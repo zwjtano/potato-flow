@@ -40,7 +40,15 @@ link_persistent_path "${DATA_DIR}/security" "${Y2A_DIR}/security"
 link_persistent_path "${DATA_DIR}/static-covers" "${Y2A_DIR}/static/covers"
 link_persistent_path "${DATA_DIR}/temp" "${Y2A_DIR}/temp"
 
-find "${DATA_DIR}" -maxdepth 1 -exec chown biliup-y2a:biliup-y2a {} +
-chown biliup-y2a:biliup-y2a "${DATA_DIR}/bridge.config.json"
+# 配置、数据库和日志可能从原生安装迁移而来，需一次性修正其文件
+# 所有权；录播和下载目录通常很大，只修正目录本身，已有媒体只需可读。
+for writable_dir in bridge config cookies db logs security static-covers temp; do
+  chown -R biliup-y2a:biliup-y2a "${DATA_DIR}/${writable_dir}"
+done
+chown biliup-y2a:biliup-y2a \
+  "${DATA_DIR}" \
+  "${DATA_DIR}/bridge.config.json" \
+  "${DATA_DIR}/downloads" \
+  "${DATA_DIR}/recordings"
 
 exec gosu biliup-y2a "$@"

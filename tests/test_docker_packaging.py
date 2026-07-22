@@ -25,6 +25,7 @@ class DockerPackagingTests(unittest.TestCase):
         )
         for directory in ("config", "cookies", "db", "recordings", "temp"):
             self.assertIn(f'"${{DATA_DIR}}/{directory}"', entrypoint)
+        self.assertIn("chown -R biliup-y2a:biliup-y2a", entrypoint)
         self.assertIn("exec gosu biliup-y2a", entrypoint)
 
 
