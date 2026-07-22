@@ -1194,7 +1194,37 @@ def live_recording():
 @app.route('/live-recording/status')
 @login_required
 def live_recording_status():
-    return jsonify(live_recorder_manager.live_status_payload())
+    payload = live_recorder_manager.live_status_payload()
+    room_id = request.args.get('room_id', '').strip() or None
+    payload['jobs'] = live_recorder_manager.pipeline_jobs(30, room_id=room_id)
+    return jsonify(payload)
+
+
+@app.route('/live-recording/jobs')
+@login_required
+def live_recording_jobs():
+    room_id = request.args.get('room_id', '').strip() or None
+    return jsonify({'jobs': live_recorder_manager.pipeline_jobs(50, room_id=room_id)})
+
+
+@app.route('/live-recording/jobs/<fingerprint>')
+@login_required
+def live_recording_job(fingerprint):
+    job = live_recorder_manager.pipeline_job(fingerprint)
+    if not job:
+        return jsonify({'error': '没有找到该录播任务'}), 404
+    job['log'] = live_recorder_manager.pipeline_log(fingerprint)
+    return jsonify(job)
+
+
+@app.route('/live-recording/jobs/<fingerprint>/retry', methods=['POST'])
+@login_required
+def live_recording_job_retry(fingerprint):
+    try:
+        live_recorder_manager.retry_pipeline_job(fingerprint)
+        return jsonify({'ok': True, 'message': '已开始重试，进度会自动刷新。'}), 202
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
 @app.route('/live-recording/rooms', methods=['POST'])

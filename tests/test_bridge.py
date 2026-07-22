@@ -43,6 +43,26 @@ class BridgeTests(unittest.TestCase):
             store.finish(key, "completed", {"ok": True})
             self.assertFalse(store.claim(key, video, "bilibili"))
 
+    def test_state_persists_each_inspectable_pipeline_stage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = bridge.StateStore(Path(temp) / "state.sqlite3")
+            video = Path(temp) / "clip.mp4"
+            video.write_bytes(b"video")
+            key = bridge.fingerprint(video)
+            self.assertTrue(store.claim(key, video, "bilibili"))
+            store.stage(key, "ass", "running", {"danmaku_xml": "clip.xml"})
+            store.stage(key, "ass", "completed", {"ass_path": "clip.ass", "danmaku_count": 12})
+            with store.connect() as db:
+                rows = db.execute(
+                    "SELECT stage, status, details_json FROM upload_stages WHERE fingerprint=? ORDER BY stage",
+                    (key,),
+                ).fetchall()
+            stages = {row["stage"]: row for row in rows}
+            self.assertEqual(set(stages), {"detect", "record", "ass", "ai", "upload"})
+            self.assertEqual(stages["record"]["status"], "completed")
+            self.assertEqual(stages["ass"]["status"], "completed")
+            self.assertEqual(json.loads(stages["ass"]["details_json"])["danmaku_count"], 12)
+
     def test_retry_preserves_uploaded_bvid(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

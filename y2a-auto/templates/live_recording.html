@@ -41,7 +41,7 @@
             {% for room in rooms %}
             <button class="room-item {{ 'active' if loop.first }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}">
                 <span class="platform-mark {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>
-                <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }} · {{ room.url.rsplit('/', 1)[-1] }}</small></span>
+                <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }} · {{ room.display_room_id }}</small></span>
                 <span class="room-state {{ room.runtime.state }}" data-role="room-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
             </button>
             {% else %}
@@ -58,7 +58,7 @@
             <header class="room-detail-header">
                 <div class="selected-room-title">
                     <span class="platform-mark large {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>
-                    <div><div class="selected-room-meta"><span>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }}</span><span>房间 {{ room.url.rsplit('/', 1)[-1] }}</span></div><h2>{{ room.name }}</h2><a href="{{ room.url }}" target="_blank" rel="noopener">{{ room.url }} <i class="bi bi-box-arrow-up-right"></i></a></div>
+                    <div><div class="selected-room-meta"><span>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }}</span><span>房间 {{ room.display_room_id }}</span></div><h2>{{ room.name }}</h2><a href="{{ room.url }}" target="_blank" rel="noopener">{{ room.display_url }} <i class="bi bi-box-arrow-up-right"></i></a></div>
                 </div>
                 <div class="detail-actions">
                     <span class="detail-status {{ room.runtime.state }}" data-role="detail-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
@@ -74,13 +74,16 @@
             </div>
 
             <section class="pipeline-card">
-                <div class="section-heading"><div><h3>自动处理流水线</h3><p>录制结束后无需人工操作</p></div><span><i class="bi bi-lightning-charge-fill"></i> 自动执行</span></div>
+                <div class="section-heading pipeline-heading"><div><h3>录播处理流水线</h3><p>自动执行，每一步都可以点开检查</p></div><div class="pipeline-toolbar"><label>录播任务<select class="form-select form-select-sm" data-role="job-select" aria-label="选择录播任务"><option value="">当前直播状态</option></select></label><span><i class="bi bi-lightning-charge-fill"></i> 自动执行</span></div></div>
                 <div class="pipeline-flow">
-                    <div class="pipeline-step {{ 'completed' if room.runtime.recording else ('active' if recorder_status.running) }}" data-stage="detect"><span><i class="bi bi-radar"></i></span><strong>直播检测</strong><small data-role="step-label">{{ '已检测开播' if room.runtime.recording else ('持续检测' if recorder_status.running else '等待中') }}</small></div>
-                    <div class="pipeline-step {{ 'active' if room.runtime.recording }}" data-stage="record"><span><i class="bi bi-record-circle"></i></span><strong>视频录制</strong><small data-role="step-label">{{ '录制中' if room.runtime.recording else '等待中' }}</small></div>
-                    <div class="pipeline-step" data-stage="ass"><span><i class="bi bi-badge-cc"></i></span><strong>生成 ASS</strong><small>等待中</small></div>
-                    <div class="pipeline-step" data-stage="ai"><span><i class="bi bi-stars"></i></span><strong>AI 简介</strong><small>等待中</small></div>
-                    <div class="pipeline-step" data-stage="upload"><span><i class="bi bi-cloud-arrow-up"></i></span><strong>投稿 B站</strong><small>等待中</small></div>
+                    <button class="pipeline-step {{ 'completed' if room.runtime.recording else ('active' if recorder_status.running) }}" type="button" data-stage="detect"><span><i class="bi bi-radar"></i></span><strong>直播检测</strong><small data-role="step-label">{{ '已检测开播' if room.runtime.recording else ('持续检测' if recorder_status.running else '等待中') }}</small></button>
+                    <button class="pipeline-step {{ 'active' if room.runtime.recording }}" type="button" data-stage="record"><span><i class="bi bi-record-circle"></i></span><strong>视频录制</strong><small data-role="step-label">{{ '录制中' if room.runtime.recording else '等待中' }}</small></button>
+                    <button class="pipeline-step" type="button" data-stage="ass"><span><i class="bi bi-badge-cc"></i></span><strong>生成 ASS</strong><small data-role="step-label">等待中</small></button>
+                    <button class="pipeline-step" type="button" data-stage="ai"><span><i class="bi bi-stars"></i></span><strong>AI 简介</strong><small data-role="step-label">等待中</small></button>
+                    <button class="pipeline-step" type="button" data-stage="upload"><span><i class="bi bi-cloud-arrow-up"></i></span><strong>投稿 B站</strong><small data-role="step-label">等待中</small></button>
+                </div>
+                <div class="pipeline-inspector" data-role="pipeline-inspector">
+                    <div class="inspector-empty"><i class="bi bi-hand-index-thumb"></i><span>点击上方任一步骤，查看状态、时间、输入、产物和错误信息</span></div>
                 </div>
                 <div class="pipeline-note"><i class="bi bi-info-circle"></i> ASS 作为独立字幕上传，不烧录视频；B站原生弹幕默认全部导入，间隔 0.6 秒。</div>
             </section>
@@ -126,7 +129,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const secs = String(seconds % 60).padStart(2, '0');
         return `${hours}:${minutes}:${secs}`;
     }
-    function updateRoom(room) {
+    function updateRoom(room, engineRunning) {
         const item = items.find(node => node.dataset.room === room.id);
         const panel = panels.find(node => node.dataset.panel === room.id);
         if (!item || !panel) return;
@@ -146,17 +149,77 @@ document.addEventListener('DOMContentLoaded', function () {
         panel.querySelector('[data-role="event-state-detail"]').textContent = room.secondary;
         const detect = panel.querySelector('[data-stage="detect"]');
         const record = panel.querySelector('[data-stage="record"]');
-        detect.className = `pipeline-step ${room.recording ? 'completed' : 'active'}`;
-        detect.querySelector('[data-role="step-label"]').textContent = room.recording ? '已检测开播' : '持续检测';
+        detect.className = `pipeline-step ${room.recording ? 'completed' : (engineRunning ? 'active' : '')}`;
+        detect.querySelector('[data-role="step-label"]').textContent = room.recording ? '已检测开播' : (engineRunning ? '持续检测' : '等待中');
         record.className = `pipeline-step ${room.recording ? 'active' : ''}`;
         record.querySelector('[data-role="step-label"]').textContent = room.recording ? '录制中' : '等待中';
+    }
+    const stageNames = {detect: '直播检测', record: '视频录制', ass: '生成 ASS', ai: 'AI 简介', upload: '投稿 B站'};
+    const statusNames = {pending: '等待中', running: '处理中', completed: '已完成', failed: '失败', skipped: '已跳过'};
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    function detailRows(details) {
+        const labels = {video_path:'录播文件', size_bytes:'文件大小', danmaku_xml:'弹幕 XML', ass_path:'ASS 字幕', danmaku_count:'弹幕数量', burn_in:'烧录视频', comment_count:'分析弹幕', description:'生成简介', reason:'说明', title:'投稿标题', cover:'视频封面', bilibili:'B站结果', danmaku_import:'原生弹幕导入'};
+        return Object.entries(details || {}).map(([key, value]) => {
+            const rendered = typeof value === 'object' ? JSON.stringify(value, null, 2) : (key === 'size_bytes' ? `${(Number(value) / 1024 / 1024).toFixed(1)} MB` : String(value));
+            return `<div class="inspector-row"><span>${escapeHtml(labels[key] || key)}</span><code>${escapeHtml(rendered)}</code></div>`;
+        }).join('');
+    }
+    function renderInspector(panel, job, stageKey) {
+        const inspector = panel.querySelector('[data-role="pipeline-inspector"]');
+        const stage = job?.stages?.find(item => item.key === stageKey);
+        if (!job) {
+            inspector.innerHTML = `<div class="inspector-empty"><i class="bi bi-info-circle"></i><span>${stageKey === 'detect' ? '录制引擎会持续检测直播状态，检测开播后自动进入录制。' : '选择一个历史录播任务即可查看这一阶段的完整记录。'}</span></div>`;
+            return;
+        }
+        const status = stage?.status || 'pending';
+        inspector.innerHTML = `<div class="inspector-head"><div><span class="stage-status ${escapeHtml(status)}"><i class="bi bi-circle-fill"></i>${escapeHtml(statusNames[status] || status)}</span><h4>${escapeHtml(stageNames[stageKey])}</h4></div>${job.status === 'failed' ? '<button class="btn btn-sm btn-outline-primary" type="button" data-action="retry"><i class="bi bi-arrow-repeat"></i> 重试失败任务</button>' : ''}</div>
+            <div class="inspector-grid"><div class="inspector-row"><span>任务文件</span><code>${escapeHtml(job.video_name)}</code></div><div class="inspector-row"><span>更新时间</span><code>${escapeHtml(stage?.updated_at || job.updated_at || '—')}</code></div>${detailRows(stage?.details)}${stage?.error ? `<div class="inspector-row error"><span>错误</span><code>${escapeHtml(stage.error)}</code></div>` : ''}</div>
+            <details class="inspector-log"><summary><i class="bi bi-terminal"></i> 查看该任务运行日志</summary><pre data-role="job-log">展开后加载…</pre></details>`;
+        inspector.querySelector('[data-action="retry"]')?.addEventListener('click', async event => {
+            event.currentTarget.disabled = true;
+            const response = await fetch(`/live-recording/jobs/${job.id}/retry`, {method: 'POST', headers: {'Accept':'application/json'}});
+            const result = await response.json();
+            if (!response.ok) { alert(result.error || '重试失败'); event.currentTarget.disabled = false; }
+            else { event.currentTarget.innerHTML = '<i class="bi bi-hourglass-split"></i> 已开始重试'; window.setTimeout(refreshLiveStatus, 800); }
+        });
+        inspector.querySelector('.inspector-log')?.addEventListener('toggle', async event => {
+            if (!event.currentTarget.open || event.currentTarget.dataset.loaded) return;
+            event.currentTarget.dataset.loaded = '1';
+            const response = await fetch(`/live-recording/jobs/${job.id}`, {headers:{'Accept':'application/json'}});
+            const result = await response.json();
+            event.currentTarget.querySelector('[data-role="job-log"]').textContent = result.log || '暂无日志。';
+        });
+    }
+    function renderRoomPipeline(panel, jobs) {
+        const select = panel.querySelector('[data-role="job-select"]');
+        const roomJobs = jobs.filter(job => job.room_id === panel.dataset.panel);
+        const previous = select.value;
+        select.innerHTML = '<option value="">当前直播状态</option>' + roomJobs.map(job => `<option value="${job.id}">${escapeHtml(job.video_name)} · ${escapeHtml(statusNames[job.status] || job.status)}</option>`).join('');
+        select.value = roomJobs.some(job => job.id === previous) ? previous : (select.dataset.touched ? '' : (roomJobs[0]?.id || ''));
+        const job = roomJobs.find(item => item.id === select.value);
+        panel.querySelectorAll('.pipeline-step').forEach(stepNode => {
+            if (!job && ['detect', 'record'].includes(stepNode.dataset.stage)) return;
+            const stage = job?.stages?.find(item => item.key === stepNode.dataset.stage);
+            const status = stage?.status || 'pending';
+            stepNode.className = `pipeline-step ${status === 'running' ? 'active' : status}`;
+            stepNode.querySelector('[data-role="step-label"]').textContent = statusNames[status] || status;
+        });
+        const selectedStage = panel.querySelector('.pipeline-step.selected')?.dataset.stage || (job?.stages?.find(item => item.status === 'failed')?.key) || 'detect';
+        panel.querySelectorAll('.pipeline-step').forEach(node => node.classList.toggle('selected', node.dataset.stage === selectedStage));
+        renderInspector(panel, job, selectedStage);
+        select.onchange = () => { select.dataset.touched = '1'; renderRoomPipeline(panel, roomJobs); };
+        panel.querySelectorAll('.pipeline-step').forEach(node => node.onclick = () => {
+            panel.querySelectorAll('.pipeline-step').forEach(item => item.classList.toggle('selected', item === node));
+            renderInspector(panel, roomJobs.find(item => item.id === select.value), node.dataset.stage);
+        });
     }
     async function refreshLiveStatus() {
         try {
             const response = await fetch('{{ url_for("live_recording_status") }}', {headers: {'Accept': 'application/json'}});
             if (!response.ok) return;
             const payload = await response.json();
-            payload.rooms.forEach(updateRoom);
+            payload.rooms.forEach(room => updateRoom(room, payload.running));
+            panels.forEach(panel => renderRoomPipeline(panel, payload.jobs || []));
             applyFilter();
         } catch (_) {
             // 短暂网络错误不覆盖最后一次可信状态，下一轮自动重试。
@@ -168,6 +231,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }));
     search?.addEventListener('input', applyFilter);
     tabs.forEach(tab => tab.addEventListener('click', function () { tabs.forEach(node => node.classList.remove('active')); tab.classList.add('active'); filter = tab.dataset.filter; applyFilter(); }));
+    refreshLiveStatus();
     window.setInterval(refreshLiveStatus, 5000);
 });
 </script>

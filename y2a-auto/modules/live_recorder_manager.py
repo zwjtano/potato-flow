@@ -9,7 +9,9 @@ import json
 import os
 import re
 import signal
+import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -136,6 +138,9 @@ class LiveRecorderManager:
         for source_room in rooms:
             room = dict(source_room)
             room_url = str(room.get("url") or "")
+            parsed_room_url = urlparse(room_url)
+            room["display_url"] = parsed_room_url._replace(query="", fragment="").geturl()
+            room["display_room_id"] = parsed_room_url.path.rstrip("/").rsplit("/", 1)[-1] or "—"
             remark = f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}"
             worker = workers_by_remark.get(remark) or workers_by_url.get(room_url)
             raw_status = cls._worker_status(worker.get("downloader_status")) if worker else "Unknown"
@@ -432,6 +437,106 @@ class LiveRecorderManager:
         tail = "\n".join(content[-max(1, min(lines, 500)):])
         # 直播源经常把签名、令牌放在查询参数中，后台排错日志不应直接暴露它们。
         return re.sub(r"(https?://[^\s?'\"]+)\?[^\s'\"]+", r"\1?[已隐藏]", tail)
+
+    def _pipeline_state_path(self) -> Path:
+        try:
+            config = json.loads(BRIDGE_CONFIG_PATH.read_text(encoding="utf-8"))
+            configured = Path(str(config.get("state_db") or ".bridge/state.sqlite3")).expanduser()
+        except (FileNotFoundError, json.JSONDecodeError, TypeError):
+            configured = Path(".bridge/state.sqlite3")
+        return configured.resolve() if configured.is_absolute() else (WORKSPACE_ROOT / configured).resolve()
+
+    @staticmethod
+    def _decode_json(value: Any) -> dict[str, Any]:
+        try:
+            parsed = json.loads(value) if value else {}
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, json.JSONDecodeError):
+            return {}
+
+    def pipeline_jobs(self, limit: int = 30, room_id: str | None = None) -> list[dict[str, Any]]:
+        state_path = self._pipeline_state_path()
+        if not state_path.is_file():
+            return []
+        try:
+            with sqlite3.connect(state_path, timeout=5) as db:
+                db.row_factory = sqlite3.Row
+                uploads = db.execute(
+                    "SELECT * FROM uploads ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 100)),)
+                ).fetchall()
+                stage_rows = db.execute(
+                    "SELECT * FROM upload_stages ORDER BY updated_at"
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        stages_by_job: dict[str, list[dict[str, Any]]] = {}
+        for row in stage_rows:
+            stages_by_job.setdefault(row["fingerprint"], []).append({
+                "key": row["stage"], "status": row["status"],
+                "details": self._decode_json(row["details_json"]), "error": row["error"],
+                "started_at": row["started_at"], "finished_at": row["finished_at"],
+                "updated_at": row["updated_at"],
+            })
+        room_marker = None
+        if room_id:
+            room = next((item for item in self.list_rooms() if item.get("id") == room_id), None)
+            if room:
+                room_marker = f"{_slug(str(room.get('name') or ''))}_{room_id[:6]}"
+        jobs = []
+        room_markers = [
+            (str(item.get("id") or ""), f"{_slug(str(item.get('name') or ''))}_{str(item.get('id') or '')[:6]}")
+            for item in self.list_rooms()
+        ]
+        for row in uploads:
+            video_path = str(row["video_path"])
+            if room_marker and room_marker not in Path(video_path).name:
+                continue
+            result = self._decode_json(row["result_json"])
+            matched_room_id = next((rid for rid, marker in room_markers if marker and marker in Path(video_path).name), None)
+            jobs.append({
+                "id": row["fingerprint"], "short_id": row["fingerprint"][:12],
+                "video_path": video_path, "video_name": Path(video_path).name,
+                "platform": row["platform"], "status": row["status"],
+                "attempts": row["attempts"], "result": result, "error": row["error"],
+                "created_at": row["created_at"], "updated_at": row["updated_at"],
+                "room_id": matched_room_id,
+                "stages": stages_by_job.get(row["fingerprint"], []),
+            })
+        return jobs
+
+    def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
+        return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)
+
+    def retry_pipeline_job(self, fingerprint: str) -> None:
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise RecorderConfigError("任务编号无效")
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        if job["status"] not in {"failed", "dry_run"}:
+            raise RecorderConfigError("只有失败或试运行任务可以重试")
+        video = Path(job["video_path"])
+        if not video.is_file():
+            raise RecorderConfigError("原始录播文件已不存在，无法重试")
+        log_path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log_handle:
+            subprocess.Popen(
+                [sys.executable, str(WORKSPACE_ROOT / "bridge.py"), "--config", str(BRIDGE_CONFIG_PATH),
+                 "ingest", "--retry", str(video)],
+                cwd=WORKSPACE_ROOT, stdout=log_handle, stderr=subprocess.STDOUT,
+                start_new_session=True, close_fds=True,
+            )
+
+    def pipeline_log(self, fingerprint: str, lines: int = 200) -> str:
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            return "任务编号无效。"
+        path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except FileNotFoundError:
+            return "该任务暂无独立重试日志；阶段错误与产物信息可在详情中查看。"
+        return "\n".join(content[-max(1, min(lines, 500)):])
 
 
 live_recorder_manager = LiveRecorderManager()

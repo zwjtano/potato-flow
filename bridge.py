@@ -148,6 +148,20 @@ class StateStore:
                     updated_at TEXT NOT NULL
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS upload_stages (
+                    fingerprint TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    details_json TEXT,
+                    error TEXT,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (fingerprint, stage),
+                    FOREIGN KEY (fingerprint) REFERENCES uploads(fingerprint)
+                )"""
+            )
 
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -175,7 +189,49 @@ class StateStore:
                      error=NULL, updated_at=excluded.updated_at""",
                 (key, str(path), platform, now, now),
             )
+            for stage, status in (("detect", "completed"), ("record", "completed"),
+                                  ("ass", "pending"), ("ai", "pending"), ("upload", "pending")):
+                db.execute(
+                    """INSERT INTO upload_stages
+                       (fingerprint, stage, status, updated_at, started_at, finished_at)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(fingerprint, stage) DO UPDATE SET
+                         status=CASE WHEN excluded.stage IN ('detect', 'record') THEN 'completed'
+                                     WHEN upload_stages.status='completed' THEN upload_stages.status
+                                     ELSE excluded.status END,
+                         error=NULL, updated_at=excluded.updated_at""",
+                    (key, stage, status, now, now if status == "completed" else None,
+                     now if status == "completed" else None),
+                )
+            db.execute(
+                """UPDATE upload_stages SET details_json=?
+                   WHERE fingerprint=? AND stage='record'""",
+                (json.dumps({"video_path": str(path), "size_bytes": path.stat().st_size}, ensure_ascii=False), key),
+            )
         return True
+
+    def stage(self, key: str, stage: str, status: str, details: Any = None,
+              error: str | None = None) -> None:
+        now = utc_now()
+        started_at = now if status == "running" else None
+        finished_at = now if status in {"completed", "failed", "skipped"} else None
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO upload_stages
+                   (fingerprint, stage, status, details_json, error, started_at, finished_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(fingerprint, stage) DO UPDATE SET
+                     status=excluded.status,
+                     details_json=COALESCE(excluded.details_json, upload_stages.details_json),
+                     error=excluded.error,
+                     started_at=CASE WHEN excluded.status='running' THEN excluded.started_at
+                                     ELSE upload_stages.started_at END,
+                     finished_at=excluded.finished_at,
+                     updated_at=excluded.updated_at""",
+                (key, stage, status,
+                 json.dumps(details, ensure_ascii=False, default=str) if details is not None else None,
+                 error, started_at, finished_at, now),
+            )
 
     def finish(self, key: str, status: str, result: Any = None, error: str | None = None) -> None:
         with self.connect() as db:
@@ -316,6 +372,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         return True
 
     work_dir = store.path.parent / "artifacts" / key[:16]
+    current_stage = "ass"
     try:
         title, description, tags = render_metadata(video, cfg)
         cover = find_cover(video, cfg, work_dir)
@@ -326,6 +383,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         upload_video = video
         ass_path = None
         comments = []
+        store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml) if danmaku_xml else None})
         if danmaku_xml and bool(cfg.get("danmaku_enabled", True)):
             comments = parse_biliup_xml(danmaku_xml)
             if comments:
@@ -352,10 +410,24 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         preset=str(cfg.get("danmaku_encode_preset", "medium")),
                         crf=int(cfg.get("danmaku_encode_crf", 20)),
                     )
-                if not dry_run:
-                    description = summarize_danmaku_with_ai(comments, description, cfg)
+                store.stage(key, "ass", "completed", {
+                    "danmaku_xml": str(danmaku_xml), "ass_path": str(ass_path),
+                    "danmaku_count": len(comments), "burn_in": bool(cfg.get("danmaku_burn_in", False)),
+                })
             else:
                 print(f"WARN 弹幕 XML 中没有可用弹幕: {danmaku_xml}", file=sys.stderr)
+                store.stage(key, "ass", "skipped", {"danmaku_xml": str(danmaku_xml), "reason": "XML 中没有可用弹幕"})
+        else:
+            store.stage(key, "ass", "skipped", {"reason": "未找到弹幕 XML 或弹幕处理未启用"})
+
+        current_stage = "ai"
+        if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
+            store.stage(key, "ai", "running", {"comment_count": len(comments)})
+            description = summarize_danmaku_with_ai(comments, description, cfg)
+            store.stage(key, "ai", "completed", {"description": description, "comment_count": len(comments)})
+        else:
+            reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
+            store.stage(key, "ai", "skipped", {"reason": reason, "description": description})
 
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
@@ -363,10 +435,13 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                    "danmaku_count": len(comments), "cover": str(cover), "platform": platform,
                    "title": title, "description": description, "tags": tags, "source_url": source_url}
         if dry_run:
+            store.stage(key, "upload", "skipped", {"reason": "试运行未投稿"})
             store.finish(key, "dry_run", summary)
             print(json.dumps(summary, ensure_ascii=False, indent=2))
             return True
 
+        current_stage = "upload"
+        store.stage(key, "upload", "running", {"title": title, "cover": str(cover)})
         BilibiliUploader, _ = import_y2a(cfg)
         cookie = resolve_path(str(cfg.get("bilibili_cookies", "")), cfg)
         partition = str(cfg.get("bilibili_partition_id", "")).strip()
@@ -413,10 +488,16 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "skipped": imported.skipped,
             }
 
+        store.stage(key, "upload", "completed", {
+            "title": title, "description": description, "cover": str(cover),
+            "bilibili": previous.get("bilibili"),
+            "danmaku_import": previous.get("danmaku_import"),
+        })
         store.finish(key, "completed", previous)
         print(f"OK 上传完成: {video}")
         return True
     except Exception as exc:
+        store.stage(key, current_stage, "failed", error=str(exc))
         store.finish(key, "failed", error=str(exc))
         print(f"ERROR {video}: {exc}", file=sys.stderr)
         return False
@@ -429,6 +510,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest = sub.add_parser("ingest", help="处理参数或 stdin 中的视频路径")
     ingest.add_argument("paths", nargs="*")
     ingest.add_argument("--dry-run", action="store_true")
+    ingest.add_argument("--retry", action="store_true", help="允许重试指定的失败任务")
     sub.add_parser("retry", help="重试失败记录")
     status = sub.add_parser("status", help="显示最近记录")
     status.add_argument("--limit", type=int, default=30)
@@ -449,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"{row['platform']:9} {row['video_path']}{error}")
         return 0
 
-    retry = args.command == "retry"
+    retry = args.command == "retry" or bool(getattr(args, "retry", False))
     received_paths = store.failed_paths() if retry else input_paths(args.paths)
     paths = [path for path in received_paths if path.suffix.lower() in VIDEO_EXTENSIONS]
     if not paths:
