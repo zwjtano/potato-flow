@@ -10,6 +10,7 @@ use crate::server::config::{Config, StreamerConfig};
 use crate::server::core::download_manager::DownloadManager;
 use crate::server::errors::{AppError, AppResult};
 use crate::server::infrastructure::connection_pool::ConnectionManager;
+use crate::server::infrastructure::models::StreamerInfo;
 use crate::server::infrastructure::models::live_streamer::InsertLiveStreamer;
 use crate::server::infrastructure::models::upload_streamer::{
     InsertUploadStreamer, UploadStreamer, is_noop_uploader,
@@ -18,9 +19,14 @@ use crate::server::infrastructure::repositories;
 use crate::server::infrastructure::service_register::ServiceRegister;
 use clap::ValueEnum;
 use error_stack::{Report, ResultExt};
+use ormlite::Model;
+use serde::Serialize;
+use std::fs;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::signal;
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 // 定义 Handle 的类型别名，简化代码
@@ -34,8 +40,23 @@ pub async fn run(
     log_handle: LogHandle,
     config_path: Option<PathBuf>,
 ) -> AppResult<()> {
-    // let config = Arc::new(AppConfig::parse());
+    let service_register = initialize_services(log_handle, config_path.as_deref()).await?;
+    tracing::info!("migrations successfully ran, initializing axum server...");
+    let addr = addr
+        .to_socket_addrs()
+        .change_context(AppError::Unknown)?
+        .next()
+        .unwrap();
+    ApplicationController::serve(&addr, auth, service_register)
+        .await
+        .attach("could not initialize application routes")?;
+    Ok(())
+}
 
+async fn initialize_services(
+    log_handle: LogHandle,
+    config_path: Option<&Path>,
+) -> AppResult<ServiceRegister> {
     tracing::info!(
         "environment loaded and configuration parsed, initializing Postgres connection and running migrations..."
     );
@@ -43,7 +64,7 @@ pub async fn run(
         .await
         .expect("could not initialize the database connection pool");
 
-    let loaded_config = if let Some(path) = config_path.as_deref() {
+    let loaded_config = if let Some(path) = config_path {
         let config = Config::load(path)?;
         tracing::info!(config = %path.display(), "loaded server config file");
         config
@@ -65,21 +86,135 @@ pub async fn run(
     )
     .await;
 
-    if let Some(path) = config_path.as_deref() {
+    if let Some(path) = config_path {
         import_config_streamers(path, &service_register).await?;
     } else {
         import_database_streamers(&service_register).await?;
     }
 
-    tracing::info!("migrations successfully ran, initializing axum server...");
-    let addr = addr
-        .to_socket_addrs()
-        .change_context(AppError::Unknown)?
-        .next()
-        .unwrap();
-    ApplicationController::serve(&addr, auth, service_register)
+    Ok(service_register)
+}
+
+#[derive(Serialize)]
+struct RecorderStatusPayload {
+    pid: u32,
+    updated_at: u64,
+    rooms: Vec<RecorderRoomStatus>,
+    stream_infos: Vec<RecorderStreamInfo>,
+}
+
+#[derive(Serialize)]
+struct RecorderRoomStatus {
+    live_streamer: RecorderLiveStreamer,
+    downloader_status: String,
+}
+
+#[derive(Serialize)]
+struct RecorderLiveStreamer {
+    url: String,
+    remark: String,
+}
+
+#[derive(Serialize)]
+struct RecorderStreamInfo {
+    url: String,
+    title: String,
+    date: i64,
+}
+
+async fn write_recorder_status(
+    service_register: &ServiceRegister,
+    status_path: &Path,
+) -> std::io::Result<()> {
+    let workers = service_register.managers.get_rooms().await;
+    let rooms = workers
+        .iter()
+        .map(|worker| RecorderRoomStatus {
+            live_streamer: RecorderLiveStreamer {
+                url: worker.get_streamer().url.clone(),
+                remark: worker.get_streamer().remark.clone(),
+            },
+            downloader_status: format!("{:?}", worker.downloader_status.read().unwrap().clone()),
+        })
+        .collect();
+    let stream_infos = StreamerInfo::select()
+        .fetch_all(&service_register.pool)
         .await
-        .attach("could not initialize application routes")?;
+        .unwrap_or_default()
+        .into_iter()
+        .map(|info| RecorderStreamInfo {
+            url: info.url,
+            title: info.title,
+            date: info.date.timestamp(),
+        })
+        .collect();
+    let payload = RecorderStatusPayload {
+        pid: std::process::id(),
+        updated_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        rooms,
+        stream_infos,
+    };
+    if let Some(parent) = status_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary_path = status_path.with_extension("tmp");
+    fs::write(&temporary_path, serde_json::to_vec_pretty(&payload)?)?;
+    fs::rename(temporary_path, status_path)
+}
+
+async fn recorder_shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+}
+
+/// Run the recording engine as an internal worker without binding an HTTP port.
+pub async fn run_recorder(
+    log_handle: LogHandle,
+    config_path: PathBuf,
+    status_path: PathBuf,
+) -> AppResult<()> {
+    let service_register = initialize_services(log_handle, Some(&config_path)).await?;
+    tracing::info!(
+        config = %config_path.display(),
+        status_file = %status_path.display(),
+        "headless recorder worker initialized; no HTTP listener"
+    );
+
+    let status_register = service_register.clone();
+    let status_path_for_task = status_path.clone();
+    let status_task = tokio::spawn(async move {
+        loop {
+            if let Err(error) = write_recorder_status(&status_register, &status_path_for_task).await
+            {
+                tracing::warn!(?error, "failed to write recorder status file");
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+
+    recorder_shutdown_signal().await;
+    status_task.abort();
+    service_register.cleanup().await;
+    let _ = fs::remove_file(status_path);
     Ok(())
 }
 

@@ -174,6 +174,16 @@ pub enum Commands {
         #[arg(short, long, value_name = "FILE")]
         config: Option<PathBuf>,
     },
+    /// 启动无 HTTP 端口的录制 worker，供整合服务内部调用
+    Recorder {
+        /// 使用 biliup 1.0.7 风格配置文件启动录制
+        #[arg(short, long, value_name = "FILE")]
+        config: PathBuf,
+
+        /// 将房间运行状态写入本地 JSON 文件
+        #[arg(long, value_name = "FILE")]
+        status_file: PathBuf,
+    },
     /// 列出所有已上传的视频
     List {
         /// 只包含进行中的视频

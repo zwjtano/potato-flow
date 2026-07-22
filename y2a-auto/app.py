@@ -1201,8 +1201,11 @@ def live_recording_status():
 @login_required
 def live_recording_save_room():
     try:
-        live_recorder_manager.save_room(request.form.get('name', ''), request.form.get('url', ''))
-        flash('直播间已添加；录制配置和上传桥接配置已同步。', 'success')
+        if live_recorder_manager.status()['running']:
+            flash('请先停止内部录制 worker 再添加直播间。', 'warning')
+        else:
+            live_recorder_manager.save_room(request.form.get('name', ''), request.form.get('url', ''))
+            flash('直播间已添加；录制配置和上传桥接配置已同步。', 'success')
     except RecorderConfigError as exc:
         flash(str(exc), 'danger')
     return redirect(url_for('live_recording'))
@@ -3917,6 +3920,16 @@ if __name__ == '__main__':
     # 配置应用
     configure_app(app, config)
 
+    # 录制器是统一服务的内部无端口 worker。Linux systemd/Docker 只需启动
+    # 当前 Web 服务，不再单独运行 biliup server 或开放 19159。
+    if os.environ.get('AUTO_START_RECORDER', '1').strip().lower() not in ('0', 'false', 'no'):
+        try:
+            if live_recorder_manager.list_rooms():
+                live_recorder_manager.start()
+                logger.info("内部录制 worker 已自动启动（无额外 HTTP 端口）")
+        except RecorderConfigError as exc:
+            logger.warning("内部录制 worker 自动启动失败: %s", exc)
+
     # 设置日志清理定时任务
     log_cleanup_scheduler = schedule_log_cleanup()
 
@@ -3924,7 +3937,7 @@ if __name__ == '__main__':
     download_cleanup_scheduler = schedule_download_cleanup()
 
     try:
-        port = int(os.environ.get('PORT', 5000))
+        port = int(os.environ.get('PORT', 5001))
         logger.info(f"服务启动，监听地址: http://127.0.0.1:{port}")
         # 使用标准Flask运行
         app.run(host='0.0.0.0', port=port, debug=False)
@@ -3933,6 +3946,8 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"服务启动失败: {str(e)}")
     finally:
+        live_recorder_manager.stop()
+
         # 关闭全局任务处理器
         shutdown_global_task_processor()
 

@@ -136,6 +136,10 @@ async fn main() -> AppResult<()> {
             auth,
             config,
         } => biliup_cli::run((&bind, port), auth, console_reload_handle, config).await?,
+        Commands::Recorder {
+            config,
+            status_file,
+        } => biliup_cli::run_recorder(console_reload_handle, config, status_file).await?,
         Commands::List {
             is_pubing,
             pubed,

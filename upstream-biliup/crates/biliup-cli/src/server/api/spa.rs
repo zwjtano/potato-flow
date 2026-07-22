@@ -7,7 +7,7 @@ static INDEX_HTML: &str = "index.html";
 
 /// 嵌入的静态资源
 #[derive(Embed)]
-#[folder = "../../out/"]
+#[folder = "assets/"]
 struct Assets;
 
 /// 静态文件处理器，用于服务单页应用

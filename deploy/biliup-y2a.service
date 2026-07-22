@@ -1,0 +1,21 @@
+[Unit]
+Description=biliup Y2A unified recorder and uploader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@ROOT@
+ExecStart="@PYTHON@" "@ROOT@/run.py"
+Environment=PORT=5001
+Environment=AUTO_START_RECORDER=1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

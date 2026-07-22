@@ -25,6 +25,7 @@ from danmaku_pipeline import (
     probe_video_size,
     select_summary_comments,
 )
+from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 
@@ -435,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_linux_ca_environment()
     args = build_parser().parse_args(argv)
     cfg = load_config(Path(args.config))
     state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)

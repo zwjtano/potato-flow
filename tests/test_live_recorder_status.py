@@ -1,13 +1,17 @@
+import json
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 Y2A_ROOT = Path(__file__).resolve().parents[1] / "y2a-auto"
 sys.path.insert(0, str(Y2A_ROOT))
 
 from modules.live_recorder_manager import LiveRecorderManager  # noqa: E402
+import modules.live_recorder_manager as recorder_module  # noqa: E402
 
 
 class LiveRecorderStatusTests(unittest.TestCase):
@@ -68,6 +72,46 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         self.assertTrue(all(room["runtime"]["state"] == "stopped" for room in rooms))
         self.assertTrue(all(room["runtime"]["label"] == "引擎未启动" for room in rooms))
+
+    def test_headless_status_file_drives_room_state(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status_path = Path(temp_dir) / "status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "pid": 4321,
+                        "updated_at": time.time(),
+                        "rooms": [
+                            {
+                                "downloader_status": "Working",
+                                "live_streamer": {
+                                    "remark": "开播主播_aaaaaa",
+                                    "url": "https://www.douyu.com/100",
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(recorder_module, "STATUS_PATH", status_path), mock.patch.object(
+                manager,
+                "_pid",
+                return_value=4321,
+            ), mock.patch.object(manager, "list_rooms", return_value=self.rooms):
+                rooms = manager.rooms_with_status()
+
+        self.assertEqual(rooms[0]["runtime"]["state"], "recording")
+        self.assertEqual(rooms[1]["runtime"]["state"], "unknown")
+
+    def test_manager_does_not_depend_on_legacy_http_port(self):
+        source = (Y2A_ROOT / "modules" / "live_recorder_manager.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("19159", source)
+        self.assertNotIn("BILIUP_API_BASE", source)
+        self.assertIn('"recorder"', source)
+        self.assertIn('"--status-file"', source)
 
 
 if __name__ == "__main__":

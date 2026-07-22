@@ -11,13 +11,12 @@ import re
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -30,8 +29,8 @@ BRIDGE_CONFIG_PATH = WORKSPACE_ROOT / "bridge.config.json"
 BRIDGE_CONFIG_EXAMPLE = WORKSPACE_ROOT / "bridge.config.example.json"
 LOG_PATH = APP_ROOT / "logs" / "biliup-recorder.log"
 PID_PATH = APP_ROOT / "temp" / "biliup-recorder.pid"
+STATUS_PATH = APP_ROOT / "temp" / "biliup-recorder-status.json"
 FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
-BILIUP_API_BASE = "http://127.0.0.1:19159"
 
 
 class RecorderConfigError(ValueError):
@@ -86,13 +85,18 @@ class LiveRecorderManager:
             return []
         return data if isinstance(data, list) else []
 
-    def _api_json(self, path: str) -> Any:
-        request = Request(
-            f"{BILIUP_API_BASE}{path}",
-            headers={"Accept": "application/json"},
-        )
-        with urlopen(request, timeout=2) as response:
-            return json.load(response)
+    def _worker_status_payload(self, pid: int) -> dict[str, Any]:
+        try:
+            payload = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return {}
+            if int(payload.get("pid") or 0) != pid:
+                return {}
+            if time.time() - float(payload.get("updated_at") or 0) > 5:
+                return {}
+            return payload
+        except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+            return {}
 
     @staticmethod
     def _worker_status(value: Any) -> str:
@@ -153,7 +157,7 @@ class LiveRecorderManager:
                 primary, secondary = "直播间已暂停", "恢复后继续检测开播"
             else:
                 state, label = "unknown", "状态未知"
-                primary, secondary = "暂时无法读取状态", "biliup 状态接口尚未返回该房间"
+                primary, secondary = "暂时无法读取状态", "内部录制 worker 尚未同步该房间"
 
             duration_seconds = 0
             live_title = ""
@@ -184,15 +188,16 @@ class LiveRecorderManager:
 
     def rooms_with_status(self) -> list[dict[str, Any]]:
         rooms = self.list_rooms()
-        engine_running = self._pid() is not None
-        if not engine_running:
+        pid = self._pid()
+        if pid is None:
             return self._merge_room_runtime(rooms, False)
-        try:
-            status_payload = self._api_json("/v1/status")
-            stream_infos = self._api_json("/v1/streamer-info")
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
-            status_payload, stream_infos = {}, []
-        return self._merge_room_runtime(rooms, True, status_payload, stream_infos)
+        status_payload = self._worker_status_payload(pid)
+        return self._merge_room_runtime(
+            rooms,
+            True,
+            status_payload,
+            status_payload.get("stream_infos", []),
+        )
 
     def live_status_payload(self) -> dict[str, Any]:
         status = self.status()
@@ -319,22 +324,26 @@ class LiveRecorderManager:
             pid = int(PID_PATH.read_text(encoding="utf-8").strip())
             os.kill(pid, 0)
             return pid
-        except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        except PermissionError:
+            # 在容器或受限运行环境中，同一服务的子进程可能不允许发送
+            # signal 0；这代表无法探测，不代表进程不存在。
+            return pid
+        except (FileNotFoundError, ValueError, ProcessLookupError):
             PID_PATH.unlink(missing_ok=True)
-        # biliup server 会在部分运行方式下脱离启动它的父进程；以监听端口为
-        # 第二事实来源，避免后台仍在录制而 UI 错报“未运行”。
         try:
-            result = subprocess.run(
-                ["lsof", "-nP", "-tiTCP:19159", "-sTCP:LISTEN"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            listener = next((line.strip() for line in result.stdout.splitlines() if line.strip().isdigit()), "")
-            if listener:
-                return int(listener)
-        except (FileNotFoundError, subprocess.SubprocessError):
+            payload = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+            status_pid = int(payload.get("pid") or 0)
+            if status_pid and time.time() - float(payload.get("updated_at") or 0) <= 5:
+                try:
+                    os.kill(status_pid, 0)
+                except PermissionError:
+                    return status_pid
+                except ProcessLookupError:
+                    pass
+                else:
+                    PID_PATH.write_text(str(status_pid), encoding="utf-8")
+                    return status_pid
+        except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
             pass
         return None
 
@@ -359,12 +368,20 @@ class LiveRecorderManager:
             if not binary.is_file():
                 raise RecorderConfigError("录制引擎尚未构建，请先安装 Rust 并构建 biliup")
             self.sync_configs()
+            STATUS_PATH.unlink(missing_ok=True)
             self._log_handle = LOG_PATH.open("a", encoding="utf-8")
             process_env = os.environ.copy()
             if FFMPEG_DIR.is_dir():
                 process_env["PATH"] = f"{FFMPEG_DIR}{os.pathsep}{process_env.get('PATH', '')}"
             self._process = subprocess.Popen(
-                [str(binary), "server", "--bind", "127.0.0.1", "--port", "19159", "--config", str(BILIUP_CONFIG_PATH)],
+                [
+                    str(binary),
+                    "recorder",
+                    "--config",
+                    str(BILIUP_CONFIG_PATH),
+                    "--status-file",
+                    str(STATUS_PATH),
+                ],
                 cwd=RECORDINGS_DIR,
                 stdout=self._log_handle,
                 stderr=subprocess.STDOUT,
@@ -373,6 +390,14 @@ class LiveRecorderManager:
                 env=process_env,
             )
             PID_PATH.write_text(str(self._process.pid), encoding="utf-8")
+            time.sleep(0.25)
+            if self._process.poll() is not None:
+                exit_code = self._process.returncode
+                self._process = None
+                PID_PATH.unlink(missing_ok=True)
+                raise RecorderConfigError(
+                    f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 biliup"
+                )
             return self.status()
 
     def stop(self) -> dict[str, Any]:
@@ -396,6 +421,7 @@ class LiveRecorderManager:
                 self._log_handle.close()
                 self._log_handle = None
             PID_PATH.unlink(missing_ok=True)
+            STATUS_PATH.unlink(missing_ok=True)
             return self.status()
 
     def tail_log(self, lines: int = 120) -> str:
