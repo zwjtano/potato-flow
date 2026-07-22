@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}直播录制 - 录播上传中心{% endblock %}
+{% block body_class %}live-console-page{% endblock %}
+{% block main_class %}live-console-main{% endblock %}
+
+{% block content %}
+{% macro format_duration(seconds) -%}
+{{ '%02d:%02d:%02d'|format((seconds // 3600), ((seconds % 3600) // 60), (seconds % 60)) }}
+{%- endmacro %}
+<section class="recorder-header">
+    <div>
+        <div class="recorder-eyebrow">LIVE RECORDER</div>
+        <h1>直播录制</h1>
+        <p>B站与斗鱼自动监控，录制完成后进入弹幕与上传流水线。</p>
+    </div>
+    <div class="recorder-header-actions">
+        <a class="btn btn-light border" href="{{ url_for('live_recording') }}"><i class="bi bi-arrow-clockwise"></i> 刷新</a>
+        <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addRoomModal"><i class="bi bi-plus-lg"></i> 新增直播间</button>
+    </div>
+</section>
+
+<section class="recorder-workspace">
+    <aside class="room-pane">
+        <div class="room-pane-top">
+            <div class="engine-state">
+                <span class="engine-icon {{ 'is-running' if recorder_status.running }}"><i class="bi bi-broadcast"></i></span>
+                <div><strong>录制引擎</strong><small>{{ '运行中 · PID ' ~ recorder_status.pid if recorder_status.running else '当前未运行' }}</small></div>
+                <form class="ms-auto" method="post" action="{{ url_for('live_recording_stop' if recorder_status.running else 'live_recording_start') }}">
+                    <button class="engine-toggle {{ 'stop' if recorder_status.running else 'start' }}" type="submit" title="{{ '停止录制引擎' if recorder_status.running else '启动录制引擎' }}"><i class="bi {{ 'bi-stop-fill' if recorder_status.running else 'bi-play-fill' }}"></i></button>
+                </form>
+            </div>
+            <label class="room-search"><i class="bi bi-search"></i><input id="roomSearch" type="search" placeholder="搜索直播间" autocomplete="off"></label>
+            <div class="room-tabs" role="tablist">
+                <button class="active" type="button" data-filter="all">全部 <span>{{ rooms|length }}</span></button>
+                <button type="button" data-filter="recording">录制中</button>
+                <button type="button" data-filter="offline">未开播</button>
+            </div>
+        </div>
+        <div class="room-list" id="roomList">
+            {% for room in rooms %}
+            <button class="room-item {{ 'active' if loop.first }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}">
+                <span class="platform-mark {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>
+                <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }} · {{ room.url.rsplit('/', 1)[-1] }}</small></span>
+                <span class="room-state {{ room.runtime.state }}" data-role="room-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
+            </button>
+            {% else %}
+            <div class="room-empty"><i class="bi bi-camera-video-off"></i><strong>还没有直播间</strong><span>新增一个 B站或斗鱼直播间开始监控</span></div>
+            {% endfor %}
+        </div>
+        <div class="room-pane-footer"><i class="bi bi-folder2-open"></i><span title="{{ recorder_status.recordings_path }}">{{ recorder_status.recordings_path }}</span></div>
+    </aside>
+
+    <div class="room-detail">
+        {% if rooms %}
+        {% for room in rooms %}
+        <article class="room-detail-panel {{ '' if loop.first else 'd-none' }}" data-panel="{{ room.id }}">
+            <header class="room-detail-header">
+                <div class="selected-room-title">
+                    <span class="platform-mark large {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>
+                    <div><div class="selected-room-meta"><span>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }}</span><span>房间 {{ room.url.rsplit('/', 1)[-1] }}</span></div><h2>{{ room.name }}</h2><a href="{{ room.url }}" target="_blank" rel="noopener">{{ room.url }} <i class="bi bi-box-arrow-up-right"></i></a></div>
+                </div>
+                <div class="detail-actions">
+                    <span class="detail-status {{ room.runtime.state }}" data-role="detail-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
+                    <form method="post" action="{{ url_for('live_recording_delete_room', room_id=room.id) }}" onsubmit="return confirm('确定删除这个直播间？')"><button class="btn btn-light border" type="submit" {% if recorder_status.running %}disabled title="请先停止录制引擎"{% endif %}><i class="bi bi-trash3"></i></button></form>
+                </div>
+            </header>
+
+            <div class="runtime-metrics">
+                <div><span>直播状态</span><strong data-role="runtime-primary">{{ room.runtime.primary }}</strong><small data-role="runtime-secondary">{{ room.runtime.secondary }}</small></div>
+                <div><span>录制时长</span><strong data-role="duration">{{ format_duration(room.runtime.duration_seconds) if room.runtime.recording else '—' }}</strong><small data-role="started-at">{{ '开始于 ' ~ room.runtime.started_at if room.runtime.started_at else '开播后实时显示' }}</small></div>
+                <div><span>当前文件</span><strong>—</strong><small>按 2.5 GB 自动分段</small></div>
+                <div><span>弹幕采集</span><strong data-role="danmaku-state">{{ '录制中' if room.runtime.recording else ('已启用' if recorder_status.running else '待命') }}</strong><small>XML 与视频同步保存</small></div>
+            </div>
+
+            <section class="pipeline-card">
+                <div class="section-heading"><div><h3>自动处理流水线</h3><p>录制结束后无需人工操作</p></div><span><i class="bi bi-lightning-charge-fill"></i> 自动执行</span></div>
+                <div class="pipeline-flow">
+                    <div class="pipeline-step {{ 'completed' if room.runtime.recording else ('active' if recorder_status.running) }}" data-stage="detect"><span><i class="bi bi-radar"></i></span><strong>直播检测</strong><small data-role="step-label">{{ '已检测开播' if room.runtime.recording else ('持续检测' if recorder_status.running else '等待中') }}</small></div>
+                    <div class="pipeline-step {{ 'active' if room.runtime.recording }}" data-stage="record"><span><i class="bi bi-record-circle"></i></span><strong>视频录制</strong><small data-role="step-label">{{ '录制中' if room.runtime.recording else '等待中' }}</small></div>
+                    <div class="pipeline-step" data-stage="ass"><span><i class="bi bi-badge-cc"></i></span><strong>生成 ASS</strong><small>等待中</small></div>
+                    <div class="pipeline-step" data-stage="ai"><span><i class="bi bi-stars"></i></span><strong>AI 简介</strong><small>等待中</small></div>
+                    <div class="pipeline-step" data-stage="upload"><span><i class="bi bi-cloud-arrow-up"></i></span><strong>投稿 B站</strong><small>等待中</small></div>
+                </div>
+                <div class="pipeline-note"><i class="bi bi-info-circle"></i> ASS 作为独立字幕上传，不烧录视频；B站原生弹幕默认全部导入，间隔 0.6 秒。</div>
+            </section>
+
+            <section class="events-card">
+                <div class="section-heading"><div><h3>最近事件</h3><p>仅展示关键状态，原始日志可按需查看</p></div><button class="btn btn-sm btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#rawLogModal"><i class="bi bi-terminal"></i> 原始日志</button></div>
+                <div class="event-list">
+                    <div class="event-row"><span class="event-icon success"><i class="bi bi-check2"></i></span><div><strong>直播间配置已加载</strong><small>{{ room.name }} · {{ '哔哩哔哩' if room.platform == 'bilibili' else '斗鱼' }}</small></div><time>当前</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-broadcast"></i></span><div><strong data-role="event-state-title">{{ room.runtime.primary }}</strong><small data-role="event-state-detail">{{ room.runtime.secondary }}</small></div><time>实时</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-chat-square-text"></i></span><div><strong>弹幕采集已配置</strong><small>XML 与视频同步保存，录制结束后生成 ASS</small></div><time>系统</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-badge-cc"></i></span><div><strong>字幕策略已加载</strong><small>ASS 独立上传，不执行耗时的视频烧录</small></div><time>系统</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-diagram-3"></i></span><div><strong>上传流水线已就绪</strong><small>ASS、AI 简介与 B站弹幕导入均已启用</small></div><time>系统</time></div>
+                </div>
+            </section>
+        </article>
+        {% endfor %}
+        {% else %}
+        <div class="detail-empty"><i class="bi bi-broadcast-pin"></i><h2>添加第一个直播间</h2><p>目前仅支持哔哩哔哩直播与斗鱼，录制后自动进入上传流程。</p><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRoomModal"><i class="bi bi-plus-lg"></i> 新增直播间</button></div>
+        {% endif %}
+    </div>
+</section>
+
+<div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">支持 B站与斗鱼直播间链接</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body"><div class="mb-3"><label class="form-label">主播名称</label><input class="form-control" name="name" placeholder="例如：主播名" required></div><div><label class="form-label">直播间 URL</label><input class="form-control" name="url" type="url" placeholder="https://live.bilibili.com/123" required><div class="form-text">也可填写 https://www.douyu.com/123</div></div></div><div class="modal-footer"><button type="button" class="btn btn-light border" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg"></i> 添加并同步</button></div></form></div></div></div>
+<div class="modal fade" id="rawLogModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><h5 class="modal-title">录制引擎原始日志</h5><small class="text-muted">仅用于排错，已隐藏 URL 查询参数</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body p-0"><pre class="raw-log">{{ recorder_log }}</pre></div></div></div></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const items = [...document.querySelectorAll('.room-item')];
+    const panels = [...document.querySelectorAll('.room-detail-panel')];
+    const search = document.getElementById('roomSearch');
+    const tabs = [...document.querySelectorAll('.room-tabs button')];
+    let filter = 'all';
+    function applyFilter() {
+        const query = (search?.value || '').trim().toLowerCase();
+        items.forEach(item => { item.hidden = !item.dataset.name.includes(query) || (filter !== 'all' && item.dataset.state !== filter); });
+    }
+    function formatDuration(seconds) {
+        if (!seconds) return '—';
+        const hours = String(Math.floor(seconds / 3600)).padStart(2, '0');
+        const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+        const secs = String(seconds % 60).padStart(2, '0');
+        return `${hours}:${minutes}:${secs}`;
+    }
+    function updateRoom(room) {
+        const item = items.find(node => node.dataset.room === room.id);
+        const panel = panels.find(node => node.dataset.panel === room.id);
+        if (!item || !panel) return;
+        item.dataset.state = room.state;
+        const itemState = item.querySelector('[data-role="room-state"]');
+        itemState.className = `room-state ${room.state}`;
+        itemState.querySelector('[data-role="state-label"]').textContent = room.label;
+        const detailState = panel.querySelector('[data-role="detail-state"]');
+        detailState.className = `detail-status ${room.state}`;
+        detailState.querySelector('[data-role="state-label"]').textContent = room.label;
+        panel.querySelector('[data-role="runtime-primary"]').textContent = room.primary;
+        panel.querySelector('[data-role="runtime-secondary"]').textContent = room.secondary;
+        panel.querySelector('[data-role="duration"]').textContent = room.recording ? formatDuration(room.duration_seconds) : '—';
+        panel.querySelector('[data-role="started-at"]').textContent = room.started_at ? `开始于 ${room.started_at}` : '开播后实时显示';
+        panel.querySelector('[data-role="danmaku-state"]').textContent = room.recording ? '录制中' : '已启用';
+        panel.querySelector('[data-role="event-state-title"]').textContent = room.primary;
+        panel.querySelector('[data-role="event-state-detail"]').textContent = room.secondary;
+        const detect = panel.querySelector('[data-stage="detect"]');
+        const record = panel.querySelector('[data-stage="record"]');
+        detect.className = `pipeline-step ${room.recording ? 'completed' : 'active'}`;
+        detect.querySelector('[data-role="step-label"]').textContent = room.recording ? '已检测开播' : '持续检测';
+        record.className = `pipeline-step ${room.recording ? 'active' : ''}`;
+        record.querySelector('[data-role="step-label"]').textContent = room.recording ? '录制中' : '等待中';
+    }
+    async function refreshLiveStatus() {
+        try {
+            const response = await fetch('{{ url_for("live_recording_status") }}', {headers: {'Accept': 'application/json'}});
+            if (!response.ok) return;
+            const payload = await response.json();
+            payload.rooms.forEach(updateRoom);
+            applyFilter();
+        } catch (_) {
+            // 短暂网络错误不覆盖最后一次可信状态，下一轮自动重试。
+        }
+    }
+    items.forEach(item => item.addEventListener('click', function () {
+        items.forEach(node => node.classList.toggle('active', node === item));
+        panels.forEach(panel => panel.classList.toggle('d-none', panel.dataset.panel !== item.dataset.room));
+    }));
+    search?.addEventListener('input', applyFilter);
+    tabs.forEach(tab => tab.addEventListener('click', function () { tabs.forEach(node => node.classList.remove('active')); tab.classList.add('active'); filter = tab.dataset.filter; applyFilter(); }));
+    window.setInterval(refreshLiveStatus, 5000);
+});
+</script>
+{% endblock %}

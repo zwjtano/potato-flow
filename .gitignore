@@ -1,0 +1,69 @@
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local tooling and design evidence
+.tools/
+.audit/
+**/design-qa.md
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.venv/
+**/venv/
+**/.pytest_cache/
+**/.mypy_cache/
+
+# Node / Next.js
+**/node_modules/
+**/.next/
+**/out/
+**/.turbo/
+
+# Rust
+**/target/
+
+# Runtime credentials and private configuration
+bridge.config.json
+.bridge/
+y2a-auto/config/*
+y2a-auto/cookies/
+y2a-auto/security/
+*.cookie
+*cookies*.json
+
+# Runtime data
+y2a-auto/db/
+y2a-auto/logs/
+y2a-auto/temp/
+y2a-auto/downloads/
+y2a-auto/recordings/
+y2a-auto/static/covers/
+y2a-auto/ffmpeg/
+upstream-biliup/data/
+upstream-biliup/logs/
+upstream-biliup/downloads/
+
+# Generated recorder configuration and media
+config.yaml
+config.*.yaml
+*.log
+*.part
+*.flv
+*.mp4
+*.mkv
+*.webm
+*.xml
+*.ass
+
+# Build/package output
+**/dist/
+**/build/
+*.zip
+*.tar.gz
+

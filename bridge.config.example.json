@@ -1,0 +1,39 @@
+{
+  "y2a_root": "y2a-auto",
+  "state_db": ".bridge/state.sqlite3",
+  "bilibili_cookies": "y2a-auto/cookies/bili_cookies.json",
+  "bilibili_partition_id": "171",
+  "source_url": "https://example.com/live-room",
+  "title_template": "{stem}",
+  "description_template": "直播录播：{stem}",
+  "tags": ["直播录播", "biliup"],
+  "cover_path": "",
+  "cover_seek_seconds": 10,
+  "ffmpeg": "ffmpeg",
+  "ffprobe": "ffprobe",
+  "danmaku_enabled": true,
+  "danmaku_burn_in": false,
+  "danmaku_native_import": true,
+  "danmaku_native_max_comments": 0,
+  "danmaku_native_interval_seconds": 0.6,
+  "danmaku_cid_wait_seconds": 300,
+  "danmaku_fonts_dir": "y2a-auto/fonts",
+  "danmaku_font_name": "Source Han Sans HW SC VF",
+  "danmaku_font_size": 42,
+  "danmaku_duration_seconds": 9,
+  "danmaku_opacity": 0.92,
+  "danmaku_encode_preset": "medium",
+  "danmaku_encode_crf": 20,
+  "ai_danmaku_summary_enabled": true,
+  "ai_danmaku_max_comments": 400,
+  "stable_checks": 2,
+  "stable_interval_seconds": 2,
+  "profiles": [
+    {
+      "match": "*主播名*",
+      "source_url": "https://example.com/another-live-room",
+      "bilibili_partition_id": "171",
+      "tags": ["主播名", "直播录播"]
+    }
+  ]
+}

@@ -1,0 +1,1208 @@
+{% extends 'base.html' %}
+
+{% block title %}Y2A-Auto - 任务列表{% endblock %}
+
+{% block content %}
+<div class="tasks-container"
+     data-tasks-stream="{{ url_for('tasks_event_stream') }}"
+     data-task-fragment-template="{{ url_for('task_fragment', task_id='__TASK_ID__') }}">
+    {% set failed_tasks = tasks|selectattr('status', 'equalto', 'failed')|list if tasks else [] %}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+        <div class="d-flex align-items-center gap-2">
+            <h2 class="mb-0">任务列表</h2>
+            <div id="tasksRefreshIndicator" class="d-none" aria-hidden="true">
+                <span class="spinner-border spinner-border-sm text-primary" role="status" aria-label="正在刷新"></span>
+            </div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal">
+                <i class="bi bi-plus-circle"></i> 新建任务
+            </button>
+            {% if failed_tasks %}
+            <button type="button" class="btn btn-outline-danger" id="retryFailedTasksBtn" onclick="confirmRetryFailed()">
+                <i class="bi bi-arrow-repeat"></i> 重试失败任务
+                <span class="badge bg-danger ms-1">{{ failed_tasks|length }}</span>
+            </button>
+            {% endif %}
+            {% if tasks %}
+            <button type="button" class="btn btn-danger" onclick="confirmClearAll()">
+                <i class="bi bi-trash"></i> 清除所有任务
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div id="tasksContent">
+    {% if tasks %}
+    <div class="modern-list">
+        <!-- 桌面端表格（md及以上显示） -->
+        <div class="table-responsive modern-table d-none d-md-block">
+                <table class="table table-striped table-hover table-borderless table-sm align-middle mb-0 tasks-table no-min-width">
+                    <colgroup>
+                        <col class="col-id">
+                        <col class="col-title">
+                        <col class="col-status">
+                        <col class="col-time">
+                        <col class="col-platform">
+                        <col class="col-partition">
+                        <col class="col-tags">
+                        <col class="col-result">
+                        <col class="col-actions">
+                    </colgroup>
+                    <thead class="table-light">
+                        <tr>
+                            <th class="col-id">ID</th>
+                            <th class="col-title">视频标题</th>
+                            <th class="col-status">状态</th>
+                            <th class="col-time">时间</th>
+                            <th class="col-platform">平台</th>
+                            <th class="col-partition">分区</th>
+                            <th class="col-tags">标签</th>
+                            <th class="col-result">上传结果</th>
+                            <th class="col-actions">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for task in tasks %}
+                            {% include 'partials/task_row.html' %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+        </div>
+
+        <!-- 移动端卡片（md以下显示） -->
+        <div class="d-block d-md-none">
+            <div class="task-cards">
+                {% for task in tasks %}
+                    {% include 'partials/task_card.html' %}
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i> 暂无任务，请点击"新建任务"按钮添加任务。
+    </div>
+    {% endif %}
+    
+    <!-- 分页导航 -->
+    {% if pagination and pagination.total > 0 %}
+    <nav aria-label="任务列表分页" class="mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="text-muted small">
+                显示第 {{ (pagination.page - 1) * pagination.per_page + 1 }} - {{ (pagination.page - 1) * pagination.per_page + pagination.tasks|length }} 条，共 {{ pagination.total }} 条任务
+            </span>
+            {% if pagination.total_pages > 1 %}
+            {%- set start_page = pagination.page - 2 if pagination.page > 2 else 1 -%}
+            {%- set end_page = pagination.page + 2 if pagination.page + 2 < pagination.total_pages else pagination.total_pages -%}
+            <div class="pagination pagination-sm mb-0" role="list">{{- '' -}}
+            {%- if pagination.has_prev -%}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.prev_page) }}" aria-label="上一页"><span aria-hidden="true">&laquo;</span></a></div>{{- '' -}}
+            {%- else -%}
+                <div class="page-item disabled" role="listitem"><span class="page-link" aria-label="上一页"><span aria-hidden="true">&laquo;</span></span></div>{{- '' -}}
+            {%- endif -%}
+
+            {%- if start_page > 1 -%}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=1) }}">1</a></div>{{- '' -}}
+                {%- if start_page > 2 -%}
+                    <div class="page-item disabled" role="listitem"><span class="page-link">...</span></div>{{- '' -}}
+                {%- endif -%}
+            {%- endif -%}
+
+            {%- for page_num in range(start_page, end_page + 1) -%}
+                {%- if page_num == pagination.page -%}
+                    <div class="page-item active" role="listitem" aria-current="page"><span class="page-link">{{ page_num }}</span></div>{{- '' -}}
+                {%- else -%}
+                    <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=page_num) }}">{{ page_num }}</a></div>{{- '' -}}
+                {%- endif -%}
+            {%- endfor -%}
+
+            {%- if end_page < pagination.total_pages -%}
+                {%- if end_page < pagination.total_pages - 1 -%}
+                    <div class="page-item disabled" role="listitem"><span class="page-link">...</span></div>{{- '' -}}
+                {%- endif -%}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.total_pages) }}">{{ pagination.total_pages }}</a></div>{{- '' -}}
+            {%- endif -%}
+
+            {%- if pagination.has_next -%}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.next_page) }}" aria-label="下一页"><span aria-hidden="true">&raquo;</span></a></div>{{- '' -}}
+            {%- else -%}
+                <div class="page-item disabled" role="listitem"><span class="page-link" aria-label="下一页"><span aria-hidden="true">&raquo;</span></span></div>{{- '' -}}
+            {%- endif -%}
+            {{- '' -}}
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+    {% endif %}
+    </div>
+</div>
+
+<!-- 新建任务对话框 -->
+<div class="modal fade" id="addTaskModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-plus-circle"></i> 新建任务</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <form method="post" action="{{ url_for('add_task_route') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="youtube_url" class="form-label">YouTube视频URL</label>
+                        <input type="text" class="form-control" id="youtube_url" name="youtube_url" required 
+                               placeholder="https://www.youtube.com/watch?v=...">
+                        <div class="form-text">支持标准YouTube视频链接</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="upload_target" class="form-label">目标平台</label>
+                        <input type="hidden" id="upload_target" name="upload_target" value="bilibili">
+                        <input class="form-control" value="哔哩哔哩" disabled>
+                        <div class="form-text">本整合版的投稿目标固定为哔哩哔哩</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="bi bi-x-circle"></i> 取消
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-circle"></i> 添加任务
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 删除确认对话框 -->
+<div class="modal fade" id="deleteTaskModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> 确认删除</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <p>确定要删除任务 <strong id="deleteTaskTitle"></strong> 吗？</p>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="deleteFiles" checked>
+                    <label class="form-check-label" for="deleteFiles">
+                        同时删除任务文件
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> 取消
+                </button>
+                <form id="deleteTaskForm" method="post" action="">
+                    <input type="hidden" name="delete_files" id="deleteFilesInput" value="true">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash"></i> 删除
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 清除所有任务确认对话框 -->
+<div class="modal fade" id="clearAllTasksModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> 确认清除所有任务</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-danger fw-bold">此操作将清除所有任务，且无法恢复！</p>
+                <p>确定要清除所有任务吗？</p>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="clearAllFiles" checked>
+                    <label class="form-check-label" for="clearAllFiles">
+                        同时删除所有任务文件
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> 取消
+                </button>
+                <form id="clearAllTasksForm" method="post" action="{{ url_for('clear_all_tasks_route') }}">
+                    <input type="hidden" name="delete_files" id="clearAllFilesInput" value="true">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash"></i> 确认清除
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 重试失败任务确认对话框 -->
+<div class="modal fade" id="retryFailedTasksModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat"></i> 重试所有失败任务</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <p>确定要重新调度所有失败的任务吗？</p>
+                <p class="mb-0 text-muted">当前共有 <span class="badge bg-danger">{{ failed_tasks|length }}</span> 个失败任务。</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> 取消
+                </button>
+                <form method="post" action="{{ url_for('retry_failed_tasks_route') }}">
+                    <button type="submit" class="btn btn-outline-danger">
+                        <i class="bi bi-arrow-repeat"></i> 确认重试
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 错误详情浮窗 -->
+<div class="modal fade" id="taskErrorModal" tabindex="-1" aria-labelledby="taskErrorModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="taskErrorModalLabel">错误详情</h5>
+                    <div class="small text-muted mt-1" id="taskErrorMeta"></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <pre class="task-error-content mb-0" id="taskErrorMessage"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<!-- 任务页面样式已移至 static/css/style.css -->
+<style>
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.upload-result-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    max-width: 180px;
+    overflow: hidden;
+}
+
+.error-message-badge {
+    max-width: 180px;
+    cursor: pointer;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    display: inline-block;
+    text-align: left;
+}
+
+.error-message-trigger {
+    padding: 0.35em 0.65em;
+}
+
+.error-message-trigger:focus-visible {
+    outline: 2px solid rgba(13, 110, 253, 0.45);
+    outline-offset: 2px;
+}
+
+.task-error-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: #212529;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    padding: 1rem;
+}
+
+.tasks-table {
+    table-layout: fixed; /* 固定布局，避免内容撑破导致横向滚动 */
+    width: 100%;
+}
+
+.tasks-table td, .tasks-table th {
+    vertical-align: middle;
+    padding: 0.5rem;
+}
+
+/* ID列溢出防护，避免图标与标题列重叠 */
+.tasks-table tbody td:first-child .id-cell {
+    max-width: 100%;
+    overflow: hidden;
+}
+.tasks-table tbody td:first-child .id-cell .text-monospace {
+    display: inline-block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tasks-table tbody td:first-child .id-cell .copy-id-btn {
+    flex: 0 0 auto;
+}
+
+/* 统一列宽在全局样式中设置为百分比，避免像素宽度导致超出 */
+.tasks-table .col-status { text-align: center; }
+.tasks-table .col-time { text-align: center; }
+.tasks-table .col-platform { text-align: center; }
+.tasks-table .col-partition { text-align: center; }
+.tasks-table .col-actions { text-align: right; }
+
+.task-datetime {
+    cursor: help;
+    border-bottom: 1px dotted #6c757d;
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.table-responsive {
+    overflow-x: auto;
+}
+
+/* 当屏幕较窄时允许表格收缩，避免出现底部横向滚动条 */
+.tasks-table.no-min-width { min-width: 0; }
+
+.tasks-table .text-monospace {
+    font-size: 0.875rem;
+}
+
+.tags-container {
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.tasks-table .badge {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tasks-table .col-result .badge {
+    max-width: 160px;
+}
+
+.tasks-table .btn-sm { font-size: 0.75rem; padding: 0.25rem 0.5rem; }
+
+/* 新增：标题多行省略显示（默认两行） */
+.title-clamp {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-clamp: 2; /* 标准属性，兼容部分浏览器 */
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* 保守换行：三行省略，减少出现横向滚动条概率 */
+.title-clamp-3 {
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    max-height: 4.2em; /* 3行 * 1.4 行高，进一步限制高度，配合table-layout: fixed */
+    line-height: 1.4;
+}
+
+/* 更细的进度条以节省空间 */
+.progress.progress-thin { height: 4px; }
+.progress.progress-thin .progress-bar { background-color: #0d6efd; }
+
+/* 行状态轻微高亮 */
+tr.status-downloading td { background-color: rgba(13,110,253,0.03); }
+tr.status-uploading td { background-color: rgba(25,135,84,0.03); }
+tr.status-failed td { background-color: rgba(220,53,69,0.03); }
+tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
+
+/* 去边框现代化风格 */
+.modern-list { border: none; box-shadow: none; }
+.modern-table table { border-collapse: separate; border-spacing: 0 4px; }
+.modern-table table tbody tr { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.modern-table table thead th { border-bottom: 1px solid #e9ecef; }
+.modern-table table tbody tr td { border-top: none; }
+.modern-table .table-hover tbody tr:hover { background: rgba(13,110,253,0.04); }
+.modern-table .table { background: transparent; }
+.table-borderless>:not(caption)>*>* { border-bottom-width: 0; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // 复制到剪贴板
+    function copyToClipboard(text) {
+        if (!text) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).catch(() => {});
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+            } finally {
+                document.body.removeChild(ta);
+            }
+        }
+    }
+
+    // 删除任务确认框
+    function confirmDelete(taskId, taskTitle) {
+        document.getElementById('deleteTaskTitle').textContent = taskTitle;
+        document.getElementById('deleteTaskForm').action = "{{ url_for('delete_task_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+
+        const deleteFilesCheckbox = document.getElementById('deleteFiles');
+        const deleteFilesInput = document.getElementById('deleteFilesInput');
+        if (deleteFilesCheckbox && deleteFilesInput) {
+            deleteFilesCheckbox.onchange = function() {
+                deleteFilesInput.value = this.checked ? 'true' : 'false';
+            };
+        }
+
+        new bootstrap.Modal(document.getElementById('deleteTaskModal')).show();
+    }
+
+    // 清除所有任务确认框
+    function confirmClearAll() {
+        const clearAllFilesCheckbox = document.getElementById('clearAllFiles');
+        const clearAllFilesInput = document.getElementById('clearAllFilesInput');
+        if (clearAllFilesCheckbox && clearAllFilesInput) {
+            clearAllFilesCheckbox.onchange = function() {
+                clearAllFilesInput.value = this.checked ? 'true' : 'false';
+            };
+        }
+
+        new bootstrap.Modal(document.getElementById('clearAllTasksModal')).show();
+    }
+
+    // 重试失败任务确认框
+    function confirmRetryFailed() {
+        const modalEl = document.getElementById('retryFailedTasksModal');
+        if (modalEl) {
+            new bootstrap.Modal(modalEl).show();
+        }
+    }
+
+    function showTaskErrorMessage(taskId, taskTitle, errorMessage) {
+        const modalEl = document.getElementById('taskErrorModal');
+        const metaEl = document.getElementById('taskErrorMeta');
+        const messageEl = document.getElementById('taskErrorMessage');
+        if (!modalEl || !metaEl || !messageEl) {
+            return;
+        }
+
+        const metaParts = [];
+        if (taskTitle) {
+            metaParts.push(taskTitle);
+        }
+        if (taskId) {
+            metaParts.push('任务ID: ' + taskId);
+        }
+
+        metaEl.textContent = metaParts.join(' | ');
+        messageEl.textContent = errorMessage || '未知错误';
+        new bootstrap.Modal(modalEl).show();
+    }
+
+    const REFRESH_INTERVAL_ACTIVE = 2000;  // 活跃任务时 2 秒刷新一次
+    const REFRESH_INTERVAL_IDLE = 8000;    // 空闲时 8 秒刷新一次
+    const REFRESH_INTERVAL_EMPTY = 15000;  // 无任务时 15 秒刷新一次
+
+    let refreshTimer = null;
+    let refreshInProgress = false;
+    let fallbackMode = false;
+    let tasksEventSource = null;
+    let reconnectTimer = null;  // 防止多个重连计时器并存
+
+    // 避免后台实时刷新导致 hover 闪烁/点击丢失：用户交互时延迟应用 DOM 更新
+    let pendingTasksContentHtml = null;
+    let pendingTasksApplyTimer = null;
+    let interactionHoldUntil = 0;
+    let pointerIsDown = false;
+
+    function markTasksInteracting(holdMs) {
+        const duration = typeof holdMs === 'number' ? holdMs : 800;  // 减少默认持续时间
+        interactionHoldUntil = Math.max(interactionHoldUntil, Date.now() + duration);
+    }
+
+    function isTasksInteracting() {
+        const root = document.querySelector('#tasksContent');
+        if (!root) return false;
+
+        if (pointerIsDown) return true;
+        if (Date.now() < interactionHoldUntil) return true;
+
+        const activeEl = document.activeElement;
+        if (activeEl && root.contains(activeEl)) {
+            const tagName = (activeEl.tagName || '').toLowerCase();
+            if (tagName === 'input' || tagName === 'textarea' || tagName === 'select' || activeEl.isContentEditable) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const taskFragmentRefreshes = new Map();
+
+    function queryAllWithin(root, selector) {
+        if (!root || !selector) return [];
+
+        const base = root === document ? document.documentElement : root;
+        const matches = [];
+        if (base && typeof base.matches === 'function' && base.matches(selector)) {
+            matches.push(base);
+        }
+        if (base && typeof base.querySelectorAll === 'function') {
+            matches.push(...base.querySelectorAll(selector));
+        }
+        return matches;
+    }
+
+    function escapeTaskIdForSelector(taskId) {
+        const value = String(taskId || '');
+        if (window.CSS && typeof window.CSS.escape === 'function') {
+            return window.CSS.escape(value);
+        }
+        return value.replace(/["\\]/g, '\\$&');
+    }
+
+    function getTaskFragmentUrl(taskId) {
+        const container = document.querySelector('.tasks-container[data-task-fragment-template]');
+        const template = container ? container.getAttribute('data-task-fragment-template') : '';
+        if (template) {
+            return template.replace('__TASK_ID__', encodeURIComponent(taskId));
+        }
+        return `/tasks/${encodeURIComponent(taskId)}/fragment`;
+    }
+
+    function createTaskRowFromHtml(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(`<table><tbody>${html}</tbody></table>`, 'text/html');
+        return doc.querySelector('tr[data-task-id]');
+    }
+
+    function createTaskCardFromHtml(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        return doc.querySelector('.task-card[data-task-id]');
+    }
+
+    function replaceTaskElement(oldElement, newElement) {
+        if (!oldElement || !newElement) return;
+        disposeTooltips(oldElement);
+        oldElement.replaceWith(newElement);
+        bindTasksEvents(newElement);
+        initTooltips(newElement);
+        updateTaskDateTimes(newElement);
+        updateProgressBars(newElement);
+    }
+
+    function replaceTaskFragments(taskId, fragments) {
+        if (!taskId || !fragments) return;
+
+        const escapedTaskId = escapeTaskIdForSelector(taskId);
+        const currentRow = document.querySelector(`tr[data-task-id="${escapedTaskId}"]`);
+        const currentCard = document.querySelector(`.task-card[data-task-id="${escapedTaskId}"]`);
+        let replaced = false;
+
+        if (currentRow && typeof fragments.row_html === 'string') {
+            const newRow = createTaskRowFromHtml(fragments.row_html);
+            if (newRow) {
+                replaceTaskElement(currentRow, newRow);
+                replaced = true;
+            }
+        }
+
+        if (currentCard && typeof fragments.card_html === 'string') {
+            const newCard = createTaskCardFromHtml(fragments.card_html);
+            if (newCard) {
+                replaceTaskElement(currentCard, newCard);
+                replaced = true;
+            }
+        }
+
+        return replaced;
+    }
+
+    function applyTaskProgressUpdate(taskId, payload) {
+        if (!taskId || !payload) return;
+
+        const escapedTaskId = escapeTaskIdForSelector(taskId);
+        const progressText = typeof payload.upload_progress === 'string' ? payload.upload_progress : '';
+        const dateTimeValue = payload.updated_at;
+
+        document.querySelectorAll(`[data-task-id="${escapedTaskId}"] [data-task-progress]`).forEach(function(el) {
+            const hasText = progressText.trim().length > 0;
+            el.textContent = progressText;
+            el.classList.toggle('d-none', !hasText);
+        });
+
+        if (dateTimeValue) {
+            document.querySelectorAll(`[data-task-id="${escapedTaskId}"] [data-task-datetime]`).forEach(function(el) {
+                el.setAttribute('data-datetime', dateTimeValue);
+                updateTaskDateTimes(el);
+            });
+        }
+    }
+
+    async function refreshTaskFragment(taskId) {
+        if (!taskId) return;
+
+        const escapedTaskId = escapeTaskIdForSelector(taskId);
+        const hasTaskDom = document.querySelector(`tr[data-task-id="${escapedTaskId}"]`) ||
+            document.querySelector(`.task-card[data-task-id="${escapedTaskId}"]`);
+        if (!hasTaskDom) {
+            return;
+        }
+
+        if (taskFragmentRefreshes.has(taskId)) {
+            return taskFragmentRefreshes.get(taskId);
+        }
+
+        const requestPromise = (async function() {
+            try {
+                const response = await fetch(getTaskFragmentUrl(taskId), {
+                    method: 'GET',
+                    cache: 'no-store',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json',
+                        'Cache-Control': 'no-cache, no-store, max-age=0',
+                        'Pragma': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`状态码 ${response.status}`);
+                }
+
+                const payload = await response.json();
+                if (!payload || !payload.success) {
+                    throw new Error('任务片段响应无效');
+                }
+
+                const replaced = replaceTaskFragments(taskId, payload);
+                if (!replaced) {
+                    throw new Error('任务片段未能应用到当前 DOM');
+                }
+            } catch (error) {
+                console.error('刷新单个任务片段失败:', taskId, error);
+                refreshTasksData(true);
+            } finally {
+                taskFragmentRefreshes.delete(taskId);
+            }
+        })();
+
+        taskFragmentRefreshes.set(taskId, requestPromise);
+        return requestPromise;
+    }
+
+    function applyTasksContentHtml(html) {
+        const currentContent = document.querySelector('#tasksContent');
+        if (!currentContent) return;
+        if (typeof html !== 'string') return;
+
+        // 内容无变化时避免触发重排/hover 重置
+        if (html === currentContent.innerHTML) {
+            return;
+        }
+
+        disposeTooltips();
+        currentContent.innerHTML = html;
+        bindTasksEvents();
+        initTooltips();
+        updateTaskDateTimes();
+        updateProgressBars();
+    }
+
+    function scheduleApplyPendingTasksContent() {
+        if (pendingTasksApplyTimer) return;
+        pendingTasksApplyTimer = setTimeout(function tryApply() {
+            pendingTasksApplyTimer = null;
+            if (!pendingTasksContentHtml) return;
+
+            if (isTasksInteracting()) {
+                pendingTasksApplyTimer = setTimeout(tryApply, 300);  // 减少等待间隔
+                return;
+            }
+
+            const htmlToApply = pendingTasksContentHtml;
+            pendingTasksContentHtml = null;
+            applyTasksContentHtml(htmlToApply);
+        }, 300);  // 减少初始延迟
+    }
+
+    function showRefreshIndicator(isVisible) {
+        const indicator = document.getElementById('tasksRefreshIndicator');
+        if (!indicator) return;
+
+        if (isVisible) {
+            indicator.classList.remove('d-none');
+            indicator.setAttribute('aria-hidden', 'false');
+        } else {
+            indicator.classList.add('d-none');
+            indicator.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function clearScheduledRefresh() {
+        if (refreshTimer) {
+            clearTimeout(refreshTimer);
+            refreshTimer = null;
+        }
+    }
+
+    function enableFallbackPolling(initialDelay) {
+        if (fallbackMode) {
+            // 已在轮询模式，仅在没有活跃计时器时才调度，避免 onerror 频繁触发时不断重置计时器
+            if (typeof initialDelay === 'number' && !refreshTimer) {
+                scheduleNextRefresh(initialDelay);
+            }
+            return;
+        }
+        fallbackMode = true;
+        scheduleNextRefresh(typeof initialDelay === 'number' ? initialDelay : undefined);
+    }
+
+    function disableFallbackPolling() {
+        const wasFallback = fallbackMode;
+        fallbackMode = false;
+        clearScheduledRefresh();
+        return wasFallback;
+    }
+
+    function updateProgressBars(root = document) {
+        queryAllWithin(root, '.progress-bar[data-pct]').forEach(function(el) {
+            let v = parseInt(el.getAttribute('data-pct') || '0', 10);
+            v = isNaN(v) ? 0 : Math.max(0, Math.min(100, v));
+            el.style.width = v + '%';
+            el.setAttribute('aria-valuenow', String(v));
+        });
+    }
+
+    function updateTasksTable(newContent) {
+        const parser = new DOMParser();
+        const newDoc = parser.parseFromString(newContent, 'text/html');
+        const newTasksContent = newDoc.querySelector('#tasksContent');
+
+        if (!newTasksContent) {
+            return;
+        }
+
+        if (isTasksInteracting()) {
+            // 用户正在悬停/点击/聚焦表格区域时，先缓存更新，等空闲再应用
+            pendingTasksContentHtml = newTasksContent.innerHTML;
+            scheduleApplyPendingTasksContent();
+            return;
+        }
+
+        applyTasksContentHtml(newTasksContent.innerHTML);
+    }
+
+    function closeTasksEventSource() {
+        if (tasksEventSource) {
+            tasksEventSource.close();
+            tasksEventSource = null;
+        }
+    }
+
+    let eventSourceReconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_DELAY_BASE = 1000;
+
+    function initTasksEventStream() {
+        const container = document.querySelector('.tasks-container[data-tasks-stream]');
+        if (!container || typeof window.EventSource === 'undefined') {
+            enableFallbackPolling(hasProcessingTasks() ? REFRESH_INTERVAL_ACTIVE : REFRESH_INTERVAL_IDLE);
+            return;
+        }
+
+        const streamUrl = container.getAttribute('data-tasks-stream');
+        if (!streamUrl) {
+            enableFallbackPolling(REFRESH_INTERVAL_IDLE);
+            return;
+        }
+
+        tasksEventSource = new EventSource(streamUrl, { withCredentials: true });
+
+        tasksEventSource.onopen = function() {
+            eventSourceReconnectAttempts = 0;
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            const wasFallback = disableFallbackPolling();
+            if (wasFallback) {
+                refreshTasksData(true);
+            }
+        };
+
+        tasksEventSource.onmessage = function(event) {
+            if (!event || !event.data) {
+                return;
+            }
+
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload.type === 'heartbeat' || payload.type === 'welcome') {
+                    return;
+                }
+
+                const eventData = payload.data || {};
+                const taskId = eventData.task_id;
+
+                if (payload.type === 'task_progress') {
+                    applyTaskProgressUpdate(taskId, eventData);
+                    return;
+                }
+
+                if (payload.type === 'task_updated') {
+                    refreshTaskFragment(taskId);
+                    return;
+                }
+
+                if (payload.type === 'task_added' || payload.type === 'task_deleted' || payload.type === 'tasks_cleared') {
+                    refreshTasksData(true);
+                    return;
+                }
+
+                refreshTasksData(true);
+            } catch (err) {
+                console.error('解析任务实时事件失败:', err, event.data);
+            }
+        };
+
+        tasksEventSource.onerror = function() {
+            const readyState = tasksEventSource ? tasksEventSource.readyState : EventSource.CLOSED;
+            if (readyState === EventSource.CLOSED) {
+                closeTasksEventSource();
+                // 仅在没有待执行的重连计时器时才调度，防止多重重连
+                if (!reconnectTimer && eventSourceReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    eventSourceReconnectAttempts++;
+                    const delay = RECONNECT_DELAY_BASE * Math.pow(1.5, eventSourceReconnectAttempts - 1);
+                    reconnectTimer = setTimeout(() => {
+                        reconnectTimer = null;
+                        if (!tasksEventSource) {
+                            initTasksEventStream();
+                        }
+                    }, delay);
+                }
+            }
+            // 启用 fallback 轮询；当 CONNECTING 时频繁触发 onerror ，不重置已就绪的计时器
+            const activeDelay = hasProcessingTasks() ? REFRESH_INTERVAL_ACTIVE : REFRESH_INTERVAL_IDLE;
+            enableFallbackPolling(activeDelay);
+        };
+
+        window.addEventListener('beforeunload', function cleanupStream() {
+            closeTasksEventSource();
+            window.removeEventListener('beforeunload', cleanupStream);
+        });
+    }
+
+    function bindTasksEvents(root = document) {
+        queryAllWithin(root, '[onclick*="confirmDelete"]').forEach(btn => {
+            btn.onclick = function() {
+                confirmDelete(this.dataset.taskId, this.dataset.taskTitle);
+            };
+        });
+
+        queryAllWithin(root, '[onclick*="confirmClearAll"]').forEach(btn => {
+            btn.onclick = confirmClearAll;
+        });
+
+        queryAllWithin(root, '[onclick*="confirmRetryFailed"]').forEach(btn => {
+            btn.onclick = confirmRetryFailed;
+        });
+
+        queryAllWithin(root, '.copy-id-btn').forEach(btn => {
+            if (btn.dataset.bindCopyId === '1') return;
+            btn.dataset.bindCopyId = '1';
+            btn.addEventListener('click', () => copyToClipboard(btn.dataset.fullId));
+        });
+
+        queryAllWithin(root, '.copy-ac-btn').forEach(btn => {
+            if (btn.dataset.bindCopyAc === '1') return;
+            btn.dataset.bindCopyAc = '1';
+            btn.addEventListener('click', () => copyToClipboard('AC' + btn.dataset.acNumber));
+        });
+
+        queryAllWithin(root, '.copy-bv-btn').forEach(btn => {
+            if (btn.dataset.bindCopyBv === '1') return;
+            btn.dataset.bindCopyBv = '1';
+            btn.addEventListener('click', () => copyToClipboard(btn.dataset.bvNumber || ''));
+        });
+
+        queryAllWithin(root, '.error-message-trigger').forEach(btn => {
+            if (btn.dataset.bindErrorMessage === '1') return;
+            btn.dataset.bindErrorMessage = '1';
+            btn.addEventListener('click', function() {
+                showTaskErrorMessage(
+                    this.dataset.taskId || '',
+                    this.dataset.taskTitle || '',
+                    this.dataset.errorMessage || ''
+                );
+            });
+        });
+    }
+
+    function disposeTooltips(root = document) {
+        queryAllWithin(root, '[data-bs-toggle="tooltip"]').forEach(function(tooltipTriggerEl) {
+            const existingTooltip = bootstrap.Tooltip.getInstance(tooltipTriggerEl);
+            if (!existingTooltip) {
+                return;
+            }
+            existingTooltip.hide();
+            existingTooltip.dispose();
+        });
+
+        if (root === document) {
+            // 防止旧 trigger 节点被替换后，遗留 tooltip 浮层无法自动消失
+            document.querySelectorAll('.tooltip').forEach(function(tooltipEl) {
+                tooltipEl.remove();
+            });
+        }
+    }
+
+    function initTooltips(root = document) {
+        queryAllWithin(root, '[data-bs-toggle="tooltip"]').forEach(function(tooltipTriggerEl) {
+            const existingTooltip = bootstrap.Tooltip.getInstance(tooltipTriggerEl);
+            if (existingTooltip) {
+                return;
+            }
+            new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+    }
+
+    function formatLocalDateTime(dateTimeString) {
+        try {
+            const date = new Date(dateTimeString);
+            if (isNaN(date.getTime())) {
+                return dateTimeString;
+            }
+
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMinutes = Math.floor(diffMs / (1000 * 60));
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+            if (diffMinutes < 5) {
+                return '刚刚';
+            } else if (diffMinutes < 60) {
+                return diffMinutes + '分钟前';
+            } else if (diffHours < 24 && date.toDateString() === now.toDateString()) {
+                return diffHours + '小时前';
+            } else if (diffDays === 1) {
+                return '昨天 ' + date.toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } else if (diffDays < 7) {
+                return diffDays + '天前';
+            } else if (date.getFullYear() === now.getFullYear()) {
+                return date.toLocaleDateString('zh-CN', {
+                    month: '2-digit',
+                    day: '2-digit'
+                }) + ' ' + date.toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+
+            return date.toLocaleDateString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            });
+        } catch (error) {
+            console.error('时间格式化错误:', error);
+            return dateTimeString;
+        }
+    }
+
+    function updateTaskDateTimes(root = document) {
+        queryAllWithin(root, '.task-datetime').forEach(function(element) {
+            const originalDateTime = element.getAttribute('data-datetime');
+            if (!originalDateTime) {
+                return;
+            }
+
+            const formattedTime = formatLocalDateTime(originalDateTime);
+            element.textContent = formattedTime;
+
+            const parsedDate = new Date(originalDateTime);
+            if (!isNaN(parsedDate.getTime())) {
+                const fullDateTime = parsedDate.toLocaleString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    weekday: 'long'
+                });
+                element.title = fullDateTime;
+            } else {
+                element.title = originalDateTime;
+            }
+        });
+    }
+
+    async function refreshTasksData(forceImmediate = false) {
+        if (refreshInProgress) {
+            return;
+        }
+
+        if (document.hidden && !forceImmediate) {
+            scheduleNextRefresh();
+            return;
+        }
+
+        refreshInProgress = true;
+        showRefreshIndicator(true);
+
+        try {
+            const requestUrl = new URL(window.location.href);
+            requestUrl.searchParams.set('_ts', String(Date.now()));
+            const response = await fetch(requestUrl.toString(), {
+                method: 'GET',
+                cache: 'no-store',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Cache-Control': 'no-cache, no-store, max-age=0',
+                    'Pragma': 'no-cache'
+                }
+            });
+
+            if (response.ok) {
+                const content = await response.text();
+                updateTasksTable(content);
+            } else {
+                console.error('刷新失败，状态码:', response.status);
+            }
+        } catch (error) {
+            console.error('刷新任务数据失败:', error);
+        } finally {
+            refreshInProgress = false;
+            showRefreshIndicator(false);
+            if (fallbackMode) {
+                scheduleNextRefresh();
+            }
+        }
+    }
+
+    function hasProcessingTasks() {
+        const statusBadges = document.querySelectorAll('.task-status-badge, .task-card .badge.rounded-pill');
+        let hasProcessing = false;
+
+        statusBadges.forEach(function(badge) {
+            const statusText = badge.textContent.trim();
+            if (statusText.includes('下载中') || statusText.includes('上传中') ||
+                statusText.includes('翻译中') || statusText.includes('生成标签中') ||
+                statusText.includes('推荐分区中') || statusText.includes('内容审核中') ||
+                statusText.includes('翻译字幕中') || statusText.includes('语音转写中') || statusText.includes('转码视频中') ||
+                statusText.includes('处理中') || statusText.includes('等待') ||
+                statusText.includes('队列中')) {
+                hasProcessing = true;
+            }
+        });
+
+        if (hasProcessing) {
+            return true;
+        }
+
+        const statusRows = document.querySelectorAll('.tasks-table tbody tr[class*="status-"]');
+        const processingStatuses = ['pending', 'downloading', 'uploading', 'translating', 'translating_subtitle', 'asr_transcribing', 'encoding_video', 'processing'];
+        for (const row of statusRows) {
+            const className = row.className || '';
+            for (const status of processingStatuses) {
+                if (className.includes('status-' + status)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    function determineRefreshDelay() {
+        if (hasProcessingTasks()) {
+            return REFRESH_INTERVAL_ACTIVE;
+        }
+
+        const hasTasks = !!document.querySelector('.tasks-table tbody tr') || !!document.querySelector('.task-card');
+        return hasTasks ? REFRESH_INTERVAL_IDLE : REFRESH_INTERVAL_EMPTY;
+    }
+
+    function scheduleNextRefresh(delayOverride) {
+        if (!fallbackMode) {
+            clearScheduledRefresh();
+            return;
+        }
+        const delay = typeof delayOverride === 'number' ? delayOverride : determineRefreshDelay();
+        clearScheduledRefresh();
+        refreshTimer = setTimeout(() => {
+            refreshTasksData();
+        }, delay);
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // 监听交互，减少实时刷新带来的 hover 闪烁/误点
+        const tasksRoot = document.querySelector('#tasksContent');
+        if (tasksRoot) {
+            tasksRoot.addEventListener('pointerenter', () => markTasksInteracting(500), { passive: true });
+            tasksRoot.addEventListener('pointermove', () => markTasksInteracting(250), { passive: true });
+            tasksRoot.addEventListener('pointerdown', () => markTasksInteracting(2000));
+            tasksRoot.addEventListener('focusin', () => markTasksInteracting(2000));
+            tasksRoot.addEventListener('focusout', () => markTasksInteracting(600));
+        }
+
+        document.addEventListener('pointerdown', () => { pointerIsDown = true; }, { passive: true });
+        document.addEventListener('pointerup', () => { pointerIsDown = false; }, { passive: true });
+        document.addEventListener('pointercancel', () => { pointerIsDown = false; }, { passive: true });
+
+        bindTasksEvents();
+        initTooltips();
+        updateTaskDateTimes();
+        updateProgressBars();
+
+        setInterval(updateTaskDateTimes, 60000);
+
+        initTasksEventStream();
+        setTimeout(() => refreshTasksData(true), 400);
+
+        document.addEventListener('visibilitychange', function() {
+            if (!fallbackMode) {
+                return;
+            }
+            if (document.hidden) {
+                clearScheduledRefresh();
+            } else {
+                refreshTasksData(true);
+            }
+        });
+    });
+</script>
+{% endblock %} 
+

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}录播上传中心{% endblock %}</title>
+    <!-- 使用本地Bootstrap CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='lib/bootstrap/bootstrap.min.css') }}">
+    <!-- 使用本地Bootstrap Icons -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='lib/icons/bootstrap-icons.css') }}">
+    <!-- 自定义样式 -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/biliup-logo.png') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="app-shell-body {% block body_class %}{% endblock %}">
+    <aside class="app-sidebar" id="appSidebar">
+        <a class="app-brand" href="{{ url_for('index') }}">
+            <img src="{{ url_for('static', filename='img/biliup-logo.png') }}" alt="" width="34" height="34">
+            <span><strong>录播上传</strong><small>Recorder Studio</small></span>
+        </a>
+        <nav class="app-nav" aria-label="主导航">
+            <div class="app-nav-label">工作台</div>
+            <a class="app-nav-link {% if request.path == url_for('index') %}active{% endif %}" href="{{ url_for('index') }}"><i class="bi bi-grid-1x2"></i><span>概览</span></a>
+            <a class="app-nav-link {% if request.path.startswith('/live-recording') %}active{% endif %}" href="{{ url_for('live_recording') }}"><i class="bi bi-record-circle"></i><span>直播录制</span></a>
+            <a class="app-nav-link {% if request.path == url_for('tasks') %}active{% endif %}" href="{{ url_for('tasks') }}"><i class="bi bi-cloud-arrow-up"></i><span>上传任务</span></a>
+            <a class="app-nav-link {% if request.path == url_for('manual_review') %}active{% endif %}" href="{{ url_for('manual_review') }}"><i class="bi bi-patch-check"></i><span>人工审核</span></a>
+            <div class="app-nav-label mt-3">工具</div>
+            <a class="app-nav-link {% if request.path.startswith('/youtube_monitor') %}active{% endif %}" href="{{ url_for('youtube_monitor_index') }}"><i class="bi bi-youtube"></i><span>YouTube 监控</span></a>
+            <a class="app-nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}"><i class="bi bi-sliders"></i><span>系统设置</span></a>
+        </nav>
+        <div class="app-sidebar-footer">
+            <span class="status-dot"></span><span>本地服务已连接</span>
+            {% if show_logout_in_nav %}<a href="{{ url_for('logout') }}" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}
+        </div>
+    </aside>
+
+    <div class="app-frame">
+        <header class="app-mobile-header">
+            <button class="btn btn-sm btn-dark" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileNav" aria-label="打开导航"><i class="bi bi-list"></i></button>
+            <span>录播上传</span>
+        </header>
+        <main class="app-main {% block main_class %}{% endblock %}">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <div class="offcanvas offcanvas-start text-bg-dark" tabindex="-1" id="mobileNav" aria-label="移动端导航">
+        <div class="offcanvas-header"><h5 class="offcanvas-title">录播上传</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="关闭"></button></div>
+        <div class="offcanvas-body app-mobile-nav"></div>
+    </div>
+    
+    <!-- 实时通知模态框 -->
+    <div class="modal fade" id="notificationModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-bell"></i> 任务完成通知</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body" id="notificationBody">
+                    <!-- 通知内容 -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <a href="#" class="btn btn-primary" id="viewVideoBtn" target="_blank" rel="noopener">查看视频</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 使用本地Bootstrap JS Bundle -->
+    <script src="{{ url_for('static', filename='lib/bootstrap/bootstrap.bundle.min.js') }}"></script>
+    <!-- 自定义JS -->
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const source = document.querySelector('.app-nav');
+        const target = document.querySelector('.app-mobile-nav');
+        if (source && target) target.innerHTML = source.innerHTML;
+    });
+    </script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html> 
