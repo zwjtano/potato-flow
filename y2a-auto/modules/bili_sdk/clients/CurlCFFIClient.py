@@ -27,7 +27,7 @@ class CurlCFFIClient(BiliAPIClient):
         self,
         proxy: str = "",
         timeout: float = 0.0,
-        verify_ssl: bool = True,
+        verify_ssl: Union[bool, str] = True,
         trust_env: bool = True,
         impersonate: str = "",
         http2: bool = False,
@@ -74,7 +74,7 @@ class CurlCFFIClient(BiliAPIClient):
     def set_timeout(self, timeout: float = 0.0) -> None:
         self.__session.timeout = timeout
 
-    def set_verify_ssl(self, verify_ssl: bool = True) -> None:
+    def set_verify_ssl(self, verify_ssl: Union[bool, str] = True) -> None:
         self.__session.verify = verify_ssl
 
     def set_trust_env(self, trust_env: bool = True) -> None:

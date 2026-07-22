@@ -1,6 +1,7 @@
 import ast
 import importlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -29,12 +30,79 @@ class BilibiliRuntimeTests(unittest.TestCase):
         fake_settings = types.SimpleNamespace(set=lambda key, value: calls.append((key, value)))
         fake_bili_sdk = types.SimpleNamespace(request_settings=fake_settings)
 
-        with mock.patch.dict(sys.modules, {"modules.bili_sdk": fake_bili_sdk}):
+        with mock.patch.dict(sys.modules, {"modules.bili_sdk": fake_bili_sdk}), mock.patch.object(
+            runtime,
+            "resolve_bilibili_ca_bundle",
+            return_value="/tmp/test-ca.pem",
+        ):
             self.assertTrue(runtime.configure_bilibili_runtime())
             self.assertTrue(runtime.configure_bilibili_runtime())
 
-        self.assertEqual(calls, [("impersonate", "chrome131")])
+        self.assertEqual(
+            calls,
+            [("verify_ssl", "/tmp/test-ca.pem"), ("impersonate", "chrome131")],
+        )
         self.assertIsNone(runtime.get_bilibili_runtime_error())
+
+    def test_ca_bundle_prefers_explicit_environment_path(self):
+        import modules.bilibili_runtime as runtime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ca_path = pathlib.Path(temp_dir) / "custom-ca.pem"
+            ca_path.write_text("custom", encoding="utf-8")
+            with mock.patch.dict(
+                os.environ,
+                {"BILIBILI_CA_BUNDLE": str(ca_path)},
+                clear=False,
+            ):
+                self.assertEqual(
+                    pathlib.Path(runtime.resolve_bilibili_ca_bundle()),
+                    ca_path.resolve(),
+                )
+
+    def test_macos_ca_bundle_merges_keychain_certificates(self):
+        import modules.bilibili_runtime as runtime
+
+        cert_a = b"-----BEGIN CERTIFICATE-----\nA\n-----END CERTIFICATE-----"
+        cert_b = b"-----BEGIN CERTIFICATE-----\nB\n-----END CERTIFICATE-----"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            certifi_path = pathlib.Path(temp_dir) / "cacert.pem"
+            certifi_path.write_bytes(cert_a)
+            fake_certifi = types.SimpleNamespace(where=lambda: str(certifi_path))
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.dict(
+                sys.modules,
+                {"certifi": fake_certifi},
+            ), mock.patch.object(runtime.platform, "system", return_value="Darwin"), mock.patch.object(
+                runtime,
+                "_read_macos_keychain_certificates",
+                return_value=[cert_a, cert_b],
+            ), mock.patch.object(runtime.tempfile, "gettempdir", return_value=temp_dir):
+                bundle = pathlib.Path(runtime.resolve_bilibili_ca_bundle())
+
+            content = bundle.read_bytes()
+            self.assertEqual(content.count(b"BEGIN CERTIFICATE"), 2)
+
+    def test_linux_ca_bundle_prefers_system_trust_store(self):
+        import modules.bilibili_runtime as runtime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            certifi_path = pathlib.Path(temp_dir) / "certifi.pem"
+            system_path = pathlib.Path(temp_dir) / "system-ca.pem"
+            certifi_path.write_text("certifi", encoding="utf-8")
+            system_path.write_text("system", encoding="utf-8")
+            fake_certifi = types.SimpleNamespace(where=lambda: str(certifi_path))
+            verify_paths = types.SimpleNamespace(cafile=str(system_path))
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.dict(
+                sys.modules,
+                {"certifi": fake_certifi},
+            ), mock.patch.object(runtime.platform, "system", return_value="Linux"), mock.patch.object(
+                runtime.ssl,
+                "get_default_verify_paths",
+                return_value=verify_paths,
+            ):
+                bundle = runtime.resolve_bilibili_ca_bundle()
+
+            self.assertEqual(pathlib.Path(bundle), system_path.resolve())
 
     def test_zone_wrapper_returns_sdk_data(self):
         import modules.bilibili_zones as zones

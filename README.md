@@ -332,6 +332,36 @@ ffprobe -version
 3. `.bridge/state.sqlite3` 对应任务是否为失败；
 4. 使用 `retry` 命令重试。
 
+### Bilibili 登录提示 curl 60 / SSL certificate problem
+
+Linux 是本项目的主要部署目标。程序会优先使用系统 CA bundle（Debian/Ubuntu、RHEL/CentOS/Fedora 和 openSUSE 的常见路径均已支持），因此通过系统方式安装的企业或代理 CA 会自动生效；找不到系统 CA 时回退到 `certifi`。macOS 会合并系统钥匙串证书作为本地开发兼容。
+
+Debian / Ubuntu 先确认 CA 包已经安装：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates
+sudo update-ca-certificates
+```
+
+如果使用企业或代理 CA，可将 PEM 格式且扩展名为 `.crt` 的根证书加入系统信任库：
+
+```bash
+sudo cp company-root-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+```
+
+然后重启 WebUI，再重新发起扫码登录。
+
+不希望修改系统信任库时，也可显式指定完整 CA bundle：
+
+```bash
+export BILIBILI_CA_BUNDLE=/absolute/path/to/company-ca-bundle.pem
+python3 run.py
+```
+
+也兼容 `CURL_CA_BUNDLE`、`SSL_CERT_FILE` 和 `REQUESTS_CA_BUNDLE`。不要通过关闭 SSL 校验规避证书错误。
+
 ### 弹幕导入很慢
 
 完整导入会按 0.6 秒间隔逐条发送。10,000 条弹幕理论上至少需要约 100 分钟，还可能受 B站限流影响。可以将 `danmaku_native_max_comments` 设为 `200` 或其他正整数。
