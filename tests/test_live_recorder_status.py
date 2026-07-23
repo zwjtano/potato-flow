@@ -145,6 +145,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 manager.sync_configs([self.rooms[0]])
 
             content = config_path.read_text(encoding="utf-8")
+            self.assertIn("filtering_threshold: 0", content)
             self.assertIn("segment_processor:", content)
             self.assertIn("ingest --session-key", content)
             self.assertIn("aaaaaa111111", content)

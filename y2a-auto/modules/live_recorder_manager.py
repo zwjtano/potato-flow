@@ -583,7 +583,9 @@ class LiveRecorderManager:
             "# 由统一管理后台自动生成，请勿手动编辑。",
             "downloader: ffmpeg",
             "file_size: 2621440000",
-            "filtering_threshold: 20",
+            # 手动录制允许随时停止；不能让 biliup 把短录播当作碎片删除，
+            # 否则视频不会进入 segment_processor / ASS 流程。
+            "filtering_threshold: 0",
             'filename_prefix: "{streamer}%Y-%m-%d_%H-%M-%S_{title}"',
             "uploader: Noop",
             "delay: 30",
