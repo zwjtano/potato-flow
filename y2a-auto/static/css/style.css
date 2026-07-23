@@ -66,8 +66,10 @@ body {
 .app-nav-link i { width: 17px; font-size: 16px; text-align: center; }
 .app-nav-link:hover { color: #fff; background: rgba(255,255,255,.055); }
 .app-nav-link.active { color: #fff; background: #343840; box-shadow: inset 3px 0 0 var(--studio-primary); }
-.app-sidebar-footer { display: flex; align-items: center; gap: 8px; padding: 13px 11px 0; border-top: 1px solid #31353d; color: #818793; font-size: 11px; }
-.app-sidebar-footer a { margin-left: auto; color: #818793; }
+.app-sidebar-footer { display: flex; flex-direction: column; gap: 8px; padding: 13px 11px 0; border-top: 1px solid #31353d; color: #818793; font-size: 11px; }
+.app-sidebar-status { display: flex; align-items: center; gap: 8px; }
+.app-sidebar-status a { margin-left: auto; color: #818793; }
+.app-release-meta { display: flex; align-items: center; justify-content: space-between; color: #686f7b; font-size: 9px; letter-spacing: .02em; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #42c77a; box-shadow: 0 0 0 3px rgba(66,199,122,.11); }
 .app-frame { min-height: 100vh; margin-left: 222px; }
 .app-main { max-width: 1450px; margin: 0 auto; padding: 30px 34px 40px; }

@@ -55,6 +55,7 @@ from modules.notifications import (
     validate_channel_config_fields,
 )
 from apscheduler.schedulers.background import BackgroundScheduler
+from version import __author__, __version__
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # 用于flash消息
@@ -68,6 +69,8 @@ def inject_app_settings():
     return {
         'now': datetime.now(),  # 每次请求动态获取当前时间
         'app_settings': app_settings,
+        'app_version': __version__,
+        'app_author': __author__,
         'show_logout_in_nav': bool(
             app_settings.get('password_protection_enabled') and session.get('logged_in')
         ),

@@ -30,8 +30,14 @@
             <a class="app-nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}"><i class="bi bi-sliders"></i><span>系统设置</span></a>
         </nav>
         <div class="app-sidebar-footer">
-            <span class="status-dot"></span><span>本地服务已连接</span>
-            {% if show_logout_in_nav %}<a href="{{ url_for('logout') }}" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}
+            <div class="app-sidebar-status">
+                <span class="status-dot"></span><span>本地服务已连接</span>
+                {% if show_logout_in_nav %}<a href="{{ url_for('logout') }}" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}
+            </div>
+            <div class="app-release-meta" aria-label="项目版本与作者">
+                <span>Potato Flow v{{ app_version }}</span>
+                <span>by {{ app_author }}</span>
+            </div>
         </div>
     </aside>
 
