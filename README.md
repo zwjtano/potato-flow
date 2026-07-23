@@ -80,11 +80,11 @@ macOS 仅用于开发验证；Windows 不属于当前整合版支持范围。
 
 需要 Docker Engine 24+ 和 Docker Compose v2。仓库根目录只定义一个容器，容器内的 biliup 是无 HTTP 端口的子进程，对外只映射 `5001`。
 
-可以从 [GitHub Releases](https://github.com/zwjtano/potato-flow/releases/latest) 下载最新的 `potato-flow-*.tar.gz` 安装包，解压后运行：
+可以从 [GitHub Releases](https://github.com/zwjtano/potato-flow/releases/latest) 下载最新版本的 **Source code (tar.gz)**，解压后进入项目目录运行：
 
 ```bash
 tar -xzf potato-flow-*.tar.gz
-cd potato-flow-*
+cd potato-flow-*/
 docker compose up -d --build
 ```
 
