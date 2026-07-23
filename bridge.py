@@ -318,6 +318,14 @@ class StateStore:
             )
         return cursor.rowcount > 0
 
+    def delete_multipart_session(self, session_key: str) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                "DELETE FROM multipart_sessions WHERE session_key=?",
+                (session_key,),
+            )
+        return cursor.rowcount > 0
+
     def failed_paths(self) -> list[Path]:
         with self.connect() as db:
             rows = db.execute(
@@ -1098,9 +1106,9 @@ def main(argv: list[str] | None = None) -> int:
                 else f"OK 最终分段已导入，无需关闭空会话: {args.session_key}"
             )
         else:
-            store.close_multipart_session(str(args.session_key))
+            store.delete_multipart_session(str(args.session_key))
             print(
-                f"WARN 最终分段导入失败，失败任务已保留且本场分P会话已结束: {args.session_key}",
+                f"WARN 最终分段导入失败，失败任务已保留且旧分P关系已解除: {args.session_key}",
                 file=sys.stderr,
             )
         # The failed task is persisted and retryable in WebUI. Recording has

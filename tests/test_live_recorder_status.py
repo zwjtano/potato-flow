@@ -262,7 +262,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(controls["rooms"]["https://www.douyu.com/100"])
         self.assertTrue(controls["rooms"]["https://live.bilibili.com/200"])
 
-    def test_restarting_room_closes_stale_failed_multipart_session(self):
+    def test_restarting_room_clears_stale_failed_multipart_session(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -291,13 +291,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 room = manager.set_room_recording("aaaaaa111111", True)
 
             with sqlite3.connect(state_path) as db:
-                status = db.execute(
+                session = db.execute(
                     "SELECT status FROM multipart_sessions WHERE session_key=?",
                     ("aaaaaa111111",),
-                ).fetchone()[0]
+                ).fetchone()
 
         self.assertTrue(room["enabled"])
-        self.assertEqual(status, "closed")
+        self.assertIsNone(session)
 
     def test_add_room_reloads_running_idle_worker(self):
         manager = LiveRecorderManager()

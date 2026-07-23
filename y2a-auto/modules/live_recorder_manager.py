@@ -539,17 +539,16 @@ class LiveRecorderManager:
             },
         )
 
-    def _close_stale_multipart_session(self, session_key: str) -> bool:
-        """End an earlier failed broadcast before a manual recording restarts."""
+    def _clear_stale_multipart_session(self, session_key: str) -> bool:
+        """Detach an earlier failed broadcast before a manual recording restarts."""
         state_path = self._pipeline_state_path()
         if not state_path.is_file():
             return False
         try:
             with sqlite3.connect(state_path, timeout=5) as db:
                 cursor = db.execute(
-                    "UPDATE multipart_sessions SET status='closed', updated_at=? "
-                    "WHERE session_key=? AND status='open'",
-                    (datetime.now(timezone.utc).isoformat(), session_key),
+                    "DELETE FROM multipart_sessions WHERE session_key=?",
+                    (session_key,),
                 )
             return cursor.rowcount > 0
         except sqlite3.Error:
@@ -564,7 +563,7 @@ class LiveRecorderManager:
                 raise RecorderConfigError("没有找到该直播间")
             was_enabled = bool(room.get("enabled", True))
             if enabled and not was_enabled:
-                self._close_stale_multipart_session(str(room["id"]))
+                self._clear_stale_multipart_session(str(room["id"]))
             room["enabled"] = bool(enabled)
             _atomic_json(ROOMS_PATH, rooms)
             self._write_control_state(rooms)

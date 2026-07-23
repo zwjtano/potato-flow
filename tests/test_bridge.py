@@ -100,7 +100,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(store.multipart_session("room-1"), {})
 
-    def test_finalize_session_closes_session_when_final_video_fails(self):
+    def test_finalize_session_detaches_session_when_final_video_fails(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "final.flv"
@@ -119,9 +119,7 @@ class BridgeTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             self.assertEqual(store.multipart_session("room-1"), {})
-            closed = store.multipart_session("room-1", include_closed=True)
-            self.assertEqual(closed["bilibili"]["bvid"], "BV1")
-            self.assertEqual(closed["_session_status"], "closed")
+            self.assertEqual(store.multipart_session("room-1", include_closed=True), {})
 
     def test_state_persists_each_inspectable_pipeline_stage(self):
         with tempfile.TemporaryDirectory() as temp:
