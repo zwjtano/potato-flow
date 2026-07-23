@@ -341,6 +341,47 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIsNone(pid)
             self.assertFalse(pid_path.exists())
 
+    def test_container_restart_marks_interrupted_cover_as_retryable_failure(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, status TEXT, error TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, error TEXT,
+                        finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES ('job-1', 'processing', NULL, 'old')"
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES ('job-1', 'cover', 'running', NULL, NULL, 'old')"
+                )
+
+            with mock.patch.object(manager, "_pipeline_state_path", return_value=state_path):
+                recovered = manager.recover_interrupted_pipeline_jobs()
+
+            with sqlite3.connect(state_path) as db:
+                upload = db.execute(
+                    "SELECT status, error FROM uploads WHERE fingerprint='job-1'"
+                ).fetchone()
+                stage = db.execute(
+                    "SELECT status, error, finished_at FROM upload_stages WHERE fingerprint='job-1'"
+                ).fetchone()
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(upload[0], "failed")
+        self.assertIn("点击重试", upload[1])
+        self.assertEqual(stage[0], "failed")
+        self.assertIn("点击重试", stage[1])
+        self.assertIsNotNone(stage[2])
+
     def test_add_room_reloads_running_idle_worker(self):
         manager = LiveRecorderManager()
         new_room = {"id": "cccccc333333", "name": "新主播"}

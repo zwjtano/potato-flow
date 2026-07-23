@@ -129,6 +129,8 @@ class LiveRecorderManager:
         self._process: subprocess.Popen | None = None
         self._log_handle = None
         self._reload_thread: threading.Thread | None = None
+        if os.environ.pop("POTATO_FLOW_CONTAINER_START", "") == "1":
+            self.recover_interrupted_pipeline_jobs()
 
     @property
     def binary_path(self) -> Path:
@@ -783,6 +785,41 @@ class LiveRecorderManager:
             config_path = BRIDGE_CONFIG_PATH.expanduser().resolve()
             configured = Path(".bridge/state.sqlite3")
         return configured.resolve() if configured.is_absolute() else (config_path.parent / configured).resolve()
+
+    def recover_interrupted_pipeline_jobs(self) -> int:
+        """Turn container-interrupted bridge jobs into visible retryable failures."""
+        state_path = self._pipeline_state_path()
+        if not state_path.is_file():
+            return 0
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        reason = "服务重启中断了当前处理，请点击重试继续"
+        try:
+            with sqlite3.connect(state_path, timeout=5) as db:
+                fingerprints = [
+                    row[0]
+                    for row in db.execute(
+                        "SELECT DISTINCT fingerprint FROM upload_stages WHERE status='running'"
+                    ).fetchall()
+                ]
+                if not fingerprints:
+                    return 0
+                placeholders = ",".join("?" for _ in fingerprints)
+                db.execute(
+                    f"""UPDATE upload_stages
+                        SET status='failed', error=?, finished_at=?, updated_at=?
+                        WHERE status='running' AND fingerprint IN ({placeholders})""",
+                    (reason, now, now, *fingerprints),
+                )
+                db.execute(
+                    f"""UPDATE uploads
+                        SET status='failed', error=?, updated_at=?
+                        WHERE status IN ('processing', 'video_uploaded')
+                          AND fingerprint IN ({placeholders})""",
+                    (reason, now, *fingerprints),
+                )
+            return len(fingerprints)
+        except sqlite3.Error:
+            return 0
 
     def _recording_file_roots(self) -> dict[str, Path]:
         return {
