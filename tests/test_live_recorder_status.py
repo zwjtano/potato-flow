@@ -32,6 +32,24 @@ class LiveRecorderStatusTests(unittest.TestCase):
             },
         ]
 
+    def test_atomic_json_writes_through_persistent_symlink(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data_dir = root / "data"
+            app_dir = root / "app"
+            data_dir.mkdir()
+            app_dir.mkdir()
+            target = data_dir / "bridge.config.json"
+            target.write_text("{}", encoding="utf-8")
+            link = app_dir / "bridge.config.json"
+            link.symlink_to(target)
+
+            recorder_module._atomic_json(link, {"enabled": True})
+
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"enabled": True})
+            self.assertFalse((app_dir / "bridge.config.json.tmp").exists())
+
     def test_resolves_bilibili_streamer_name_avatar_and_real_room_id(self):
         manager = LiveRecorderManager()
         room_response = {

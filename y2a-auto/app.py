@@ -717,7 +717,8 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'AUTO_MODE_ENABLED', 'TRANSLATE_TITLE', 'TRANSLATE_DESCRIPTION',
             'UPLOAD_APPEND_REPOST_NOTICE',
             'GENERATE_TAGS', 'YOUTUBE_UPLOADER_AS_FIRST_TAG', 'RECOMMEND_PARTITION',
-            'RECOMMEND_PARTITION_WITH_COVER', 'CONTENT_MODERATION_ENABLED',
+            'RECOMMEND_PARTITION_WITH_COVER', 'AI_GENERATE_RECORDING_COVER',
+            'CONTENT_MODERATION_ENABLED',
             'OPENAI_THINKING_ENABLED', 'SUBTITLE_OPENAI_THINKING_ENABLED', 'SUBTITLE_QC_THINKING_ENABLED',
             'LOG_CLEANUP_ENABLED', 'SUBTITLE_TRANSLATION_ENABLED', 'SUBTITLE_EMBED_IN_VIDEO',
             'SUBTITLE_KEEP_ORIGINAL', 'YOUTUBE_AUTO_GENERATED_SUBTITLES_ENABLED',
@@ -1174,6 +1175,16 @@ def live_recording_job(fingerprint):
         return jsonify({'error': '没有找到该录播任务'}), 404
     job['log'] = live_recorder_manager.pipeline_log(fingerprint)
     return jsonify(job)
+
+
+@app.route('/live-recording/jobs/<fingerprint>/cover')
+@login_required
+def live_recording_job_cover(fingerprint):
+    try:
+        path = live_recorder_manager.pipeline_cover(fingerprint)
+        return send_file(path, conditional=True)
+    except RecorderConfigError as exc:
+        return jsonify({'error': str(exc)}), 404
 
 
 @app.route('/live-recording/jobs/<fingerprint>/retry', methods=['POST'])

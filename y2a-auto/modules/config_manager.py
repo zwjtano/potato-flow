@@ -29,6 +29,7 @@ DEFAULT_CONFIG = {
     "YOUTUBE_UPLOADER_AS_FIRST_TAG": False,
     "RECOMMEND_PARTITION": False,
     "RECOMMEND_PARTITION_WITH_COVER": False,
+    "AI_GENERATE_RECORDING_COVER": False,
     "CONTENT_MODERATION_ENABLED": False,
     "LOG_CLEANUP_ENABLED": True, # 是否启用日志自动清理
     "LOG_CLEANUP_HOURS": 72, # 保留最近多少小时的日志
@@ -82,6 +83,9 @@ DEFAULT_CONFIG = {
     "OPENAI_API_KEY": "",
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
     "OPENAI_MODEL_NAME": "gpt-3.5-turbo",
+    "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+    "OPENAI_IMAGE_BASE_URL": "",
+    "OPENAI_IMAGE_SIZE": "1536x1024",
     "OPENAI_THINKING_ENABLED": False,
     "OPENAI_TIMEOUT_SECONDS": 600,  # OpenAI API 请求超时秒数；思考模型输出可达64k token，建议不低于300
     # 固定分区ID（可选）：如设置则推荐分区将直接使用该ID

@@ -84,7 +84,7 @@ class BridgeTests(unittest.TestCase):
                     (key,),
                 ).fetchall()
             stages = {row["stage"]: row for row in rows}
-            self.assertEqual(set(stages), {"detect", "record", "ass", "ai", "upload"})
+            self.assertEqual(set(stages), {"detect", "record", "ass", "ai", "cover", "upload"})
             self.assertEqual(stages["record"]["status"], "completed")
             self.assertEqual(stages["ass"]["status"], "completed")
             self.assertEqual(json.loads(stages["ass"]["details_json"])["danmaku_count"], 12)
@@ -120,6 +120,10 @@ class BridgeTests(unittest.TestCase):
                 bridge,
                 "enhance_recording_metadata",
                 return_value=([], "171", {}),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                return_value=(None, {"ai_cover_enabled": False}),
             ), patch.object(bridge, "import_y2a", return_value=(MustNotUpload, None)):
                 self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
             result = store.results(key)
@@ -201,12 +205,17 @@ class BridgeTests(unittest.TestCase):
                 "enhance_recording_metadata",
                 return_value=(["主播", "AI标签"], "129", automation),
             ) as enhance_metadata, patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                return_value=(None, {"ai_cover_enabled": False}),
+            ) as generate_cover, patch.object(
                 bridge, "import_y2a", return_value=(FakeUploader, None)
             ):
                 self.assertTrue(bridge.upload_one(first, cfg, store, session_key="room-1"))
                 self.assertTrue(bridge.upload_one(second, cfg, store, session_key="room-1"))
 
             enhance_metadata.assert_called_once()
+            generate_cover.assert_called_once()
             self.assertIsNone(calls[0]["existing_submission"])
             self.assertEqual(calls[0]["page_titles"], ["P1 09:00:00"])
             self.assertEqual(calls[0]["tags"], ["主播", "AI标签"])
@@ -219,6 +228,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(session["bilibili"]["part_count"], 2)
             self.assertEqual(session["partition_id"], "129")
             self.assertTrue(session["metadata_automation"]["cover_for_partition_ai"])
+            self.assertEqual(Path(session["cover_path"]), cover.resolve())
             self.assertTrue(store.close_multipart_session("room-1"))
             self.assertEqual(store.multipart_session("room-1"), {})
 
@@ -275,6 +285,61 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(recommend.call_args.kwargs["cover_path"], str(cover))
         self.assertTrue(recommend.call_args.kwargs["include_cover_for_ai"])
         self.assertEqual(recommend.call_args.kwargs["tags"], tags)
+
+    def test_recording_cover_headline_removes_date_and_clock(self):
+        headline = bridge.recording_cover_headline(
+            "【直播回放】土豆｜深夜游戏挑战｜2026-07-23 21:30",
+        )
+        self.assertEqual(headline, "游戏挑战")
+        self.assertNotRegex(headline, r"2026|21:30")
+
+    def test_ai_recording_cover_uses_ai_title_and_forbids_time(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work_dir = root / "artifacts"
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_generate = Mock(return_value=response)
+            client = types.SimpleNamespace(
+                images=types.SimpleNamespace(generate=image_generate)
+            )
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_BASE_URL": "https://example.com/v1",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
+                cover, details = bridge.generate_recording_cover_with_ai(
+                    title="【直播回放】土豆｜新地图极限挑战｜2026-07-23",
+                    ai_topic="新地图极限挑战",
+                    description="主播挑战新地图，弹幕反应热烈。",
+                    streamer="土豆",
+                    cfg={"_config_dir": str(root), "y2a_root": str(y2a_root), "ffmpeg": "ffmpeg"},
+                    work_dir=work_dir,
+                )
+
+        self.assertEqual(cover.name, "ai_cover.jpg")
+        self.assertTrue(details["ai_cover_generated"])
+        self.assertEqual(details["ai_cover_headline"], "新地图极限挑战")
+        prompt = image_generate.call_args.kwargs["prompt"]
+        self.assertIn("AI 生成的核心标题：新地图极限挑战", prompt)
+        self.assertIn("绝对禁止出现日期", prompt)
+        self.assertNotIn("2026-07-23", prompt)
 
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:

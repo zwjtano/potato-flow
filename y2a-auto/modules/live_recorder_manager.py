@@ -51,10 +51,11 @@ class RecorderConfigError(ValueError):
 
 
 def _atomic_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
+    destination = path.resolve() if path.is_symlink() else path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp = destination.with_suffix(destination.suffix + ".tmp")
     temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temp.replace(path)
+    temp.replace(destination)
 
 
 def _yaml_string(value: str) -> str:
@@ -1012,7 +1013,7 @@ class LiveRecorderManager:
                 "bvid": str(bilibili_result.get("bvid") or ""),
                 "bilibili_url": str(bilibili_result.get("url") or ""),
                 "completed_stages": completed_stages,
-                "total_stages": 5,
+                "total_stages": 6,
                 "failed_stage": failed_stage,
                 "active_stage": active_stage,
                 "retryable": row["status"] in {"failed", "dry_run"},
@@ -1022,6 +1023,31 @@ class LiveRecorderManager:
 
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
         return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)
+
+    def pipeline_cover(self, fingerprint: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise RecorderConfigError("任务编号无效")
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        cover_stage = next(
+            (stage for stage in job.get("stages", []) if stage.get("key") == "cover"),
+            {},
+        )
+        details = cover_stage.get("details") if isinstance(cover_stage, dict) else {}
+        details = details if isinstance(details, dict) else {}
+        candidate = str(details.get("ai_cover_path") or "").strip()
+        if not candidate:
+            raise RecorderConfigError("该任务暂无可预览的 AI 封面")
+        path = Path(candidate).resolve()
+        allowed_root = self._recording_file_roots()["artifacts"]
+        try:
+            path.relative_to(allowed_root)
+        except ValueError as exc:
+            raise RecorderConfigError("封面路径不在允许的录播产物目录中") from exc
+        if not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+            raise RecorderConfigError("录播封面文件不存在")
+        return path
 
     def retry_pipeline_job(self, fingerprint: str) -> None:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):

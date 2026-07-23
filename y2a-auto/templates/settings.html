@@ -169,8 +169,12 @@
                                                         <input type="checkbox" name="RECOMMEND_PARTITION_WITH_COVER" {% if config.get('RECOMMEND_PARTITION_WITH_COVER', False) %}checked{% endif %}>
                                                         推荐分区时附带原视频封面供 AI 参考
                                                     </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="AI_GENERATE_RECORDING_COVER" {% if config.get('AI_GENERATE_RECORDING_COVER', False) %}checked{% endif %}>
+                                                        AI 生成录播封面
+                                                    </label>
                                                 </div>
-                                                <p class="help-text mt-2 mb-0">仅在已启用自动推荐分区、任务存在封面、且 AI 接口支持图片输入时生效；否则自动回退文本模式。</p>
+                                                <p class="help-text mt-2 mb-0">录播封面会参考 AI 核心标题生成，并禁止日期、具体时间和时间戳；生成失败时自动使用视频截图。</p>
                                             </div>
                                         </article>
                                     </div>
@@ -614,6 +618,41 @@
                                                             </div>
                                                         </div>
                                                     </div>
+                                                </div>
+
+                                                <div class="settings-subcard">
+                                                    <div class="settings-subcard-header">
+                                                        <h5>录播封面图片模型</h5>
+                                                        <span class="settings-status-badge {{ 'is-success' if config.get('AI_GENERATE_RECORDING_COVER') else 'is-neutral' }}">
+                                                            {{ '已启用' if config.get('AI_GENERATE_RECORDING_COVER') else '未启用' }}
+                                                        </span>
+                                                    </div>
+                                                    <div class="row g-3">
+                                                        <div class="col-12">
+                                                            <div class="form-group">
+                                                                <label for="openai-image-url" class="form-label">图片接口地址（可选）</label>
+                                                                <input type="text" id="openai-image-url" name="OPENAI_IMAGE_BASE_URL" value="{{ config.get('OPENAI_IMAGE_BASE_URL', '') }}" class="form-control" placeholder="留空则沿用全局接口地址">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-8">
+                                                            <div class="form-group">
+                                                                <label for="openai-image-model" class="form-label">图片模型</label>
+                                                                <input type="text" id="openai-image-model" name="OPENAI_IMAGE_MODEL_NAME" value="{{ config.get('OPENAI_IMAGE_MODEL_NAME', 'gpt-image-2') }}" class="form-control" placeholder="如 gpt-image-2">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-image-size" class="form-label">生成尺寸</label>
+                                                                <select id="openai-image-size" name="OPENAI_IMAGE_SIZE" class="form-select">
+                                                                    {% set image_size = config.get('OPENAI_IMAGE_SIZE', '1536x1024') %}
+                                                                    <option value="1536x1024" {% if image_size == '1536x1024' %}selected{% endif %}>1536 × 1024</option>
+                                                                    <option value="1024x1024" {% if image_size == '1024x1024' %}selected{% endif %}>1024 × 1024</option>
+                                                                    <option value="1024x1536" {% if image_size == '1024x1536' %}selected{% endif %}>1024 × 1536</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <p class="help-text mt-2 mb-0">沿用全局 API 密钥。若当前服务不支持图片生成，请单独填写兼容 OpenAI Images API 的地址。</p>
                                                 </div>
 
                                                 <div class="settings-subcard">

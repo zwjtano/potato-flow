@@ -88,6 +88,7 @@
                     <button class="pipeline-step {{ 'active' if room.runtime.recording }}" type="button" data-stage="record"><span><i class="bi bi-record-circle"></i></span><strong>视频录制</strong><small data-role="step-label">{{ '录制中' if room.runtime.recording else '等待中' }}</small></button>
                     <button class="pipeline-step" type="button" data-stage="ass"><span><i class="bi bi-badge-cc"></i></span><strong>生成 ASS</strong><small data-role="step-label">等待中</small></button>
                     <button class="pipeline-step" type="button" data-stage="ai"><span><i class="bi bi-stars"></i></span><strong>AI 简介</strong><small data-role="step-label">等待中</small></button>
+                    <button class="pipeline-step" type="button" data-stage="cover"><span><i class="bi bi-image"></i></span><strong>AI 封面</strong><small data-role="step-label">等待中</small></button>
                     <button class="pipeline-step" type="button" data-stage="upload"><span><i class="bi bi-cloud-arrow-up"></i></span><strong>投稿 B站</strong><small data-role="step-label">等待中</small></button>
                 </div>
                 <div class="pipeline-inspector" data-role="pipeline-inspector">
@@ -408,11 +409,11 @@ document.addEventListener('DOMContentLoaded', function () {
         record.className = `pipeline-step ${room.recording ? 'active' : ''}`;
         record.querySelector('[data-role="step-label"]').textContent = room.recording ? '录制中' : '等待中';
     }
-    const stageNames = {detect: '直播检测', record: '视频录制', ass: '生成 ASS', ai: 'AI 简介', upload: '投稿 B站'};
+    const stageNames = {detect: '直播检测', record: '视频录制', ass: '生成 ASS', ai: 'AI 简介', cover: 'AI 封面', upload: '投稿 B站'};
     const statusNames = {pending: '等待中', running: '处理中', completed: '已完成', failed: '失败', skipped: '已跳过'};
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     function detailRows(details) {
-        const labels = {video_path:'录播文件', size_bytes:'文件大小', danmaku_xml:'弹幕 XML', ass_path:'ASS 字幕', danmaku_count:'弹幕数量', burn_in:'烧录视频', comment_count:'分析弹幕', title_topic:'核心主题', description:'生成简介', reason:'说明', title:'投稿标题', cover:'视频封面', bilibili:'B站结果', part_number:'分P序号', existing_bvid:'追加稿件', multipart_session:'直播分P会话', generated_tags:'AI 生成标签', final_tags:'最终投稿标签', tag_generation_enabled:'自动标签', recommended_partition_id:'AI 推荐分区', selected_partition_id:'最终投稿分区', partition_recommendation_enabled:'自动推荐分区', partition_source:'推荐来源', partition_confidence:'推荐置信度', partition_reason:'推荐理由', partition_alternatives:'备选分区', cover_for_partition_ai:'分区推荐附带封面', partition_cover_path:'参考封面', metadata_automation_error:'标签/分区推荐错误'};
+        const labels = {video_path:'录播文件', size_bytes:'文件大小', danmaku_xml:'弹幕 XML', ass_path:'ASS 字幕', danmaku_count:'弹幕数量', burn_in:'烧录视频', comment_count:'分析弹幕', title_topic:'核心主题', description:'生成简介', reason:'说明', title:'投稿标题', cover:'视频封面', bilibili:'B站结果', part_number:'分P序号', existing_bvid:'追加稿件', multipart_session:'直播分P会话', generated_tags:'AI 生成标签', final_tags:'最终投稿标签', tag_generation_enabled:'自动标签', recommended_partition_id:'AI 推荐分区', selected_partition_id:'最终投稿分区', partition_recommendation_enabled:'自动推荐分区', partition_source:'推荐来源', partition_confidence:'推荐置信度', partition_reason:'推荐理由', partition_alternatives:'备选分区', cover_for_partition_ai:'分区推荐附带封面', partition_cover_path:'参考封面', metadata_automation_error:'标签/分区推荐错误', ai_cover_enabled:'AI 生成封面', ai_cover_headline:'封面核心标题', ai_cover_excludes_time:'禁止日期时间', ai_cover_generated:'生成成功', ai_cover_model:'图片模型', ai_cover_path:'AI 封面文件', ai_cover_prompt:'完整生成提示词', ai_cover_reused:'复用首个分P封面', ai_cover_error:'生成错误', cover_fallback:'回退方案', cover_used_for_upload:'最终投稿封面', original_cover_path:'原始视频截图'};
         return Object.entries(details || {}).map(([key, value]) => {
             const rendered = typeof value === 'object' ? JSON.stringify(value, null, 2) : (key === 'size_bytes' ? `${(Number(value) / 1024 / 1024).toFixed(1)} MB` : String(value));
             return `<div class="inspector-row"><span>${escapeHtml(labels[key] || key)}</span><code>${escapeHtml(rendered)}</code></div>`;
@@ -453,8 +454,11 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         const status = stage?.status || 'pending';
         const logState = getJobLogState(job.id);
+        const coverPreview = stageKey === 'cover' && stage?.details?.ai_cover_path
+            ? `<div class="inspector-cover-preview"><span>封面预览</span><img src="/live-recording/jobs/${encodeURIComponent(job.id)}/cover?v=${encodeURIComponent(stage?.updated_at || job.updated_at || '')}" alt="录播投稿封面"></div>`
+            : '';
         inspector.innerHTML = `<div class="inspector-head"><div><span class="stage-status ${escapeHtml(status)}"><i class="bi bi-circle-fill"></i>${escapeHtml(statusNames[status] || status)}</span><h4>${escapeHtml(stageNames[stageKey])}</h4></div>${job.status === 'failed' ? '<button class="btn btn-sm btn-outline-primary" type="button" data-action="retry"><i class="bi bi-arrow-repeat"></i> 重试失败任务</button>' : ''}</div>
-            <div class="inspector-grid"><div class="inspector-row"><span>任务文件</span><code>${escapeHtml(job.video_name)}</code></div><div class="inspector-row"><span>更新时间</span><code>${escapeHtml(stage?.updated_at || job.updated_at || '—')}</code></div>${detailRows(stage?.details)}${stage?.error ? `<div class="inspector-row error"><span>错误</span><code>${escapeHtml(stage.error)}</code></div>` : ''}</div>
+            ${coverPreview}<div class="inspector-grid"><div class="inspector-row"><span>任务文件</span><code>${escapeHtml(job.video_name)}</code></div><div class="inspector-row"><span>更新时间</span><code>${escapeHtml(stage?.updated_at || job.updated_at || '—')}</code></div>${detailRows(stage?.details)}${stage?.error ? `<div class="inspector-row error"><span>错误</span><code>${escapeHtml(stage.error)}</code></div>` : ''}</div>
             <details class="inspector-log" ${logState.open ? 'open' : ''}><summary><i class="bi bi-terminal"></i> 查看该任务运行日志 <small>${logState.open ? '· 每 5 秒自动刷新' : ''}</small></summary><pre data-role="job-log">${escapeHtml(logState.loaded ? logState.text : '展开后加载…')}</pre></details>`;
         inspector.querySelector('[data-action="retry"]')?.addEventListener('click', async event => {
             event.currentTarget.disabled = true;

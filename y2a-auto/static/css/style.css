@@ -162,7 +162,7 @@ body {
 .pipeline-toolbar .form-select { font-size: 10px; }
 .pipeline-toolbar > span { padding-bottom: 7px; color: #8a909b; font-size: 9px; white-space: nowrap; }
 .pipeline-toolbar > span i { color: #f2a118; }
-.pipeline-flow { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); margin: 32px 12px 25px; }
+.pipeline-flow { position: relative; display: grid; grid-template-columns: repeat(6, 1fr); margin: 32px 12px 25px; }
 .pipeline-flow::before { content: ""; position: absolute; top: 23px; right: 10%; left: 10%; height: 1px; background: #e4e6ea; }
 .pipeline-step { position: relative; z-index: 1; display: flex; min-width: 0; align-items: center; flex-direction: column; padding: 0; color: inherit; border: 0; outline: 0; background: transparent; text-align: center; }
 .pipeline-step::after { content: ""; position: absolute; bottom: -12px; width: 20px; height: 2px; border-radius: 2px; background: transparent; }
@@ -186,6 +186,9 @@ body {
 .stage-status.completed { color: #188c4d; background: #e7f7ee; }
 .stage-status.running { color: #0b6fc5; background: #e5f2ff; }
 .stage-status.failed { color: #c9283a; background: #fde9ec; }
+.inspector-cover-preview { display: grid; grid-template-columns: 82px minmax(0, 420px); align-items: start; gap: 7px; margin-bottom: 12px; }
+.inspector-cover-preview > span { color: #8b929d; font-size: 9px; }
+.inspector-cover-preview img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border: 1px solid #e1e5ea; border-radius: 7px; background: #eef1f4; }
 .inspector-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 18px; }
 .inspector-row { display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: start; gap: 7px; min-width: 0; }
 .inspector-row > span { color: #8b929d; font-size: 9px; }

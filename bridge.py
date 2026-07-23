@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import fnmatch
 import hashlib
 import json
@@ -13,6 +14,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -202,7 +204,8 @@ class StateStore:
                 (key, str(path), platform, now, now),
             )
             for stage, status in (("detect", "completed"), ("record", "completed"),
-                                  ("ass", "pending"), ("ai", "pending"), ("upload", "pending")):
+                                  ("ass", "pending"), ("ai", "pending"),
+                                  ("cover", "pending"), ("upload", "pending")):
                 db.execute(
                     """INSERT INTO upload_stages
                        (fingerprint, stage, status, updated_at, started_at, finished_at)
@@ -355,6 +358,109 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"FFmpeg 自动截取封面失败: {message}")
     return cover
+
+
+def recording_cover_headline(title: str, ai_topic: str = "") -> str:
+    """Extract a cover-safe headline without dates, clocks or template chrome."""
+    candidate = str(ai_topic or "").strip()
+    if not candidate:
+        parts = [part.strip() for part in re.split(r"[｜|]", str(title or "")) if part.strip()]
+        candidate = parts[1] if len(parts) >= 2 else (parts[0] if parts else "直播精彩内容")
+    candidate = re.sub(r"【[^】]*(?:直播|回放)[^】]*】", "", candidate)
+    candidate = re.sub(r"\b20\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?\b", "", candidate)
+    candidate = re.sub(r"\b\d{1,2}[:：]\d{2}(?::\d{2})?\b", "", candidate)
+    candidate = re.sub(r"\b(?:上午|下午|凌晨|早上|晚上|深夜)?\d{1,2}\s*[点时]\b", "", candidate)
+    candidate = re.sub(r"(?:今天|今日|今晚|昨天|明天|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜)", "", candidate)
+    candidate = re.sub(r"[\r\n｜|]+", " ", candidate)
+    candidate = re.sub(r"\s{2,}", " ", candidate).strip(" -_｜|·")
+    return (candidate or "直播精彩内容")[:24]
+
+
+def generate_recording_cover_with_ai(
+    title: str,
+    ai_topic: str,
+    description: str,
+    streamer: str,
+    cfg: dict[str, Any],
+    work_dir: Path,
+) -> tuple[Path | None, dict[str, Any]]:
+    """Generate a 16:10 Bilibili cover from the final AI-assisted title."""
+    root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from modules.ai_enhancer import get_openai_client  # type: ignore
+    from modules.config_manager import load_config as load_y2a_config  # type: ignore
+
+    ai_cfg = load_y2a_config()
+    enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
+    headline = recording_cover_headline(title, ai_topic)
+    details: dict[str, Any] = {
+        "ai_cover_enabled": enabled,
+        "ai_cover_headline": headline,
+        "ai_cover_excludes_time": True,
+    }
+    if not enabled:
+        return None, details
+    if not ai_cfg.get("OPENAI_API_KEY"):
+        raise ValueError("未配置 AI API Key，无法生成录播封面")
+
+    image_model = str(ai_cfg.get("OPENAI_IMAGE_MODEL_NAME") or "gpt-image-2").strip()
+    image_base_url = str(ai_cfg.get("OPENAI_IMAGE_BASE_URL") or "").strip()
+    client_config = dict(ai_cfg)
+    if image_base_url:
+        client_config["OPENAI_BASE_URL"] = image_base_url
+    prompt = f"""
+为哔哩哔哩直播回放生成一张横向 16:10 视频封面，画面精致、主体明确、对比强烈，在手机缩略图尺寸下仍清晰。
+主播：{streamer or "主播"}
+AI 生成的核心标题：{headline}
+内容摘要：{str(description or "")[:500]}
+
+只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
+不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
+""".strip()
+    response = get_openai_client(client_config).images.generate(
+        model=image_model,
+        prompt=prompt,
+        size=str(ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024"),
+    )
+    item = response.data[0] if getattr(response, "data", None) else None
+    if item is None:
+        raise RuntimeError("图片模型没有返回封面")
+    encoded = getattr(item, "b64_json", None)
+    image_url = str(getattr(item, "url", "") or "").strip()
+    if encoded:
+        raw = base64.b64decode(encoded)
+    elif image_url:
+        request = urllib.request.Request(image_url, headers={"User-Agent": "PotatoFlow/1.0"})
+        with urllib.request.urlopen(request, timeout=180) as remote:
+            raw = remote.read()
+    else:
+        raise RuntimeError("图片模型返回结果中没有图片数据")
+    if not raw:
+        raise RuntimeError("图片模型返回了空图片")
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    source = work_dir / "ai_cover_source.png"
+    cover = work_dir / "ai_cover.jpg"
+    source.write_bytes(raw)
+    ffmpeg = str(cfg.get("ffmpeg", "ffmpeg"))
+    command = [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+        "-vf", "scale=1146:717:force_original_aspect_ratio=increase,crop=1146:717",
+        "-frames:v", "1", "-q:v", "2", str(cover),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    if completed.returncode != 0 or not cover.is_file():
+        message = completed.stderr.strip()[-1000:]
+        raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
+    details.update({
+        "ai_cover_generated": True,
+        "ai_cover_model": image_model,
+        "ai_cover_path": str(cover),
+        "ai_cover_prompt": prompt,
+    })
+    return cover, details
 
 
 def cleanup_uploaded_recording(
@@ -651,7 +757,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             raise RuntimeError("前一分P尚未上传成功，请先重试前一分P")
 
         title, description, tags = render_metadata(video, cfg)
-        cover = find_cover(video, cfg, work_dir)
+        original_cover = find_cover(video, cfg, work_dir)
+        cover = original_cover
         source_url = str(cfg.get("source_url", "")).strip()
         if not source_url:
             raise ValueError("Y2A 的 bilibili 上传强制使用转载模式，必须配置 source_url")
@@ -722,7 +829,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     title,
                     description,
                     tags,
-                    cover,
+                    original_cover,
                     partition,
                     cfg,
                 )
@@ -757,12 +864,74 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         )
         store.stage(key, "ai", "completed" if ai_was_used else "skipped", ai_details)
 
+        current_stage = "cover"
+        cover_generation: dict[str, Any] = {}
+        session_cover = str(multipart.get("cover_path") or "").strip() if multipart else ""
+        if session_cover and Path(session_cover).is_file():
+            cover = Path(session_cover)
+            cover_generation = dict(multipart.get("cover_generation") or {})
+            cover_generation.update({
+                "ai_cover_reused": True,
+                "ai_cover_path": str(cover),
+                "original_cover_path": str(original_cover),
+            })
+            store.stage(key, "cover", "completed", cover_generation)
+        elif not dry_run and not existing_submission:
+            store.stage(key, "cover", "running", {
+                "title": title,
+                "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+                "original_cover_path": str(original_cover),
+            })
+            try:
+                generated_cover, cover_generation = generate_recording_cover_with_ai(
+                    title=title,
+                    ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+                    description=description,
+                    streamer=recording_metadata_values(video, cfg)["streamer"],
+                    cfg=cfg,
+                    work_dir=work_dir,
+                )
+                if generated_cover:
+                    cover = generated_cover
+                cover_generation.update({
+                    "cover_used_for_upload": str(cover),
+                    "original_cover_path": str(original_cover),
+                })
+                cover_status = (
+                    "completed"
+                    if cover_generation.get("ai_cover_generated")
+                    else "skipped"
+                )
+                store.stage(key, "cover", cover_status, cover_generation)
+            except Exception as exc:
+                cover_generation = {
+                    "ai_cover_enabled": True,
+                    "ai_cover_generated": False,
+                    "ai_cover_error": str(exc),
+                    "cover_fallback": "视频截图",
+                    "cover_used_for_upload": str(original_cover),
+                    "original_cover_path": str(original_cover),
+                }
+                cover = original_cover
+                store.stage(key, "cover", "skipped", cover_generation)
+                print(f"WARN AI 录播封面生成失败，回退视频截图: {exc}", file=sys.stderr)
+        else:
+            reason = "试运行" if dry_run else "后续分P沿用当前稿件封面"
+            cover_generation = {
+                "reason": reason,
+                "cover_used_for_upload": str(cover),
+                "original_cover_path": str(original_cover),
+            }
+            store.stage(key, "cover", "skipped", cover_generation)
+
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
                    "ass_path": str(ass_path) if ass_path else None,
-                   "danmaku_count": len(comments), "cover": str(cover), "platform": platform,
+                   "danmaku_count": len(comments), "cover": str(cover),
+                   "original_cover": str(original_cover), "platform": platform,
                    "title": title, "description": description, "tags": tags, "source_url": source_url,
                    "partition_id": partition, "metadata_automation": metadata_automation,
+                   "cover_generation": cover_generation,
                    "multipart_session": session_key or None, "part_number": part_number}
         if dry_run:
             store.stage(key, "upload", "skipped", {"reason": "试运行未投稿"})
@@ -792,6 +961,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "tags": tags,
             "partition_id": partition,
             "metadata_automation": metadata_automation,
+            "cover_generation": cover_generation,
+            "cover_path": str(cover),
         })
         result = previous.get("bilibili")
         if not isinstance(result, dict) or not result.get("bvid"):
@@ -819,6 +990,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "source_url": source_url,
                 "partition_id": partition,
                 "metadata_automation": metadata_automation,
+                "cover_generation": cover_generation,
+                "cover_path": str(cover),
                 "last_video": str(video),
             }
             store.save_multipart_session(
