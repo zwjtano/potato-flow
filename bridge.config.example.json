@@ -17,6 +17,7 @@
   "danmaku_native_max_comments": 0,
   "danmaku_native_interval_seconds": 0.6,
   "danmaku_cid_wait_seconds": 300,
+  "delete_recording_after_upload": true,
   "danmaku_fonts_dir": "y2a-auto/fonts",
   "danmaku_font_name": "Source Han Sans HW SC VF",
   "danmaku_font_size": 42,

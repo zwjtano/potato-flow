@@ -151,8 +151,13 @@
         <select class="form-select" data-role="file-type" aria-label="按文件类型筛选"><option value="">全部类型</option><option value="video">录播视频</option><option value="xml">XML 弹幕</option><option value="ass">ASS 字幕</option></select>
         <button class="btn btn-light border" type="button" data-action="refresh-files"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
     </div>
-    <div class="file-table-wrap"><table class="file-table"><thead><tr><th>文件</th><th>类型</th><th>大小</th><th>修改时间</th><th class="text-end">操作</th></tr></thead><tbody data-role="file-rows"><tr><td colspan="5" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr></tbody></table></div>
-    <div class="file-manager-note"><i class="bi bi-info-circle"></i> 正在录制或流水线处理中的文件会自动锁定，无法删除。删除操作不可恢复。</div>
+    <div class="file-batch-toolbar">
+        <label><input class="form-check-input" type="checkbox" data-role="file-select-all"> 选择当前结果</label>
+        <span>已选择 <strong data-role="file-selected-count">0</strong> 个文件</span>
+        <button class="btn btn-sm btn-danger" type="button" data-action="delete-selected-files" disabled><i class="bi bi-trash3"></i> 删除所选</button>
+    </div>
+    <div class="file-table-wrap"><table class="file-table"><thead><tr><th class="file-check-column"><input class="form-check-input" type="checkbox" data-role="file-select-all-table" aria-label="全选当前文件"></th><th>文件</th><th>类型</th><th>大小</th><th>修改时间</th><th class="text-end">操作</th></tr></thead><tbody data-role="file-rows"><tr><td colspan="6" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr></tbody></table></div>
+    <div class="file-manager-note"><i class="bi bi-info-circle"></i> 正在录制或流水线处理中的文件会自动锁定，无法删除。投稿与弹幕导入全部完成后，源视频和 XML 会自动清理。</div>
 </div></div></div></div>
 <div class="modal fade" id="rawLogModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><h5 class="modal-title">录制引擎原始日志</h5><small class="text-muted">仅用于排错，已隐藏 URL 查询参数</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body p-0"><pre class="raw-log">{{ recorder_log }}</pre></div></div></div></div>
 {% endblock %}
@@ -178,6 +183,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let roomResolveTimer = null;
     let resolvedRoomUrl = '';
     let recordingFiles = [];
+    const selectedRecordingFileIds = new Set();
     let filter = 'all';
     const jobLogStates = new Map();
     function getJobLogState(jobId) {
@@ -275,28 +281,90 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         const rows = filesModal.querySelector('[data-role="file-rows"]');
         if (!visible.length) {
-            rows.innerHTML = '<tr><td colspan="5" class="file-empty"><i class="bi bi-folder2-open"></i><strong>没有符合条件的文件</strong><span>录制结束后，视频和弹幕文件会显示在这里</span></td></tr>';
+            rows.innerHTML = '<tr><td colspan="6" class="file-empty"><i class="bi bi-folder2-open"></i><strong>没有符合条件的文件</strong><span>录制结束后，视频和弹幕文件会显示在这里</span></td></tr>';
+            updateFileSelectionControls(visible);
             return;
         }
         const typeNames = {video: '录播视频', xml: 'XML 弹幕', ass: 'ASS 字幕'};
         const typeIcons = {video: 'bi-camera-video', xml: 'bi-chat-square-text', ass: 'bi-badge-cc'};
-        rows.innerHTML = visible.map(file => `<tr><td><div class="file-name"><span class="file-type-icon ${escapeHtml(file.type)}"><i class="bi ${typeIcons[file.type] || 'bi-file-earmark'}"></i></span><div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small title="${escapeHtml(file.relative_path)}">${escapeHtml(file.source === 'artifacts' ? '流水线产物 / ' : '录制目录 / ')}${escapeHtml(file.relative_path)}</small></div></div></td><td><span class="file-kind ${escapeHtml(file.type)}">${escapeHtml(typeNames[file.type] || file.extension)}</span></td><td>${formatBytes(file.size_bytes)}</td><td><time>${escapeHtml(new Date(file.modified_at).toLocaleString('zh-CN', {hour12: false}))}</time></td><td><div class="file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-outline-danger" type="button" data-action="delete-file" data-id="${escapeHtml(file.id)}" data-name="${escapeHtml(file.name)}" ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : 'title="删除"'}><i class="bi ${file.locked ? 'bi-lock-fill' : 'bi-trash3'}"></i></button></div></td></tr>`).join('');
+        rows.innerHTML = visible.map(file => `<tr class="${selectedRecordingFileIds.has(file.id) ? 'selected' : ''}"><td class="file-check-column"><input class="form-check-input" type="checkbox" data-action="select-file" data-id="${escapeHtml(file.id)}" aria-label="选择 ${escapeHtml(file.name)}" ${selectedRecordingFileIds.has(file.id) ? 'checked' : ''} ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : ''}></td><td><div class="file-name"><span class="file-type-icon ${escapeHtml(file.type)}"><i class="bi ${typeIcons[file.type] || 'bi-file-earmark'}"></i></span><div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small title="${escapeHtml(file.relative_path)}">${escapeHtml(file.source === 'artifacts' ? '流水线产物 / ' : '录制目录 / ')}${escapeHtml(file.relative_path)}</small></div></div></td><td><span class="file-kind ${escapeHtml(file.type)}">${escapeHtml(typeNames[file.type] || file.extension)}</span></td><td>${formatBytes(file.size_bytes)}</td><td><time>${escapeHtml(new Date(file.modified_at).toLocaleString('zh-CN', {hour12: false}))}</time></td><td><div class="file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-outline-danger" type="button" data-action="delete-file" data-id="${escapeHtml(file.id)}" data-name="${escapeHtml(file.name)}" ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : 'title="删除"'}><i class="bi ${file.locked ? 'bi-lock-fill' : 'bi-trash3'}"></i></button></div></td></tr>`).join('');
         rows.querySelectorAll('[data-action="delete-file"]').forEach(button => button.addEventListener('click', deleteFile));
+        rows.querySelectorAll('[data-action="select-file"]').forEach(input => input.addEventListener('change', toggleFileSelection));
+        updateFileSelectionControls(visible);
+    }
+    function visibleRecordingFiles() {
+        const query = (filesModal.querySelector('[data-role="file-search"]').value || '').trim().toLowerCase();
+        const room = filesModal.querySelector('[data-role="file-room"]').value;
+        const type = filesModal.querySelector('[data-role="file-type"]').value;
+        return recordingFiles.filter(file => {
+            const roomMatches = !room || (room === 'unmatched' ? !file.room_id : file.room_id === room);
+            return roomMatches && (!type || file.type === type) && (`${file.name} ${file.relative_path}`).toLowerCase().includes(query);
+        });
+    }
+    function updateFileSelectionControls(visible = visibleRecordingFiles()) {
+        const selectable = visible.filter(file => !file.locked);
+        const selectedVisible = selectable.filter(file => selectedRecordingFileIds.has(file.id));
+        filesModal.querySelector('[data-role="file-selected-count"]').textContent = selectedRecordingFileIds.size;
+        filesModal.querySelector('[data-action="delete-selected-files"]').disabled = selectedRecordingFileIds.size === 0;
+        filesModal.querySelectorAll('[data-role^="file-select-all"]').forEach(input => {
+            input.disabled = selectable.length === 0;
+            input.checked = selectable.length > 0 && selectedVisible.length === selectable.length;
+            input.indeterminate = selectedVisible.length > 0 && selectedVisible.length < selectable.length;
+        });
+    }
+    function toggleFileSelection(event) {
+        const id = event.currentTarget.dataset.id;
+        if (event.currentTarget.checked) selectedRecordingFileIds.add(id);
+        else selectedRecordingFileIds.delete(id);
+        event.currentTarget.closest('tr')?.classList.toggle('selected', event.currentTarget.checked);
+        updateFileSelectionControls();
+    }
+    function selectVisibleFiles(event) {
+        const selectable = visibleRecordingFiles().filter(file => !file.locked);
+        const shouldSelect = event.currentTarget.checked;
+        selectable.forEach(file => shouldSelect ? selectedRecordingFileIds.add(file.id) : selectedRecordingFileIds.delete(file.id));
+        renderFiles();
+    }
+    async function deleteSelectedFiles(event) {
+        const ids = [...selectedRecordingFileIds];
+        if (!ids.length || !confirm(`确定永久删除所选的 ${ids.length} 个文件？\n正在录制或处理中的文件会受到保护。`)) return;
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 删除中';
+        try {
+            const response = await fetch('/live-recording/files/batch-delete', {
+                method: 'POST',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                body: JSON.stringify({file_ids: ids}),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '批量删除失败');
+            (result.deleted || []).forEach(file => selectedRecordingFileIds.delete(file.id));
+            if (result.failed_count) alert(`已删除 ${result.deleted_count} 个文件，${result.failed_count} 个文件未删除（可能正在录制或处理）。`);
+            await loadFiles();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            button.innerHTML = '<i class="bi bi-trash3"></i> 删除所选';
+            updateFileSelectionControls();
+        }
     }
     async function loadFiles() {
         if (!filesModal) return;
         const rows = filesModal.querySelector('[data-role="file-rows"]');
-        rows.innerHTML = '<tr><td colspan="5" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr>';
+        rows.innerHTML = '<tr><td colspan="6" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr>';
         try {
             const response = await fetch('/live-recording/files', {headers: {'Accept': 'application/json'}});
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '读取失败');
             recordingFiles = result.files || [];
+            const availableIds = new Set(recordingFiles.map(file => file.id));
+            [...selectedRecordingFileIds].forEach(id => { if (!availableIds.has(id)) selectedRecordingFileIds.delete(id); });
             filesModal.querySelector('[data-role="file-count"]').textContent = result.total_files ?? recordingFiles.length;
             filesModal.querySelector('[data-role="file-size"]').textContent = formatBytes(result.total_size_bytes);
             renderFiles();
         } catch (error) {
-            rows.innerHTML = `<tr><td colspan="5" class="file-empty text-danger"><i class="bi bi-exclamation-triangle"></i><strong>文件读取失败</strong><span>${escapeHtml(error.message)}</span></td></tr>`;
+            rows.innerHTML = `<tr><td colspan="6" class="file-empty text-danger"><i class="bi bi-exclamation-triangle"></i><strong>文件读取失败</strong><span>${escapeHtml(error.message)}</span></td></tr>`;
         }
     }
     async function deleteFile(event) {
@@ -306,6 +374,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const response = await fetch(`/live-recording/files/${encodeURIComponent(button.dataset.id)}/delete`, {method: 'POST', headers: {'Accept': 'application/json'}});
         const result = await response.json();
         if (!response.ok) { alert(result.error || '删除失败'); button.disabled = false; return; }
+        selectedRecordingFileIds.delete(button.dataset.id);
         await loadFiles();
     }
     function updateRoom(room, engineRunning) {
@@ -498,6 +567,8 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     filesModal?.addEventListener('shown.bs.modal', loadFiles);
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
+    filesModal?.querySelector('[data-action="delete-selected-files"]')?.addEventListener('click', deleteSelectedFiles);
+    filesModal?.querySelectorAll('[data-role^="file-select-all"]').forEach(input => input.addEventListener('change', selectVisibleFiles));
     filesModal?.querySelector('[data-role="file-search"]')?.addEventListener('input', renderFiles);
     filesModal?.querySelector('[data-role="file-room"]')?.addEventListener('change', renderFiles);
     filesModal?.querySelector('[data-role="file-type"]')?.addEventListener('change', renderFiles);

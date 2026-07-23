@@ -296,6 +296,36 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
     return cover
 
 
+def cleanup_uploaded_recording(
+    video: Path,
+    danmaku_xml: Path | None,
+    upload_video: Path,
+) -> dict[str, Any]:
+    """Remove large recording inputs after the complete upload state is durable."""
+    candidates = [
+        ("video", video),
+        ("danmaku_xml", danmaku_xml),
+    ]
+    if upload_video.resolve() != video.resolve():
+        candidates.append(("upload_video", upload_video))
+    deleted: list[str] = []
+    failed: list[dict[str, str]] = []
+    seen: set[Path] = set()
+    for kind, candidate in candidates:
+        if candidate is None:
+            continue
+        path = candidate.resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            path.unlink(missing_ok=True)
+            deleted.append(str(path))
+        except OSError as exc:
+            failed.append({"kind": kind, "path": str(path), "error": str(exc)})
+    return {"deleted": deleted, "failed": failed}
+
+
 def recording_metadata_values(
     video: Path,
     cfg: dict[str, Any],
@@ -552,6 +582,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "danmaku_import": previous.get("danmaku_import"),
         })
         store.finish(key, "completed", previous)
+        if bool(cfg.get("delete_recording_after_upload", True)):
+            previous["source_cleanup"] = cleanup_uploaded_recording(video, danmaku_xml, upload_video)
+            store.finish(key, "completed", previous)
         print(f"OK 上传完成: {video}")
         return True
     except Exception as exc:

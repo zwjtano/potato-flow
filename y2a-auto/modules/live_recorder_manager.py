@@ -863,6 +863,30 @@ class LiveRecorderManager:
                 raise RecorderConfigError("文件已经不存在") from exc
             return info
 
+    def delete_recording_files(self, file_ids: list[str]) -> dict[str, Any]:
+        if not isinstance(file_ids, list) or not file_ids:
+            raise RecorderConfigError("请选择要删除的文件")
+        if len(file_ids) > 500:
+            raise RecorderConfigError("单次最多删除 500 个文件")
+        deleted: list[dict[str, Any]] = []
+        failed: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for raw_id in file_ids:
+            file_id = str(raw_id or "").strip()
+            if not file_id or file_id in seen:
+                continue
+            seen.add(file_id)
+            try:
+                deleted.append(self.delete_recording_file(file_id))
+            except RecorderConfigError as exc:
+                failed.append({"id": file_id, "error": str(exc)})
+        return {
+            "deleted": deleted,
+            "failed": failed,
+            "deleted_count": len(deleted),
+            "failed_count": len(failed),
+        }
+
     @staticmethod
     def _decode_json(value: Any) -> dict[str, Any]:
         try:

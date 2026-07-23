@@ -62,6 +62,21 @@ class RecordingFilesTests(unittest.TestCase):
         with self.assertRaises(RecorderConfigError):
             self.manager.recording_file(forged)
 
+    def test_batch_delete_removes_selected_files_and_reports_invalid_ids(self):
+        first = self.recordings / "first.mp4"
+        second = self.recordings / "second.xml"
+        first.write_bytes(b"video")
+        second.write_text("<i/>", encoding="utf-8")
+        file_ids = [item["id"] for item in self.manager.recording_files()["files"]]
+        forged = self.manager._encode_file_id("recordings", "../outside.mp4")
+
+        result = self.manager.delete_recording_files(file_ids + [forged])
+
+        self.assertEqual(result["deleted_count"], 2)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertFalse(first.exists())
+        self.assertFalse(second.exists())
+
     def test_active_recording_is_locked_and_cannot_be_deleted(self):
         room_id = "abcdef123456"
         video = self.recordings / "主播_abcdef-live.flv"

@@ -118,6 +118,24 @@ class BridgeTests(unittest.TestCase):
                 self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
             result = store.results(key)
             self.assertEqual(result["bilibili"]["bvid"], "BV1existing")
+            self.assertFalse(video.exists())
+            self.assertEqual(result["source_cleanup"]["deleted"], [str(video.resolve())])
+
+    def test_cleanup_after_upload_removes_video_xml_and_transcoded_copy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.flv"
+            xml = root / "clip.xml"
+            upload_video = root / "artifacts" / "clip.mp4"
+            upload_video.parent.mkdir()
+            for path in (video, xml, upload_video):
+                path.write_bytes(b"data")
+
+            result = bridge.cleanup_uploaded_recording(video, xml, upload_video)
+
+            self.assertEqual(result["failed"], [])
+            self.assertEqual(len(result["deleted"]), 3)
+            self.assertTrue(all(not path.exists() for path in (video, xml, upload_video)))
 
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -1254,6 +1254,21 @@ def live_recording_file_delete(file_id):
         return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
+@app.route('/live-recording/files/batch-delete', methods=['POST'])
+@login_required
+def live_recording_files_batch_delete():
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = live_recorder_manager.delete_recording_files(payload.get('file_ids'))
+        return jsonify({
+            'ok': result['failed_count'] == 0,
+            'message': f"已删除 {result['deleted_count']} 个文件。",
+            **result,
+        })
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+
+
 @app.route('/live-recording/rooms', methods=['POST'])
 @login_required
 def live_recording_save_room():
