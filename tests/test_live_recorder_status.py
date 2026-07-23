@@ -109,6 +109,43 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(controls["rooms"]["https://www.douyu.com/100"])
         self.assertTrue(controls["rooms"]["https://live.bilibili.com/200"])
 
+    def test_add_room_reloads_running_idle_worker(self):
+        manager = LiveRecorderManager()
+        new_room = {"id": "cccccc333333", "name": "新主播"}
+        with mock.patch.object(manager, "_pid", return_value=4321), mock.patch.object(
+            manager, "save_room", return_value=new_room
+        ), mock.patch.object(
+            manager,
+            "rooms_with_status",
+            return_value=[{"runtime": {"recording": False}}],
+        ), mock.patch.object(manager, "stop") as stop, mock.patch.object(manager, "start") as start:
+            room, state = manager.save_room_and_reload("新主播", "https://www.douyu.com/300")
+
+        self.assertEqual(room, new_room)
+        self.assertEqual(state, "reloaded")
+        stop.assert_called_once_with()
+        start.assert_called_once_with()
+
+    def test_add_room_defers_reload_while_another_room_is_recording(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reload_path = Path(temp_dir) / "reload.json"
+            with mock.patch.object(recorder_module, "RELOAD_PATH", reload_path), mock.patch.object(
+                manager, "_pid", return_value=4321
+            ), mock.patch.object(
+                manager, "save_room", return_value={"id": "cccccc333333"}
+            ), mock.patch.object(
+                manager,
+                "rooms_with_status",
+                return_value=[{"runtime": {"recording": True}}],
+            ), mock.patch.object(manager, "_ensure_reload_thread") as ensure_thread:
+                _, state = manager.save_room_and_reload("新主播", "https://www.douyu.com/300")
+                marker_exists = reload_path.exists()
+
+        self.assertEqual(state, "pending")
+        self.assertTrue(marker_exists)
+        ensure_thread.assert_called_once_with()
+
     def test_headless_status_file_drives_room_state(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

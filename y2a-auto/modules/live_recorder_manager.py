@@ -34,6 +34,7 @@ LOG_PATH = APP_ROOT / "logs" / "biliup-recorder.log"
 PID_PATH = APP_ROOT / "temp" / "biliup-recorder.pid"
 STATUS_PATH = APP_ROOT / "temp" / "biliup-recorder-status.json"
 CONTROL_PATH = APP_ROOT / "temp" / "biliup-recorder-control.json"
+RELOAD_PATH = APP_ROOT / "temp" / "biliup-recorder-reload.json"
 FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
 RECORDING_FILE_SUFFIXES = {
     ".mp4": "video", ".flv": "video", ".mkv": "video", ".webm": "video",
@@ -77,6 +78,7 @@ class LiveRecorderManager:
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._log_handle = None
+        self._reload_thread: threading.Thread | None = None
 
     @property
     def binary_path(self) -> Path:
@@ -248,6 +250,48 @@ class LiveRecorderManager:
             self.sync_configs(rooms)
             self._write_control_state(rooms)
             return dict(existing)
+
+    def save_room_and_reload(self, name: str, url: str) -> tuple[dict[str, Any], str]:
+        """Save a room and make a running worker load it without truncating recordings."""
+        with self._lock:
+            was_running = self._pid() is not None
+            room = self.save_room(name, url)
+            if not was_running:
+                return room, "saved"
+            if any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status()):
+                _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
+                self._ensure_reload_thread()
+                return room, "pending"
+            self.stop()
+            self.start()
+            return room, "reloaded"
+
+    def _ensure_reload_thread(self) -> None:
+        if self._reload_thread is not None and self._reload_thread.is_alive():
+            return
+        self._reload_thread = threading.Thread(
+            target=self._reload_when_recordings_finish,
+            name="biliup-recorder-config-reload",
+            daemon=True,
+        )
+        self._reload_thread.start()
+
+    def _reload_when_recordings_finish(self) -> None:
+        while RELOAD_PATH.exists():
+            time.sleep(5)
+            with self._lock:
+                if self._pid() is None:
+                    RELOAD_PATH.unlink(missing_ok=True)
+                    return
+                if any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status()):
+                    continue
+                try:
+                    self.stop()
+                    self.start()
+                except RecorderConfigError:
+                    return
+                RELOAD_PATH.unlink(missing_ok=True)
+                return
 
     def delete_room(self, room_id: str) -> bool:
         with self._lock:

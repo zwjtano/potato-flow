@@ -1257,10 +1257,14 @@ def live_recording_file_delete(file_id):
 @login_required
 def live_recording_save_room():
     try:
-        if live_recorder_manager.status()['running']:
-            flash('请先停止内部录制 worker 再添加直播间。', 'warning')
+        _, reload_state = live_recorder_manager.save_room_and_reload(
+            request.form.get('name', ''), request.form.get('url', '')
+        )
+        if reload_state == 'reloaded':
+            flash('直播间已添加，录制 worker 已自动重载。', 'success')
+        elif reload_state == 'pending':
+            flash('直播间已添加；当前录制结束后会自动重载 worker。', 'success')
         else:
-            live_recorder_manager.save_room(request.form.get('name', ''), request.form.get('url', ''))
             flash('直播间已添加；录制配置和上传桥接配置已同步。', 'success')
     except RecorderConfigError as exc:
         flash(str(exc), 'danger')
