@@ -183,6 +183,67 @@ class BridgeTests(unittest.TestCase):
             self.assertFalse(video.exists())
             self.assertEqual(result["source_cleanup"]["deleted"], [str(video.resolve())])
 
+    def test_retry_detaches_unsubmitted_first_part_from_stale_session(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.mp4"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.claim(key, video, "bilibili")
+            store.finish(
+                key,
+                "failed",
+                {"multipart_session": "room-1", "part_number": 1},
+                "upload failed",
+            )
+            store.save_multipart_session(
+                "room-1",
+                {"pending_first_video": str(video), "title": ""},
+            )
+
+            self.assertTrue(bridge.upload_one(video, cfg, store, retry=True, dry_run=True))
+
+            self.assertIsNone(store.results(key)["multipart_session"])
+
+    def test_ingest_retry_only_processes_the_selected_failed_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            selected = root / "selected.mp4"
+            other = root / "other.mp4"
+            selected.write_bytes(b"selected")
+            other.write_bytes(b"other")
+            config = root / "bridge.config.json"
+            state = root / "state.sqlite3"
+            config.write_text(json.dumps({"state_db": str(state)}), encoding="utf-8")
+            store = bridge.StateStore(state)
+            for video in (selected, other):
+                key = bridge.fingerprint(video)
+                store.claim(key, video, "bilibili")
+                store.finish(key, "failed", error="failed")
+
+            with patch.object(bridge, "stdin_paths", return_value=[]), patch.object(
+                bridge, "upload_one", return_value=True
+            ) as upload:
+                result = bridge.main([
+                    "--config", str(config), "ingest", "--retry", str(selected),
+                ])
+
+            self.assertEqual(result, 0)
+            upload.assert_called_once()
+            self.assertEqual(upload.call_args.args[0], selected.resolve())
+
     def test_cleanup_after_upload_removes_video_xml_and_transcoded_copy(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -717,7 +717,17 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
     danmaku_xml = danmaku_xml or find_danmaku_xml(video)
     key = fingerprint(video, danmaku_xml)
     if retry and not session_key:
-        session_key = store.upload_session_key(key)
+        previous_session_key = store.upload_session_key(key)
+        previous_session = (
+            store.multipart_session(previous_session_key, include_closed=True)
+            if previous_session_key
+            else {}
+        )
+        # A session without a BVID only represents an unfinished first part.
+        # Retrying through it would block forever on its own pending_first_video.
+        # Retry that file as an independent submission instead.
+        if isinstance(previous_session.get("bilibili"), dict):
+            session_key = previous_session_key
     prior_result = store.results(key)
     if not store.claim(key, video, platform, retry=retry):
         print(f"SKIP 已处理或正在处理: {video}")
@@ -1070,7 +1080,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     retry = args.command == "retry" or bool(getattr(args, "retry", False))
-    received_paths = store.failed_paths() if retry else input_paths(args.paths)
+    received_paths = store.failed_paths() if args.command == "retry" else input_paths(args.paths)
     paths = [path for path in received_paths if path.suffix.lower() in VIDEO_EXTENSIONS]
     if args.command == "finalize-session" and not paths:
         closed = store.close_multipart_session(str(args.session_key))
