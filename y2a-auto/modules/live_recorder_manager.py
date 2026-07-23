@@ -44,6 +44,7 @@ RECORDING_FILE_SUFFIXES = {
     ".xml": "xml", ".ass": "ass",
 }
 DEFAULT_RECORDING_TITLE_TEMPLATE = "【直播回放】{streamer}｜{ai_topic}｜{date}"
+DEFAULT_RECORDING_SEGMENT_TIME = "01:00:00"
 
 
 class RecorderConfigError(ValueError):
@@ -596,7 +597,9 @@ class LiveRecorderManager:
         lines = [
             "# 由统一管理后台自动生成，请勿手动编辑。",
             "downloader: ffmpeg",
-            "file_size: 2621440000",
+            # 固定按时长切分，同一场直播的各段会依次投稿为 P1、P2……。
+            "file_size: null",
+            f'segment_time: "{DEFAULT_RECORDING_SEGMENT_TIME}"',
             # 手动录制允许随时停止；不能让 biliup 把短录播当作碎片删除，
             # 否则视频不会进入 segment_processor / ASS 流程。
             "filtering_threshold: 0",
