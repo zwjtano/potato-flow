@@ -8,7 +8,7 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="${ROOT}/y2a-auto/.venv/bin/python"
-SERVICE_NAME="biliup-y2a"
+SERVICE_NAME="potato-flow"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
 run_root() {
@@ -38,7 +38,7 @@ sed \
   -e "s|@PYTHON@|${PYTHON_ESCAPED}|g" \
   -e "s|@USER@|${USER_ESCAPED}|g" \
   -e "s|@GROUP@|${GROUP_ESCAPED}|g" \
-  "${ROOT}/deploy/biliup-y2a.service" > "${TMPDIR:-/tmp}/${SERVICE_NAME}.service"
+  "${ROOT}/deploy/potato-flow.service" > "${TMPDIR:-/tmp}/${SERVICE_NAME}.service"
 
 run_root install -m 0644 "${TMPDIR:-/tmp}/${SERVICE_NAME}.service" "${SERVICE_PATH}"
 run_root systemctl daemon-reload

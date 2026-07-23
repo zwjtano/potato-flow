@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}录播上传中心{% endblock %}</title>
+    <title>{% block title %}PotatoFlow · 土豆录播姬{% endblock %}</title>
     <!-- 使用本地Bootstrap CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='lib/bootstrap/bootstrap.min.css') }}">
     <!-- 使用本地Bootstrap Icons -->
     <link rel="stylesheet" href="{{ url_for('static', filename='lib/icons/bootstrap-icons.css') }}">
     <!-- 自定义样式 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/biliup-logo.png') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/potato-flow.svg') }}">
     {% block extra_css %}{% endblock %}
 </head>
 <body class="app-shell-body {% block body_class %}{% endblock %}">
     <aside class="app-sidebar" id="appSidebar">
         <a class="app-brand" href="{{ url_for('index') }}">
-            <img src="{{ url_for('static', filename='img/biliup-logo.png') }}" alt="" width="34" height="34">
-            <span><strong>录播上传</strong><small>Recorder Studio</small></span>
+            <img src="{{ url_for('static', filename='img/potato-flow.svg') }}" alt="" width="34" height="34">
+            <span><strong>土豆录播姬</strong><small>PotatoFlow</small></span>
         </a>
         <nav class="app-nav" aria-label="主导航">
             <div class="app-nav-label">工作台</div>
@@ -38,7 +38,7 @@
     <div class="app-frame">
         <header class="app-mobile-header">
             <button class="btn btn-sm btn-dark" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileNav" aria-label="打开导航"><i class="bi bi-list"></i></button>
-            <span>录播上传</span>
+            <span>土豆录播姬</span>
         </header>
         {% set shell_section = '概览' %}{% set shell_icon = 'bi-grid-1x2' %}
         {% if request.path.startswith('/live-recording') %}{% set shell_section = '直播录制' %}{% set shell_icon = 'bi-record-circle' %}
@@ -47,7 +47,7 @@
         {% elif request.path.startswith('/youtube_monitor') %}{% set shell_section = 'YouTube 监控' %}{% set shell_icon = 'bi-youtube' %}
         {% elif request.path.startswith('/settings') %}{% set shell_section = '系统设置' %}{% set shell_icon = 'bi-sliders' %}{% endif %}
         <header class="app-topbar">
-            <div class="app-breadcrumb"><span>Recorder Studio</span><i class="bi bi-chevron-right"></i><strong><i class="bi {{ shell_icon }}"></i>{{ shell_section }}</strong></div>
+            <div class="app-breadcrumb"><span>PotatoFlow</span><i class="bi bi-chevron-right"></i><strong><i class="bi {{ shell_icon }}"></i>{{ shell_section }}</strong></div>
             <div class="app-topbar-status"><span class="status-dot"></span><span>服务正常</span><time id="appClock"></time>{% if show_logout_in_nav %}<a href="{{ url_for('logout') }}" title="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}</div>
         </header>
         <main class="app-main {% block main_class %}{% endblock %}">
@@ -66,7 +66,7 @@
     </div>
 
     <div class="offcanvas offcanvas-start text-bg-dark" tabindex="-1" id="mobileNav" aria-label="移动端导航">
-        <div class="offcanvas-header"><h5 class="offcanvas-title">录播上传</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="关闭"></button></div>
+        <div class="offcanvas-header"><h5 class="offcanvas-title">土豆录播姬</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="关闭"></button></div>
         <div class="offcanvas-body app-mobile-nav"></div>
     </div>
     

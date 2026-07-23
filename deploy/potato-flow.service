@@ -1,5 +1,5 @@
 [Unit]
-Description=biliup Y2A unified recorder and uploader
+Description=PotatoFlow live recorder and AI uploader
 After=network-online.target
 Wants=network-online.target
 

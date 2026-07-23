@@ -82,7 +82,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
     event_type = event.event_type
 
     if event_type == EVENT_TASK_ADDED:
-        title = "Y2A-Auto 📋 任务已添加"
+        title = "PotatoFlow 📋 任务已添加"
         summary = f"{payload.get('task_id', '')[:8]} | {_upload_target_label(payload.get('upload_target'))}"
         body = _section_block(
             _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
@@ -96,7 +96,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
     if event_type == EVENT_TASK_COMPLETED:
         task_title = _task_title(payload)
         platform_result = _task_platform_result(payload)
-        title = "Y2A-Auto ✅ 任务已完成"
+        title = "PotatoFlow ✅ 任务已完成"
         summary = f"{task_title} | {platform_result}"
         body = _section_block(
             _kv("视频标题", _truncate(task_title, 120)),
@@ -111,7 +111,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
     if event_type == EVENT_TASK_FAILED:
         task_title = _task_title(payload)
         error_text = _pretty_error_text(payload.get("error_message"))
-        title = "Y2A-Auto ❌ 任务失败"
+        title = "PotatoFlow ❌ 任务失败"
         summary = f"{task_title} | {error_text}"
         body = _section_block(
             _kv("视频标题", _truncate(task_title, 120)),
@@ -125,7 +125,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
     if event_type == EVENT_LOGIN_SUCCESS:
         ip = _as_text(payload.get("ip_address")) or "unknown"
         occurred_at = _as_text(payload.get("occurred_at"))
-        title = "Y2A-Auto 🔐 后台登录成功"
+        title = "PotatoFlow 🔐 后台登录成功"
         summary = f"{ip} | {occurred_at}"
         body = _section_block(
             _kv("来源 IP", ip),
@@ -140,7 +140,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         max_att = _as_text(payload.get("max_attempts"))
         lock_min = _as_text(payload.get("lock_minutes"))
         occurred_at = _as_text(payload.get("occurred_at"))
-        title = "Y2A-Auto 🚫 登录已被锁定"
+        title = "PotatoFlow 🚫 登录已被锁定"
         summary = f"{failed}/{max_att} | {lock_min} 分钟"
         body = _section_block(
             _kv("来源 IP", ip),
@@ -158,7 +158,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         status_text = "成功" if is_success else "失败"
         message = _truncate(_as_text(payload.get("message")) or ("Cookies 已保存" if is_success else "登录失败"), 300)
         occurred_at = _as_text(payload.get("occurred_at"))
-        title = f"Y2A-Auto {icon} {platform}扫码登录{status_text}"
+        title = f"PotatoFlow {icon} {platform}扫码登录{status_text}"
         summary = f"{platform} | {message}"
         body = _section_block(
             _kv("平台", platform),
@@ -168,7 +168,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         markdown = _markdown_lines(f"**{icon} {platform}扫码登录{status_text}**", "", body)
         return NotificationMessage(title=title, summary=summary, markdown=markdown)
 
-    title = "Y2A-Auto 💬 系统通知"
+    title = "PotatoFlow 💬 系统通知"
     serialized = json.dumps(payload, ensure_ascii=False)
     summary = _truncate(serialized, 180)
     body = _section_block(

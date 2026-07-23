@@ -194,11 +194,11 @@ class NotificationService:
         now_text = _current_ts()
         channel_label = CHANNEL_LABELS.get(channel_id, channel_id)
         message = NotificationMessage(
-            title=f"Y2A-Auto 🔔 测试消息",
+            title=f"PotatoFlow 🔔 测试消息",
             summary=f"{channel_label} 测试发送成功触发",
             markdown="\n".join(
                 (
-                    "**🔔 Y2A-Auto 测试消息**",
+                    "**🔔 PotatoFlow 测试消息**",
                     "",
                     f"> **推送渠道：**{channel_label}",
                     f"> **发送时间：**{now_text}",

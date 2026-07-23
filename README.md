@@ -1,6 +1,6 @@
-# biliup × Y2A 录播上传中心
+# PotatoFlow（土豆录播姬）
 
-把 [biliup](https://github.com/biliup/biliup) 的直播录制能力与 [Y2A-Auto](https://github.com/fqscfqj/Y2A-Auto) 的下载、AI 处理和投稿能力整合进同一个 WebUI。
+土豆的直播录制与 AI 投稿流水线。PotatoFlow 把 [biliup](https://github.com/biliup/biliup) 的直播录制能力与 [Y2A-Auto](https://github.com/fqscfqj/Y2A-Auto) 的下载、AI 处理和投稿能力整合进同一个 WebUI。
 
 本项目的边界很明确：
 
@@ -82,8 +82,8 @@ macOS 仅用于开发验证；Windows 不属于当前整合版支持范围。
 需要 Docker Engine 24+ 和 Docker Compose v2。仓库根目录只定义一个容器，容器内的 biliup 是无 HTTP 端口的子进程，对外只映射 `5001`。
 
 ```bash
-git clone https://github.com/zwjtano/biliup-y2a-recorder.git
-cd biliup-y2a-recorder
+git clone https://github.com/zwjtano/potato-flow.git
+cd potato-flow
 docker compose up -d --build
 ```
 
@@ -125,8 +125,8 @@ docker compose up -d --build
 #### 1. 获取源码
 
 ```bash
-git clone https://github.com/zwjtano/biliup-y2a-recorder.git
-cd biliup-y2a-recorder
+git clone https://github.com/zwjtano/potato-flow.git
+cd potato-flow
 ```
 
 #### 2. Linux 一键安装
@@ -252,12 +252,12 @@ PORT=8080 python3 run.py
 ./scripts/install-systemd.sh
 ```
 
-脚本会根据当前项目路径和用户生成 `biliup-y2a.service`。systemd 只管理一个主服务，并通过 `KillMode=control-group` 管理其内部录制 worker。
+脚本会根据当前项目路径和用户生成 `potato-flow.service`。systemd 只管理一个主服务，并通过 `KillMode=control-group` 管理其内部录制 worker。
 
 ```bash
-sudo systemctl status biliup-y2a
-journalctl -u biliup-y2a -f
-sudo systemctl restart biliup-y2a
+sudo systemctl status potato-flow
+journalctl -u potato-flow -f
+sudo systemctl restart potato-flow
 ```
 
 防火墙只需放行主端口，例如：

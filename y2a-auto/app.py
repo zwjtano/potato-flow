@@ -1409,7 +1409,7 @@ except Exception:
     pass
 
 # 配置应用日志记录器
-logger = logging.getLogger('Y2A-Auto')
+logger = logging.getLogger('PotatoFlow')
 logger.setLevel(logging.WARNING)
 
 def init_id_mapping():
@@ -3973,7 +3973,7 @@ def cookie_refresh_needed():
         return jsonify({'error': '处理失败，请稍后重试'}), 500
 
 if __name__ == '__main__':
-    logger.info("Y2A-Auto 启动中...")
+    logger.info("PotatoFlow 启动中...")
 
     # 初始化AcFun分区ID映射
     init_id_mapping()
