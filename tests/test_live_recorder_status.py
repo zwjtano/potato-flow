@@ -262,6 +262,43 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(controls["rooms"]["https://www.douyu.com/100"])
         self.assertTrue(controls["rooms"]["https://live.bilibili.com/200"])
 
+    def test_restarting_room_closes_stale_failed_multipart_session(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            rooms_path = root / "rooms.json"
+            control_path = root / "control.json"
+            state_path = root / "state.sqlite3"
+            rooms = [dict(self.rooms[0], enabled=False)]
+            rooms_path.write_text(json.dumps(rooms), encoding="utf-8")
+            with sqlite3.connect(state_path) as db:
+                db.execute(
+                    """CREATE TABLE multipart_sessions (
+                       session_key TEXT PRIMARY KEY, status TEXT NOT NULL,
+                       result_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                       updated_at TEXT NOT NULL)"""
+                )
+                db.execute(
+                    "INSERT INTO multipart_sessions VALUES (?, 'open', '{}', 'old', 'old')",
+                    ("aaaaaa111111",),
+                )
+
+            with mock.patch.object(recorder_module, "ROOMS_PATH", rooms_path), mock.patch.object(
+                recorder_module, "CONTROL_PATH", control_path
+            ), mock.patch.object(manager, "_pipeline_state_path", return_value=state_path), mock.patch.object(
+                manager, "_pid", return_value=4321
+            ):
+                room = manager.set_room_recording("aaaaaa111111", True)
+
+            with sqlite3.connect(state_path) as db:
+                status = db.execute(
+                    "SELECT status FROM multipart_sessions WHERE session_key=?",
+                    ("aaaaaa111111",),
+                ).fetchone()[0]
+
+        self.assertTrue(room["enabled"])
+        self.assertEqual(status, "closed")
+
     def test_add_room_reloads_running_idle_worker(self):
         manager = LiveRecorderManager()
         new_room = {"id": "cccccc333333", "name": "新主播"}

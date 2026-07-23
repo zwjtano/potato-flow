@@ -539,6 +539,22 @@ class LiveRecorderManager:
             },
         )
 
+    def _close_stale_multipart_session(self, session_key: str) -> bool:
+        """End an earlier failed broadcast before a manual recording restarts."""
+        state_path = self._pipeline_state_path()
+        if not state_path.is_file():
+            return False
+        try:
+            with sqlite3.connect(state_path, timeout=5) as db:
+                cursor = db.execute(
+                    "UPDATE multipart_sessions SET status='closed', updated_at=? "
+                    "WHERE session_key=? AND status='open'",
+                    (datetime.now(timezone.utc).isoformat(), session_key),
+                )
+            return cursor.rowcount > 0
+        except sqlite3.Error:
+            return False
+
     def set_room_recording(self, room_id: str, enabled: bool) -> dict[str, Any]:
         """Enable or gracefully pause one room without stopping the whole engine."""
         with self._lock:
@@ -546,6 +562,9 @@ class LiveRecorderManager:
             room = next((item for item in rooms if item.get("id") == room_id), None)
             if room is None:
                 raise RecorderConfigError("没有找到该直播间")
+            was_enabled = bool(room.get("enabled", True))
+            if enabled and not was_enabled:
+                self._close_stale_multipart_session(str(room["id"]))
             room["enabled"] = bool(enabled)
             _atomic_json(ROOMS_PATH, rooms)
             self._write_control_state(rooms)

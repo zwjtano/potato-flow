@@ -1098,8 +1098,9 @@ def main(argv: list[str] | None = None) -> int:
                 else f"OK 最终分段已导入，无需关闭空会话: {args.session_key}"
             )
         else:
+            store.close_multipart_session(str(args.session_key))
             print(
-                f"WARN 最终分段导入失败，分P会话保持开启: {args.session_key}",
+                f"WARN 最终分段导入失败，失败任务已保留且本场分P会话已结束: {args.session_key}",
                 file=sys.stderr,
             )
         # The failed task is persisted and retryable in WebUI. Recording has
