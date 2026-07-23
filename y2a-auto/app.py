@@ -1719,7 +1719,10 @@ def index():
         cur.execute("SELECT COUNT(*) FROM tasks")
         total_tasks = cur.fetchone()[0] or 0
 
-        cur.execute("SELECT COUNT(*) FROM tasks WHERE status = ?", (TASK_STATES['AWAITING_REVIEW'],))
+        cur.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status IN (?, ?)",
+            (TASK_STATES['AWAITING_REVIEW'], TASK_STATES['FAILED'])
+        )
         awaiting_review = cur.fetchone()[0] or 0
 
         cur.execute("SELECT COUNT(*) FROM tasks WHERE status = ?", (TASK_STATES['FAILED'],))
@@ -1832,6 +1835,7 @@ def index():
             if today_start <= recording_local_time(job.get('updated_at')) < tomorrow_start
         ]
         total_tasks += len(recording_jobs)
+        awaiting_review += sum(job.get('status') == 'failed' for job in recording_jobs)
         failed_total += sum(job.get('status') == 'failed' for job in recording_jobs)
         ready_total += sum(job.get('status') == 'dry_run' for job in recording_jobs)
         in_progress += sum(
@@ -2017,10 +2021,22 @@ def manual_review():
     """人工审核列表页面"""
     logger.info("访问人工审核列表页面")
     review_tasks = get_tasks_by_status(TASK_STATES['AWAITING_REVIEW'])
+    failed_tasks = get_tasks_by_status(TASK_STATES['FAILED'])
+    known_task_ids = {task.get('id') for task in review_tasks}
+    review_tasks.extend(task for task in failed_tasks if task.get('id') not in known_task_ids)
+    review_tasks.sort(key=lambda task: str(task.get('updated_at') or ''), reverse=True)
+    recording_review_jobs = [
+        job for job in live_recorder_manager.pipeline_jobs(100)
+        if job.get('status') == 'failed'
+    ]
     
     # 封面图片现在直接从downloads目录提供
     
-    return render_template('manual_review.html', tasks=review_tasks)
+    return render_template(
+        'manual_review.html',
+        tasks=review_tasks,
+        recording_jobs=recording_review_jobs,
+    )
 
 @app.route('/tasks/<task_id>/edit', methods=['GET', 'POST'])
 @login_required

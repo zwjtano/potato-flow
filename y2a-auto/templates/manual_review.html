@@ -5,17 +5,95 @@
 {% block content %}
 <div class="review-container">
     <div class="studio-page-header">
-        <div><div class="page-eyebrow">MANUAL REVIEW</div><h1>人工审核</h1><p>集中检查标题、简介、封面、分区与安全审核结果。</p></div>
-        <div class="page-header-stat"><span>待处理</span><strong>{{ tasks|length if tasks else 0 }}</strong></div>
+        <div><div class="page-eyebrow">MANUAL REVIEW</div><h1>人工审核</h1><p>集中检查失败任务、标题、简介、封面、分区与安全审核结果。</p></div>
+        <div class="page-header-stat"><span>待处理</span><strong>{{ (tasks|length if tasks else 0) + (recording_jobs|length if recording_jobs else 0) }}</strong></div>
     </div>
+
+    {% if recording_jobs %}
+    <section class="mb-4" aria-labelledby="recordingReviewTitle">
+        <div class="task-section-heading">
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="task-source-icon recording"><i class="bi bi-record-circle"></i></span>
+                    <h2 id="recordingReviewTitle">录播失败任务</h2>
+                    <span class="badge rounded-pill text-bg-warning">{{ recording_jobs|length }}</span>
+                </div>
+                <p>失败任务已停止自动推进，请检查错误和流水线后决定是否重试。</p>
+            </div>
+        </div>
+        <div class="row row-cols-1 row-cols-xl-2 g-4">
+            {% for job in recording_jobs %}
+            <div class="col" id="recording-{{ job.id }}">
+                <article class="card h-100 border-warning">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span class="badge text-bg-warning"><i class="bi bi-patch-exclamation"></i> 失败待审核</span>
+                        <small class="text-muted">任务ID: <span class="text-monospace">{{ job.short_id }}</span></small>
+                    </div>
+                    {% set cover_stage = job.stages|selectattr('key', 'equalto', 'cover')|first %}
+                    {% if cover_stage and cover_stage.details and cover_stage.details.ai_cover_path %}
+                    <div class="card-img-container">
+                        <img src="{{ url_for('live_recording_job_cover', fingerprint=job.id) }}" class="card-img-top" alt="录播视频封面">
+                    </div>
+                    {% endif %}
+                    <div class="card-body">
+                        <h5 class="card-title">{{ job.title or job.video_name }}</h5>
+                        <div class="small text-muted mb-3">
+                            <i class="bi bi-person-video3"></i> {{ job.room_name }}
+                            <span class="mx-1">·</span>
+                            {{ job.video_name }}
+                        </div>
+                        <div class="alert alert-danger mb-3">
+                            <div class="fw-semibold mb-1">
+                                {{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage or '处理') }}失败
+                            </div>
+                            <div class="small text-break">{{ job.error or '任务执行失败，请查看流水线日志。' }}</div>
+                        </div>
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>已完成 {{ job.completed_stages }}/{{ job.total_stages }} 步</span>
+                            <span class="text-muted">重试 {{ job.attempts }} 次</span>
+                        </div>
+                        {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
+                        <div class="progress progress-thin">
+                            <div class="progress-bar bg-warning" data-pct="{{ progress }}"></div>
+                        </div>
+                    </div>
+                    <div class="card-footer d-flex flex-wrap justify-content-end gap-2">
+                        <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-diagram-3"></i> 查看流水线与日志
+                        </a>
+                        {% if job.retryable %}
+                        <button type="button" class="btn btn-primary recording-review-retry" data-job-id="{{ job.id }}">
+                            <i class="bi bi-arrow-repeat"></i> 审核后重试
+                        </button>
+                        {% endif %}
+                    </div>
+                </article>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
     
     {% if tasks %}
+        <div class="task-section-heading">
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="task-source-icon youtube"><i class="bi bi-youtube"></i></span>
+                    <h2>YouTube / 手动任务</h2>
+                    <span class="badge rounded-pill text-bg-warning">{{ tasks|length }}</span>
+                </div>
+            </div>
+        </div>
         <div class="row row-cols-1 row-cols-md-2 g-4">
             {% for task in tasks %}
                 <div class="col">
                     <div class="card h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
+                            {% if task.status == 'failed' %}
+                            <span class="badge bg-danger"><i class="bi bi-exclamation-circle"></i> 失败待审核</span>
+                            {% else %}
                             <span class="badge bg-warning"><i class="bi bi-hourglass-split"></i> 待审核</span>
+                            {% endif %}
                             <small class="text-muted">任务ID: <span class="text-monospace">{{ task.id[:8] }}...</span></small>
                         </div>
                         
@@ -204,12 +282,36 @@
                 </div>
             {% endfor %}
         </div>
-    {% else %}
+    {% elif not recording_jobs %}
         <div class="studio-empty-state">
             <span><i class="bi bi-patch-check"></i></span><h3>审核队列已清空</h3><p>需要人工确认的任务会自动出现在这里。</p><a class="btn btn-light border" href="{{ url_for('tasks') }}"><i class="bi bi-arrow-left"></i> 返回上传任务</a>
         </div>
     {% endif %}
 </div>
+
+<script>
+document.querySelectorAll('.recording-review-retry').forEach((button) => {
+    button.addEventListener('click', async () => {
+        if (!window.confirm('确认已检查错误信息，并重新执行这个录播任务吗？')) return;
+        button.disabled = true;
+        const original = button.innerHTML;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>正在启动';
+        try {
+            const response = await fetch(`/live-recording/jobs/${button.dataset.jobId}/retry`, {
+                method: 'POST',
+                headers: {'Accept': 'application/json'}
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error(result.error || '重试失败');
+            window.location.reload();
+        } catch (error) {
+            window.alert(error.message || '重试失败');
+            button.disabled = false;
+            button.innerHTML = original;
+        }
+    });
+});
+</script>
 
 <!-- 强制上传确认对话框 -->
 <div class="modal fade" id="forceUploadModal" tabindex="-1">
