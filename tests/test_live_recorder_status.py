@@ -81,6 +81,40 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["name"], "yyfyyf")
         self.assertEqual(room["avatar_url"], "https://apic.douyucdn.cn/avatar.jpg")
 
+    def test_readding_legacy_room_updates_profile_without_duplicate(self):
+        manager = LiveRecorderManager()
+        legacy_room = {
+            "id": "legacy-room",
+            "name": "旧名称",
+            "url": "https://www.douyu.com/9999",
+            "platform": "douyu",
+        }
+        resolved = {
+            "platform": "douyu",
+            "platform_name": "斗鱼",
+            "room_id": "9999",
+            "name": "新名称",
+            "avatar_url": "https://apic.douyucdn.cn/new.jpg",
+            "url": "https://www.douyu.com/9999",
+            "live_title": "直播标题",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rooms_path = Path(temp_dir) / "rooms.json"
+            rooms_path.write_text(json.dumps([legacy_room]), encoding="utf-8")
+            with mock.patch.object(recorder_module, "ROOMS_PATH", rooms_path), mock.patch.object(
+                manager, "resolve_room", return_value=resolved
+            ), mock.patch.object(manager, "sync_configs"), mock.patch.object(
+                manager, "_write_control_state"
+            ):
+                room = manager.add_room_from_url(resolved["url"])
+            saved = json.loads(rooms_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(room["id"], "legacy-room")
+        self.assertEqual(room["name"], "新名称")
+        self.assertEqual(room["platform_room_id"], "9999")
+        self.assertEqual(room["avatar_url"], "https://apic.douyucdn.cn/new.jpg")
+
     def test_maps_biliup_worker_status_per_room(self):
         payload = {
             "rooms": [

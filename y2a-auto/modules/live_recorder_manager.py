@@ -360,7 +360,10 @@ class LiveRecorderManager:
                 (
                     room for room in rooms
                     if room.get("platform") == resolved["platform"]
-                    and str(room.get("platform_room_id") or "") == resolved["room_id"]
+                    and (
+                        str(room.get("platform_room_id") or "") == resolved["room_id"]
+                        or str(room.get("url") or "").rstrip("/") == resolved["url"]
+                    )
                 ),
                 None,
             )
