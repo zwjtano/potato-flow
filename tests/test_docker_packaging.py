@@ -21,6 +21,14 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("BILIUP_BIN=/app/upstream-biliup/target/release/biliup", dockerfile)
         self.assertIn("EXPOSE 5001", dockerfile)
 
+    def test_image_contains_yyf_cover_reference(self):
+        reference_root = ROOT / "assets" / "streamer-references"
+        for filename in ("yyf.png", "guoxiaoguo.png"):
+            with self.subTest(filename=filename):
+                reference = reference_root / filename
+                self.assertTrue(reference.is_file())
+                self.assertGreater(reference.stat().st_size, 1024)
+
     def test_entrypoint_persists_runtime_data(self):
         entrypoint = (ROOT / "deploy" / "docker-entrypoint.sh").read_text(
             encoding="utf-8"

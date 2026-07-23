@@ -31,6 +31,13 @@ from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 DEFAULT_TITLE_TEMPLATE = "【直播回放】{streamer}｜{ai_topic}｜{date}"
+WORKSPACE_ROOT = Path(__file__).resolve().parent
+YYF_COVER_REFERENCE = WORKSPACE_ROOT / "assets" / "streamer-references" / "yyf.png"
+YYF_STREAMER_ALIASES = {"yyf", "yyfyyf", "月夜枫", "枫哥", "姜岑"}
+GUOXIAOGUO_COVER_REFERENCE = (
+    WORKSPACE_ROOT / "assets" / "streamer-references" / "guoxiaoguo.png"
+)
+GUOXIAOGUO_STREAMER_ALIASES = {"果小果", "果小果是个弟弟"}
 
 
 def utc_now() -> str:
@@ -384,6 +391,18 @@ def recording_cover_headline(title: str, ai_topic: str = "") -> str:
     return (candidate or "直播精彩内容")[:24]
 
 
+def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
+    """Return a curated identity reference for a known streamer."""
+    normalized = re.sub(r"[\s_\-]+", "", str(streamer or "")).casefold()
+    if normalized in YYF_STREAMER_ALIASES or re.fullmatch(r"yyf(?:yyf)?\d*", normalized):
+        if YYF_COVER_REFERENCE.is_file():
+            return "YYF", YYF_COVER_REFERENCE
+    if normalized in GUOXIAOGUO_STREAMER_ALIASES or normalized.startswith("果小果"):
+        if GUOXIAOGUO_COVER_REFERENCE.is_file():
+            return "果小果", GUOXIAOGUO_COVER_REFERENCE
+    return None
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -417,6 +436,8 @@ def generate_recording_cover_with_ai(
     client_config = dict(ai_cfg)
     if image_base_url:
         client_config["OPENAI_BASE_URL"] = image_base_url
+    reference = recording_cover_reference(streamer)
+    reference_name = reference[0] if reference else ""
     prompt = f"""
 为哔哩哔哩直播回放生成一张横向 16:10 视频封面，画面精致、主体明确、对比强烈，在手机缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -424,14 +445,31 @@ AI 生成的核心标题：{headline}
 内容摘要：{str(description or "")[:500]}
 
 只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+{f"上传的参考照片是主播 {reference_name} 本人。必须以照片中的人物为唯一人物原型，保持其脸型、五官、发型和身份辨识度；可以根据直播主题更换背景、服装和姿势，但不要生成成其他人。" if reference else ""}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
 """.strip()
-    response = get_openai_client(client_config).images.generate(
-        model=image_model,
-        prompt=prompt,
-        size=str(ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024"),
-    )
+    image_client = get_openai_client(client_config).images
+    image_size = str(ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024")
+    if reference:
+        with reference[1].open("rb") as reference_handle:
+            response = image_client.edit(
+                model=image_model,
+                image=reference_handle,
+                prompt=prompt,
+                size=image_size,
+            )
+        details.update({
+            "ai_cover_reference_used": True,
+            "ai_cover_reference_name": reference_name,
+            "ai_cover_reference_path": str(reference[1]),
+        })
+    else:
+        response = image_client.generate(
+            model=image_model,
+            prompt=prompt,
+            size=image_size,
+        )
     item = response.data[0] if getattr(response, "data", None) else None
     if item is None:
         raise RuntimeError("图片模型没有返回封面")

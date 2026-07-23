@@ -454,6 +454,80 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("绝对禁止出现日期", prompt)
         self.assertNotIn("2026-07-23", prompt)
 
+    def test_yyf_recording_cover_uses_identity_reference_image(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        self.assertTrue(bridge.YYF_COVER_REFERENCE.is_file())
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work_dir = root / "artifacts"
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_edit = Mock(return_value=response)
+            image_generate = Mock()
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=image_edit,
+                generate=image_generate,
+            ))
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
+                cover, details = bridge.generate_recording_cover_with_ai(
+                    title="【直播回放】YYF｜天梯翻盘局｜2026-07-24",
+                    ai_topic="天梯翻盘局",
+                    description="YYF进行天梯对局并完成翻盘。",
+                    streamer="yyfyyf",
+                    cfg={"_config_dir": str(root), "y2a_root": str(y2a_root), "ffmpeg": "ffmpeg"},
+                    work_dir=work_dir,
+                )
+
+        self.assertEqual(cover.name, "ai_cover.jpg")
+        self.assertTrue(details["ai_cover_reference_used"])
+        self.assertEqual(details["ai_cover_reference_name"], "YYF")
+        self.assertEqual(
+            details["ai_cover_reference_path"],
+            str(bridge.YYF_COVER_REFERENCE),
+        )
+        image_generate.assert_not_called()
+        image_edit.assert_called_once()
+        edit_kwargs = image_edit.call_args.kwargs
+        self.assertEqual(edit_kwargs["model"], "gpt-image-2")
+        self.assertEqual(edit_kwargs["size"], "1536x1024")
+        self.assertEqual(Path(edit_kwargs["image"].name), bridge.YYF_COVER_REFERENCE)
+        self.assertIn("参考照片是主播 YYF 本人", edit_kwargs["prompt"])
+        self.assertIn("保持其脸型、五官、发型和身份辨识度", edit_kwargs["prompt"])
+
+    def test_yyf_reference_aliases_are_recognized(self):
+        for alias in ("YYF", "yyfyyf", "月夜枫", "枫哥", "姜岑"):
+            with self.subTest(alias=alias):
+                reference = bridge.recording_cover_reference(alias)
+                self.assertIsNotNone(reference)
+                self.assertEqual(reference[0], "YYF")
+
+    def test_guoxiaoguo_reference_aliases_are_recognized(self):
+        self.assertTrue(bridge.GUOXIAOGUO_COVER_REFERENCE.is_file())
+        for alias in ("果小果", "果小果是个弟弟", "果小果是个弟弟_直播间"):
+            with self.subTest(alias=alias):
+                reference = bridge.recording_cover_reference(alias)
+                self.assertIsNotNone(reference)
+                self.assertEqual(reference[0], "果小果")
+                self.assertEqual(reference[1], bridge.GUOXIAOGUO_COVER_REFERENCE)
+
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.json"
