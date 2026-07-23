@@ -3,11 +3,11 @@
 {% block title %}{% if is_edit %}编辑监控配置{% else %}新建监控配置{% endif %} - Y2A-Auto{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>
+<div class="studio-page-header">
+    <div><div class="page-eyebrow">MONITOR SETUP</div><h1>
         <i class="bi bi-youtube text-danger"></i> 
         {% if is_edit %}编辑监控配置{% else %}新建监控配置{% endif %}
-    </h2>
+    </h1><p>配置内容来源、过滤条件、调度频率和任务处理策略。</p></div>
     <a href="{{ url_for('youtube_monitor_index') }}" class="btn btn-secondary">
         <i class="bi bi-arrow-left"></i> 返回
     </a>
@@ -981,4 +981,4 @@ function toggleLatestDateRange() {
     }
 }
 </script>
-{% endblock %} 
+{% endblock %}

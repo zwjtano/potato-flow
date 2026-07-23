@@ -7,14 +7,14 @@
      data-tasks-stream="{{ url_for('tasks_event_stream') }}"
      data-task-fragment-template="{{ url_for('task_fragment', task_id='__TASK_ID__') }}">
     {% set failed_tasks = tasks|selectattr('status', 'equalto', 'failed')|list if tasks else [] %}
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+    <div class="studio-page-header">
         <div class="d-flex align-items-center gap-2">
-            <h2 class="mb-0">任务列表</h2>
+            <div><div class="page-eyebrow">UPLOAD QUEUE</div><h1>上传任务</h1><p>查看下载、处理与 B站投稿的完整进度。</p></div>
             <div id="tasksRefreshIndicator" class="d-none" aria-hidden="true">
                 <span class="spinner-border spinner-border-sm text-primary" role="status" aria-label="正在刷新"></span>
             </div>
         </div>
-        <div class="d-flex gap-2 flex-wrap align-items-center">
+        <div class="page-actions">
             <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal">
                 <i class="bi bi-plus-circle"></i> 新建任务
             </button>
@@ -80,8 +80,8 @@
         </div>
     </div>
     {% else %}
-    <div class="alert alert-info">
-        <i class="bi bi-info-circle"></i> 暂无任务，请点击"新建任务"按钮添加任务。
+    <div class="studio-empty-state">
+        <span><i class="bi bi-cloud-arrow-up"></i></span><h3>还没有上传任务</h3><p>添加一个 YouTube 视频链接，系统会自动完成下载、处理和 B站投稿。</p><button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal"><i class="bi bi-plus-lg"></i> 新建任务</button>
     </div>
     {% endif %}
     
@@ -1205,4 +1205,3 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
     });
 </script>
 {% endblock %} 
-

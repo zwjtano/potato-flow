@@ -3,16 +3,17 @@
 {% block title %}Y2A-Auto - 首页{% endblock %}
 
 {% block content %}
-<div class="home-hero p-3 p-md-4">
-    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
+<div class="studio-page-header home-hero">
+    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3 w-100">
         <div>
-            <h1 class="h3 h-md-2 mb-1">Y2A-Auto 仪表盘</h1>
-            <div class="text-muted small">今日概览 · 实时掌握任务与转发情况</div>
+            <div class="page-eyebrow">OVERVIEW</div>
+            <h1>工作台概览</h1>
+            <p>实时掌握录制、处理、审核与投稿状态。</p>
         </div>
-        <div class="d-flex flex-wrap gap-2">
+        <div class="page-actions">
             <a href="{{ url_for('tasks') }}" class="btn btn-primary"><i class="bi bi-collection-play me-1"></i> 任务列表</a>
-            <a href="{{ url_for('manual_review') }}" class="btn btn-warning"><i class="bi bi-patch-check me-1"></i> 待审核</a>
-            <a href="{{ url_for('youtube_monitor_index') }}" class="btn btn-outline-danger"><i class="bi bi-broadcast-pin me-1"></i> 监控</a>
+            <a href="{{ url_for('manual_review') }}" class="btn btn-light border"><i class="bi bi-patch-check me-1"></i> 待审核</a>
+            <a href="{{ url_for('youtube_monitor_index') }}" class="btn btn-light border"><i class="bi bi-broadcast-pin me-1"></i> 监控</a>
             <a href="#" data-bs-toggle="modal" data-bs-target="#quickStartModal" class="btn btn-outline-secondary"><i class="bi bi-ui-checks-grid me-1"></i> 快速入门</a>
         </div>
     </div>

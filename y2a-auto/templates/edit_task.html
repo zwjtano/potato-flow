@@ -4,8 +4,8 @@
 
 {% block content %}
 <div class="edit-task-container" data-upload-target="{{ upload_target|default('acfun') }}">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>编辑任务</h2>
+    <div class="studio-page-header">
+        <div><div class="page-eyebrow">TASK EDITOR</div><h1>编辑任务</h1><p>检查素材并调整投稿信息。</p></div>
         <a href="{{ url_for('tasks') }}" class="btn btn-outline-secondary">返回任务列表</a>
     </div>
     
