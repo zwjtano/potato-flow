@@ -25,7 +25,6 @@ from modules.utils import get_app_subdir
 from modules.config_manager import load_config, update_config, reset_specific_config
 from modules.whisper_languages import WHISPER_LANGUAGE_LIST
 from modules.task_manager import add_task, start_task, get_task, get_tasks_paginated, get_tasks_by_status, update_task, delete_task, force_upload_task, TASK_STATES, clear_all_tasks, retry_failed_tasks, register_task_updates_listener, unregister_task_updates_listener, resolve_cookie_file_path
-from modules.acfun_auth import AcfunQrLoginSession
 from modules.bilibili_auth import BilibiliQrLoginSession
 from queue import Empty
 from modules.youtube_monitor import youtube_monitor
@@ -85,10 +84,6 @@ ALLOWED_COVER_EXTENSIONS = {
 _BILIBILI_QR_SESSIONS = {}
 _BILIBILI_QR_SESSION_LOCK = threading.Lock()
 _BILIBILI_QR_SESSION_TTL_SECONDS = 300
-# AcFun二维码登录会话（内存）
-_ACFUN_QR_SESSIONS = {}
-_ACFUN_QR_SESSION_LOCK = threading.Lock()
-_ACFUN_QR_SESSION_TTL_SECONDS = 420
 # 登录安全状态存储
 def _get_security_state_path():
     try:
@@ -284,43 +279,6 @@ def _get_bilibili_qr_session(session_id: str):
     _cleanup_bilibili_qr_sessions()
     with _BILIBILI_QR_SESSION_LOCK:
         item = _BILIBILI_QR_SESSIONS.get(session_id)
-    if not item:
-        return None
-    return item.get('session')
-
-
-def _cleanup_acfun_qr_sessions():
-    now_ts = time.time()
-    with _ACFUN_QR_SESSION_LOCK:
-        stale_ids = []
-        for sid, item in _ACFUN_QR_SESSIONS.items():
-            created_at = float(item.get('created_at', 0) or 0)
-            if now_ts - created_at > _ACFUN_QR_SESSION_TTL_SECONDS:
-                stale_ids.append(sid)
-        for sid in stale_ids:
-            _ACFUN_QR_SESSIONS.pop(sid, None)
-
-
-def _create_acfun_qr_session():
-    _cleanup_acfun_qr_sessions()
-    session_id = str(uuid.uuid4())
-    session_obj = AcfunQrLoginSession()
-    with _ACFUN_QR_SESSION_LOCK:
-        _ACFUN_QR_SESSIONS[session_id] = {
-            'created_at': time.time(),
-            'session': session_obj,
-            'success_notified': False,
-            'failure_notified': False,
-        }
-    return session_id, session_obj
-
-
-def _get_acfun_qr_session(session_id: str):
-    if not session_id:
-        return None
-    _cleanup_acfun_qr_sessions()
-    with _ACFUN_QR_SESSION_LOCK:
-        item = _ACFUN_QR_SESSIONS.get(session_id)
     if not item:
         return None
     return item.get('session')
@@ -3179,72 +3137,6 @@ def settings_sync_cookiecloud():
             'status': 'error',
         }), 500
 
-
-@app.route('/settings/acfun/qrcode/start', methods=['POST'])
-@login_required
-def acfun_qrcode_start():
-    """发起 AcFun 二维码登录并返回二维码图片。"""
-    config = load_config()
-    cookie_path = resolve_cookie_file_path(
-        path_value=config.get('ACFUN_COOKIES_PATH', 'cookies/ac_cookies.json'),
-        default_relative_path='cookies/ac_cookies.json',
-        service_name='AcFun',
-        logger_obj=logger,
-        allow_json_txt_fallback=True
-    )
-
-    try:
-        session_id, qr_session = _create_acfun_qr_session()
-        qr_data = qr_session.generate()
-        return jsonify({
-            'success': True,
-            'session_id': session_id,
-            'image_base64': qr_data.get('image_base64', ''),
-            'mime_type': qr_data.get('mime_type', 'image/png'),
-            'expires_in': _ACFUN_QR_SESSION_TTL_SECONDS,
-            'qr_expires_in_ms': qr_data.get('expires_in_ms', 120000),
-            'cookie_path': cookie_path,
-        })
-    except Exception as e:
-        logger.error(f"发起 AcFun 二维码登录失败: {e}")
-        return jsonify({'success': False, 'message': '二维码登录失败，请稍后重试'}), 500
-
-@app.route('/settings/acfun/qrcode/status/<session_id>', methods=['GET'])
-@login_required
-def acfun_qrcode_status(session_id):
-    """轮询 AcFun 二维码登录状态。"""
-    qr_session = _get_acfun_qr_session(session_id)
-    if not qr_session:
-        return jsonify({'success': False, 'message': '二维码会话不存在或已过期'}), 404
-
-    config = load_config()
-    cookie_path = resolve_cookie_file_path(
-        path_value=config.get('ACFUN_COOKIES_PATH', 'cookies/ac_cookies.json'),
-        default_relative_path='cookies/ac_cookies.json',
-        service_name='AcFun',
-        logger_obj=logger,
-        allow_json_txt_fallback=True
-    )
-
-    try:
-        status_data = qr_session.check_status(cookie_file=cookie_path)
-        _emit_qr_login_event_once(
-            _ACFUN_QR_SESSIONS,
-            _ACFUN_QR_SESSION_LOCK,
-            session_id,
-            'AcFun',
-            status_data,
-        )
-        status = status_data.get('status')
-        # done/failed 状态保留到 TTL 自动清理，避免前端再次检查时立刻报“会话过期”
-        # 仅 timeout（QR码确实过期）时立即移除
-        if status == 'timeout':
-            with _ACFUN_QR_SESSION_LOCK:
-                _ACFUN_QR_SESSIONS.pop(session_id, None)
-        return jsonify({'success': True, **status_data})
-    except Exception as e:
-        logger.error(f"查询 AcFun 二维码登录状态失败: {e}")
-        return jsonify({'success': False, 'message': '查询登录状态失败，请稍后重试'}), 500
 
 @app.route('/settings/bilibili/qrcode/start', methods=['POST'])
 @login_required

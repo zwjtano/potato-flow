@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import wave
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from .asr_api_client import AsrApiClient, AsrConfig
 from .ffmpeg_manager import get_ffmpeg_path, get_ffprobe_path

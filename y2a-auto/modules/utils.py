@@ -38,7 +38,7 @@ def get_app_subdir(subdir_name):
 import re
 import copy
 import json
-from typing import Any, Optional
+from typing import Optional
 from urllib.parse import urlparse
 
 def process_cover(image_path, output_path=None, mode='crop'):

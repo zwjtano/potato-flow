@@ -9,12 +9,11 @@ import datetime
 from datetime import datetime, timedelta
 import socket
 import ssl
-from typing import Optional, Dict, List, Any, Union, Tuple
+from typing import Optional, Dict, List, Any, Tuple
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import DEFAULT_HTTP_TIMEOUT_SEC
 import httplib2
-import threading
 import time
 from urllib.parse import quote, urlsplit
 from apscheduler.schedulers.background import BackgroundScheduler

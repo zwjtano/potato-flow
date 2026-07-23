@@ -87,10 +87,6 @@ def input_paths(values: list[str], include_stdin: bool = True) -> list[Path]:
     return result
 
 
-def video_paths(values: list[str], include_stdin: bool = True) -> list[Path]:
-    return [path for path in input_paths(values, include_stdin) if path.suffix.lower() in VIDEO_EXTENSIONS]
-
-
 def find_danmaku_xml(video: Path, paths: list[Path] | None = None) -> Path | None:
     candidates = [path for path in (paths or []) if path.suffix.lower() == ".xml"]
     candidates.extend((video.with_suffix(".xml"), video.parent / "danmaku" / f"{video.stem}.xml"))
@@ -432,12 +428,6 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
     except Exception as exc:
         print(f"WARN 弹幕 AI 简介生成失败，使用原简介: {exc}", file=sys.stderr)
         return base_description, ""
-
-
-def summarize_danmaku_with_ai(comments, base_description: str, cfg: dict[str, Any]) -> str:
-    """Backward-compatible description-only wrapper."""
-    description, _ = generate_danmaku_metadata_with_ai(comments, base_description, cfg)
-    return description
 
 
 def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,

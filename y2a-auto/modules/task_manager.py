@@ -34,13 +34,6 @@ import subprocess
 from typing import Any, Dict
 from werkzeug.security import safe_join
 
-# 导入其他模块
-# 这些导入会在函数内部使用，避免循环导入问题
-# from modules.youtube_handler import download_video_data
-# from modules.ai_enhancer import translate_video_metadata, generate_acfun_tags, recommend_acfun_partition
-# from modules.content_moderator import AlibabaCloudModerator
-# from modules.acfun_uploader import AcfunUploader
-
 def _get_memory_usage_percent():
     """获取系统内存使用百分比，用于内存感知处理"""
     try:
