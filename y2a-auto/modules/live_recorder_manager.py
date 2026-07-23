@@ -67,6 +67,18 @@ def _slug(value: str) -> str:
     return cleaned.strip("_") or "直播间"
 
 
+def _workspace_runtime_path(value: Any, default: str) -> str:
+    """Convert repository-relative paths into paths valid in the active runtime."""
+    raw = str(value or default).strip()
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return str(path)
+    parts = path.parts
+    if parts and parts[0] == "y2a-auto":
+        return str(APP_ROOT.joinpath(*parts[1:]))
+    return str(WORKSPACE_ROOT / path)
+
+
 def detect_platform(url: str) -> str:
     parsed = urlparse(url.strip())
     host = (parsed.hostname or "").lower()
@@ -649,6 +661,14 @@ class LiveRecorderManager:
         else:
             config = {}
         config["y2a_root"] = str(APP_ROOT)
+        config["bilibili_cookies"] = _workspace_runtime_path(
+            config.get("bilibili_cookies"),
+            "y2a-auto/cookies/bili_cookies.json",
+        )
+        config["danmaku_fonts_dir"] = _workspace_runtime_path(
+            config.get("danmaku_fonts_dir"),
+            "y2a-auto/fonts",
+        )
         if str(config.get("title_template") or "").strip() in {"", "{stem}"}:
             config["title_template"] = DEFAULT_RECORDING_TITLE_TEMPLATE
         if (FFMPEG_DIR / "ffmpeg").is_file():

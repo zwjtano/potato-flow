@@ -487,7 +487,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "bridge.config.json"
             config_path.write_text(
-                json.dumps({"title_template": "{stem}"}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "title_template": "{stem}",
+                        "bilibili_cookies": "y2a-auto/cookies/bili_cookies.json",
+                        "danmaku_fonts_dir": "y2a-auto/fonts",
+                    },
+                    ensure_ascii=False,
+                ),
                 encoding="utf-8",
             )
             with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_path):
@@ -499,6 +506,34 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "【直播回放】{streamer}｜{ai_topic}｜{date}",
         )
         self.assertEqual(config["profiles"][0]["streamer_name"], "开播主播")
+        self.assertEqual(
+            config["bilibili_cookies"],
+            str(recorder_module.APP_ROOT / "cookies" / "bili_cookies.json"),
+        )
+        self.assertEqual(
+            config["danmaku_fonts_dir"],
+            str(recorder_module.APP_ROOT / "fonts"),
+        )
+
+    def test_bridge_profiles_preserve_absolute_runtime_paths(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "bridge.config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "bilibili_cookies": "/custom/cookies.json",
+                        "danmaku_fonts_dir": "/custom/fonts",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_path):
+                manager._sync_bridge_profiles(self.rooms)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(config["bilibili_cookies"], "/custom/cookies.json")
+        self.assertEqual(config["danmaku_fonts_dir"], "/custom/fonts")
 
     def test_headless_status_file_drives_room_state(self):
         manager = LiveRecorderManager()
