@@ -232,7 +232,7 @@ class BilibiliUploader:
 
     def upload_video(
         self,
-        video_file_path: str,
+        video_file_path: Union[str, List[str]],
         cover_file_path: str,
         title: str,
         description: str,
@@ -243,6 +243,8 @@ class BilibiliUploader:
         progress_callback: Optional[Callable[[str], None]] = None,
         title_limit: int = BILIBILI_TITLE_LIMIT,
         description_limit: int = BILIBILI_DESCRIPTION_LIMIT,
+        page_titles: Optional[List[str]] = None,
+        existing_submission: Optional[dict] = None,
     ) -> Tuple[bool, Union[dict, str]]:
         self.task_id = task_id
         self.logger = setup_task_logger(task_id or "unknown")
@@ -250,8 +252,16 @@ class BilibiliUploader:
         try:
             configure_bilibili_runtime()
 
-            if not os.path.exists(video_file_path):
-                return False, f"视频文件不存在: {video_file_path}"
+            video_paths = (
+                [str(path) for path in video_file_path]
+                if isinstance(video_file_path, (list, tuple))
+                else [str(video_file_path)]
+            )
+            if not video_paths:
+                return False, "没有可上传的视频文件"
+            missing_videos = [path for path in video_paths if not os.path.exists(path)]
+            if missing_videos:
+                return False, f"视频文件不存在: {missing_videos[0]}"
             if not os.path.exists(cover_file_path):
                 return False, f"封面文件不存在: {cover_file_path}"
 
@@ -291,12 +301,23 @@ class BilibiliUploader:
                 no_reprint=False,
             )
 
-            page = video_uploader.VideoUploaderPage(
-                path=video_file_path,
-                title=safe_title,
-            )
+            normalized_page_titles = [str(item or "").strip() for item in (page_titles or [])]
+            pages = []
+            for index, path in enumerate(video_paths):
+                fallback_title = safe_title if len(video_paths) == 1 else f"P{index + 1}"
+                page_title = (
+                    normalized_page_titles[index]
+                    if index < len(normalized_page_titles) and normalized_page_titles[index]
+                    else fallback_title
+                )
+                pages.append(
+                    video_uploader.VideoUploaderPage(
+                        path=path,
+                        title=page_title[:80],
+                    )
+                )
             uploader = video_uploader.VideoUploader(
-                pages=[page],
+                pages=pages,
                 meta=meta,
                 credential=credential,
                 cover=cover_file_path,
@@ -415,14 +436,43 @@ class BilibiliUploader:
                     self.log(f"bilibili上传失败事件: {_compact_exception_text(str(err))}")
 
             _emit_progress("0.0%")
-            self.log("开始上传到bilibili")
+            appending = bool(
+                isinstance(existing_submission, dict)
+                and existing_submission.get("bvid")
+            )
+            self.log("开始追加Bilibili分P" if appending else "开始上传到bilibili")
+
+            async def _run_upload():
+                if not appending:
+                    return await uploader.start()
+
+                aid = existing_submission.get("aid")
+                cover_url = str(existing_submission.get("cover_url") or "")
+                existing_parts = existing_submission.get("uploaded_parts")
+                if not aid or not cover_url or not isinstance(existing_parts, list):
+                    raise ValueError("已有稿件缺少 aid、封面地址或分P上传状态，无法安全追加分P")
+
+                new_parts = await uploader.upload_pages()
+                combined_parts = [*existing_parts, *new_parts]
+                edit_result = await uploader.edit(
+                    combined_parts,
+                    aid=int(aid),
+                    cover_url=cover_url,
+                )
+                merged = dict(edit_result) if isinstance(edit_result, dict) else {}
+                merged.setdefault("aid", aid)
+                merged.setdefault("bvid", existing_submission.get("bvid"))
+                merged["_uploaded_videos"] = combined_parts
+                merged["_cover_url"] = cover_url
+                return merged
+
             try:
-                result = asyncio.run(uploader.start())
+                result = asyncio.run(_run_upload())
             except RuntimeError:
                 # 已有事件循环时，在新线程中运行
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    result = pool.submit(asyncio.run, uploader.start()).result()
+                    result = pool.submit(asyncio.run, _run_upload()).result()
 
             _emit_progress("100.0%")
             self.log(f"bilibili上传完成: {result}")
@@ -430,6 +480,8 @@ class BilibiliUploader:
             if not isinstance(result, dict):
                 return False, "bilibili返回结果格式异常"
 
+            uploaded_parts = result.pop("_uploaded_videos", None)
+            cover_url = result.pop("_cover_url", "")
             bvid = result.get("bvid")
             aid = result.get("aid")
             if not bvid and isinstance(result.get("data"), dict):
@@ -445,6 +497,9 @@ class BilibiliUploader:
                 "bvid": bvid,
                 "aid": aid,
                 "url": video_url,
+                "part_count": len(uploaded_parts) if isinstance(uploaded_parts, list) else len(video_paths),
+                "uploaded_parts": uploaded_parts if isinstance(uploaded_parts, list) else [],
+                "cover_url": cover_url,
             }
 
         except ArgsException as e:

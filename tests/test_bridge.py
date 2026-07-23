@@ -137,6 +137,64 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(len(result["deleted"]), 3)
             self.assertTrue(all(not path.exists() for path in (video, xml, upload_video)))
 
+    def test_live_segments_append_to_one_bilibili_submission(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cover = root / "cover.jpg"
+            cookie = root / "cookie.json"
+            first = root / "主播_abcdef2026-07-23_09-00-00_直播.flv"
+            second = root / "主播_abcdef2026-07-23_10-00-00_直播.flv"
+            cover.write_bytes(b"cover")
+            cookie.write_text("[]", encoding="utf-8")
+            first.write_bytes(b"part-one")
+            second.write_bytes(b"part-two")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "ai_danmaku_summary_enabled": False,
+                "delete_recording_after_upload": False,
+            }
+            calls = []
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **kwargs):
+                    calls.append(kwargs)
+                    existing = kwargs.get("existing_submission")
+                    part_count = int((existing or {}).get("part_count") or 0) + 1
+                    parts = list((existing or {}).get("uploaded_parts") or [])
+                    parts.append({"filename": f"part-{part_count}", "title": f"P{part_count}"})
+                    return True, {
+                        "bvid": "BV1multipart",
+                        "aid": 123,
+                        "url": "https://www.bilibili.com/video/BV1multipart",
+                        "part_count": part_count,
+                        "uploaded_parts": parts,
+                        "cover_url": "https://example.com/cover.jpg",
+                    }
+
+            store = bridge.StateStore(root / "state.sqlite3")
+            with patch.object(bridge, "import_y2a", return_value=(FakeUploader, None)):
+                self.assertTrue(bridge.upload_one(first, cfg, store, session_key="room-1"))
+                self.assertTrue(bridge.upload_one(second, cfg, store, session_key="room-1"))
+
+            self.assertIsNone(calls[0]["existing_submission"])
+            self.assertEqual(calls[0]["page_titles"], ["P1 09:00:00"])
+            self.assertEqual(calls[1]["existing_submission"]["bvid"], "BV1multipart")
+            self.assertEqual(calls[1]["page_titles"], ["P2 10:00:00"])
+            session = store.multipart_session("room-1")
+            self.assertEqual(session["bilibili"]["part_count"], 2)
+            self.assertTrue(store.close_multipart_session("room-1"))
+            self.assertEqual(store.multipart_session("room-1"), {})
+
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.json"

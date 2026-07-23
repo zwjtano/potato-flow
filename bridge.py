@@ -126,6 +126,12 @@ def fingerprint(path: Path, sidecar: Path | None = None) -> str:
     return digest.hexdigest()
 
 
+def recording_part_title(video: Path, index: int) -> str:
+    match = re.search(r"20\d{2}-\d{2}-\d{2}_(\d{2})-(\d{2})-(\d{2})", video.stem)
+    clock = ":".join(match.groups()) if match else ""
+    return f"P{max(1, index)} {clock}".strip()
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,6 +163,15 @@ class StateStore:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (fingerprint, stage),
                     FOREIGN KEY (fingerprint) REFERENCES uploads(fingerprint)
+                )"""
+            )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS multipart_sessions (
+                    session_key TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )"""
             )
 
@@ -248,6 +263,57 @@ class StateStore:
             return value if isinstance(value, dict) else {}
         except (TypeError, json.JSONDecodeError):
             return {}
+
+    def multipart_session(self, session_key: str, *, include_closed: bool = False) -> dict[str, Any]:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT status, result_json FROM multipart_sessions WHERE session_key=?",
+                (session_key,),
+            ).fetchone()
+        if not row or (row["status"] != "open" and not include_closed):
+            return {}
+        try:
+            value = json.loads(row["result_json"])
+            if isinstance(value, dict):
+                value["_session_status"] = row["status"]
+                return value
+            return {}
+        except (TypeError, json.JSONDecodeError):
+            return {}
+
+    def save_multipart_session(
+        self,
+        session_key: str,
+        result: dict[str, Any],
+        *,
+        status: str = "open",
+    ) -> None:
+        now = utc_now()
+        stored_result = {key: value for key, value in result.items() if key != "_session_status"}
+        payload = json.dumps(stored_result, ensure_ascii=False, default=str)
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO multipart_sessions
+                   (session_key, status, result_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(session_key) DO UPDATE SET
+                     status=excluded.status, result_json=excluded.result_json,
+                     updated_at=excluded.updated_at""",
+                (session_key, status, payload, now, now),
+            )
+
+    def upload_session_key(self, key: str) -> str:
+        result = self.results(key)
+        return str(result.get("multipart_session") or "")
+
+    def close_multipart_session(self, session_key: str) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE multipart_sessions SET status='closed', updated_at=? "
+                "WHERE session_key=? AND status='open'",
+                (utc_now(), session_key),
+            )
+        return cursor.rowcount > 0
 
     def failed_paths(self) -> list[Path]:
         with self.connect() as db:
@@ -431,19 +497,61 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
 
 def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                dry_run: bool = False, retry: bool = False,
-               danmaku_xml: Path | None = None) -> bool:
+               danmaku_xml: Path | None = None,
+               session_key: str = "") -> bool:
     cfg = effective_config(base_cfg, video)
     platform = "bilibili"
     wait_until_stable(video, int(cfg.get("stable_checks", 2)), float(cfg.get("stable_interval_seconds", 2)))
     danmaku_xml = danmaku_xml or find_danmaku_xml(video)
     key = fingerprint(video, danmaku_xml)
+    if retry and not session_key:
+        session_key = store.upload_session_key(key)
+    prior_result = store.results(key)
     if not store.claim(key, video, platform, retry=retry):
         print(f"SKIP 已处理或正在处理: {video}")
         return True
 
+    multipart = (
+        store.multipart_session(session_key, include_closed=retry)
+        if session_key
+        else {}
+    )
+    session_status = str(multipart.pop("_session_status", "open")) if multipart else "open"
+    if session_key and not multipart:
+        multipart = {
+            "pending_first_video": str(video.resolve()),
+            "title": "",
+            "description": "",
+            "tags": [],
+            "source_url": str(cfg.get("source_url", "")).strip(),
+        }
+        if not dry_run:
+            store.save_multipart_session(session_key, multipart)
+    pending_first_video = str(multipart.get("pending_first_video") or "")
+    blocked_by_pending_part = bool(
+        session_key
+        and pending_first_video
+        and Path(pending_first_video).resolve() != video.resolve()
+        and not multipart.get("bilibili")
+    )
+    existing_submission = multipart.get("bilibili") if multipart else None
+    part_number = (
+        int(existing_submission.get("part_count") or 0) + 1
+        if isinstance(existing_submission, dict)
+        else 1
+    )
+    store.finish(key, "processing", {
+        **prior_result,
+        "multipart_session": session_key or None,
+        "part_number": part_number,
+    })
     work_dir = store.path.parent / "artifacts" / key[:16]
     current_stage = "ass"
     try:
+        if blocked_by_pending_part:
+            current_stage = "upload"
+            raise RuntimeError("前一分P尚未上传成功，请先重试前一分P")
+
         title, description, tags = render_metadata(video, cfg)
         cover = find_cover(video, cfg, work_dir)
         source_url = str(cfg.get("source_url", "")).strip()
@@ -506,11 +614,18 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
             store.stage(key, "ai", "skipped", {"reason": reason, "title": title, "description": description})
 
+        if multipart:
+            title = str(multipart.get("title") or title)
+            description = str(multipart.get("description") or description)
+            tags = list(multipart.get("tags") or tags)
+            source_url = str(multipart.get("source_url") or source_url)
+
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
                    "ass_path": str(ass_path) if ass_path else None,
                    "danmaku_count": len(comments), "cover": str(cover), "platform": platform,
-                   "title": title, "description": description, "tags": tags, "source_url": source_url}
+                   "title": title, "description": description, "tags": tags, "source_url": source_url,
+                   "multipart_session": session_key or None, "part_number": part_number}
         if dry_run:
             store.stage(key, "upload", "skipped", {"reason": "试运行未投稿"})
             store.finish(key, "dry_run", summary)
@@ -518,7 +633,16 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             return True
 
         current_stage = "upload"
-        store.stage(key, "upload", "running", {"title": title, "cover": str(cover)})
+        store.stage(key, "upload", "running", {
+            "title": title,
+            "cover": str(cover),
+            "part_number": part_number,
+            "existing_bvid": (
+                existing_submission.get("bvid")
+                if isinstance(existing_submission, dict)
+                else None
+            ),
+        })
         BilibiliUploader, _ = import_y2a(cfg)
         cookie = resolve_path(str(cfg.get("bilibili_cookies", "")), cfg)
         partition = str(cfg.get("bilibili_partition_id", "")).strip()
@@ -532,6 +656,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 video_file_path=str(upload_video), cover_file_path=str(cover), title=title,
                 description=description, tags=tags, partition_id=partition,
                 youtube_url=source_url, task_id=None,
+                page_titles=[recording_part_title(video, part_number)],
+                existing_submission=existing_submission,
             )
             if not ok:
                 raise RuntimeError(f"bilibili 上传失败: {result}")
@@ -540,9 +666,25 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             # duplicate video submission.
             store.finish(key, "video_uploaded", previous)
 
+        if session_key:
+            session_state = {
+                "bilibili": previous.get("bilibili"),
+                "title": title,
+                "description": description,
+                "tags": tags,
+                "source_url": source_url,
+                "last_video": str(video),
+            }
+            store.save_multipart_session(
+                session_key,
+                session_state,
+                status=session_status if retry else "open",
+            )
+
         store.stage(key, "upload", "completed", {
             "title": title, "description": description, "cover": str(cover),
             "bilibili": previous.get("bilibili"),
+            "part_number": part_number,
         })
         store.finish(key, "completed", previous)
         if bool(cfg.get("delete_recording_after_upload", True)):
@@ -565,7 +707,10 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("paths", nargs="*")
     ingest.add_argument("--dry-run", action="store_true")
     ingest.add_argument("--retry", action="store_true", help="允许重试指定的失败任务")
+    ingest.add_argument("--session-key", default="", help="将分段追加到同一场直播稿件")
     sub.add_parser("retry", help="重试失败记录")
+    close_session = sub.add_parser("close-session", help="结束直播的分P追加会话")
+    close_session.add_argument("--session-key", required=True)
     status = sub.add_parser("status", help="显示最近记录")
     status.add_argument("--limit", type=int, default=30)
     return parser
@@ -577,6 +722,11 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(Path(args.config))
     state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)
     store = StateStore(state_path)
+
+    if args.command == "close-session":
+        closed = store.close_multipart_session(str(args.session_key))
+        print(f"OK 分P会话已结束: {args.session_key}" if closed else f"SKIP 没有活动分P会话: {args.session_key}")
+        return 0
 
     if args.command == "status":
         for row in store.recent(max(1, args.limit)):
@@ -603,7 +753,15 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=bool(getattr(args, "dry_run", False)),
             retry=retry,
             danmaku_xml=danmaku_xml,
+            session_key=str(getattr(args, "session_key", "") or ""),
         ) and ok
+    if not ok and str(getattr(args, "session_key", "") or "") and not retry:
+        # A failed segment is already visible and retryable in the WebUI.  Do
+        # not abort biliup's live event stream here: later segments still need
+        # to be recorded, and the end-of-stream hook must close this session so
+        # the next broadcast cannot append to the old submission.
+        print("WARN 分P处理失败已记录，录制与后续分段将继续", file=sys.stderr)
+        return 0
     return 0 if ok else 1
 
 

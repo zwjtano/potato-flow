@@ -957,6 +957,21 @@ class VideoUploader(AsyncEvent):
         return preupload
 
     async def _main(self) -> dict:
+        videos = await self.upload_pages()
+
+        cover_url = await self._upload_cover()
+
+        result = await self._submit(videos, cover_url)
+        if isinstance(result, dict):
+            result["_uploaded_videos"] = videos
+            result["_cover_url"] = cover_url
+
+        self.dispatch(VideoUploaderEvents.COMPLETED.value, result)
+        return result
+
+    async def upload_pages(self) -> list[dict]:
+        """Upload page files without creating or editing an archive."""
+        self.line = await _choose_line(self.line)
         videos = []
         for page in self.pages:
             data = await self._upload_page(page)
@@ -968,13 +983,35 @@ class VideoUploader(AsyncEvent):
                     "cid": data["cid"],  # type: ignore
                 }
             )
+        return videos
 
-        cover_url = await self._upload_cover()
+    async def edit(self, videos: list[dict], *, aid: int, cover_url: str) -> dict:
+        """Replace an existing archive's page list after uploading new pages."""
+        meta = copy(
+            self.meta.__dict__() if isinstance(self.meta, VideoMeta) else self.meta
+        )
+        meta["aid"] = int(aid)
+        meta["cover"] = cover_url
+        meta["videos"] = videos
+        meta["csrf"] = self.credential.bili_jct
+        api = _API["edit"]
 
-        result = await self._submit(videos, cover_url)
-
-        self.dispatch(VideoUploaderEvents.COMPLETED.value, result)
-        return result
+        self.dispatch(VideoUploaderEvents.PRE_SUBMIT.value, deepcopy(meta))
+        try:
+            params = {"csrf": self.credential.bili_jct, "t": time.time() * 1000}
+            result = (
+                await Api(
+                    **api, credential=self.credential, no_csrf=True, json_body=True
+                )
+                .update_params(**params)
+                .update_data(**meta)
+                .result
+            )
+            self.dispatch(VideoUploaderEvents.AFTER_SUBMIT.value, result)
+            return result
+        except Exception as err:
+            self.dispatch(VideoUploaderEvents.SUBMIT_FAILED.value, {"err": err})
+            raise
 
     async def start(self) -> dict:  # type: ignore
         """
@@ -984,7 +1021,6 @@ class VideoUploader(AsyncEvent):
             dict: 返回带有 bvid 和 aid 的字典。
         """
 
-        self.line = await _choose_line(self.line)
         task = create_task(self._main())
         self.__task = task
 

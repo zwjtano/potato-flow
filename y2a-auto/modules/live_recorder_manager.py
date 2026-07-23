@@ -533,15 +533,6 @@ class LiveRecorderManager:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         PID_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-        bridge_command = " ".join(
-            [
-                _yaml_string(str(APP_ROOT / ".venv" / "bin" / "python")),
-                _yaml_string(str(WORKSPACE_ROOT / "bridge.py")),
-                "--config",
-                _yaml_string(str(BRIDGE_CONFIG_PATH)),
-                "ingest",
-            ]
-        )
         lines = [
             "# 由统一管理后台自动生成，请勿手动编辑。",
             "downloader: ffmpeg",
@@ -563,14 +554,35 @@ class LiveRecorderManager:
             lines.append("streamers:")
         for room in rooms:
             key = f"{_slug(str(room['name']))}_{str(room['id'])[:6]}"
+            session_key = str(room["id"])
+            bridge_base = [
+                _yaml_string(str(APP_ROOT / ".venv" / "bin" / "python")),
+                _yaml_string(str(WORKSPACE_ROOT / "bridge.py")),
+                "--config",
+                _yaml_string(str(BRIDGE_CONFIG_PATH)),
+            ]
+            segment_command = " ".join([
+                *bridge_base,
+                "ingest",
+                "--session-key",
+                _yaml_string(session_key),
+            ])
+            close_command = " ".join([
+                *bridge_base,
+                "close-session",
+                "--session-key",
+                _yaml_string(session_key),
+            ])
             lines.extend(
                 [
                     f"  {_yaml_string(key)}:",
                     "    url:",
                     f"      - {_yaml_string(str(room['url']))}",
                     "    uploader: Noop",
+                    "    segment_processor:",
+                    f"      - run: {_yaml_string(segment_command)}",
                     "    postprocessor:",
-                    f"      - run: {_yaml_string(bridge_command)}",
+                    f"      - run: {_yaml_string(close_command)}",
                 ]
             )
         BILIUP_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")

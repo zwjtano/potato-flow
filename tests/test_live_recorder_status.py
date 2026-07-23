@@ -82,6 +82,25 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["name"], "yyfyyf")
         self.assertEqual(room["avatar_url"], "https://apic.douyucdn.cn/avatar.jpg")
 
+    def test_config_uploads_each_segment_and_closes_session_after_live(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "biliup.yaml"
+            with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
+                    mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
+                    mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
+                    mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
+                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(manager, "_sync_bridge_profiles"):
+                manager.sync_configs([self.rooms[0]])
+
+            content = config_path.read_text(encoding="utf-8")
+            self.assertIn("segment_processor:", content)
+            self.assertIn("ingest --session-key", content)
+            self.assertIn("aaaaaa111111", content)
+            self.assertIn("close-session --session-key", content)
+
     def test_readding_legacy_room_updates_profile_without_duplicate(self):
         manager = LiveRecorderManager()
         legacy_room = {

@@ -90,6 +90,7 @@ where
 async fn process_without_upload<F>(
     rx: Inspect<Receiver<SegmentInfo>, F>,
     ctx: &Context,
+    segment_processors: &[HookStep],
 ) -> AppResult<()>
 where
     F: FnMut(&SegmentInfo),
@@ -97,7 +98,16 @@ where
     let mut paths = Vec::new();
     pin!(rx);
     while let Some(event) = rx.next().await {
-        paths.extend(segment_paths(&event));
+        let mut segment = segment_paths(&event);
+        if !segment_processors.is_empty()
+            && let Err(e) = process_video_paths(&mut segment, segment_processors).await
+        {
+            error!(
+                file = ?event.prev_file_path,
+                "Noop segment_processor failed; recording will continue: {:?}", e
+            );
+        }
+        paths.extend(segment);
     }
     execute_postprocessor(paths, ctx).await
 }
@@ -528,7 +538,12 @@ impl UActor {
                             uploader = ?config.uploader,
                             "Skipping upload because uploader is Noop"
                         );
-                        process_without_upload(inspect, &ctx).await
+                        let segment_processors = ctx
+                            .live_streamer()
+                            .segment_processor
+                            .clone()
+                            .unwrap_or_default();
+                        process_without_upload(inspect, &ctx, &segment_processors).await
                     }
                     Some(config) => process_with_upload(inspect, &ctx, config).await,
                     None => {

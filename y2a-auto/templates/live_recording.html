@@ -18,7 +18,7 @@
     <div>
         <div class="recorder-eyebrow">LIVE RECORDER</div>
         <h1>直播录制</h1>
-        <p>B站与斗鱼自动监控，录制完成后进入弹幕与上传流水线。</p>
+        <p>B站与斗鱼自动监控，每个录制分段完成后立即进入弹幕与上传流水线。</p>
     </div>
     <div class="recorder-header-actions">
         <a class="btn btn-light border" href="{{ url_for('live_recording') }}"><i class="bi bi-arrow-clockwise"></i> 刷新</a>
@@ -93,7 +93,7 @@
                 <div class="pipeline-inspector" data-role="pipeline-inspector">
                     <div class="inspector-empty"><i class="bi bi-hand-index-thumb"></i><span>点击上方任一步骤，查看状态、时间、输入、产物和错误信息</span></div>
                 </div>
-                <div class="pipeline-note"><i class="bi bi-info-circle"></i> XML 弹幕会生成 ASS 供查看和下载，不烧录视频，也不导入 B站原生弹幕。</div>
+                <div class="pipeline-note"><i class="bi bi-info-circle"></i> 每场直播的 P1 会立即创建稿件，后续分段边录边追加为 P2、P3；XML 弹幕生成 ASS 供查看和下载，不烧录视频。</div>
             </section>
 
             <section class="events-card">
@@ -101,9 +101,9 @@
                 <div class="event-list">
                     <div class="event-row"><span class="event-icon success"><i class="bi bi-check2"></i></span><div><strong>直播间配置已加载</strong><small>{{ room.name }} · {{ '哔哩哔哩' if room.platform == 'bilibili' else '斗鱼' }}</small></div><time>当前</time></div>
                     <div class="event-row"><span class="event-icon"><i class="bi bi-broadcast"></i></span><div><strong data-role="event-state-title">{{ room.runtime.primary }}</strong><small data-role="event-state-detail">{{ room.runtime.secondary }}</small></div><time>实时</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-chat-square-text"></i></span><div><strong>弹幕采集已配置</strong><small>XML 与视频同步保存，录制结束后生成 ASS</small></div><time>系统</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-chat-square-text"></i></span><div><strong>弹幕采集已配置</strong><small>XML 与视频同步保存，每个分段完成后生成 ASS</small></div><time>系统</time></div>
                     <div class="event-row"><span class="event-icon"><i class="bi bi-badge-cc"></i></span><div><strong>字幕策略已加载</strong><small>ASS 独立保存，不执行耗时的视频烧录</small></div><time>系统</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-diagram-3"></i></span><div><strong>上传流水线已就绪</strong><small>ASS 生成、AI 简介与 B站投稿均已启用</small></div><time>系统</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-diagram-3"></i></span><div><strong>逐文件投稿已就绪</strong><small>P1 创建稿件，后续分段自动追加到同一个 BVID</small></div><time>系统</time></div>
                 </div>
             </section>
         </article>
@@ -412,7 +412,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const statusNames = {pending: '等待中', running: '处理中', completed: '已完成', failed: '失败', skipped: '已跳过'};
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     function detailRows(details) {
-        const labels = {video_path:'录播文件', size_bytes:'文件大小', danmaku_xml:'弹幕 XML', ass_path:'ASS 字幕', danmaku_count:'弹幕数量', burn_in:'烧录视频', comment_count:'分析弹幕', title_topic:'核心主题', description:'生成简介', reason:'说明', title:'投稿标题', cover:'视频封面', bilibili:'B站结果'};
+        const labels = {video_path:'录播文件', size_bytes:'文件大小', danmaku_xml:'弹幕 XML', ass_path:'ASS 字幕', danmaku_count:'弹幕数量', burn_in:'烧录视频', comment_count:'分析弹幕', title_topic:'核心主题', description:'生成简介', reason:'说明', title:'投稿标题', cover:'视频封面', bilibili:'B站结果', part_number:'分P序号', existing_bvid:'追加稿件', multipart_session:'直播分P会话'};
         return Object.entries(details || {}).map(([key, value]) => {
             const rendered = typeof value === 'object' ? JSON.stringify(value, null, 2) : (key === 'size_bytes' ? `${(Number(value) / 1024 / 1024).toFixed(1)} MB` : String(value));
             return `<div class="inspector-row"><span>${escapeHtml(labels[key] || key)}</span><code>${escapeHtml(rendered)}</code></div>`;

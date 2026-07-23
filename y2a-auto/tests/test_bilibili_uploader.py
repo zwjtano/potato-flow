@@ -282,6 +282,80 @@ class BilibiliProgressTests(unittest.TestCase):
         self.assertTrue(any("正在提交分P" in item for item in log_messages))
         self.assertTrue(any("正在提交Bilibili投稿" in item for item in log_messages))
 
+    def test_upload_video_appends_page_to_existing_submission(self):
+        edit_calls = []
+
+        class FakePage:
+            def __init__(self, path, title):
+                self.path = path
+                self.title = title
+                self.description = ""
+
+        class FakeUploader(AsyncEvent):
+            def __init__(self, pages, meta, credential, cover):
+                super().__init__()
+                self.pages = pages
+
+            async def upload_pages(self):
+                return [{"title": self.pages[0].title, "desc": "", "filename": "new-part", "cid": 2}]
+
+            async def edit(self, videos, *, aid, cover_url):
+                edit_calls.append({"videos": videos, "aid": aid, "cover_url": cover_url})
+                return {}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video_path = os.path.join(temp_dir, "part-2.mp4")
+            cover_path = os.path.join(temp_dir, "cover.jpg")
+            for path in (video_path, cover_path):
+                with open(path, "wb") as stream:
+                    stream.write(b"test")
+
+            with patch(
+                "modules.bilibili_uploader.setup_task_logger", return_value=Mock()
+            ), patch(
+                "modules.bilibili_uploader.configure_bilibili_runtime"
+            ), patch(
+                "modules.bilibili_uploader.load_credential_from_file",
+                return_value=object(),
+            ), patch(
+                "modules.bilibili_uploader.validate_credential_remote",
+                return_value=(True, "ok"),
+            ), patch(
+                "modules.bilibili_uploader.video_uploader.VideoMeta",
+                return_value=object(),
+            ), patch(
+                "modules.bilibili_uploader.video_uploader.VideoUploaderPage",
+                FakePage,
+            ), patch(
+                "modules.bilibili_uploader.video_uploader.VideoUploader",
+                FakeUploader,
+            ):
+                success, result = BilibiliUploader("cookies.json").upload_video(
+                    video_path,
+                    cover_path,
+                    "标题",
+                    "简介",
+                    ["标签"],
+                    21,
+                    page_titles=["P2 10:00:00"],
+                    existing_submission={
+                        "bvid": "BV1test",
+                        "aid": 1,
+                        "cover_url": "https://example.com/cover.jpg",
+                        "part_count": 1,
+                        "uploaded_parts": [
+                            {"title": "P1 09:00:00", "desc": "", "filename": "part-1", "cid": 1}
+                        ],
+                    },
+                )
+
+        self.assertTrue(success)
+        self.assertEqual(result["bvid"], "BV1test")
+        self.assertEqual(result["part_count"], 2)
+        self.assertEqual(edit_calls[0]["aid"], 1)
+        self.assertEqual(edit_calls[0]["cover_url"], "https://example.com/cover.jpg")
+        self.assertEqual([item["filename"] for item in edit_calls[0]["videos"]], ["part-1", "new-part"])
+
 
 if __name__ == "__main__":
     unittest.main()
