@@ -9,7 +9,12 @@ RUN apt-get update \
 
 WORKDIR /build/upstream-biliup
 COPY upstream-biliup/ ./
-RUN cargo build --release -p biliup-cli
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/upstream-biliup/target \
+    CARGO_PROFILE_RELEASE_LTO=false \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=8 \
+    cargo build --release -p biliup-cli \
+    && cp target/release/biliup /tmp/biliup
 
 
 FROM python:3.11-slim-bookworm AS python-builder
@@ -70,7 +75,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=python-builder /opt/venv/ /app/y2a-auto/.venv/
 COPY --from=recorder-builder \
-    /build/upstream-biliup/target/release/biliup \
+    /tmp/biliup \
     /app/upstream-biliup/target/release/biliup
 COPY . /app
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

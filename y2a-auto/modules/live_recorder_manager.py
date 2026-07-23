@@ -33,6 +33,7 @@ BRIDGE_CONFIG_EXAMPLE = WORKSPACE_ROOT / "bridge.config.example.json"
 LOG_PATH = APP_ROOT / "logs" / "biliup-recorder.log"
 PID_PATH = APP_ROOT / "temp" / "biliup-recorder.pid"
 STATUS_PATH = APP_ROOT / "temp" / "biliup-recorder-status.json"
+CONTROL_PATH = APP_ROOT / "temp" / "biliup-recorder-control.json"
 FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
 RECORDING_FILE_SUFFIXES = {
     ".mp4": "video", ".flv": "video", ".mkv": "video", ".webm": "video",
@@ -143,6 +144,7 @@ class LiveRecorderManager:
         enriched: list[dict[str, Any]] = []
         for source_room in rooms:
             room = dict(source_room)
+            manual_enabled = bool(room.get("enabled", True))
             room_url = str(room.get("url") or "")
             parsed_room_url = urlparse(room_url)
             room["display_url"] = parsed_room_url._replace(query="", fragment="").geturl()
@@ -154,6 +156,9 @@ class LiveRecorderManager:
             if not engine_running:
                 state, label = "stopped", "引擎未启动"
                 primary, secondary = "等待启动引擎", "启动后自动检测开播"
+            elif not manual_enabled:
+                state, label = "paused", "已手动停止"
+                primary, secondary = "录制已停止", "点击开始录制后恢复直播检测"
             elif raw_status == "Working":
                 state, label = "recording", "录制中"
                 primary, secondary = "正在录制", "已检测开播，正在写入录播文件"
@@ -190,6 +195,7 @@ class LiveRecorderManager:
                 "raw_status": raw_status,
                 "recording": state == "recording",
                 "live": state == "recording",
+                "manual_enabled": manual_enabled,
                 "duration_seconds": duration_seconds,
                 "started_at": started_at,
                 "live_title": live_title,
@@ -240,6 +246,7 @@ class LiveRecorderManager:
             existing.update({"name": name, "url": url, "platform": platform})
             _atomic_json(ROOMS_PATH, rooms)
             self.sync_configs(rooms)
+            self._write_control_state(rooms)
             return dict(existing)
 
     def delete_room(self, room_id: str) -> bool:
@@ -250,7 +257,36 @@ class LiveRecorderManager:
                 return False
             _atomic_json(ROOMS_PATH, filtered)
             self.sync_configs(filtered)
+            self._write_control_state(filtered)
             return True
+
+    def _write_control_state(self, rooms: list[dict[str, Any]] | None = None) -> None:
+        rooms = rooms if rooms is not None else self.list_rooms()
+        _atomic_json(
+            CONTROL_PATH,
+            {
+                "updated_at": time.time(),
+                "rooms": {
+                    str(room.get("url") or ""): bool(room.get("enabled", True))
+                    for room in rooms
+                    if room.get("url")
+                },
+            },
+        )
+
+    def set_room_recording(self, room_id: str, enabled: bool) -> dict[str, Any]:
+        """Enable or gracefully pause one room without stopping the whole engine."""
+        with self._lock:
+            rooms = self.list_rooms()
+            room = next((item for item in rooms if item.get("id") == room_id), None)
+            if room is None:
+                raise RecorderConfigError("没有找到该直播间")
+            room["enabled"] = bool(enabled)
+            _atomic_json(ROOMS_PATH, rooms)
+            self._write_control_state(rooms)
+            if enabled and self._pid() is None:
+                self.start()
+            return dict(room)
 
     def sync_configs(self, rooms: list[dict[str, Any]] | None = None) -> None:
         rooms = rooms if rooms is not None else self.list_rooms()
@@ -379,6 +415,7 @@ class LiveRecorderManager:
             if not binary.is_file():
                 raise RecorderConfigError("录制引擎尚未构建，请先安装 Rust 并构建 biliup")
             self.sync_configs()
+            self._write_control_state()
             STATUS_PATH.unlink(missing_ok=True)
             self._log_handle = LOG_PATH.open("a", encoding="utf-8")
             process_env = os.environ.copy()

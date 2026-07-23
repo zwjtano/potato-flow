@@ -1279,6 +1279,21 @@ def live_recording_delete_room(room_id):
     return redirect(url_for('live_recording'))
 
 
+@app.route('/live-recording/rooms/<room_id>/recording', methods=['POST'])
+@login_required
+def live_recording_room_control(room_id):
+    payload = request.get_json(silent=True) or request.form
+    action = str(payload.get('action') or '').strip().lower()
+    if action not in {'start', 'stop'}:
+        return jsonify({'ok': False, 'error': '录制操作无效'}), 400
+    try:
+        room = live_recorder_manager.set_room_recording(room_id, action == 'start')
+        message = '已开始检测直播，开播后立即录制。' if action == 'start' else '正在安全停止录制并收尾视频与弹幕文件。'
+        return jsonify({'ok': True, 'message': message, 'room': room}), 202
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+
+
 @app.route('/live-recording/start', methods=['POST'])
 @login_required
 def live_recording_start():

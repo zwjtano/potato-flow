@@ -20,7 +20,7 @@ use crate::server::infrastructure::service_register::ServiceRegister;
 use clap::ValueEnum;
 use error_stack::{Report, ResultExt};
 use ormlite::Model;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
@@ -28,6 +28,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::signal;
 use tracing_subscriber::{EnvFilter, Registry, reload};
+use crate::server::infrastructure::context::{Stage, WorkerStatus};
 
 // 定义 Handle 的类型别名，简化代码
 // EnvFilter: 我们使用的过滤器类型
@@ -122,6 +123,47 @@ struct RecorderStreamInfo {
     date: i64,
 }
 
+#[derive(Default, Deserialize)]
+struct RecorderControlPayload {
+    rooms: std::collections::HashMap<String, bool>,
+}
+
+async fn apply_recorder_controls(
+    service_register: &ServiceRegister,
+    control_path: &Path,
+) -> std::io::Result<()> {
+    let payload: RecorderControlPayload = match fs::read(control_path) {
+        Ok(content) => serde_json::from_slice(&content).unwrap_or_default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for worker in service_register.managers.get_rooms().await {
+        let enabled = payload
+            .rooms
+            .get(&worker.live_streamer.url)
+            .copied()
+            .unwrap_or(true);
+        let paused = matches!(
+            &*worker.downloader_status.read().unwrap(),
+            WorkerStatus::Pause
+        );
+        if !enabled && !paused {
+            worker
+                .change_status(Stage::Download, WorkerStatus::Pause)
+                .await;
+            service_register.managers.make_waker(worker.id()).await;
+            tracing::info!(url = %worker.live_streamer.url, "manual recording stop applied");
+        } else if enabled && paused {
+            worker
+                .change_status(Stage::Download, WorkerStatus::Idle)
+                .await;
+            service_register.managers.wake_waker(worker.id()).await;
+            tracing::info!(url = %worker.live_streamer.url, "manual recording start applied");
+        }
+    }
+    Ok(())
+}
+
 async fn write_recorder_status(
     service_register: &ServiceRegister,
     status_path: &Path,
@@ -211,8 +253,20 @@ pub async fn run_recorder(
         }
     });
 
+    let control_register = service_register.clone();
+    let control_path = status_path.with_file_name("biliup-recorder-control.json");
+    let control_task = tokio::spawn(async move {
+        loop {
+            if let Err(error) = apply_recorder_controls(&control_register, &control_path).await {
+                tracing::warn!(?error, "failed to apply recorder control file");
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    });
+
     recorder_shutdown_signal().await;
     status_task.abort();
+    control_task.abort();
     service_register.cleanup().await;
     let _ = fs::remove_file(status_path);
     Ok(())

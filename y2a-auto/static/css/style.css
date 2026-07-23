@@ -132,6 +132,7 @@ body {
 .selected-room-title a { display: inline-block; margin-top: 3px; color: #9298a3; font-size: 9px; text-decoration: none; }
 .detail-actions { display: flex; align-items: center; gap: 9px; }
 .detail-actions form { margin: 0; }
+.manual-record-toggle { min-width: 96px; white-space: nowrap; }
 .detail-status { display: flex; align-items: center; gap: 6px; padding: 7px 10px; color: #8e949e; border: 1px solid #e0e3e7; border-radius: 18px; background: #fff; font-size: 9px; }
 .detail-status i { font-size: 6px; }
 .detail-status.recording { color: #d93249; border-color: #f2c5cc; background: #fff3f5; }

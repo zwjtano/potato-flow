@@ -63,6 +63,7 @@
                 </div>
                 <div class="detail-actions">
                     <span class="detail-status {{ room.runtime.state }}" data-role="detail-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
+                    <button class="btn btn-sm {{ 'btn-outline-danger' if recorder_status.running and room.runtime.manual_enabled else 'btn-primary' }} manual-record-toggle" type="button" data-action="room-recording" data-room="{{ room.id }}" data-enabled="{{ 'true' if recorder_status.running and room.runtime.manual_enabled else 'false' }}" title="{{ '安全停止当前录制并暂停自动检测' if recorder_status.running and room.runtime.manual_enabled else '启动引擎并开始检测录制' }}"><i class="bi {{ 'bi-stop-fill' if recorder_status.running and room.runtime.manual_enabled else 'bi-record-circle' }}"></i> <span>{{ '停止录制' if recorder_status.running and room.runtime.manual_enabled else '开始录制' }}</span></button>
                     <form method="post" action="{{ url_for('live_recording_delete_room', room_id=room.id) }}" onsubmit="return confirm('确定删除这个直播间？')"><button class="btn btn-light border" type="submit" {% if recorder_status.running %}disabled title="请先停止录制引擎"{% endif %}><i class="bi bi-trash3"></i></button></form>
                 </div>
             </header>
@@ -212,6 +213,12 @@ document.addEventListener('DOMContentLoaded', function () {
         panel.querySelector('[data-role="danmaku-state"]').textContent = room.recording ? '录制中' : '已启用';
         panel.querySelector('[data-role="event-state-title"]').textContent = room.primary;
         panel.querySelector('[data-role="event-state-detail"]').textContent = room.secondary;
+        const recordingToggle = panel.querySelector('[data-action="room-recording"]');
+        const enabled = Boolean(engineRunning && room.manual_enabled);
+        recordingToggle.dataset.enabled = enabled ? 'true' : 'false';
+        recordingToggle.className = `btn btn-sm manual-record-toggle ${enabled ? 'btn-outline-danger' : 'btn-primary'}`;
+        recordingToggle.title = enabled ? '安全停止当前录制并暂停自动检测' : '启动引擎并开始检测录制';
+        recordingToggle.innerHTML = enabled ? '<i class="bi bi-stop-fill"></i> <span>停止录制</span>' : '<i class="bi bi-record-circle"></i> <span>开始录制</span>';
         const detect = panel.querySelector('[data-stage="detect"]');
         const record = panel.querySelector('[data-stage="record"]');
         detect.className = `pipeline-step ${room.recording ? 'completed' : (engineRunning ? 'active' : '')}`;
@@ -290,6 +297,30 @@ document.addEventListener('DOMContentLoaded', function () {
             // 短暂网络错误不覆盖最后一次可信状态，下一轮自动重试。
         }
     }
+    async function controlRoomRecording(event) {
+        const button = event.currentTarget;
+        const stopping = button.dataset.enabled === 'true';
+        if (stopping && !confirm('确定停止这个直播间的录制？\n当前视频和弹幕文件会安全收尾，然后进入后续处理流水线。')) return;
+        button.disabled = true;
+        const original = button.innerHTML;
+        button.innerHTML = `<span class="spinner-border spinner-border-sm"></span> ${stopping ? '正在停止' : '正在启动'}`;
+        try {
+            const response = await fetch(`/live-recording/rooms/${encodeURIComponent(button.dataset.room)}/recording`, {
+                method: 'POST',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                body: JSON.stringify({action: stopping ? 'stop' : 'start'})
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '操作失败');
+            await new Promise(resolve => window.setTimeout(resolve, 650));
+            await refreshLiveStatus();
+        } catch (error) {
+            alert(error.message);
+            button.innerHTML = original;
+        } finally {
+            button.disabled = false;
+        }
+    }
     items.forEach(item => item.addEventListener('click', function () {
         items.forEach(node => node.classList.toggle('active', node === item));
         panels.forEach(panel => panel.classList.toggle('d-none', panel.dataset.panel !== item.dataset.room));
@@ -301,6 +332,7 @@ document.addEventListener('DOMContentLoaded', function () {
     filesModal?.querySelector('[data-role="file-search"]')?.addEventListener('input', renderFiles);
     filesModal?.querySelector('[data-role="file-room"]')?.addEventListener('change', renderFiles);
     filesModal?.querySelector('[data-role="file-type"]')?.addEventListener('change', renderFiles);
+    document.querySelectorAll('[data-action="room-recording"]').forEach(button => button.addEventListener('click', controlRoomRecording));
     refreshLiveStatus();
     window.setInterval(refreshLiveStatus, 5000);
 });

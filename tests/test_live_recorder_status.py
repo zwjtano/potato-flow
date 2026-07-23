@@ -73,6 +73,42 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(all(room["runtime"]["state"] == "stopped" for room in rooms))
         self.assertTrue(all(room["runtime"]["label"] == "引擎未启动" for room in rooms))
 
+    def test_manually_stopped_room_overrides_stale_worker_status(self):
+        rooms = [dict(self.rooms[0], enabled=False)]
+        payload = {
+            "rooms": [
+                {
+                    "downloader_status": "Working",
+                    "live_streamer": {"url": rooms[0]["url"], "remark": "开播主播_aaaaaa"},
+                }
+            ]
+        }
+
+        merged = LiveRecorderManager._merge_room_runtime(rooms, True, payload)
+
+        self.assertEqual(merged[0]["runtime"]["state"], "paused")
+        self.assertEqual(merged[0]["runtime"]["label"], "已手动停止")
+        self.assertFalse(merged[0]["runtime"]["manual_enabled"])
+
+    def test_stopping_one_room_persists_control_without_stopping_engine(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rooms_path = Path(temp_dir) / "rooms.json"
+            control_path = Path(temp_dir) / "control.json"
+            rooms_path.write_text(json.dumps(self.rooms), encoding="utf-8")
+            with mock.patch.object(recorder_module, "ROOMS_PATH", rooms_path), mock.patch.object(
+                recorder_module, "CONTROL_PATH", control_path
+            ), mock.patch.object(manager, "_pid", return_value=4321):
+                room = manager.set_room_recording("aaaaaa111111", False)
+
+            saved_rooms = json.loads(rooms_path.read_text(encoding="utf-8"))
+            controls = json.loads(control_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(room["enabled"])
+        self.assertFalse(saved_rooms[0]["enabled"])
+        self.assertFalse(controls["rooms"]["https://www.douyu.com/100"])
+        self.assertTrue(controls["rooms"]["https://live.bilibili.com/200"])
+
     def test_headless_status_file_drives_room_state(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
