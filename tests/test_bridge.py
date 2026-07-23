@@ -527,6 +527,10 @@ class BridgeTests(unittest.TestCase):
                 self.assertIsNotNone(reference)
                 self.assertEqual(reference[0], "果小果")
                 self.assertEqual(reference[1], bridge.GUOXIAOGUO_COVER_REFERENCE)
+        instruction = bridge.recording_cover_reference_instruction("果小果")
+        self.assertIn("头顶蛋壳", instruction)
+        self.assertIn("禁止把蛋壳改成煎蛋", instruction)
+        self.assertIn("禁止改成真人", instruction)
 
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -403,6 +403,21 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     return None
 
 
+def recording_cover_reference_instruction(reference_name: str) -> str:
+    if reference_name == "果小果":
+        return (
+            "上传的参考图是主播果小果的固定角色形象。必须以图中角色为唯一原型，"
+            "保留深棕色长发、红棕色星光大眼、脸颊红晕、两侧红色蝴蝶结和头顶蛋壳；"
+            "保持二次元 Q 版插画风格，禁止改成真人、禁止把蛋壳改成煎蛋，也不要生成成其他角色。"
+            "可以根据直播主题更换背景、服装和姿势。"
+        )
+    return (
+        f"上传的参考照片是主播 {reference_name} 本人。必须以照片中的人物为唯一人物原型，"
+        "保持其脸型、五官、发型和身份辨识度；可以根据直播主题更换背景、服装和姿势，"
+        "但不要生成成其他人。"
+    )
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -438,6 +453,9 @@ def generate_recording_cover_with_ai(
         client_config["OPENAI_BASE_URL"] = image_base_url
     reference = recording_cover_reference(streamer)
     reference_name = reference[0] if reference else ""
+    reference_instruction = (
+        recording_cover_reference_instruction(reference_name) if reference else ""
+    )
     prompt = f"""
 为哔哩哔哩直播回放生成一张横向 16:10 视频封面，画面精致、主体明确、对比强烈，在手机缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -445,7 +463,7 @@ AI 生成的核心标题：{headline}
 内容摘要：{str(description or "")[:500]}
 
 只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
-{f"上传的参考照片是主播 {reference_name} 本人。必须以照片中的人物为唯一人物原型，保持其脸型、五官、发型和身份辨识度；可以根据直播主题更换背景、服装和姿势，但不要生成成其他人。" if reference else ""}
+{reference_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
 """.strip()
