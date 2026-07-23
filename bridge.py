@@ -440,6 +440,104 @@ def import_y2a(cfg: dict[str, Any]):
     return BilibiliUploader, load_y2a_config
 
 
+def enhance_recording_metadata(
+    title: str,
+    description: str,
+    existing_tags: list[str],
+    cover: Path,
+    fallback_partition_id: str,
+    cfg: dict[str, Any],
+) -> tuple[list[str], str, dict[str, Any]]:
+    """Apply Y2A's tag and Bilibili partition automation to a recording."""
+    root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from modules.ai_enhancer import (  # type: ignore
+        generate_acfun_tags,
+        recommend_bilibili_partition,
+    )
+    from modules.bilibili_zones import get_zone_list_sub  # type: ignore
+    from modules.config_manager import load_config as load_y2a_config  # type: ignore
+
+    ai_cfg = load_y2a_config()
+    generate_tags_enabled = bool(ai_cfg.get("GENERATE_TAGS", False))
+    recommend_partition_enabled = bool(ai_cfg.get("RECOMMEND_PARTITION", False))
+    include_cover = bool(ai_cfg.get("RECOMMEND_PARTITION_WITH_COVER", False))
+    openai_config = {
+        "OPENAI_API_KEY": ai_cfg.get("OPENAI_API_KEY", ""),
+        "OPENAI_BASE_URL": ai_cfg.get("OPENAI_BASE_URL", ""),
+        "OPENAI_MODEL_NAME": ai_cfg.get("OPENAI_MODEL_NAME", "gpt-3.5-turbo"),
+        "OPENAI_THINKING_ENABLED": ai_cfg.get("OPENAI_THINKING_ENABLED", False),
+        "OPENAI_TIMEOUT_SECONDS": ai_cfg.get("OPENAI_TIMEOUT_SECONDS", 600),
+        "FIXED_PARTITION_ID": ai_cfg.get("FIXED_PARTITION_ID", ""),
+        "FIXED_PARTITION_ID_BILIBILI": ai_cfg.get("FIXED_PARTITION_ID_BILIBILI", ""),
+        "RECOMMEND_PARTITION_WITH_COVER": include_cover,
+    }
+
+    generated_tags: list[str] = []
+    final_tags = [str(tag).strip() for tag in existing_tags if str(tag).strip()]
+    if generate_tags_enabled:
+        generated_tags = [
+            str(tag).strip()
+            for tag in (
+                generate_acfun_tags(
+                    title,
+                    description,
+                    openai_config=openai_config,
+                    task_id=None,
+                )
+                or []
+            )
+            if str(tag).strip()
+        ][:6]
+        seen = {tag.casefold() for tag in final_tags}
+        for tag in generated_tags:
+            if tag.casefold() not in seen:
+                final_tags.append(tag)
+                seen.add(tag.casefold())
+
+    partition_id = str(fallback_partition_id or "").strip()
+    selection: dict[str, Any] = {}
+    if recommend_partition_enabled:
+        zone_data = get_zone_list_sub()
+        if zone_data:
+            selection = recommend_bilibili_partition(
+                title,
+                description,
+                zone_data,
+                tags=final_tags,
+                openai_config=openai_config,
+                task_id=None,
+                cover_path=str(cover),
+                include_cover_for_ai=include_cover,
+            ) or {}
+            recommended = str(selection.get("id") or "").strip()
+            if recommended:
+                partition_id = recommended
+
+    details = {
+        "tag_generation_enabled": generate_tags_enabled,
+        "generated_tags": generated_tags,
+        "final_tags": final_tags,
+        "partition_recommendation_enabled": recommend_partition_enabled,
+        "recommended_partition_id": str(selection.get("id") or "").strip() or None,
+        "selected_partition_id": partition_id or None,
+        "partition_source": selection.get("source"),
+        "partition_confidence": selection.get("confidence"),
+        "partition_reason": selection.get("reason_summary") or "",
+        "partition_alternatives": selection.get("alternatives") or [],
+        "cover_for_partition_ai": bool(
+            recommend_partition_enabled and include_cover and cover.is_file()
+        ),
+        "partition_cover_path": (
+            str(cover)
+            if recommend_partition_enabled and include_cover and cover.is_file()
+            else None
+        ),
+    }
+    return final_tags, partition_id, details
+
+
 def generate_danmaku_metadata_with_ai(
     comments,
     base_description: str,
@@ -600,11 +698,12 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "ai"
         ai_topic = ""
+        ai_details: dict[str, Any] = {}
         if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
             store.stage(key, "ai", "running", {"comment_count": len(comments)})
             description, ai_topic = generate_danmaku_metadata_with_ai(comments, description, cfg)
             title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
-            store.stage(key, "ai", "completed", {
+            ai_details.update({
                 "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
                 "title": title,
                 "description": description,
@@ -612,19 +711,58 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             })
         else:
             reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
-            store.stage(key, "ai", "skipped", {"reason": reason, "title": title, "description": description})
+            ai_details.update({"reason": reason, "title": title, "description": description})
+
+        partition = str(cfg.get("bilibili_partition_id", "")).strip()
+        metadata_automation: dict[str, Any] = {}
+        if not dry_run and not existing_submission:
+            store.stage(key, "ai", "running", ai_details)
+            try:
+                tags, partition, metadata_automation = enhance_recording_metadata(
+                    title,
+                    description,
+                    tags,
+                    cover,
+                    partition,
+                    cfg,
+                )
+                ai_details.update(metadata_automation)
+            except Exception as exc:
+                metadata_automation = {"metadata_automation_error": str(exc)}
+                ai_details.update(metadata_automation)
+                print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
 
         if multipart:
             title = str(multipart.get("title") or title)
             description = str(multipart.get("description") or description)
             tags = list(multipart.get("tags") or tags)
             source_url = str(multipart.get("source_url") or source_url)
+            partition = str(multipart.get("partition_id") or partition)
+            if isinstance(multipart.get("metadata_automation"), dict):
+                metadata_automation = dict(multipart["metadata_automation"])
+                ai_details.update(metadata_automation)
+
+        ai_details.update({
+            "title": title,
+            "description": description,
+            "final_tags": tags,
+            "selected_partition_id": partition or None,
+        })
+        ai_was_used = bool(
+            comments and bool(cfg.get("ai_danmaku_summary_enabled", True))
+        ) or bool(
+            metadata_automation.get("tag_generation_enabled")
+            or metadata_automation.get("partition_recommendation_enabled")
+            or metadata_automation.get("metadata_automation_error")
+        )
+        store.stage(key, "ai", "completed" if ai_was_used else "skipped", ai_details)
 
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
                    "ass_path": str(ass_path) if ass_path else None,
                    "danmaku_count": len(comments), "cover": str(cover), "platform": platform,
                    "title": title, "description": description, "tags": tags, "source_url": source_url,
+                   "partition_id": partition, "metadata_automation": metadata_automation,
                    "multipart_session": session_key or None, "part_number": part_number}
         if dry_run:
             store.stage(key, "upload", "skipped", {"reason": "试运行未投稿"})
@@ -636,6 +774,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         store.stage(key, "upload", "running", {
             "title": title,
             "cover": str(cover),
+            "tags": tags,
+            "partition_id": partition,
             "part_number": part_number,
             "existing_bvid": (
                 existing_submission.get("bvid")
@@ -645,10 +785,14 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         })
         BilibiliUploader, _ = import_y2a(cfg)
         cookie = resolve_path(str(cfg.get("bilibili_cookies", "")), cfg)
-        partition = str(cfg.get("bilibili_partition_id", "")).strip()
         if not cookie.is_file() or not partition:
             raise ValueError("bilibili 需要有效的 bilibili_cookies 和 bilibili_partition_id")
         previous = store.results(key)
+        previous.update({
+            "tags": tags,
+            "partition_id": partition,
+            "metadata_automation": metadata_automation,
+        })
         result = previous.get("bilibili")
         if not isinstance(result, dict) or not result.get("bvid"):
             uploader = BilibiliUploader(cookie_file=str(cookie))
@@ -673,6 +817,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "description": description,
                 "tags": tags,
                 "source_url": source_url,
+                "partition_id": partition,
+                "metadata_automation": metadata_automation,
                 "last_video": str(video),
             }
             store.save_multipart_session(
@@ -683,6 +829,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         store.stage(key, "upload", "completed", {
             "title": title, "description": description, "cover": str(cover),
+            "tags": tags, "partition_id": partition,
             "bilibili": previous.get("bilibili"),
             "part_number": part_number,
         })

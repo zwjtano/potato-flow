@@ -1,8 +1,10 @@
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import bridge
 
@@ -114,7 +116,11 @@ class BridgeTests(unittest.TestCase):
                 def __init__(self, **_kwargs):
                     raise AssertionError("retry must not instantiate uploader")
 
-            with patch.object(bridge, "import_y2a", return_value=(MustNotUpload, None)):
+            with patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                return_value=([], "171", {}),
+            ), patch.object(bridge, "import_y2a", return_value=(MustNotUpload, None)):
                 self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
             result = store.results(key)
             self.assertEqual(result["bilibili"]["bvid"], "BV1existing")
@@ -182,18 +188,93 @@ class BridgeTests(unittest.TestCase):
                     }
 
             store = bridge.StateStore(root / "state.sqlite3")
-            with patch.object(bridge, "import_y2a", return_value=(FakeUploader, None)):
+            automation = {
+                "tag_generation_enabled": True,
+                "generated_tags": ["AI标签"],
+                "partition_recommendation_enabled": True,
+                "recommended_partition_id": "129",
+                "selected_partition_id": "129",
+                "cover_for_partition_ai": True,
+            }
+            with patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                return_value=(["主播", "AI标签"], "129", automation),
+            ) as enhance_metadata, patch.object(
+                bridge, "import_y2a", return_value=(FakeUploader, None)
+            ):
                 self.assertTrue(bridge.upload_one(first, cfg, store, session_key="room-1"))
                 self.assertTrue(bridge.upload_one(second, cfg, store, session_key="room-1"))
 
+            enhance_metadata.assert_called_once()
             self.assertIsNone(calls[0]["existing_submission"])
             self.assertEqual(calls[0]["page_titles"], ["P1 09:00:00"])
+            self.assertEqual(calls[0]["tags"], ["主播", "AI标签"])
+            self.assertEqual(calls[0]["partition_id"], "129")
             self.assertEqual(calls[1]["existing_submission"]["bvid"], "BV1multipart")
             self.assertEqual(calls[1]["page_titles"], ["P2 10:00:00"])
+            self.assertEqual(calls[1]["tags"], ["主播", "AI标签"])
+            self.assertEqual(calls[1]["partition_id"], "129")
             session = store.multipart_session("room-1")
             self.assertEqual(session["bilibili"]["part_count"], 2)
+            self.assertEqual(session["partition_id"], "129")
+            self.assertTrue(session["metadata_automation"]["cover_for_partition_ai"])
             self.assertTrue(store.close_multipart_session("room-1"))
             self.assertEqual(store.multipart_session("room-1"), {})
+
+    def test_recording_metadata_uses_y2a_tags_partition_and_cover_setting(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cover = root / "cover.jpg"
+            cover.write_bytes(b"cover")
+            cfg = {"_config_dir": str(root), "y2a_root": str(y2a_root)}
+            selection = {
+                "id": "129",
+                "source": "ai",
+                "confidence": 0.92,
+                "reason_summary": "封面与标题均为游戏内容",
+                "alternatives": ["171"],
+            }
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.generate_acfun_tags = Mock(
+                return_value=["游戏", "直播回放", "", "游戏"]
+            )
+            recommend = Mock(return_value=selection)
+            ai_module.recommend_bilibili_partition = recommend
+            zones_module = types.ModuleType("modules.bilibili_zones")
+            zones_module.get_zone_list_sub = Mock(
+                return_value=[{"tid": 4, "name": "游戏", "sub": []}]
+            )
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "GENERATE_TAGS": True,
+                "RECOMMEND_PARTITION": True,
+                "RECOMMEND_PARTITION_WITH_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_MODEL_NAME": "vision-model",
+            })
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.bilibili_zones": zones_module,
+                "modules.config_manager": config_module,
+            }):
+                tags, partition_id, details = bridge.enhance_recording_metadata(
+                    "直播标题",
+                    "直播简介",
+                    ["主播", "直播回放"],
+                    cover,
+                    "171",
+                    cfg,
+                )
+
+        self.assertEqual(tags, ["主播", "直播回放", "游戏"])
+        self.assertEqual(partition_id, "129")
+        self.assertEqual(details["recommended_partition_id"], "129")
+        self.assertTrue(details["cover_for_partition_ai"])
+        self.assertEqual(recommend.call_args.kwargs["cover_path"], str(cover))
+        self.assertTrue(recommend.call_args.kwargs["include_cover_for_ai"])
+        self.assertEqual(recommend.call_args.kwargs["tags"], tags)
 
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:
