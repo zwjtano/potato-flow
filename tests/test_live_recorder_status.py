@@ -82,6 +82,37 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["name"], "yyfyyf")
         self.assertEqual(room["avatar_url"], "https://apic.douyucdn.cn/avatar.jpg")
 
+    def test_resolves_numeric_douyu_vanity_room_id(self):
+        manager = LiveRecorderManager()
+        response = {
+            "room": {
+                "room_id": 6558897,
+                "room_name": "果小果：备战宝可梦",
+                "owner_name": "果小果是个弟弟",
+                "owner_avatar": "https://apic.douyucdn.cn/fruit.jpg",
+            },
+        }
+        mobile_page = (
+            b'<script>window.__DATA__={"roomInfo":{"rid":6558897,'
+            b'"vipId":5556,"nickname":"fruit"}}</script>'
+        )
+        with mock.patch.object(
+            recorder_module,
+            "_response_json",
+            side_effect=[RecorderConfigError("not json"), response],
+        ) as response_json, mock.patch.object(
+            recorder_module,
+            "_open_url",
+            return_value=(mobile_page, "https://m.douyu.com/5556"),
+        ):
+            room = manager.resolve_room("https://www.douyu.com/5556")
+
+        self.assertEqual(room["room_id"], "6558897")
+        self.assertEqual(room["name"], "果小果是个弟弟")
+        self.assertEqual(room["url"], "https://www.douyu.com/6558897")
+        self.assertIn("/betard/5556", response_json.call_args_list[0].args[0])
+        self.assertIn("/betard/6558897", response_json.call_args_list[1].args[0])
+
     def test_config_uploads_each_segment_and_closes_session_after_live(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

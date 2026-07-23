@@ -103,6 +103,25 @@ def _response_json(url: str, *, referer: str = "", timeout: int = 12) -> dict[st
     return payload
 
 
+def _resolve_douyu_real_room_id(room_ref: str) -> str:
+    """Resolve vanity/named Douyu room references through the mobile page."""
+    try:
+        body, _ = _open_url(f"https://m.douyu.com/{room_ref}")
+    except RecorderConfigError as exc:
+        raise RecorderConfigError(f"解析斗鱼真实房间号失败：{exc}") from exc
+    text = body.decode("utf-8", errors="replace")
+    match = re.search(
+        r'"roomInfo"\s*:\s*\{.*?"rid"\s*:\s*"?(\d+)',
+        text,
+        flags=re.DOTALL,
+    )
+    if not match:
+        match = re.search(r'"rid"\s*:\s*"?(\d+)', text)
+    if not match:
+        raise RecorderConfigError("无法从斗鱼链接识别真实房间号")
+    return match.group(1)
+
+
 class LiveRecorderManager:
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -319,18 +338,26 @@ class LiveRecorderManager:
             raise RecorderConfigError("斗鱼直播间链接中没有有效房间号")
         room_id = room_ref
         if not room_id.isdigit():
-            try:
-                body, _ = _open_url(f"https://m.douyu.com/{room_ref}")
-            except RecorderConfigError as exc:
-                raise RecorderConfigError(f"解析斗鱼房间号失败：{exc}") from exc
-            match = re.search(r'"roomInfo":\{"rid":(\d+)', body.decode("utf-8", errors="replace"))
-            if not match:
-                raise RecorderConfigError("无法从斗鱼链接识别真实房间号")
-            room_id = match.group(1)
-        payload = _response_json(
-            f"https://www.douyu.com/betard/{room_id}",
-            referer="https://www.douyu.com/",
-        )
+            room_id = _resolve_douyu_real_room_id(room_ref)
+        try:
+            payload = _response_json(
+                f"https://www.douyu.com/betard/{room_id}",
+                referer="https://www.douyu.com/",
+            )
+        except RecorderConfigError:
+            # Numeric Douyu vanity IDs look exactly like ordinary room IDs.
+            # If the direct API lookup fails, resolve the mobile page's rid and
+            # retry with the platform's internal room ID.
+            if not room_ref.isdigit():
+                raise
+            real_room_id = _resolve_douyu_real_room_id(room_ref)
+            if real_room_id == room_id:
+                raise
+            room_id = real_room_id
+            payload = _response_json(
+                f"https://www.douyu.com/betard/{room_id}",
+                referer="https://www.douyu.com/",
+            )
         room_data = payload.get("room")
         if not isinstance(room_data, dict):
             raise RecorderConfigError("斗鱼直播间不存在或暂时无法访问")
