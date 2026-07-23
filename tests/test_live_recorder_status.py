@@ -31,6 +31,56 @@ class LiveRecorderStatusTests(unittest.TestCase):
             },
         ]
 
+    def test_resolves_bilibili_streamer_name_avatar_and_real_room_id(self):
+        manager = LiveRecorderManager()
+        room_response = {
+            "code": 0,
+            "data": {
+                "uid": 123,
+                "room_id": 456,
+                "title": "今晚歌回",
+            },
+        }
+        master_response = {
+            "code": 0,
+            "data": {
+                "info": {
+                    "uname": "自动识别主播",
+                    "face": "https://i0.hdslb.com/avatar.jpg",
+                },
+            },
+        }
+        with mock.patch.object(
+            recorder_module,
+            "_response_json",
+            side_effect=[room_response, master_response],
+        ):
+            room = manager.resolve_room("https://live.bilibili.com/100")
+
+        self.assertEqual(room["platform"], "bilibili")
+        self.assertEqual(room["room_id"], "456")
+        self.assertEqual(room["name"], "自动识别主播")
+        self.assertEqual(room["avatar_url"], "https://i0.hdslb.com/avatar.jpg")
+        self.assertEqual(room["url"], "https://live.bilibili.com/456")
+
+    def test_resolves_douyu_streamer_name_and_avatar(self):
+        manager = LiveRecorderManager()
+        response = {
+            "room": {
+                "room_id": 9999,
+                "room_name": "陪伴每一天",
+                "owner_name": "yyfyyf",
+                "owner_avatar": "https://apic.douyucdn.cn/avatar.jpg",
+            },
+        }
+        with mock.patch.object(recorder_module, "_response_json", return_value=response):
+            room = manager.resolve_room("https://www.douyu.com/9999")
+
+        self.assertEqual(room["platform"], "douyu")
+        self.assertEqual(room["room_id"], "9999")
+        self.assertEqual(room["name"], "yyfyyf")
+        self.assertEqual(room["avatar_url"], "https://apic.douyucdn.cn/avatar.jpg")
+
     def test_maps_biliup_worker_status_per_room(self):
         payload = {
             "rooms": [
@@ -212,6 +262,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("${logState.open ? 'open' : ''}", source)
         self.assertIn("loadJobLog(job.id, logPre, true)", source)
         self.assertIn("logState.stickToBottom", source)
+
+    def test_add_room_form_only_requires_room_url(self):
+        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+
+        self.assertNotIn('name="name"', source)
+        self.assertIn("粘贴链接，自动识别主播名称和头像", source)
+        self.assertIn("/live-recording/rooms/resolve", source)
+        self.assertIn("room.avatar_url", source)
 
 
 if __name__ == "__main__":

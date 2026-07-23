@@ -1257,18 +1257,30 @@ def live_recording_file_delete(file_id):
 @login_required
 def live_recording_save_room():
     try:
-        _, reload_state = live_recorder_manager.save_room_and_reload(
-            request.form.get('name', ''), request.form.get('url', '')
+        room, reload_state = live_recorder_manager.add_room_from_url_and_reload(
+            request.form.get('url', '')
         )
+        room_name = str(room.get('name') or '直播间')
         if reload_state == 'reloaded':
-            flash('直播间已添加，录制 worker 已自动重载。', 'success')
+            flash(f'已识别“{room_name}”，录制 worker 已自动重载。', 'success')
         elif reload_state == 'pending':
-            flash('直播间已添加；当前录制结束后会自动重载 worker。', 'success')
+            flash(f'已识别“{room_name}”；当前录制结束后会自动重载 worker。', 'success')
         else:
-            flash('直播间已添加；录制配置和上传桥接配置已同步。', 'success')
+            flash(f'已识别并添加“{room_name}”；录制与上传配置已同步。', 'success')
     except RecorderConfigError as exc:
         flash(str(exc), 'danger')
     return redirect(url_for('live_recording'))
+
+
+@app.route('/live-recording/rooms/resolve', methods=['POST'])
+@login_required
+def live_recording_resolve_room():
+    payload = request.get_json(silent=True) or request.form
+    try:
+        room = live_recorder_manager.resolve_room(str(payload.get('url') or ''))
+        return jsonify({'ok': True, 'room': room})
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
 @app.route('/live-recording/rooms/<room_id>/delete', methods=['POST'])

@@ -108,6 +108,13 @@ body {
 .platform-mark.bilibili { background: #f35b8a; }
 .platform-mark.douyu { background: #ff7a22; }
 .platform-mark.large { width: 45px; height: 45px; border-radius: 9px; font-size: 20px; }
+.room-avatar { position: relative; display: block; width: 36px; height: 36px; flex: 0 0 auto; }
+.room-avatar.large { width: 48px; height: 48px; }
+.room-avatar > img, .room-avatar > .platform-mark { width: 100%; height: 100%; object-fit: cover; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #dfe3e8; }
+.room-avatar-platform { position: absolute; right: -2px; bottom: -2px; display: grid; width: 15px; height: 15px; place-items: center; color: #fff; border: 2px solid #fff; border-radius: 50%; font-size: 7px; }
+.room-avatar-platform.bilibili { background: #f35b8a; }
+.room-avatar-platform.douyu { background: #ff7a22; }
+.room-avatar.large .room-avatar-platform { width: 18px; height: 18px; font-size: 8px; }
 .room-item-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .room-item-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .room-item-copy small { overflow: hidden; margin-top: 3px; color: #8a909b; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -238,6 +245,21 @@ body {
 .file-empty .spinner-border { display: inline-block; width: 1rem; height: 1rem; margin-right: 7px; }
 .file-manager-note { margin-top: 11px; color: #777e89; font-size: 9px; }
 .file-manager-note i { margin-right: 5px; color: var(--studio-primary); }
+
+.room-resolve-input { position: relative; display: flex; align-items: center; }
+.room-resolve-input > i { position: absolute; left: 12px; z-index: 1; color: #9198a3; font-size: 16px; }
+.room-resolve-input .form-control { padding-left: 36px; padding-right: 38px; }
+.room-resolve-input .spinner-border { position: absolute; right: 13px; width: 14px; height: 14px; color: var(--studio-primary); }
+.room-resolve-error { margin-top: 11px; padding: 9px 11px; color: #ad3344; border: 1px solid #f0ccd2; border-radius: 7px; background: #fff4f5; font-size: 10px; }
+.room-resolve-preview { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 13px; border: 1px solid #cfe7da; border-radius: 9px; background: #f4fbf7; }
+.room-resolve-avatar { position: relative; width: 48px; height: 48px; flex: 0 0 auto; }
+.room-resolve-avatar img { width: 100%; height: 100%; object-fit: cover; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #d9e4dd; }
+.room-resolve-avatar > i { position: absolute; right: -2px; bottom: -2px; display: grid; width: 18px; height: 18px; place-items: center; color: #fff; border: 2px solid #fff; border-radius: 50%; background: var(--studio-primary); font-size: 8px; }
+.room-resolve-preview > div:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.room-resolve-preview span { color: #7d8791; font-size: 9px; }
+.room-resolve-preview strong { margin: 2px 0; color: #29313a; font-size: 13px; }
+.room-resolve-preview small { overflow: hidden; color: #858e98; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.room-resolve-ok { color: #32a66a; font-size: 18px; }
 
 .stop-recording-modal .modal-dialog { max-width: 430px; padding: 16px; }
 .stop-recording-modal .modal-content { border-radius: 14px; box-shadow: 0 24px 80px rgba(24, 31, 42, .24); }

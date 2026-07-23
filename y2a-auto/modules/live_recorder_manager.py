@@ -19,7 +19,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +74,33 @@ def detect_platform(url: str) -> str:
     if host == "douyu.com" or host.endswith(".douyu.com"):
         return "douyu"
     raise RecorderConfigError("只支持哔哩哔哩直播间和斗鱼直播间 URL")
+
+
+def _open_url(url: str, *, referer: str = "", timeout: int = 12) -> tuple[bytes, str]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        ),
+    }
+    if referer:
+        headers["Referer"] = referer
+    try:
+        with urlopen(Request(url, headers=headers), timeout=timeout) as response:
+            return response.read(), response.geturl()
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise RecorderConfigError(f"读取直播间信息失败：{exc}") from exc
+
+
+def _response_json(url: str, *, referer: str = "", timeout: int = 12) -> dict[str, Any]:
+    body, _ = _open_url(url, referer=referer, timeout=timeout)
+    try:
+        payload = json.loads(body.decode("utf-8", errors="replace"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RecorderConfigError(f"解析平台直播间信息失败：{exc}") from exc
+    if not isinstance(payload, dict):
+        raise RecorderConfigError("平台返回的直播间信息格式无效")
+    return payload
 
 
 class LiveRecorderManager:
@@ -233,6 +262,137 @@ class LiveRecorderManager:
                 for room in rooms
             ],
         }
+
+    def resolve_room(self, url: str) -> dict[str, Any]:
+        """Resolve a supported room URL into canonical streamer metadata."""
+        url = url.strip()
+        platform = detect_platform(url)
+        if platform == "bilibili":
+            parsed = urlparse(url)
+            if (parsed.hostname or "").lower() == "b23.tv":
+                try:
+                    _, url = _open_url(url)
+                except RecorderConfigError as exc:
+                    raise RecorderConfigError(f"解析 B站短链接失败：{exc}") from exc
+                if detect_platform(url) != "bilibili":
+                    raise RecorderConfigError("B站短链接没有指向直播间")
+            room_match = re.search(r"/(\d+)", urlparse(url).path)
+            if not room_match:
+                raise RecorderConfigError("B站直播间链接中没有有效房间号")
+            room = _response_json(
+                "https://api.live.bilibili.com/room/v1/Room/get_info"
+                f"?room_id={room_match.group(1)}",
+                referer="https://live.bilibili.com/",
+            )
+            if room.get("code") != 0 or not isinstance(room.get("data"), dict):
+                raise RecorderConfigError(
+                    f"B站直播间识别失败：{room.get('message') or room.get('msg') or '房间不存在'}"
+                )
+            room_data = room["data"]
+            real_room_id = str(room_data.get("room_id") or "").strip()
+            uid = str(room_data.get("uid") or "").strip()
+            if not real_room_id or not uid:
+                raise RecorderConfigError("B站直播间没有有效的房间号或主播 UID")
+            master = _response_json(
+                f"https://api.live.bilibili.com/live_user/v1/Master/info?uid={uid}",
+                referer=f"https://live.bilibili.com/{real_room_id}",
+            )
+            master_data = master.get("data") if master.get("code") == 0 else None
+            info = master_data.get("info") if isinstance(master_data, dict) else None
+            name = str(info.get("uname") or "").strip() if isinstance(info, dict) else ""
+            avatar_url = str(info.get("face") or "").strip() if isinstance(info, dict) else ""
+            if not name:
+                raise RecorderConfigError("B站没有返回主播名称，请稍后重试")
+            return {
+                "platform": "bilibili",
+                "platform_name": "哔哩哔哩",
+                "room_id": real_room_id,
+                "name": name,
+                "avatar_url": avatar_url,
+                "url": f"https://live.bilibili.com/{real_room_id}",
+                "live_title": str(room_data.get("title") or "").strip(),
+            }
+
+        parsed = urlparse(url)
+        room_ref = parsed.path.strip("/").split("/", 1)[0]
+        if not room_ref:
+            raise RecorderConfigError("斗鱼直播间链接中没有有效房间号")
+        room_id = room_ref
+        if not room_id.isdigit():
+            try:
+                body, _ = _open_url(f"https://m.douyu.com/{room_ref}")
+            except RecorderConfigError as exc:
+                raise RecorderConfigError(f"解析斗鱼房间号失败：{exc}") from exc
+            match = re.search(r'"roomInfo":\{"rid":(\d+)', body.decode("utf-8", errors="replace"))
+            if not match:
+                raise RecorderConfigError("无法从斗鱼链接识别真实房间号")
+            room_id = match.group(1)
+        payload = _response_json(
+            f"https://www.douyu.com/betard/{room_id}",
+            referer="https://www.douyu.com/",
+        )
+        room_data = payload.get("room")
+        if not isinstance(room_data, dict):
+            raise RecorderConfigError("斗鱼直播间不存在或暂时无法访问")
+        real_room_id = str(room_data.get("room_id") or room_id).strip()
+        name = str(room_data.get("owner_name") or room_data.get("nickname") or "").strip()
+        avatar = room_data.get("avatar")
+        avatar_url = str(room_data.get("owner_avatar") or "").strip()
+        if not avatar_url and isinstance(avatar, dict):
+            avatar_url = str(avatar.get("big") or avatar.get("middle") or avatar.get("small") or "").strip()
+        if not name:
+            raise RecorderConfigError("斗鱼没有返回主播名称，请稍后重试")
+        return {
+            "platform": "douyu",
+            "platform_name": "斗鱼",
+            "room_id": real_room_id,
+            "name": name,
+            "avatar_url": avatar_url,
+            "url": f"https://www.douyu.com/{real_room_id}",
+            "live_title": str(room_data.get("room_name") or "").strip(),
+        }
+
+    def add_room_from_url(self, url: str) -> dict[str, Any]:
+        resolved = self.resolve_room(url)
+        with self._lock:
+            rooms = self.list_rooms()
+            existing = next(
+                (
+                    room for room in rooms
+                    if room.get("platform") == resolved["platform"]
+                    and str(room.get("platform_room_id") or "") == resolved["room_id"]
+                ),
+                None,
+            )
+            if existing is None:
+                existing = {"id": uuid.uuid4().hex, "enabled": True}
+                rooms.append(existing)
+            existing.update({
+                "name": resolved["name"],
+                "url": resolved["url"],
+                "platform": resolved["platform"],
+                "platform_room_id": resolved["room_id"],
+                "avatar_url": resolved["avatar_url"],
+            })
+            _atomic_json(ROOMS_PATH, rooms)
+            self.sync_configs(rooms)
+            self._write_control_state(rooms)
+            return dict(existing)
+
+    def add_room_from_url_and_reload(self, url: str) -> tuple[dict[str, Any], str]:
+        """Resolve, save and reload a room without interrupting active recordings."""
+        with self._lock:
+            was_running = self._pid() is not None
+            room = self.add_room_from_url(url)
+            if not was_running:
+                return room, "saved"
+            if any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status()):
+                _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
+                self._ensure_reload_thread()
+                return room, "pending"
+            self.stop()
+            self.start()
+            return room, "reloaded"
 
     def save_room(self, name: str, url: str, room_id: str | None = None) -> dict[str, Any]:
         name = name.strip()

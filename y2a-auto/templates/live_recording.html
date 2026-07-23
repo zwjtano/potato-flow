@@ -8,6 +8,12 @@
 {% macro format_duration(seconds) -%}
 {{ '%02d:%02d:%02d'|format((seconds // 3600), ((seconds % 3600) // 60), (seconds % 60)) }}
 {%- endmacro %}
+{% macro room_avatar(room, large=false) -%}
+<span class="room-avatar {{ 'large' if large }}" aria-hidden="true">
+    {% if room.avatar_url %}<img src="{{ room.avatar_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% else %}<span class="platform-mark {{ 'large' if large }} {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>{% endif %}
+    <i class="room-avatar-platform bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }} {{ room.platform }}"></i>
+</span>
+{%- endmacro %}
 <section class="recorder-header">
     <div>
         <div class="recorder-eyebrow">LIVE RECORDER</div>
@@ -41,7 +47,7 @@
         <div class="room-list" id="roomList">
             {% for room in rooms %}
             <button class="room-item {{ 'active' if loop.first }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}">
-                <span class="platform-mark {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>
+                {{ room_avatar(room) }}
                 <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }} · {{ room.display_room_id }}</small></span>
                 <span class="room-state {{ room.runtime.state }}" data-role="room-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
             </button>
@@ -58,7 +64,7 @@
         <article class="room-detail-panel {{ '' if loop.first else 'd-none' }}" data-panel="{{ room.id }}">
             <header class="room-detail-header">
                 <div class="selected-room-title">
-                    <span class="platform-mark large {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>
+                    {{ room_avatar(room, true) }}
                     <div><div class="selected-room-meta"><span>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }}</span><span>房间 {{ room.display_room_id }}</span></div><h2>{{ room.name }}</h2><a href="{{ room.url }}" target="_blank" rel="noopener">{{ room.display_url }} <i class="bi bi-box-arrow-up-right"></i></a></div>
                 </div>
                 <div class="detail-actions">
@@ -108,7 +114,17 @@
     </div>
 </section>
 
-<div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">支持 B站与斗鱼直播间链接</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body"><div class="mb-3"><label class="form-label">主播名称</label><input class="form-control" name="name" placeholder="例如：主播名" required></div><div><label class="form-label">直播间 URL</label><input class="form-control" name="url" type="url" placeholder="https://live.bilibili.com/123" required><div class="form-text">也可填写 https://www.douyu.com/123</div></div></div><div class="modal-footer"><button type="button" class="btn btn-light border" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg"></i> 添加并同步</button></div></form></div></div></div>
+<div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="addRoomForm" method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">粘贴链接，自动识别主播名称和头像</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body">
+    <label class="form-label">B站或斗鱼直播间链接</label>
+    <div class="room-resolve-input"><i class="bi bi-link-45deg"></i><input class="form-control" name="url" type="url" data-role="room-url" placeholder="https://live.bilibili.com/123" autocomplete="off" required><span class="spinner-border spinner-border-sm d-none" data-role="room-resolve-spinner"></span></div>
+    <div class="form-text">支持 live.bilibili.com、b23.tv 和 douyu.com 直播间链接</div>
+    <div class="room-resolve-error d-none" data-role="room-resolve-error"></div>
+    <div class="room-resolve-preview d-none" data-role="room-resolve-preview">
+        <div class="room-resolve-avatar"><img data-role="room-resolve-avatar" alt="" referrerpolicy="no-referrer"><i class="bi" data-role="room-resolve-platform-icon"></i></div>
+        <div><span data-role="room-resolve-platform"></span><strong data-role="room-resolve-name"></strong><small data-role="room-resolve-title"></small></div>
+        <i class="bi bi-check-circle-fill room-resolve-ok"></i>
+    </div>
+</div><div class="modal-footer"><button type="button" class="btn btn-light border" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit" data-role="room-submit" disabled><i class="bi bi-plus-lg"></i> 识别并添加</button></div></form></div></div></div>
 <div class="modal fade stop-recording-modal" id="stopRecordingConfirmModal" tabindex="-1" aria-labelledby="stopRecordingConfirmTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -149,9 +165,18 @@ document.addEventListener('DOMContentLoaded', function () {
     const search = document.getElementById('roomSearch');
     const tabs = [...document.querySelectorAll('.room-tabs button')];
     const filesModal = document.getElementById('recordingFilesModal');
+    const addRoomModal = document.getElementById('addRoomModal');
+    const addRoomForm = document.getElementById('addRoomForm');
+    const roomUrlInput = addRoomForm?.querySelector('[data-role="room-url"]');
+    const roomSubmit = addRoomForm?.querySelector('[data-role="room-submit"]');
+    const roomResolveSpinner = addRoomForm?.querySelector('[data-role="room-resolve-spinner"]');
+    const roomResolveError = addRoomForm?.querySelector('[data-role="room-resolve-error"]');
+    const roomResolvePreview = addRoomForm?.querySelector('[data-role="room-resolve-preview"]');
     const stopConfirmModalElement = document.getElementById('stopRecordingConfirmModal');
     const stopConfirmButton = stopConfirmModalElement?.querySelector('[data-action="confirm-stop-recording"]');
     let stopConfirmResolve = null;
+    let roomResolveTimer = null;
+    let resolvedRoomUrl = '';
     let recordingFiles = [];
     let filter = 'all';
     const jobLogStates = new Map();
@@ -183,6 +208,47 @@ document.addEventListener('DOMContentLoaded', function () {
     function applyFilter() {
         const query = (search?.value || '').trim().toLowerCase();
         items.forEach(item => { item.hidden = !item.dataset.name.includes(query) || (filter !== 'all' && item.dataset.state !== filter); });
+    }
+    function resetRoomResolution() {
+        resolvedRoomUrl = '';
+        roomSubmit.disabled = true;
+        roomResolveSpinner.classList.add('d-none');
+        roomResolveError.classList.add('d-none');
+        roomResolvePreview.classList.add('d-none');
+    }
+    async function resolveRoomUrl() {
+        const requestedUrl = (roomUrlInput?.value || '').trim();
+        resetRoomResolution();
+        if (!requestedUrl) return;
+        roomResolveSpinner.classList.remove('d-none');
+        try {
+            const response = await fetch('/live-recording/rooms/resolve', {
+                method: 'POST',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                body: JSON.stringify({url: requestedUrl}),
+            });
+            const result = await response.json();
+            if ((roomUrlInput?.value || '').trim() !== requestedUrl) return;
+            if (!response.ok) throw new Error(result.error || '无法识别这个直播间');
+            const room = result.room;
+            const avatar = roomResolvePreview.querySelector('[data-role="room-resolve-avatar"]');
+            avatar.src = room.avatar_url || '';
+            avatar.hidden = !room.avatar_url;
+            roomResolvePreview.querySelector('[data-role="room-resolve-platform"]').textContent = `${room.platform_name} · 房间 ${room.room_id}`;
+            roomResolvePreview.querySelector('[data-role="room-resolve-name"]').textContent = room.name;
+            roomResolvePreview.querySelector('[data-role="room-resolve-title"]').textContent = room.live_title || '主播资料识别成功';
+            const platformIcon = roomResolvePreview.querySelector('[data-role="room-resolve-platform-icon"]');
+            platformIcon.className = `bi ${room.platform === 'bilibili' ? 'bi-tv' : 'bi-controller'}`;
+            platformIcon.style.background = room.platform === 'bilibili' ? '#f35b8a' : '#ff7a22';
+            resolvedRoomUrl = requestedUrl;
+            roomResolvePreview.classList.remove('d-none');
+            roomSubmit.disabled = false;
+        } catch (error) {
+            roomResolveError.textContent = error.message;
+            roomResolveError.classList.remove('d-none');
+        } finally {
+            if ((roomUrlInput?.value || '').trim() === requestedUrl) roomResolveSpinner.classList.add('d-none');
+        }
     }
     function formatDuration(seconds) {
         if (!seconds) return '—';
@@ -410,6 +476,20 @@ document.addEventListener('DOMContentLoaded', function () {
     }));
     search?.addEventListener('input', applyFilter);
     tabs.forEach(tab => tab.addEventListener('click', function () { tabs.forEach(node => node.classList.remove('active')); tab.classList.add('active'); filter = tab.dataset.filter; applyFilter(); }));
+    roomUrlInput?.addEventListener('input', function () {
+        window.clearTimeout(roomResolveTimer);
+        resetRoomResolution();
+        roomResolveTimer = window.setTimeout(resolveRoomUrl, 500);
+    });
+    addRoomForm?.addEventListener('submit', function (event) {
+        if (resolvedRoomUrl === (roomUrlInput?.value || '').trim()) return;
+        event.preventDefault();
+        resolveRoomUrl();
+    });
+    addRoomModal?.addEventListener('hidden.bs.modal', function () {
+        addRoomForm.reset();
+        resetRoomResolution();
+    });
     filesModal?.addEventListener('shown.bs.modal', loadFiles);
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
     filesModal?.querySelector('[data-role="file-search"]')?.addEventListener('input', renderFiles);
