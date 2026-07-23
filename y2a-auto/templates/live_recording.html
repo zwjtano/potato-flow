@@ -109,6 +109,24 @@
 </section>
 
 <div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">支持 B站与斗鱼直播间链接</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body"><div class="mb-3"><label class="form-label">主播名称</label><input class="form-control" name="name" placeholder="例如：主播名" required></div><div><label class="form-label">直播间 URL</label><input class="form-control" name="url" type="url" placeholder="https://live.bilibili.com/123" required><div class="form-text">也可填写 https://www.douyu.com/123</div></div></div><div class="modal-footer"><button type="button" class="btn btn-light border" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg"></i> 添加并同步</button></div></form></div></div></div>
+<div class="modal fade stop-recording-modal" id="stopRecordingConfirmModal" tabindex="-1" aria-labelledby="stopRecordingConfirmTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="stop-recording-icon" aria-hidden="true"><i class="bi bi-stop-fill"></i></div>
+                <div class="stop-recording-copy">
+                    <h5 id="stopRecordingConfirmTitle">停止录制？</h5>
+                    <p data-role="stop-confirm-room">确定停止这个直播间的录制？</p>
+                    <div class="stop-recording-note"><i class="bi bi-shield-check"></i><span>当前视频和弹幕文件会安全收尾，然后自动进入后续处理流水线。</span></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-light border" type="button" data-bs-dismiss="modal">继续录制</button>
+                <button class="btn btn-danger" type="button" data-action="confirm-stop-recording"><i class="bi bi-stop-fill"></i> 确认停止</button>
+            </div>
+        </div>
+    </div>
+</div>
 <div class="modal fade recording-files-modal" id="recordingFilesModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><h5 class="modal-title">录播文件管理</h5><small class="text-muted">集中查看录播视频、原始 XML 弹幕和生成的 ASS 字幕</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body">
     <div class="file-summary"><div><i class="bi bi-files"></i><span>文件总数</span><strong data-role="file-count">—</strong></div><div><i class="bi bi-device-hdd"></i><span>占用空间</span><strong data-role="file-size">—</strong></div><div><i class="bi bi-shield-check"></i><span>安全保护</span><strong>已启用</strong></div></div>
     <div class="file-toolbar">
@@ -131,8 +149,23 @@ document.addEventListener('DOMContentLoaded', function () {
     const search = document.getElementById('roomSearch');
     const tabs = [...document.querySelectorAll('.room-tabs button')];
     const filesModal = document.getElementById('recordingFilesModal');
+    const stopConfirmModalElement = document.getElementById('stopRecordingConfirmModal');
+    const stopConfirmButton = stopConfirmModalElement?.querySelector('[data-action="confirm-stop-recording"]');
+    let stopConfirmResolve = null;
     let recordingFiles = [];
     let filter = 'all';
+    function confirmStopRecording(button) {
+        if (!stopConfirmModalElement || !window.bootstrap?.Modal) return Promise.resolve(false);
+        const roomName = button.closest('.room-detail-panel')?.querySelector('.selected-room-title h2')?.textContent?.trim();
+        stopConfirmModalElement.querySelector('[data-role="stop-confirm-room"]').textContent = roomName
+            ? `确定停止“${roomName}”的录制？`
+            : '确定停止这个直播间的录制？';
+        stopConfirmButton.disabled = true;
+        return new Promise(resolve => {
+            stopConfirmResolve = resolve;
+            bootstrap.Modal.getOrCreateInstance(stopConfirmModalElement).show();
+        });
+    }
     function applyFilter() {
         const query = (search?.value || '').trim().toLowerCase();
         items.forEach(item => { item.hidden = !item.dataset.name.includes(query) || (filter !== 'all' && item.dataset.state !== filter); });
@@ -300,7 +333,7 @@ document.addEventListener('DOMContentLoaded', function () {
     async function controlRoomRecording(event) {
         const button = event.currentTarget;
         const stopping = button.dataset.enabled === 'true';
-        if (stopping && !confirm('确定停止这个直播间的录制？\n当前视频和弹幕文件会安全收尾，然后进入后续处理流水线。')) return;
+        if (stopping && !(await confirmStopRecording(button))) return;
         button.disabled = true;
         const original = button.innerHTML;
         button.innerHTML = `<span class="spinner-border spinner-border-sm"></span> ${stopping ? '正在停止' : '正在启动'}`;
@@ -332,6 +365,22 @@ document.addEventListener('DOMContentLoaded', function () {
     filesModal?.querySelector('[data-role="file-search"]')?.addEventListener('input', renderFiles);
     filesModal?.querySelector('[data-role="file-room"]')?.addEventListener('change', renderFiles);
     filesModal?.querySelector('[data-role="file-type"]')?.addEventListener('change', renderFiles);
+    stopConfirmModalElement?.addEventListener('shown.bs.modal', function () {
+        stopConfirmButton.disabled = false;
+        stopConfirmButton.focus();
+    });
+    stopConfirmButton?.addEventListener('click', function () {
+        const resolve = stopConfirmResolve;
+        stopConfirmResolve = null;
+        bootstrap.Modal.getOrCreateInstance(stopConfirmModalElement).hide();
+        resolve?.(true);
+    });
+    stopConfirmModalElement?.addEventListener('hidden.bs.modal', function () {
+        if (!stopConfirmResolve) return;
+        const resolve = stopConfirmResolve;
+        stopConfirmResolve = null;
+        resolve(false);
+    });
     document.querySelectorAll('[data-action="room-recording"]').forEach(button => button.addEventListener('click', controlRoomRecording));
     refreshLiveStatus();
     window.setInterval(refreshLiveStatus, 5000);

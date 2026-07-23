@@ -239,6 +239,20 @@ body {
 .file-manager-note { margin-top: 11px; color: #777e89; font-size: 9px; }
 .file-manager-note i { margin-right: 5px; color: var(--studio-primary); }
 
+.stop-recording-modal .modal-dialog { max-width: 430px; padding: 16px; }
+.stop-recording-modal .modal-content { border-radius: 14px; box-shadow: 0 24px 80px rgba(24, 31, 42, .24); }
+.stop-recording-modal .modal-body { display: flex; align-items: flex-start; gap: 16px; padding: 24px 24px 18px; }
+.stop-recording-icon { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; color: var(--studio-danger); border-radius: 50%; background: #fff0f2; font-size: 20px; }
+.stop-recording-copy { min-width: 0; padding-top: 1px; }
+.stop-recording-copy h5 { margin: 0 0 7px; color: #282f39; font-size: 16px; font-weight: 700; }
+.stop-recording-copy > p { margin: 0; color: #4f5865; font-size: 12px; line-height: 1.6; }
+.stop-recording-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 12px; padding: 10px 11px; color: #69727f; border-radius: 7px; background: #f5f7f9; font-size: 10px; line-height: 1.55; }
+.stop-recording-note i { flex: 0 0 auto; margin-top: 1px; color: #36a26c; font-size: 13px; }
+.stop-recording-modal .modal-footer { justify-content: flex-end; gap: 8px; padding: 13px 24px 18px; border-top: 0; background: #fff; }
+.stop-recording-modal .modal-footer .btn { min-width: 92px; min-height: 36px; margin: 0; border-radius: 7px; font-size: 11px; font-weight: 650; }
+.stop-recording-modal .btn-danger { border-color: var(--studio-danger); background: var(--studio-danger); }
+.stop-recording-modal .btn-danger:hover { border-color: #d93249; background: #d93249; }
+
 @media (max-width: 991.98px) {
     .app-sidebar { display: none; }
     .app-frame { margin-left: 0; }
