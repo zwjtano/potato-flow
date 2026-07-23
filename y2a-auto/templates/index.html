@@ -8,7 +8,7 @@
         <div>
             <div class="page-eyebrow">OVERVIEW</div>
             <h1>工作台概览</h1>
-            <p>实时掌握录制、处理、审核与投稿状态。</p>
+            <p>统一掌握直播录播与 YouTube 任务的处理、审核和投稿状态。</p>
         </div>
         <div class="page-actions">
             <a href="{{ url_for('tasks') }}" class="btn btn-primary"><i class="bi bi-collection-play me-1"></i> 任务列表</a>
@@ -138,6 +138,7 @@
                 <thead class="table-light">
                     <tr>
                         <th class="col-narrow">#</th>
+                        <th>来源</th>
                         <th>标题</th>
                         <th class="text-center">状态</th>
                         <th class="text-center">更新时间</th>
@@ -148,6 +149,13 @@
                     {% for t in recent_tasks %}
                     <tr>
                         <td class="text-monospace">{{ t.id[:6] }}…</td>
+                        <td>
+                            {% if t.source == 'recording' %}
+                            <span class="badge source-badge recording"><i class="bi bi-record-circle"></i> 直播录播</span>
+                            {% else %}
+                            <span class="badge source-badge youtube"><i class="bi bi-youtube"></i> YouTube</span>
+                            {% endif %}
+                        </td>
                         <td class="title-clamp title-clamp-2">{{ t.title }}</td>
                         <td class="text-center"><span class="badge bg-{{ task_status_color(t.status) }}">{{ task_status_display(t.status) }}</span></td>
                         <td class="text-center"><span class="task-datetime" data-datetime="{{ t.updated_at }}">{{ t.updated_at }}</span></td>
@@ -219,6 +227,9 @@
 <style>
     .title-clamp-2 { -webkit-line-clamp: 2; line-clamp: 2; max-height: 2.8em; }
     .col-narrow { width: 32px; }
+    .source-badge { white-space: nowrap; font-weight: 600; }
+    .source-badge.recording { color: #b42335; background: #fff0f2; }
+    .source-badge.youtube { color: #9f1c26; background: #fff1f1; }
 </style>
 {% endblock %}
 

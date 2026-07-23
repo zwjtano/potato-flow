@@ -9,7 +9,7 @@
     {% set failed_tasks = tasks|selectattr('status', 'equalto', 'failed')|list if tasks else [] %}
     <div class="studio-page-header">
         <div class="d-flex align-items-center gap-2">
-            <div><div class="page-eyebrow">UPLOAD QUEUE</div><h1>上传任务</h1><p>查看下载、处理与 B站投稿的完整进度。</p></div>
+            <div><div class="page-eyebrow">UPLOAD QUEUE</div><h1>上传任务</h1><p>统一查看直播录播、下载、处理与 B站投稿进度。</p></div>
             <div id="tasksRefreshIndicator" class="d-none" aria-hidden="true">
                 <span class="spinner-border spinner-border-sm text-primary" role="status" aria-label="正在刷新"></span>
             </div>
@@ -33,6 +33,144 @@
     </div>
 
     <div id="tasksContent">
+    <section class="recording-task-section mb-4" aria-labelledby="recordingTasksTitle">
+        <div class="task-section-heading">
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="task-source-icon recording"><i class="bi bi-record-circle"></i></span>
+                    <h2 id="recordingTasksTitle">直播录播任务</h2>
+                    <span class="badge rounded-pill text-bg-light">{{ recording_jobs|length }}</span>
+                </div>
+                <p>斗鱼与哔哩哔哩录制完成后，在这里查看 ASS、AI 简介和投稿流水线。</p>
+            </div>
+            <a href="{{ url_for('live_recording') }}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-broadcast"></i> 直播录制
+            </a>
+        </div>
+
+        {% if recording_jobs %}
+        <div class="modern-list recording-task-list">
+            <div class="table-responsive modern-table d-none d-md-block">
+                <table class="table table-hover table-borderless align-middle mb-0 recording-tasks-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>录播视频</th>
+                            <th>直播间</th>
+                            <th class="text-center">状态</th>
+                            <th>处理进度</th>
+                            <th class="text-center">更新时间</th>
+                            <th class="text-end">结果与操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for job in recording_jobs %}
+                        {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
+                        <tr class="recording-task-row">
+                            <td>
+                                <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
+                                <code class="recording-task-file">{{ job.video_name }}</code>
+                            </td>
+                            <td>
+                                <div class="d-flex align-items-center gap-2">
+                                    {% if job.room_avatar_url %}
+                                    <img src="{{ job.room_avatar_url }}" alt="" class="recording-room-avatar">
+                                    {% else %}
+                                    <span class="recording-room-avatar fallback"><i class="bi bi-person-video3"></i></span>
+                                    {% endif %}
+                                    <span class="small">{{ job.room_name }}</span>
+                                </div>
+                            </td>
+                            <td class="text-center">
+                                {% if job.status == 'completed' %}
+                                <span class="badge rounded-pill text-bg-success">已完成</span>
+                                {% elif job.status == 'failed' %}
+                                <span class="badge rounded-pill text-bg-danger">失败</span>
+                                {% elif job.status == 'dry_run' %}
+                                <span class="badge rounded-pill text-bg-warning">待投稿</span>
+                                {% elif job.status == 'video_uploaded' %}
+                                <span class="badge rounded-pill text-bg-info">导入弹幕中</span>
+                                {% else %}
+                                <span class="badge rounded-pill text-bg-primary">处理中</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="d-flex justify-content-between gap-2 small mb-1">
+                                    <span>
+                                        {% if job.failed_stage %}{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage) }}失败
+                                        {% elif job.active_stage %}正在{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'生成 AI 简介','upload':'投稿 B站'}.get(job.active_stage, job.active_stage) }}
+                                        {% elif job.status == 'completed' %}全部完成
+                                        {% else %}{{ job.completed_stages }}/{{ job.total_stages }} 步{% endif %}
+                                    </span>
+                                    <span class="text-muted">{{ progress }}%</span>
+                                </div>
+                                <div class="progress progress-thin" role="progressbar" aria-label="录播处理进度" aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
+                                    <div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div>
+                                </div>
+                            </td>
+                            <td class="text-center"><span class="task-datetime" data-datetime="{{ job.updated_at }}">{{ job.updated_at }}</span></td>
+                            <td class="text-end">
+                                <div class="recording-task-actions">
+                                    {% if job.bvid %}
+                                    <a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="badge text-bg-success text-decoration-none">{{ job.bvid }}</a>
+                                    {% endif %}
+                                    {% if job.error %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger error-message-trigger"
+                                            data-task-id="{{ job.short_id }}" data-task-title="{{ job.title or job.video_name }}"
+                                            data-error-message="{{ job.error }}"><i class="bi bi-exclamation-circle"></i> 错误</button>
+                                    {% endif %}
+                                    <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3"></i> 流水线</a>
+                                    {% if job.retryable %}
+                                    <button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="d-md-none recording-task-cards">
+            {% for job in recording_jobs %}
+                {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
+                <article class="recording-task-card">
+                    <div class="d-flex justify-content-between gap-3">
+                        <div class="min-w-0">
+                            <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
+                            <div class="small text-muted mt-1">{{ job.room_name }}</div>
+                        </div>
+                        {% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
+                        {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-danger">失败</span>
+                        {% elif job.status == 'dry_run' %}<span class="badge rounded-pill text-bg-warning">待投稿</span>
+                        {% elif job.status == 'video_uploaded' %}<span class="badge rounded-pill text-bg-info">导入弹幕中</span>
+                        {% else %}<span class="badge rounded-pill text-bg-primary">处理中</span>{% endif %}
+                    </div>
+                    <div class="d-flex justify-content-between small mt-3 mb-1"><span>{{ job.completed_stages }}/{{ job.total_stages }} 步</span><span>{{ progress }}%</span></div>
+                    <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
+                    <div class="d-flex flex-wrap gap-2 mt-3">
+                        <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3"></i> 查看流水线</a>
+                        {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>{% endif %}
+                        {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
+                    </div>
+                </article>
+            {% endfor %}
+            </div>
+        </div>
+        {% else %}
+        <div class="task-section-empty"><i class="bi bi-camera-video"></i><span>暂无录播视频任务。直播结束并生成文件后会自动出现在这里。</span></div>
+        {% endif %}
+    </section>
+
+    <div class="task-section-heading standard-task-heading">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <span class="task-source-icon youtube"><i class="bi bi-youtube"></i></span>
+                <h2>YouTube / 手动上传任务</h2>
+                <span class="badge rounded-pill text-bg-light">{{ pagination.total if pagination else (tasks|length) }}</span>
+            </div>
+            <p>通过视频链接创建的下载、处理和投稿任务。</p>
+        </div>
+    </div>
     {% if tasks %}
     <div class="modern-list">
         <!-- 桌面端表格（md及以上显示） -->
@@ -80,8 +218,8 @@
         </div>
     </div>
     {% else %}
-    <div class="studio-empty-state">
-        <span><i class="bi bi-cloud-arrow-up"></i></span><h3>还没有上传任务</h3><p>添加一个 YouTube 视频链接，系统会自动完成下载、处理和 B站投稿。</p><button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal"><i class="bi bi-plus-lg"></i> 新建任务</button>
+    <div class="task-section-empty">
+        <i class="bi bi-cloud-arrow-up"></i><span>暂无 YouTube / 手动上传任务。</span><button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal"><i class="bi bi-plus-lg"></i> 新建任务</button>
     </div>
     {% endif %}
     
@@ -444,6 +582,35 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .modern-table .table-hover tbody tr:hover { background: rgba(13,110,253,0.04); }
 .modern-table .table { background: transparent; }
 .table-borderless>:not(caption)>*>* { border-bottom-width: 0; }
+
+.task-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.task-section-heading h2 { margin: 0; font-size: 1.05rem; font-weight: 700; }
+.task-section-heading p { margin: .35rem 0 0; color: #8490a4; font-size: .85rem; }
+.standard-task-heading { margin-top: 1.5rem; }
+.task-source-icon {
+    width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 10px; font-size: 1rem;
+}
+.task-source-icon.recording { color: #dc3545; background: rgba(220,53,69,.1); }
+.task-source-icon.youtube { color: #dc3545; background: rgba(220,53,69,.1); }
+.recording-task-list { padding: .25rem 0; }
+.recording-tasks-table th { font-size: .78rem; color: #778195; font-weight: 600; }
+.recording-tasks-table td { padding: .8rem .65rem; }
+.recording-task-title { font-weight: 650; color: #202736; max-width: 420px; }
+.recording-task-file { display: block; max-width: 420px; margin-top: .25rem; color: #8a94a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .72rem; }
+.recording-room-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
+.recording-room-avatar.fallback { display: inline-flex; align-items: center; justify-content: center; color: #738096; background: #eef2f7; }
+.recording-task-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: .4rem; }
+.task-section-empty { display: flex; align-items: center; justify-content: center; gap: .65rem; min-height: 84px; padding: 1rem; color: #7c8799; background: #f8fafc; border: 1px dashed #dbe2ec; border-radius: 14px; }
+.recording-task-cards { display: grid; gap: .75rem; }
+.recording-task-card { padding: 1rem; background: #fff; border: 1px solid #e8edf4; border-radius: 14px; }
+.min-w-0 { min-width: 0; }
 </style>
 {% endblock %}
 
@@ -501,6 +668,28 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         const modalEl = document.getElementById('retryFailedTasksModal');
         if (modalEl) {
             new bootstrap.Modal(modalEl).show();
+        }
+    }
+
+    async function retryRecordingTask(button) {
+        const jobId = button?.dataset?.jobId;
+        if (!jobId || button.disabled) return;
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 重试中';
+        try {
+            const response = await fetch(`/live-recording/jobs/${encodeURIComponent(jobId)}/retry`, {
+                method: 'POST',
+                headers: {'Accept': 'application/json'}
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '录播任务重试失败');
+            button.innerHTML = '<i class="bi bi-check2"></i> 已启动';
+            window.setTimeout(() => refreshTasksData(true), 900);
+        } catch (error) {
+            button.innerHTML = original;
+            button.disabled = false;
+            showTaskErrorMessage(jobId.slice(0, 12), '录播任务重试失败', error.message);
         }
     }
 
@@ -963,6 +1152,12 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
                     this.dataset.errorMessage || ''
                 );
             });
+        });
+
+        queryAllWithin(root, '.recording-retry-btn').forEach(btn => {
+            if (btn.dataset.bindRecordingRetry === '1') return;
+            btn.dataset.bindRecordingRetry = '1';
+            btn.addEventListener('click', () => retryRecordingTask(btn));
         });
     }
 

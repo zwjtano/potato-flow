@@ -411,12 +411,18 @@ document.addEventListener('DOMContentLoaded', function () {
             loadJobLog(job.id, pre, true);
         });
     }
+    let requestedPipelineJob = {{ selected_pipeline_job|tojson }};
     function renderRoomPipeline(panel, jobs) {
         const select = panel.querySelector('[data-role="job-select"]');
         const roomJobs = jobs.filter(job => job.room_id === panel.dataset.panel);
         const previous = select.value;
         select.innerHTML = '<option value="">当前直播状态</option>' + roomJobs.map(job => `<option value="${job.id}">${escapeHtml(job.video_name)} · ${escapeHtml(statusNames[job.status] || job.status)}</option>`).join('');
-        select.value = roomJobs.some(job => job.id === previous) ? previous : (select.dataset.touched ? '' : (roomJobs[0]?.id || ''));
+        const requested = roomJobs.some(job => job.id === requestedPipelineJob) ? requestedPipelineJob : '';
+        select.value = requested || (roomJobs.some(job => job.id === previous) ? previous : (select.dataset.touched ? '' : (roomJobs[0]?.id || '')));
+        if (requested) {
+            select.dataset.touched = '1';
+            requestedPipelineJob = '';
+        }
         const job = roomJobs.find(item => item.id === select.value);
         panel.querySelectorAll('.pipeline-step').forEach(stepNode => {
             if (!job && ['detect', 'record'].includes(stepNode.dataset.stage)) return;

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import sys
 import tempfile
 import time
@@ -359,6 +360,76 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("${logState.open ? 'open' : ''}", source)
         self.assertIn("loadJobLog(job.id, logPre, true)", source)
         self.assertIn("logState.stickToBottom", source)
+
+    def test_pipeline_jobs_expose_unified_task_metadata(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "fingerprint-123",
+                        "/data/recordings/Alice_abcdef2026-07-23_09-00-00.flv",
+                        "bilibili",
+                        "completed",
+                        1,
+                        json.dumps({"bilibili": {"bvid": "BV1potato", "url": "https://www.bilibili.com/video/BV1potato"}}),
+                        None,
+                        "2026-07-23T01:00:00+00:00",
+                        "2026-07-23T02:00:00+00:00",
+                    ),
+                )
+                for stage in ("detect", "record", "ass", "ai", "upload"):
+                    details = {"title": "【直播回放】Alice｜测试主题｜2026-07-23"} if stage == "upload" else {}
+                    db.execute(
+                        "INSERT INTO upload_stages VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            "fingerprint-123", stage, "completed", json.dumps(details),
+                            None, None, None, "2026-07-23T02:00:00+00:00",
+                        ),
+                    )
+            rooms = [{
+                "id": "abcdef123456",
+                "name": "Alice",
+                "avatar_url": "https://example.com/alice.jpg",
+            }]
+            with mock.patch.object(manager, "_pipeline_state_path", return_value=state_path), mock.patch.object(
+                manager, "list_rooms", return_value=rooms
+            ):
+                jobs = manager.pipeline_jobs()
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["source"], "recording")
+        self.assertEqual(jobs[0]["room_name"], "Alice")
+        self.assertEqual(jobs[0]["bvid"], "BV1potato")
+        self.assertEqual(jobs[0]["completed_stages"], 5)
+        self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
+
+    def test_unified_task_views_include_recording_jobs(self):
+        tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        overview_source = (Y2A_ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+        live_source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+
+        self.assertIn("直播录播任务", tasks_source)
+        self.assertIn("recording_jobs", tasks_source)
+        self.assertIn("recording-retry-btn", tasks_source)
+        self.assertIn("t.source == 'recording'", overview_source)
+        self.assertIn("直播录播", overview_source)
+        self.assertIn("requestedPipelineJob", live_source)
 
     def test_add_room_form_only_requires_room_url(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")

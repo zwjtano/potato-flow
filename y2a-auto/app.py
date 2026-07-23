@@ -1188,6 +1188,7 @@ def live_recording():
         rooms=rooms,
         recorder_status=live_recorder_manager.status(),
         recorder_log=live_recorder_manager.tail_log(),
+        selected_pipeline_job=request.args.get('job', '').strip(),
     )
 
 
@@ -1811,10 +1812,64 @@ def index():
                 'status': r[3],
                 'updated_at': r[4],
                 'upload_target': upload_target,
-                'upload_id': upload_id
+                'upload_id': upload_id,
+                'source': 'youtube',
             })
 
         conn.close()
+
+        recording_jobs = live_recorder_manager.pipeline_jobs(100)
+        recording_status_map = {
+            'completed': TASK_STATES['COMPLETED'],
+            'failed': TASK_STATES['FAILED'],
+            'dry_run': TASK_STATES['READY_FOR_UPLOAD'],
+            'processing': TASK_STATES['UPLOADING'],
+            'video_uploaded': TASK_STATES['UPLOADING'],
+        }
+
+        def recording_local_time(value):
+            try:
+                parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                if parsed.tzinfo is not None:
+                    parsed = parsed.astimezone().replace(tzinfo=None)
+                return parsed
+            except (TypeError, ValueError):
+                return datetime.min
+
+        recording_today = [
+            job for job in recording_jobs
+            if today_start <= recording_local_time(job.get('created_at')) < tomorrow_start
+        ]
+        recording_updated_today = [
+            job for job in recording_jobs
+            if today_start <= recording_local_time(job.get('updated_at')) < tomorrow_start
+        ]
+        total_tasks += len(recording_jobs)
+        failed_total += sum(job.get('status') == 'failed' for job in recording_jobs)
+        ready_total += sum(job.get('status') == 'dry_run' for job in recording_jobs)
+        in_progress += sum(
+            job.get('status') in {'processing', 'video_uploaded'} for job in recording_jobs
+        )
+        completed_today += sum(job.get('status') == 'completed' for job in recording_updated_today)
+        failed_today += sum(job.get('status') == 'failed' for job in recording_updated_today)
+        created_today += len(recording_today)
+        recent_tasks.extend({
+            'id': job['id'],
+            'title': job.get('title') or job.get('video_name') or '直播录播',
+            'status': recording_status_map.get(job.get('status'), TASK_STATES['PENDING']),
+            'updated_at': job.get('updated_at'),
+            'upload_target': 'bilibili',
+            'upload_id': job.get('bvid') or None,
+            'source': 'recording',
+            '_sort_time': recording_local_time(job.get('updated_at')),
+        } for job in recording_jobs[:10])
+        for task in recent_tasks:
+            task.setdefault('_sort_time', recording_local_time(task.get('updated_at')))
+        recent_tasks = sorted(
+            recent_tasks,
+            key=lambda task: task['_sort_time'],
+            reverse=True,
+        )[:10]
 
         stats = {
             'total_tasks': total_tasks,
@@ -1856,10 +1911,12 @@ def tasks():
     
     # 获取分页数据
     pagination_data = get_tasks_paginated(page=page, per_page=per_page)
+    recording_jobs = live_recorder_manager.pipeline_jobs(50)
     config = load_config()
     
     return render_template('tasks.html', 
                          tasks=pagination_data['tasks'],
+                         recording_jobs=recording_jobs,
                          pagination=pagination_data,
                          config=config)
 

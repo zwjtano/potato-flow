@@ -901,7 +901,12 @@ class LiveRecorderManager:
                 room_marker = f"{_slug(str(room.get('name') or ''))}_{room_id[:6]}"
         jobs = []
         room_markers = [
-            (str(item.get("id") or ""), f"{_slug(str(item.get('name') or ''))}_{str(item.get('id') or '')[:6]}")
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or "直播间"),
+                "avatar_url": str(item.get("avatar_url") or ""),
+                "marker": f"{_slug(str(item.get('name') or ''))}_{str(item.get('id') or '')[:6]}",
+            }
             for item in self.list_rooms()
         ]
         for row in uploads:
@@ -909,15 +914,46 @@ class LiveRecorderManager:
             if room_marker and room_marker not in Path(video_path).name:
                 continue
             result = self._decode_json(row["result_json"])
-            matched_room_id = next((rid for rid, marker in room_markers if marker and marker in Path(video_path).name), None)
+            matched_room = next(
+                (item for item in room_markers if item["marker"] and item["marker"] in Path(video_path).name),
+                None,
+            )
+            stages = stages_by_job.get(row["fingerprint"], [])
+            upload_stage = next((item for item in stages if item["key"] == "upload"), {})
+            ai_stage = next((item for item in stages if item["key"] == "ai"), {})
+            upload_details = upload_stage.get("details") if isinstance(upload_stage, dict) else {}
+            ai_details = ai_stage.get("details") if isinstance(ai_stage, dict) else {}
+            upload_details = upload_details if isinstance(upload_details, dict) else {}
+            ai_details = ai_details if isinstance(ai_details, dict) else {}
+            bilibili_result = result.get("bilibili")
+            if not isinstance(bilibili_result, dict):
+                bilibili_result = upload_details.get("bilibili")
+            bilibili_result = bilibili_result if isinstance(bilibili_result, dict) else {}
+            title = str(upload_details.get("title") or ai_details.get("title") or Path(video_path).stem)
+            completed_stages = sum(
+                1 for stage in stages if stage.get("status") in {"completed", "skipped"}
+            )
+            failed_stage = next((stage.get("key") for stage in stages if stage.get("status") == "failed"), None)
+            active_stage = next((stage.get("key") for stage in stages if stage.get("status") == "running"), None)
             jobs.append({
                 "id": row["fingerprint"], "short_id": row["fingerprint"][:12],
                 "video_path": video_path, "video_name": Path(video_path).name,
+                "title": title,
                 "platform": row["platform"], "status": row["status"],
                 "attempts": row["attempts"], "result": result, "error": row["error"],
                 "created_at": row["created_at"], "updated_at": row["updated_at"],
-                "room_id": matched_room_id,
-                "stages": stages_by_job.get(row["fingerprint"], []),
+                "room_id": matched_room["id"] if matched_room else None,
+                "room_name": matched_room["name"] if matched_room else "未匹配直播间",
+                "room_avatar_url": matched_room["avatar_url"] if matched_room else "",
+                "source": "recording",
+                "bvid": str(bilibili_result.get("bvid") or ""),
+                "bilibili_url": str(bilibili_result.get("url") or ""),
+                "completed_stages": completed_stages,
+                "total_stages": 5,
+                "failed_stage": failed_stage,
+                "active_stage": active_stage,
+                "retryable": row["status"] in {"failed", "dry_run"},
+                "stages": stages,
             })
         return jobs
 
