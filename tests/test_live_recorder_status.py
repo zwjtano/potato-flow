@@ -657,6 +657,62 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("直播录播", overview_source)
         self.assertIn("requestedPipelineJob", live_source)
 
+    def test_orphan_recording_scan_finds_only_old_unclaimed_room_videos(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            recordings = root / "recordings"
+            recordings.mkdir()
+            state_path = root / "state.sqlite3"
+            known = recordings / "开播主播_aaaaaa2026-07-23_09-00-00.flv"
+            orphan = recordings / "开播主播_aaaaaa2026-07-23_10-00-00.flv"
+            recent = recordings / "开播主播_aaaaaa2026-07-23_11-00-00.flv"
+            unknown = recordings / "其他主播_cccccc2026-07-23_10-00-00.flv"
+            for path in (known, orphan, recent, unknown):
+                path.write_bytes(b"video")
+            old = time.time() - 600
+            for path in (known, orphan, unknown):
+                os.utime(path, (old, old))
+            with sqlite3.connect(state_path) as db:
+                db.execute("CREATE TABLE uploads (video_path TEXT NOT NULL)")
+                db.execute("INSERT INTO uploads VALUES (?)", (str(known),))
+
+            with mock.patch.object(recorder_module, "RECORDINGS_DIR", recordings), mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[self.rooms[0]]):
+                candidates = manager._orphan_recording_candidates(120)
+
+        self.assertEqual(candidates, [(orphan.resolve(), "aaaaaa111111")])
+
+    def test_orphan_recordings_are_reingested_sequentially_with_room_session(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first = root / "first.flv"
+            second = root / "second.flv"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            completed = mock.Mock(returncode=0)
+            with mock.patch.object(
+                manager,
+                "_orphan_recording_candidates",
+                return_value=[(first, "room-1"), (second, "room-1")],
+            ), mock.patch.object(recorder_module, "APP_ROOT", root), mock.patch.object(
+                recorder_module.subprocess, "run", return_value=completed
+            ) as run:
+                recovered = manager.recover_orphan_recordings()
+
+        self.assertEqual(recovered, 2)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args_list[0].args[0][-3:],
+            ["--session-key", "room-1", str(first)],
+        )
+        self.assertEqual(
+            run.call_args_list[1].args[0][-3:],
+            ["--session-key", "room-1", str(second)],
+        )
+
     def test_add_room_form_only_requires_room_url(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 

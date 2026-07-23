@@ -505,7 +505,12 @@ impl UActor {
     /// 运行Actor主循环，处理接收到的消息
     pub(crate) async fn run(&mut self) {
         while let Ok(msg) = self.receiver.recv().await {
-            self.handle_message(msg).await;
+            // A segment receiver remains open for the lifetime of one
+            // recording session. Awaiting it inline monopolizes the global
+            // actor and leaves other rooms or restarted sessions queued.
+            tokio::spawn(async move {
+                Self::handle_message(msg).await;
+            });
         }
     }
 
@@ -513,7 +518,7 @@ impl UActor {
     ///
     /// # 参数
     /// * `msg` - 要处理的上传消息
-    async fn handle_message(&mut self, msg: UploaderMessage) {
+    async fn handle_message(msg: UploaderMessage) {
         match msg {
             UploaderMessage::SegmentEvent(rx, ctx) => {
                 ctx.change_status(Stage::Upload, WorkerStatus::Pending)

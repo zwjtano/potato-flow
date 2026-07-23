@@ -142,6 +142,7 @@ class LiveRecorderManager:
         self._process: subprocess.Popen | None = None
         self._log_handle = None
         self._reload_thread: threading.Thread | None = None
+        self._orphan_recovery_thread: threading.Thread | None = None
         if os.environ.pop("POTATO_FLOW_CONTAINER_START", "") == "1":
             self.recover_interrupted_pipeline_jobs()
 
@@ -722,6 +723,7 @@ class LiveRecorderManager:
     def start(self) -> dict[str, Any]:
         with self._lock:
             if self._pid() is not None:
+                self._ensure_orphan_recovery_thread()
                 return self.status()
             if not self.list_rooms():
                 raise RecorderConfigError("请先添加至少一个直播间")
@@ -760,6 +762,7 @@ class LiveRecorderManager:
                 raise RecorderConfigError(
                     f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 biliup"
                 )
+            self._ensure_orphan_recovery_thread()
             return self.status()
 
     def stop(self) -> dict[str, Any]:
@@ -843,6 +846,112 @@ class LiveRecorderManager:
             return len(fingerprints)
         except sqlite3.Error:
             return 0
+
+    def _orphan_recording_candidates(
+        self,
+        minimum_age_seconds: float = 120,
+    ) -> list[tuple[Path, str]]:
+        """Find finalized videos that have never been claimed by the bridge."""
+        state_path = self._pipeline_state_path()
+        known_paths: set[Path] = set()
+        if state_path.is_file():
+            try:
+                with sqlite3.connect(state_path, timeout=5) as db:
+                    known_paths = {
+                        Path(str(row[0])).expanduser().resolve()
+                        for row in db.execute("SELECT video_path FROM uploads").fetchall()
+                    }
+            except sqlite3.Error:
+                return []
+
+        room_markers = [
+            (
+                str(room.get("id") or ""),
+                f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}",
+            )
+            for room in self.list_rooms()
+        ]
+        video_suffixes = {
+            suffix for suffix, kind in RECORDING_FILE_SUFFIXES.items() if kind == "video"
+        }
+        cutoff = time.time() - max(0, minimum_age_seconds)
+        candidates: list[tuple[Path, str]] = []
+        if not RECORDINGS_DIR.is_dir():
+            return candidates
+        for path in RECORDINGS_DIR.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in video_suffixes:
+                continue
+            resolved = path.resolve()
+            if resolved in known_paths:
+                continue
+            try:
+                if path.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
+                continue
+            room_id = next(
+                (
+                    room_id
+                    for room_id, marker in room_markers
+                    if room_id and marker and marker in path.name
+                ),
+                "",
+            )
+            if room_id:
+                candidates.append((resolved, room_id))
+        candidates.sort(key=lambda item: item[0].stat().st_mtime)
+        return candidates
+
+    def recover_orphan_recordings(self, minimum_age_seconds: float = 120) -> int:
+        """Sequentially feed missed segments back into their room's multipart session."""
+        candidates = self._orphan_recording_candidates(minimum_age_seconds)
+        if not candidates:
+            return 0
+        log_path = APP_ROOT / "logs" / "orphan-recording-recovery.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        recovered = 0
+        with log_path.open("a", encoding="utf-8") as log_handle:
+            for video, room_id in candidates:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(WORKSPACE_ROOT / "bridge.py"),
+                        "--config",
+                        str(BRIDGE_CONFIG_PATH),
+                        "ingest",
+                        "--session-key",
+                        room_id,
+                        str(video),
+                    ],
+                    cwd=WORKSPACE_ROOT,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    recovered += 1
+        return recovered
+
+    def _ensure_orphan_recovery_thread(self) -> None:
+        if self._orphan_recovery_thread is not None and self._orphan_recovery_thread.is_alive():
+            return
+
+        def worker() -> None:
+            # Let the normal segment hook claim freshly finalized files first.
+            time.sleep(30)
+            while True:
+                try:
+                    self.recover_orphan_recordings()
+                except Exception:
+                    pass
+                time.sleep(300)
+
+        self._orphan_recovery_thread = threading.Thread(
+            target=worker,
+            name="potato-orphan-recording-recovery",
+            daemon=True,
+        )
+        self._orphan_recovery_thread.start()
 
     def _recording_file_roots(self) -> dict[str, Path]:
         return {

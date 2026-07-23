@@ -39,6 +39,22 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn('SERVICE_NAME="potato-flow"', installer)
         self.assertTrue((ROOT / "deploy" / "potato-flow.service").is_file())
 
+    def test_recorder_upload_actor_does_not_block_other_room_sessions(self):
+        source = (
+            ROOT
+            / "upstream-biliup"
+            / "crates"
+            / "biliup-cli"
+            / "src"
+            / "server"
+            / "common"
+            / "upload.rs"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("tokio::spawn(async move", source)
+        self.assertIn("Self::handle_message(msg).await", source)
+        self.assertNotIn("self.handle_message(msg).await", source)
+
 
 if __name__ == "__main__":
     unittest.main()
