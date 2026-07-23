@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -33,6 +34,11 @@ LOG_PATH = APP_ROOT / "logs" / "biliup-recorder.log"
 PID_PATH = APP_ROOT / "temp" / "biliup-recorder.pid"
 STATUS_PATH = APP_ROOT / "temp" / "biliup-recorder-status.json"
 FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
+RECORDING_FILE_SUFFIXES = {
+    ".mp4": "video", ".flv": "video", ".mkv": "video", ".webm": "video",
+    ".ts": "video", ".m2ts": "video", ".mov": "video",
+    ".xml": "xml", ".ass": "ass",
+}
 
 
 class RecorderConfigError(ValueError):
@@ -445,6 +451,140 @@ class LiveRecorderManager:
         except (FileNotFoundError, json.JSONDecodeError, TypeError):
             configured = Path(".bridge/state.sqlite3")
         return configured.resolve() if configured.is_absolute() else (WORKSPACE_ROOT / configured).resolve()
+
+    def _recording_file_roots(self) -> dict[str, Path]:
+        return {
+            "recordings": RECORDINGS_DIR.resolve(),
+            "artifacts": (self._pipeline_state_path().parent / "artifacts").resolve(),
+        }
+
+    @staticmethod
+    def _encode_file_id(source: str, relative_path: str) -> str:
+        raw = json.dumps({"source": source, "path": relative_path}, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    def _resolve_recording_file(self, file_id: str) -> tuple[Path, str, str]:
+        try:
+            padded = file_id + "=" * (-len(file_id) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+            source = str(payload["source"])
+            relative_path = str(payload["path"])
+        except (ValueError, TypeError, KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RecorderConfigError("文件编号无效") from exc
+        root = self._recording_file_roots().get(source)
+        if root is None or not relative_path or Path(relative_path).is_absolute():
+            raise RecorderConfigError("文件编号无效")
+        candidate = (root / relative_path).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise RecorderConfigError("文件路径超出录播目录") from exc
+        if not candidate.is_file() or candidate.suffix.lower() not in RECORDING_FILE_SUFFIXES:
+            raise RecorderConfigError("文件不存在或不属于可管理的录播文件")
+        return candidate, source, relative_path
+
+    def _recording_locks(self) -> tuple[set[Path], list[str]]:
+        processing_files: set[Path] = set()
+        for job in self.pipeline_jobs(100):
+            if job.get("status") in {"processing", "video_uploaded"}:
+                candidate_paths = [job.get("video_path")]
+                for stage in job.get("stages") or []:
+                    details = stage.get("details") if isinstance(stage, dict) else None
+                    if not isinstance(details, dict):
+                        continue
+                    candidate_paths.extend(
+                        value for key, value in details.items()
+                        if key.endswith("_path") or key in {"danmaku_xml", "ass_path"}
+                    )
+                for value in candidate_paths:
+                    if isinstance(value, str) and value:
+                        processing_files.add(Path(value).resolve())
+        active_markers = [
+            f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}"
+            for room in self.rooms_with_status()
+            if room.get("runtime", {}).get("recording")
+        ]
+        return processing_files, active_markers
+
+    def _recording_file_info(
+        self,
+        path: Path,
+        source: str,
+        relative_path: str,
+        processing_files: set[Path],
+        active_markers: list[str],
+    ) -> dict[str, Any]:
+        stat = path.stat()
+        room_markers = [
+            (str(room.get("id") or ""), f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}")
+            for room in self.list_rooms()
+        ]
+        room_id = next((room_id for room_id, marker in room_markers if marker and marker in path.name), None)
+        recording_active = (
+            source == "recordings"
+            and time.time() - stat.st_mtime < 120
+            and any(marker in path.name for marker in active_markers)
+        )
+        pipeline_active = path.resolve() in processing_files
+        return {
+            "id": self._encode_file_id(source, relative_path),
+            "name": path.name,
+            "relative_path": relative_path,
+            "source": source,
+            "type": RECORDING_FILE_SUFFIXES[path.suffix.lower()],
+            "extension": path.suffix.lower().lstrip("."),
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
+            "modified_timestamp": stat.st_mtime,
+            "room_id": room_id,
+            "locked": recording_active or pipeline_active,
+            "lock_reason": "正在录制" if recording_active else ("流水线处理中" if pipeline_active else ""),
+        }
+
+    def recording_files(self, limit: int = 500) -> dict[str, Any]:
+        processing_files, active_markers = self._recording_locks()
+        files: list[dict[str, Any]] = []
+        for source, root in self._recording_file_roots().items():
+            if not root.is_dir():
+                continue
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix.lower() not in RECORDING_FILE_SUFFIXES:
+                    continue
+                relative_path = path.relative_to(root).as_posix()
+                try:
+                    files.append(self._recording_file_info(
+                        path, source, relative_path, processing_files, active_markers
+                    ))
+                except OSError:
+                    continue
+        files.sort(key=lambda item: item["modified_timestamp"], reverse=True)
+        total_files = len(files)
+        total_size = sum(item["size_bytes"] for item in files)
+        limited = files[:max(1, min(limit, 2000))]
+        return {
+            "files": limited,
+            "total_files": total_files,
+            "total_size_bytes": total_size,
+            "truncated": len(limited) < total_files,
+        }
+
+    def recording_file(self, file_id: str) -> tuple[Path, dict[str, Any]]:
+        path, source, relative_path = self._resolve_recording_file(file_id)
+        processing_files, active_markers = self._recording_locks()
+        return path, self._recording_file_info(
+            path, source, relative_path, processing_files, active_markers
+        )
+
+    def delete_recording_file(self, file_id: str) -> dict[str, Any]:
+        with self._lock:
+            path, info = self.recording_file(file_id)
+            if info["locked"]:
+                raise RecorderConfigError(f"文件{info['lock_reason']}，暂时不能删除")
+            try:
+                path.unlink()
+            except FileNotFoundError as exc:
+                raise RecorderConfigError("文件已经不存在") from exc
+            return info
 
     @staticmethod
     def _decode_json(value: Any) -> dict[str, Any]:

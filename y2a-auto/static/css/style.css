@@ -201,6 +201,42 @@ body {
 .detail-empty h2 { margin: 15px 0 7px; font-size: 19px; }
 .detail-empty p { max-width: 420px; color: #848a95; font-size: 12px; }
 .raw-log { min-height: 420px; max-height: 70vh; margin: 0; padding: 20px; overflow: auto; color: #d7dde7; background: #171a20; font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.recording-files-modal .modal-content { min-height: min(760px, calc(100vh - 56px)); border: 0; }
+.recording-files-modal .modal-body { padding: 20px 24px 24px; background: #f7f8fa; }
+.file-summary { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 14px; overflow: hidden; border: 1px solid var(--studio-border); border-radius: 8px; background: #fff; }
+.file-summary > div { position: relative; display: grid; grid-template-columns: 34px 1fr; min-height: 76px; align-content: center; padding: 12px 18px; border-right: 1px solid var(--studio-border); }
+.file-summary > div:last-child { border-right: 0; }
+.file-summary i { grid-row: 1 / 3; align-self: center; color: var(--studio-primary); font-size: 21px; }
+.file-summary span { color: #9298a3; font-size: 9px; }
+.file-summary strong { margin-top: 2px; font-size: 15px; }
+.file-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 180px 150px auto; gap: 9px; margin-bottom: 12px; }
+.file-toolbar .form-select, .file-toolbar .btn { min-height: 38px; font-size: 11px; }
+.file-search { display: flex; min-width: 0; align-items: center; padding: 0 12px; color: #9298a3; border: 1px solid #dfe2e7; border-radius: 6px; background: #fff; }
+.file-search input { min-width: 0; width: 100%; margin-left: 8px; border: 0; outline: 0; background: transparent; font-size: 11px; }
+.file-table-wrap { overflow: auto; border: 1px solid var(--studio-border); border-radius: 8px; background: #fff; }
+.file-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.file-table th { padding: 11px 14px; color: #8d939e; border-bottom: 1px solid var(--studio-border); background: #fafbfc; font-size: 9px; font-weight: 600; white-space: nowrap; }
+.file-table td { padding: 11px 14px; color: #606873; border-bottom: 1px solid #eef0f2; vertical-align: middle; white-space: nowrap; }
+.file-table tbody tr:last-child td { border-bottom: 0; }
+.file-name { display: flex; min-width: 280px; max-width: 520px; align-items: center; gap: 10px; }
+.file-name > div { min-width: 0; }
+.file-name strong, .file-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-name strong { color: #303640; font-size: 10px; }
+.file-name small { max-width: 450px; margin-top: 3px; color: #9a9faa; font-size: 8px; }
+.file-type-icon { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; color: #247dd2; border-radius: 7px; background: #eaf4ff; font-size: 14px; }
+.file-type-icon.xml { color: #e07a16; background: #fff3e5; }
+.file-type-icon.ass { color: #7654c4; background: #f1edfc; }
+.file-kind { padding: 4px 7px; color: #247dd2; border-radius: 10px; background: #eaf4ff; font-size: 8px; }
+.file-kind.xml { color: #c6680e; background: #fff3e5; }
+.file-kind.ass { color: #6942bd; background: #f1edfc; }
+.file-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.file-actions .btn { width: 31px; height: 29px; padding: 4px; }
+.file-empty { height: 260px; color: #9298a3 !important; text-align: center; }
+.file-empty i, .file-empty strong, .file-empty span { display: block; margin: 5px auto; }
+.file-empty i { font-size: 24px; }
+.file-empty .spinner-border { display: inline-block; width: 1rem; height: 1rem; margin-right: 7px; }
+.file-manager-note { margin-top: 11px; color: #777e89; font-size: 9px; }
+.file-manager-note i { margin-right: 5px; color: var(--studio-primary); }
 
 @media (max-width: 991.98px) {
     .app-sidebar { display: none; }
@@ -236,6 +272,13 @@ body {
     .pipeline-step small { display: none; }
     .inspector-grid { grid-template-columns: 1fr; }
     .inspector-row.error { grid-column: auto; }
+    .recording-files-modal .modal-body { padding: 14px; }
+    .file-summary { grid-template-columns: 1fr; }
+    .file-summary > div { min-height: 60px; border-right: 0; border-bottom: 1px solid var(--studio-border); }
+    .file-summary > div:last-child { border-bottom: 0; }
+    .file-toolbar { grid-template-columns: 1fr 1fr; }
+    .file-search { grid-column: 1 / -1; min-height: 38px; }
+    .file-name { min-width: 230px; }
 }
 
 /* 自定义导航栏 */

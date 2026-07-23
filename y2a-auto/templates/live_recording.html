@@ -16,6 +16,7 @@
     </div>
     <div class="recorder-header-actions">
         <a class="btn btn-light border" href="{{ url_for('live_recording') }}"><i class="bi bi-arrow-clockwise"></i> 刷新</a>
+        <button class="btn btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal"><i class="bi bi-folder2-open"></i> 文件管理</button>
         <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addRoomModal"><i class="bi bi-plus-lg"></i> 新增直播间</button>
     </div>
 </section>
@@ -107,6 +108,17 @@
 </section>
 
 <div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">支持 B站与斗鱼直播间链接</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body"><div class="mb-3"><label class="form-label">主播名称</label><input class="form-control" name="name" placeholder="例如：主播名" required></div><div><label class="form-label">直播间 URL</label><input class="form-control" name="url" type="url" placeholder="https://live.bilibili.com/123" required><div class="form-text">也可填写 https://www.douyu.com/123</div></div></div><div class="modal-footer"><button type="button" class="btn btn-light border" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg"></i> 添加并同步</button></div></form></div></div></div>
+<div class="modal fade recording-files-modal" id="recordingFilesModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><h5 class="modal-title">录播文件管理</h5><small class="text-muted">集中查看录播视频、原始 XML 弹幕和生成的 ASS 字幕</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body">
+    <div class="file-summary"><div><i class="bi bi-files"></i><span>文件总数</span><strong data-role="file-count">—</strong></div><div><i class="bi bi-device-hdd"></i><span>占用空间</span><strong data-role="file-size">—</strong></div><div><i class="bi bi-shield-check"></i><span>安全保护</span><strong>已启用</strong></div></div>
+    <div class="file-toolbar">
+        <label class="file-search"><i class="bi bi-search"></i><input type="search" data-role="file-search" placeholder="搜索文件名或目录" autocomplete="off"></label>
+        <select class="form-select" data-role="file-room" aria-label="按直播间筛选"><option value="">全部直播间</option>{% for room in rooms %}<option value="{{ room.id }}">{{ room.name }}</option>{% endfor %}<option value="unmatched">未匹配直播间</option></select>
+        <select class="form-select" data-role="file-type" aria-label="按文件类型筛选"><option value="">全部类型</option><option value="video">录播视频</option><option value="xml">XML 弹幕</option><option value="ass">ASS 字幕</option></select>
+        <button class="btn btn-light border" type="button" data-action="refresh-files"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+    </div>
+    <div class="file-table-wrap"><table class="file-table"><thead><tr><th>文件</th><th>类型</th><th>大小</th><th>修改时间</th><th class="text-end">操作</th></tr></thead><tbody data-role="file-rows"><tr><td colspan="5" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr></tbody></table></div>
+    <div class="file-manager-note"><i class="bi bi-info-circle"></i> 正在录制或流水线处理中的文件会自动锁定，无法删除。删除操作不可恢复。</div>
+</div></div></div></div>
 <div class="modal fade" id="rawLogModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><h5 class="modal-title">录制引擎原始日志</h5><small class="text-muted">仅用于排错，已隐藏 URL 查询参数</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body p-0"><pre class="raw-log">{{ recorder_log }}</pre></div></div></div></div>
 {% endblock %}
 
@@ -117,6 +129,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const panels = [...document.querySelectorAll('.room-detail-panel')];
     const search = document.getElementById('roomSearch');
     const tabs = [...document.querySelectorAll('.room-tabs button')];
+    const filesModal = document.getElementById('recordingFilesModal');
+    let recordingFiles = [];
     let filter = 'all';
     function applyFilter() {
         const query = (search?.value || '').trim().toLowerCase();
@@ -128,6 +142,57 @@ document.addEventListener('DOMContentLoaded', function () {
         const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
         const secs = String(seconds % 60).padStart(2, '0');
         return `${hours}:${minutes}:${secs}`;
+    }
+    function formatBytes(bytes) {
+        const value = Number(bytes || 0);
+        if (!value) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+        return `${(value / Math.pow(1024, index)).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
+    }
+    function renderFiles() {
+        if (!filesModal) return;
+        const query = (filesModal.querySelector('[data-role="file-search"]').value || '').trim().toLowerCase();
+        const room = filesModal.querySelector('[data-role="file-room"]').value;
+        const type = filesModal.querySelector('[data-role="file-type"]').value;
+        const visible = recordingFiles.filter(file => {
+            const roomMatches = !room || (room === 'unmatched' ? !file.room_id : file.room_id === room);
+            return roomMatches && (!type || file.type === type) && (`${file.name} ${file.relative_path}`).toLowerCase().includes(query);
+        });
+        const rows = filesModal.querySelector('[data-role="file-rows"]');
+        if (!visible.length) {
+            rows.innerHTML = '<tr><td colspan="5" class="file-empty"><i class="bi bi-folder2-open"></i><strong>没有符合条件的文件</strong><span>录制结束后，视频和弹幕文件会显示在这里</span></td></tr>';
+            return;
+        }
+        const typeNames = {video: '录播视频', xml: 'XML 弹幕', ass: 'ASS 字幕'};
+        const typeIcons = {video: 'bi-camera-video', xml: 'bi-chat-square-text', ass: 'bi-badge-cc'};
+        rows.innerHTML = visible.map(file => `<tr><td><div class="file-name"><span class="file-type-icon ${escapeHtml(file.type)}"><i class="bi ${typeIcons[file.type] || 'bi-file-earmark'}"></i></span><div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small title="${escapeHtml(file.relative_path)}">${escapeHtml(file.source === 'artifacts' ? '流水线产物 / ' : '录制目录 / ')}${escapeHtml(file.relative_path)}</small></div></div></td><td><span class="file-kind ${escapeHtml(file.type)}">${escapeHtml(typeNames[file.type] || file.extension)}</span></td><td>${formatBytes(file.size_bytes)}</td><td><time>${escapeHtml(new Date(file.modified_at).toLocaleString('zh-CN', {hour12: false}))}</time></td><td><div class="file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-outline-danger" type="button" data-action="delete-file" data-id="${escapeHtml(file.id)}" data-name="${escapeHtml(file.name)}" ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : 'title="删除"'}><i class="bi ${file.locked ? 'bi-lock-fill' : 'bi-trash3'}"></i></button></div></td></tr>`).join('');
+        rows.querySelectorAll('[data-action="delete-file"]').forEach(button => button.addEventListener('click', deleteFile));
+    }
+    async function loadFiles() {
+        if (!filesModal) return;
+        const rows = filesModal.querySelector('[data-role="file-rows"]');
+        rows.innerHTML = '<tr><td colspan="5" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr>';
+        try {
+            const response = await fetch('/live-recording/files', {headers: {'Accept': 'application/json'}});
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '读取失败');
+            recordingFiles = result.files || [];
+            filesModal.querySelector('[data-role="file-count"]').textContent = result.total_files ?? recordingFiles.length;
+            filesModal.querySelector('[data-role="file-size"]').textContent = formatBytes(result.total_size_bytes);
+            renderFiles();
+        } catch (error) {
+            rows.innerHTML = `<tr><td colspan="5" class="file-empty text-danger"><i class="bi bi-exclamation-triangle"></i><strong>文件读取失败</strong><span>${escapeHtml(error.message)}</span></td></tr>`;
+        }
+    }
+    async function deleteFile(event) {
+        const button = event.currentTarget;
+        if (!confirm(`确定永久删除“${button.dataset.name}”？\n此操作不可恢复。`)) return;
+        button.disabled = true;
+        const response = await fetch(`/live-recording/files/${encodeURIComponent(button.dataset.id)}/delete`, {method: 'POST', headers: {'Accept': 'application/json'}});
+        const result = await response.json();
+        if (!response.ok) { alert(result.error || '删除失败'); button.disabled = false; return; }
+        await loadFiles();
     }
     function updateRoom(room, engineRunning) {
         const item = items.find(node => node.dataset.room === room.id);
@@ -231,6 +296,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }));
     search?.addEventListener('input', applyFilter);
     tabs.forEach(tab => tab.addEventListener('click', function () { tabs.forEach(node => node.classList.remove('active')); tab.classList.add('active'); filter = tab.dataset.filter; applyFilter(); }));
+    filesModal?.addEventListener('shown.bs.modal', loadFiles);
+    filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
+    filesModal?.querySelector('[data-role="file-search"]')?.addEventListener('input', renderFiles);
+    filesModal?.querySelector('[data-role="file-room"]')?.addEventListener('change', renderFiles);
+    filesModal?.querySelector('[data-role="file-type"]')?.addEventListener('change', renderFiles);
     refreshLiveStatus();
     window.setInterval(refreshLiveStatus, 5000);
 });

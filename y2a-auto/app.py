@@ -1227,6 +1227,32 @@ def live_recording_job_retry(fingerprint):
         return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
+@app.route('/live-recording/files')
+@login_required
+def live_recording_files():
+    return jsonify(live_recorder_manager.recording_files())
+
+
+@app.route('/live-recording/files/<file_id>/download')
+@login_required
+def live_recording_file_download(file_id):
+    try:
+        path, _ = live_recorder_manager.recording_file(file_id)
+        return send_file(path, as_attachment=True, download_name=path.name, conditional=True)
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 404
+
+
+@app.route('/live-recording/files/<file_id>/delete', methods=['POST'])
+@login_required
+def live_recording_file_delete(file_id):
+    try:
+        deleted = live_recorder_manager.delete_recording_file(file_id)
+        return jsonify({'ok': True, 'message': '文件已删除。', 'file': deleted})
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+
+
 @app.route('/live-recording/rooms', methods=['POST'])
 @login_required
 def live_recording_save_room():
