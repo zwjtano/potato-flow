@@ -595,9 +595,9 @@ class LiveRecorderManager:
                 "--session-key",
                 _yaml_string(session_key),
             ])
-            close_command = " ".join([
+            finalize_command = " ".join([
                 *bridge_base,
-                "close-session",
+                "finalize-session",
                 "--session-key",
                 _yaml_string(session_key),
             ])
@@ -610,7 +610,7 @@ class LiveRecorderManager:
                     "    segment_processor:",
                     f"      - run: {_yaml_string(segment_command)}",
                     "    postprocessor:",
-                    f"      - run: {_yaml_string(close_command)}",
+                    f"      - run: {_yaml_string(finalize_command)}",
                 ]
             )
         BILIUP_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")

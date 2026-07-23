@@ -148,7 +148,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIn("segment_processor:", content)
             self.assertIn("ingest --session-key", content)
             self.assertIn("aaaaaa111111", content)
-            self.assertIn("close-session --session-key", content)
+            self.assertIn("finalize-session --session-key", content)
 
     def test_readding_legacy_room_updates_profile_without_duplicate(self):
         manager = LiveRecorderManager()

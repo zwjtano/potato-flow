@@ -1029,6 +1029,12 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--retry", action="store_true", help="允许重试指定的失败任务")
     ingest.add_argument("--session-key", default="", help="将分段追加到同一场直播稿件")
     sub.add_parser("retry", help="重试失败记录")
+    finalize_session = sub.add_parser(
+        "finalize-session",
+        help="导入手动停止时的最终录制文件，然后结束分P追加会话",
+    )
+    finalize_session.add_argument("paths", nargs="*")
+    finalize_session.add_argument("--session-key", required=True)
     close_session = sub.add_parser("close-session", help="结束直播的分P追加会话")
     close_session.add_argument("--session-key", required=True)
     status = sub.add_parser("status", help="显示最近记录")
@@ -1058,6 +1064,14 @@ def main(argv: list[str] | None = None) -> int:
     retry = args.command == "retry" or bool(getattr(args, "retry", False))
     received_paths = store.failed_paths() if retry else input_paths(args.paths)
     paths = [path for path in received_paths if path.suffix.lower() in VIDEO_EXTENSIONS]
+    if args.command == "finalize-session" and not paths:
+        closed = store.close_multipart_session(str(args.session_key))
+        print(
+            f"OK 分P会话已结束: {args.session_key}"
+            if closed
+            else f"SKIP 没有活动分P会话: {args.session_key}"
+        )
+        return 0
     if not paths:
         print("没有收到可处理的视频路径", file=sys.stderr)
         return 2
@@ -1075,6 +1089,23 @@ def main(argv: list[str] | None = None) -> int:
             danmaku_xml=danmaku_xml,
             session_key=str(getattr(args, "session_key", "") or ""),
         ) and ok
+    if args.command == "finalize-session":
+        if ok:
+            closed = store.close_multipart_session(str(args.session_key))
+            print(
+                f"OK 最终分段已导入，分P会话已结束: {args.session_key}"
+                if closed
+                else f"OK 最终分段已导入，无需关闭空会话: {args.session_key}"
+            )
+        else:
+            print(
+                f"WARN 最终分段导入失败，分P会话保持开启: {args.session_key}",
+                file=sys.stderr,
+            )
+        # The failed task is persisted and retryable in WebUI. Recording has
+        # already stopped, so do not turn safe finalization into a recorder
+        # process failure.
+        return 0
     if not ok and str(getattr(args, "session_key", "") or "") and not retry:
         # A failed segment is already visible and retryable in the WebUI.  Do
         # not abort biliup's live event stream here: later segments still need

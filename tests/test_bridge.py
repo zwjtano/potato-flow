@@ -69,6 +69,57 @@ class BridgeTests(unittest.TestCase):
             store.finish(key, "completed", {"ok": True})
             self.assertFalse(store.claim(key, video, "bilibili"))
 
+    def test_finalize_session_ingests_final_video_before_closing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "final.flv"
+            config = root / "bridge.config.json"
+            state = root / "state.sqlite3"
+            video.write_bytes(b"video")
+            config.write_text(json.dumps({
+                "state_db": str(state),
+                "delete_recording_after_upload": False,
+            }), encoding="utf-8")
+            store = bridge.StateStore(state)
+            store.save_multipart_session("room-1", {"bilibili": {"bvid": "BV1"}}, status="open")
+
+            def fake_upload(path, _cfg, target_store, **kwargs):
+                self.assertEqual(path, video.resolve())
+                self.assertEqual(kwargs["session_key"], "room-1")
+                key = bridge.fingerprint(path)
+                target_store.claim(key, path, "bilibili")
+                target_store.finish(key, "completed", {"ok": True})
+                return True
+
+            with patch.object(bridge, "upload_one", side_effect=fake_upload):
+                result = bridge.main([
+                    "--config", str(config),
+                    "finalize-session", "--session-key", "room-1", str(video),
+                ])
+
+            self.assertEqual(result, 0)
+            self.assertEqual(store.multipart_session("room-1"), {})
+
+    def test_finalize_session_keeps_session_open_when_final_video_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "final.flv"
+            config = root / "bridge.config.json"
+            state = root / "state.sqlite3"
+            video.write_bytes(b"video")
+            config.write_text(json.dumps({"state_db": str(state)}), encoding="utf-8")
+            store = bridge.StateStore(state)
+            store.save_multipart_session("room-1", {"bilibili": {"bvid": "BV1"}}, status="open")
+
+            with patch.object(bridge, "upload_one", return_value=False):
+                result = bridge.main([
+                    "--config", str(config),
+                    "finalize-session", "--session-key", "room-1", str(video),
+                ])
+
+            self.assertEqual(result, 0)
+            self.assertEqual(store.multipart_session("room-1")["bilibili"]["bvid"], "BV1")
+
     def test_state_persists_each_inspectable_pipeline_stage(self):
         with tempfile.TemporaryDirectory() as temp:
             store = bridge.StateStore(Path(temp) / "state.sqlite3")
