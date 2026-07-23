@@ -1286,12 +1286,20 @@ def live_recording_resolve_room():
 @app.route('/live-recording/rooms/<room_id>/delete', methods=['POST'])
 @login_required
 def live_recording_delete_room(room_id):
-    if live_recorder_manager.status()['running']:
-        flash('请先停止录制引擎再删除直播间。', 'warning')
-    elif live_recorder_manager.delete_room(room_id):
-        flash('直播间已删除。', 'success')
-    else:
-        flash('没有找到该直播间。', 'warning')
+    try:
+        state = live_recorder_manager.delete_room_and_reload(room_id)
+        if state == 'reloaded':
+            flash('直播间已删除，录制 worker 已自动重载。', 'success')
+        elif state == 'pending':
+            flash('直播间已删除；其他录制结束后会自动重载 worker。', 'success')
+        elif state == 'stopped':
+            flash('最后一个直播间已删除，录制引擎已停止。', 'success')
+        elif state == 'deleted':
+            flash('直播间已删除。', 'success')
+        else:
+            flash('没有找到该直播间。', 'warning')
+    except RecorderConfigError as exc:
+        flash(str(exc), 'warning')
     return redirect(url_for('live_recording'))
 
 

@@ -468,6 +468,35 @@ class LiveRecorderManager:
             self._write_control_state(filtered)
             return True
 
+    def delete_room_and_reload(self, room_id: str) -> str:
+        """Delete one room and safely reload a running recorder when possible."""
+        with self._lock:
+            rooms = self.list_rooms()
+            if not any(room.get("id") == room_id for room in rooms):
+                return "missing"
+            was_running = self._pid() is not None
+            runtime_rooms = self.rooms_with_status() if was_running else []
+            target = next((room for room in runtime_rooms if room.get("id") == room_id), None)
+            if target and target.get("runtime", {}).get("recording"):
+                raise RecorderConfigError("这个直播间正在录制，请先停止该直播间并等待文件安全收尾后再删除")
+            other_recording = any(
+                room.get("id") != room_id and room.get("runtime", {}).get("recording")
+                for room in runtime_rooms
+            )
+            self.delete_room(room_id)
+            if not was_running:
+                return "deleted"
+            if not self.list_rooms():
+                self.stop()
+                return "stopped"
+            if other_recording:
+                _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
+                self._ensure_reload_thread()
+                return "pending"
+            self.stop()
+            self.start()
+            return "reloaded"
+
     def _write_control_state(self, rooms: list[dict[str, Any]] | None = None) -> None:
         rooms = rooms if rooms is not None else self.list_rooms()
         _atomic_json(

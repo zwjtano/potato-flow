@@ -10,7 +10,7 @@ from unittest import mock
 Y2A_ROOT = Path(__file__).resolve().parents[1] / "y2a-auto"
 sys.path.insert(0, str(Y2A_ROOT))
 
-from modules.live_recorder_manager import LiveRecorderManager  # noqa: E402
+from modules.live_recorder_manager import LiveRecorderManager, RecorderConfigError  # noqa: E402
 import modules.live_recorder_manager as recorder_module  # noqa: E402
 
 
@@ -230,6 +230,69 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(marker_exists)
         ensure_thread.assert_called_once_with()
 
+    def test_delete_room_reloads_running_idle_worker(self):
+        manager = LiveRecorderManager()
+        with mock.patch.object(manager, "_pid", return_value=4321), mock.patch.object(
+            manager, "list_rooms", side_effect=[self.rooms, [self.rooms[1]]]
+        ), mock.patch.object(
+            manager,
+            "rooms_with_status",
+            return_value=[
+                dict(self.rooms[0], runtime={"recording": False}),
+                dict(self.rooms[1], runtime={"recording": False}),
+            ],
+        ), mock.patch.object(manager, "delete_room", return_value=True) as delete, mock.patch.object(
+            manager, "stop"
+        ) as stop, mock.patch.object(manager, "start") as start:
+            state = manager.delete_room_and_reload("aaaaaa111111")
+
+        self.assertEqual(state, "reloaded")
+        delete.assert_called_once_with("aaaaaa111111")
+        stop.assert_called_once_with()
+        start.assert_called_once_with()
+
+    def test_delete_recording_room_requires_safe_stop_first(self):
+        manager = LiveRecorderManager()
+        with mock.patch.object(manager, "_pid", return_value=4321), mock.patch.object(
+            manager, "list_rooms", return_value=self.rooms
+        ), mock.patch.object(
+            manager,
+            "rooms_with_status",
+            return_value=[
+                dict(self.rooms[0], runtime={"recording": True}),
+                dict(self.rooms[1], runtime={"recording": False}),
+            ],
+        ), mock.patch.object(manager, "delete_room") as delete:
+            with self.assertRaises(RecorderConfigError):
+                manager.delete_room_and_reload("aaaaaa111111")
+
+        delete.assert_not_called()
+
+    def test_delete_room_defers_reload_while_other_room_records(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reload_path = Path(temp_dir) / "reload.json"
+            with mock.patch.object(recorder_module, "RELOAD_PATH", reload_path), mock.patch.object(
+                manager, "_pid", return_value=4321
+            ), mock.patch.object(
+                manager, "list_rooms", side_effect=[self.rooms, [self.rooms[1]]]
+            ), mock.patch.object(
+                manager,
+                "rooms_with_status",
+                return_value=[
+                    dict(self.rooms[0], runtime={"recording": False}),
+                    dict(self.rooms[1], runtime={"recording": True}),
+                ],
+            ), mock.patch.object(manager, "delete_room", return_value=True), mock.patch.object(
+                manager, "_ensure_reload_thread"
+            ) as ensure_thread:
+                state = manager.delete_room_and_reload("aaaaaa111111")
+
+            self.assertTrue(reload_path.exists())
+
+        self.assertEqual(state, "pending")
+        ensure_thread.assert_called_once_with()
+
     def test_bridge_profiles_receive_streamer_name_and_default_title_template(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -304,6 +367,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("粘贴链接，自动识别主播名称和头像", source)
         self.assertIn("/live-recording/rooms/resolve", source)
         self.assertIn("room.avatar_url", source)
+
+    def test_delete_room_button_is_enabled_while_worker_runs(self):
+        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+
+        self.assertNotIn('disabled title="请先停止录制引擎"', source)
+        self.assertIn('title="删除直播间"', source)
 
 
 if __name__ == "__main__":
