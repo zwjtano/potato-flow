@@ -783,11 +783,17 @@ class LiveRecorderManager:
 
     def _pipeline_state_path(self) -> Path:
         try:
-            config = json.loads(BRIDGE_CONFIG_PATH.read_text(encoding="utf-8"))
+            # bridge.load_config resolves symlinks before resolving state_db.
+            # Docker keeps bridge.config.json in /data, so use the same real
+            # parent here or stale multipart sessions are cleared in the wrong
+            # database (/data/bridge instead of /data/.bridge).
+            config_path = BRIDGE_CONFIG_PATH.expanduser().resolve()
+            config = json.loads(config_path.read_text(encoding="utf-8"))
             configured = Path(str(config.get("state_db") or ".bridge/state.sqlite3")).expanduser()
         except (FileNotFoundError, json.JSONDecodeError, TypeError):
+            config_path = BRIDGE_CONFIG_PATH.expanduser().resolve()
             configured = Path(".bridge/state.sqlite3")
-        return configured.resolve() if configured.is_absolute() else (WORKSPACE_ROOT / configured).resolve()
+        return configured.resolve() if configured.is_absolute() else (config_path.parent / configured).resolve()
 
     def _recording_file_roots(self) -> dict[str, Path]:
         return {

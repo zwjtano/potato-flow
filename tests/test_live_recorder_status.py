@@ -300,6 +300,27 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(room["enabled"])
         self.assertIsNone(session)
 
+    def test_pipeline_state_path_matches_bridge_config_symlink_target(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_root = root / "app"
+            data_root = root / "data"
+            app_root.mkdir()
+            data_root.mkdir()
+            real_config = data_root / "bridge.config.json"
+            real_config.write_text(
+                json.dumps({"state_db": ".bridge/state.sqlite3"}),
+                encoding="utf-8",
+            )
+            config_link = app_root / "bridge.config.json"
+            config_link.symlink_to(real_config)
+
+            with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_link):
+                state_path = manager._pipeline_state_path()
+
+        self.assertEqual(state_path, (data_root / ".bridge" / "state.sqlite3").resolve())
+
     def test_add_room_reloads_running_idle_worker(self):
         manager = LiveRecorderManager()
         new_room = {"id": "cccccc333333", "name": "新主播"}
