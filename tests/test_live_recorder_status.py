@@ -204,6 +204,15 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('"recorder"', source)
         self.assertIn('"--status-file"', source)
 
+    def test_pipeline_log_stays_open_across_status_refreshes(self):
+        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+
+        self.assertIn("const jobLogStates = new Map()", source)
+        self.assertIn("logState.open = event.currentTarget.open", source)
+        self.assertIn("${logState.open ? 'open' : ''}", source)
+        self.assertIn("loadJobLog(job.id, logPre, true)", source)
+        self.assertIn("logState.stickToBottom", source)
+
 
 if __name__ == "__main__":
     unittest.main()

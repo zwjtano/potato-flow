@@ -154,6 +154,20 @@ document.addEventListener('DOMContentLoaded', function () {
     let stopConfirmResolve = null;
     let recordingFiles = [];
     let filter = 'all';
+    const jobLogStates = new Map();
+    function getJobLogState(jobId) {
+        if (!jobLogStates.has(jobId)) {
+            jobLogStates.set(jobId, {
+                open: false,
+                loaded: false,
+                loading: false,
+                text: '',
+                scrollTop: 0,
+                stickToBottom: true,
+            });
+        }
+        return jobLogStates.get(jobId);
+    }
     function confirmStopRecording(button) {
         if (!stopConfirmModalElement || !window.bootstrap?.Modal) return Promise.resolve(false);
         const roomName = button.closest('.room-detail-panel')?.querySelector('.selected-room-title h2')?.textContent?.trim();
@@ -269,6 +283,32 @@ document.addEventListener('DOMContentLoaded', function () {
             return `<div class="inspector-row"><span>${escapeHtml(labels[key] || key)}</span><code>${escapeHtml(rendered)}</code></div>`;
         }).join('');
     }
+    function restoreLogViewport(pre, state) {
+        window.requestAnimationFrame(() => {
+            pre.scrollTop = state.stickToBottom ? pre.scrollHeight : state.scrollTop;
+        });
+    }
+    async function loadJobLog(jobId, pre, force = false) {
+        const state = getJobLogState(jobId);
+        if (state.loading || (!force && state.loaded)) return;
+        state.loading = true;
+        if (!state.loaded) pre.textContent = '正在加载完整日志…';
+        try {
+            const response = await fetch(`/live-recording/jobs/${jobId}`, {headers:{'Accept':'application/json'}});
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '日志读取失败');
+            state.text = result.log || '暂无日志。';
+            state.loaded = true;
+            if (pre.isConnected) {
+                pre.textContent = state.text;
+                restoreLogViewport(pre, state);
+            }
+        } catch (error) {
+            if (!state.loaded && pre.isConnected) pre.textContent = `日志读取失败：${error.message}`;
+        } finally {
+            state.loading = false;
+        }
+    }
     function renderInspector(panel, job, stageKey) {
         const inspector = panel.querySelector('[data-role="pipeline-inspector"]');
         const stage = job?.stages?.find(item => item.key === stageKey);
@@ -277,9 +317,10 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
         const status = stage?.status || 'pending';
+        const logState = getJobLogState(job.id);
         inspector.innerHTML = `<div class="inspector-head"><div><span class="stage-status ${escapeHtml(status)}"><i class="bi bi-circle-fill"></i>${escapeHtml(statusNames[status] || status)}</span><h4>${escapeHtml(stageNames[stageKey])}</h4></div>${job.status === 'failed' ? '<button class="btn btn-sm btn-outline-primary" type="button" data-action="retry"><i class="bi bi-arrow-repeat"></i> 重试失败任务</button>' : ''}</div>
             <div class="inspector-grid"><div class="inspector-row"><span>任务文件</span><code>${escapeHtml(job.video_name)}</code></div><div class="inspector-row"><span>更新时间</span><code>${escapeHtml(stage?.updated_at || job.updated_at || '—')}</code></div>${detailRows(stage?.details)}${stage?.error ? `<div class="inspector-row error"><span>错误</span><code>${escapeHtml(stage.error)}</code></div>` : ''}</div>
-            <details class="inspector-log"><summary><i class="bi bi-terminal"></i> 查看该任务运行日志</summary><pre data-role="job-log">展开后加载…</pre></details>`;
+            <details class="inspector-log" ${logState.open ? 'open' : ''}><summary><i class="bi bi-terminal"></i> 查看该任务运行日志 <small>${logState.open ? '· 每 5 秒自动刷新' : ''}</small></summary><pre data-role="job-log">${escapeHtml(logState.loaded ? logState.text : '展开后加载…')}</pre></details>`;
         inspector.querySelector('[data-action="retry"]')?.addEventListener('click', async event => {
             event.currentTarget.disabled = true;
             const response = await fetch(`/live-recording/jobs/${job.id}/retry`, {method: 'POST', headers: {'Accept':'application/json'}});
@@ -287,12 +328,21 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!response.ok) { alert(result.error || '重试失败'); event.currentTarget.disabled = false; }
             else { event.currentTarget.innerHTML = '<i class="bi bi-hourglass-split"></i> 已开始重试'; window.setTimeout(refreshLiveStatus, 800); }
         });
-        inspector.querySelector('.inspector-log')?.addEventListener('toggle', async event => {
-            if (!event.currentTarget.open || event.currentTarget.dataset.loaded) return;
-            event.currentTarget.dataset.loaded = '1';
-            const response = await fetch(`/live-recording/jobs/${job.id}`, {headers:{'Accept':'application/json'}});
-            const result = await response.json();
-            event.currentTarget.querySelector('[data-role="job-log"]').textContent = result.log || '暂无日志。';
+        const logDetails = inspector.querySelector('.inspector-log');
+        const logPre = logDetails?.querySelector('[data-role="job-log"]');
+        logPre?.addEventListener('scroll', () => {
+            logState.scrollTop = logPre.scrollTop;
+            logState.stickToBottom = logPre.scrollHeight - logPre.scrollTop - logPre.clientHeight < 24;
+        });
+        if (logState.open && logPre) {
+            restoreLogViewport(logPre, logState);
+            loadJobLog(job.id, logPre, true);
+        }
+        logDetails?.addEventListener('toggle', event => {
+            logState.open = event.currentTarget.open;
+            if (!logState.open) return;
+            const pre = event.currentTarget.querySelector('[data-role="job-log"]');
+            loadJobLog(job.id, pre, true);
         });
     }
     function renderRoomPipeline(panel, jobs) {
