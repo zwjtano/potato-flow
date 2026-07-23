@@ -204,6 +204,7 @@ cp bridge.config.example.json bridge.config.json
 
 ```json
 {
+  "title_template": "【直播回放】{streamer}｜{ai_topic}｜{date}",
   "danmaku_enabled": true,
   "danmaku_burn_in": false,
   "danmaku_native_import": true,
@@ -212,6 +213,8 @@ cp bridge.config.example.json bridge.config.json
   "ai_danmaku_summary_enabled": true
 }
 ```
+
+默认投稿标题为 `【直播回放】{streamer}｜{ai_topic}｜{date}`。其中 `{streamer}` 是主播名，`{ai_topic}` 是 AI 根据弹幕生成的核心主题，`{date}` 是录制日期；AI 不可用或没有有效弹幕时，核心主题会回退为直播标题。
 
 `0` 表示完整导入弹幕；如只想导入最多 200 条，改为：
 

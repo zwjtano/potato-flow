@@ -41,6 +41,7 @@ RECORDING_FILE_SUFFIXES = {
     ".ts": "video", ".m2ts": "video", ".mov": "video",
     ".xml": "xml", ".ass": "ass",
 }
+DEFAULT_RECORDING_TITLE_TEMPLATE = "【直播回放】{streamer}｜{ai_topic}｜{date}"
 
 
 class RecorderConfigError(ValueError):
@@ -394,6 +395,8 @@ class LiveRecorderManager:
         else:
             config = {}
         config["y2a_root"] = str(APP_ROOT)
+        if str(config.get("title_template") or "").strip() in {"", "{stem}"}:
+            config["title_template"] = DEFAULT_RECORDING_TITLE_TEMPLATE
         if (FFMPEG_DIR / "ffmpeg").is_file():
             config["ffmpeg"] = str(FFMPEG_DIR / "ffmpeg")
         if (FFMPEG_DIR / "ffprobe").is_file():
@@ -402,6 +405,7 @@ class LiveRecorderManager:
             {
                 "match": f"*{_slug(str(room['name']))}_{str(room['id'])[:6]}*",
                 "source_url": room["url"],
+                "streamer_name": str(room["name"]),
                 "tags": [str(room["name"]), "直播录播"],
             }
             for room in rooms

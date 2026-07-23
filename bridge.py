@@ -8,6 +8,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from danmaku_pipeline import (
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
+DEFAULT_TITLE_TEMPLATE = "【直播回放】{streamer}｜{ai_topic}｜{date}"
 
 
 def utc_now() -> str:
@@ -294,9 +296,42 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
     return cover
 
 
-def render_metadata(video: Path, cfg: dict[str, Any]) -> tuple[str, str, list[str]]:
-    values = {"stem": video.stem, "name": video.name, "suffix": video.suffix.lstrip(".")}
-    title = str(cfg.get("title_template", "{stem}")).format_map(values).strip()
+def recording_metadata_values(
+    video: Path,
+    cfg: dict[str, Any],
+    ai_topic: str = "",
+) -> dict[str, str]:
+    stem = video.stem
+    date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", stem)
+    time_match = re.search(r"20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+)$", stem)
+    marker_match = re.match(r"(.+?)_[0-9a-f]{6}(?=20\d{2}-\d{2}-\d{2})", stem, re.IGNORECASE)
+    streamer = str(cfg.get("streamer_name") or "").strip()
+    if not streamer and marker_match:
+        streamer = marker_match.group(1).strip("_- ")
+    live_title = time_match.group(1).strip("_- ") if time_match else ""
+    topic = re.sub(r"[\r\n｜|]+", " ", str(ai_topic or live_title or "直播精彩内容")).strip()
+    return {
+        "stem": stem,
+        "name": video.name,
+        "suffix": video.suffix.lstrip("."),
+        "streamer": streamer or "主播",
+        "ai_topic": topic[:28],
+        "date": date_match.group(1) if date_match else (
+            datetime.fromtimestamp(video.stat().st_mtime).strftime("%Y-%m-%d")
+            if video.exists()
+            else datetime.now().strftime("%Y-%m-%d")
+        ),
+        "live_title": live_title,
+    }
+
+
+def render_metadata(
+    video: Path,
+    cfg: dict[str, Any],
+    ai_topic: str = "",
+) -> tuple[str, str, list[str]]:
+    values = recording_metadata_values(video, cfg, ai_topic)
+    title = str(cfg.get("title_template") or DEFAULT_TITLE_TEMPLATE).format_map(values).strip()
     description = str(cfg.get("description_template", "{stem}")).format_map(values).strip()
     tags = [str(tag).strip() for tag in cfg.get("tags", []) if str(tag).strip()]
     if not title:
@@ -314,10 +349,14 @@ def import_y2a(cfg: dict[str, Any]):
     return BilibiliUploader, load_y2a_config
 
 
-def summarize_danmaku_with_ai(comments, base_description: str, cfg: dict[str, Any]) -> str:
-    """Generate a grounded description with Y2A's existing OpenAI-compatible client."""
+def generate_danmaku_metadata_with_ai(
+    comments,
+    base_description: str,
+    cfg: dict[str, Any],
+) -> tuple[str, str]:
+    """Generate a grounded description and concise title topic from danmaku."""
     if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
-        return base_description
+        return base_description, ""
     try:
         root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
         if str(root) not in sys.path:
@@ -328,7 +367,7 @@ def summarize_danmaku_with_ai(comments, base_description: str, cfg: dict[str, An
         ai_cfg = load_y2a_config()
         if not ai_cfg.get("OPENAI_API_KEY"):
             print("WARN 未配置 Y2A OPENAI_API_KEY，跳过弹幕 AI 简介", file=sys.stderr)
-            return base_description
+            return base_description, ""
         selected = select_summary_comments(comments, int(cfg.get("ai_danmaku_max_comments", 400)))
         payload = {
             "base_description": base_description,
@@ -336,10 +375,11 @@ def summarize_danmaku_with_ai(comments, base_description: str, cfg: dict[str, An
             "sampled_comments": format_comments_for_ai(selected),
         }
         system_prompt = str(cfg.get("ai_danmaku_prompt") or """
-你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成简洁中文简介。
+你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和简洁中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 不要引用用户名、UID、广告或重复刷屏。保留 base_description 中有用的基础信息。
-返回 JSON 对象：{"description":"..."}，description 不超过 1200 个中文字符。
+title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
+返回 JSON 对象：{"title_topic":"...","description":"..."}，description 不超过 1200 个中文字符。
 """).strip()
         result = _request_json_object(
             client=get_openai_client(ai_cfg),
@@ -353,10 +393,21 @@ def summarize_danmaku_with_ai(comments, base_description: str, cfg: dict[str, An
             scene_name="biliup_danmaku_summary",
         )
         description = str((result or {}).get("description", "")).strip()
-        return description[:1800] if description else base_description
+        title_topic = re.sub(
+            r"[\r\n｜|]+",
+            " ",
+            str((result or {}).get("title_topic", "")).strip(),
+        )[:28].strip()
+        return description[:1800] if description else base_description, title_topic
     except Exception as exc:
         print(f"WARN 弹幕 AI 简介生成失败，使用原简介: {exc}", file=sys.stderr)
-        return base_description
+        return base_description, ""
+
+
+def summarize_danmaku_with_ai(comments, base_description: str, cfg: dict[str, Any]) -> str:
+    """Backward-compatible description-only wrapper."""
+    description, _ = generate_danmaku_metadata_with_ai(comments, base_description, cfg)
+    return description
 
 
 def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
@@ -421,13 +472,20 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             store.stage(key, "ass", "skipped", {"reason": "未找到弹幕 XML 或弹幕处理未启用"})
 
         current_stage = "ai"
+        ai_topic = ""
         if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
             store.stage(key, "ai", "running", {"comment_count": len(comments)})
-            description = summarize_danmaku_with_ai(comments, description, cfg)
-            store.stage(key, "ai", "completed", {"description": description, "comment_count": len(comments)})
+            description, ai_topic = generate_danmaku_metadata_with_ai(comments, description, cfg)
+            title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
+            store.stage(key, "ai", "completed", {
+                "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+                "title": title,
+                "description": description,
+                "comment_count": len(comments),
+            })
         else:
             reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
-            store.stage(key, "ai", "skipped", {"reason": reason, "description": description})
+            store.stage(key, "ai", "skipped", {"reason": reason, "title": title, "description": description})
 
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,

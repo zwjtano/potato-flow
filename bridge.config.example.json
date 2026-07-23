@@ -4,7 +4,7 @@
   "bilibili_cookies": "y2a-auto/cookies/bili_cookies.json",
   "bilibili_partition_id": "171",
   "source_url": "https://example.com/live-room",
-  "title_template": "{stem}",
+  "title_template": "【直播回放】{streamer}｜{ai_topic}｜{date}",
   "description_template": "直播录播：{stem}",
   "tags": ["直播录播", "biliup"],
   "cover_path": "",
