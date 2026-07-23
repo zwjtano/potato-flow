@@ -1,6 +1,5 @@
 # Keep yt-dlp rolling because extractor fixes are time-sensitive.
 yt-dlp[default]
-static-ffmpeg~=3.0
 
 # Web runtime: lock to the current compatible release line for stability.
 flask~=3.1.3

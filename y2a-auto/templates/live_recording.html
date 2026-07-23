@@ -93,7 +93,7 @@
                 <div class="pipeline-inspector" data-role="pipeline-inspector">
                     <div class="inspector-empty"><i class="bi bi-hand-index-thumb"></i><span>点击上方任一步骤，查看状态、时间、输入、产物和错误信息</span></div>
                 </div>
-                <div class="pipeline-note"><i class="bi bi-info-circle"></i> ASS 作为独立字幕上传，不烧录视频；B站原生弹幕默认全部导入，间隔 0.6 秒。</div>
+                <div class="pipeline-note"><i class="bi bi-info-circle"></i> XML 弹幕会生成 ASS 供查看和下载，不烧录视频，也不导入 B站原生弹幕。</div>
             </section>
 
             <section class="events-card">
@@ -102,8 +102,8 @@
                     <div class="event-row"><span class="event-icon success"><i class="bi bi-check2"></i></span><div><strong>直播间配置已加载</strong><small>{{ room.name }} · {{ '哔哩哔哩' if room.platform == 'bilibili' else '斗鱼' }}</small></div><time>当前</time></div>
                     <div class="event-row"><span class="event-icon"><i class="bi bi-broadcast"></i></span><div><strong data-role="event-state-title">{{ room.runtime.primary }}</strong><small data-role="event-state-detail">{{ room.runtime.secondary }}</small></div><time>实时</time></div>
                     <div class="event-row"><span class="event-icon"><i class="bi bi-chat-square-text"></i></span><div><strong>弹幕采集已配置</strong><small>XML 与视频同步保存，录制结束后生成 ASS</small></div><time>系统</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-badge-cc"></i></span><div><strong>字幕策略已加载</strong><small>ASS 独立上传，不执行耗时的视频烧录</small></div><time>系统</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-diagram-3"></i></span><div><strong>上传流水线已就绪</strong><small>ASS、AI 简介与 B站弹幕导入均已启用</small></div><time>系统</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-badge-cc"></i></span><div><strong>字幕策略已加载</strong><small>ASS 独立保存，不执行耗时的视频烧录</small></div><time>系统</time></div>
+                    <div class="event-row"><span class="event-icon"><i class="bi bi-diagram-3"></i></span><div><strong>上传流水线已就绪</strong><small>ASS 生成、AI 简介与 B站投稿均已启用</small></div><time>系统</time></div>
                 </div>
             </section>
         </article>
@@ -157,7 +157,7 @@
         <button class="btn btn-sm btn-danger" type="button" data-action="delete-selected-files" disabled><i class="bi bi-trash3"></i> 删除所选</button>
     </div>
     <div class="file-table-wrap"><table class="file-table"><thead><tr><th class="file-check-column"><input class="form-check-input" type="checkbox" data-role="file-select-all-table" aria-label="全选当前文件"></th><th>文件</th><th>类型</th><th>大小</th><th>修改时间</th><th class="text-end">操作</th></tr></thead><tbody data-role="file-rows"><tr><td colspan="6" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr></tbody></table></div>
-    <div class="file-manager-note"><i class="bi bi-info-circle"></i> 正在录制或流水线处理中的文件会自动锁定，无法删除。投稿与弹幕导入全部完成后，源视频和 XML 会自动清理。</div>
+    <div class="file-manager-note"><i class="bi bi-info-circle"></i> 正在录制或流水线处理中的文件会自动锁定，无法删除。投稿完成后，源视频和 XML 会自动清理。</div>
 </div></div></div></div>
 <div class="modal fade" id="rawLogModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content"><div class="modal-header"><div><h5 class="modal-title">录制引擎原始日志</h5><small class="text-muted">仅用于排错，已隐藏 URL 查询参数</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body p-0"><pre class="raw-log">{{ recorder_log }}</pre></div></div></div></div>
 {% endblock %}
@@ -412,7 +412,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const statusNames = {pending: '等待中', running: '处理中', completed: '已完成', failed: '失败', skipped: '已跳过'};
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     function detailRows(details) {
-        const labels = {video_path:'录播文件', size_bytes:'文件大小', danmaku_xml:'弹幕 XML', ass_path:'ASS 字幕', danmaku_count:'弹幕数量', burn_in:'烧录视频', comment_count:'分析弹幕', title_topic:'核心主题', description:'生成简介', reason:'说明', title:'投稿标题', cover:'视频封面', bilibili:'B站结果', danmaku_import:'原生弹幕导入'};
+        const labels = {video_path:'录播文件', size_bytes:'文件大小', danmaku_xml:'弹幕 XML', ass_path:'ASS 字幕', danmaku_count:'弹幕数量', burn_in:'烧录视频', comment_count:'分析弹幕', title_topic:'核心主题', description:'生成简介', reason:'说明', title:'投稿标题', cover:'视频封面', bilibili:'B站结果'};
         return Object.entries(details || {}).map(([key, value]) => {
             const rendered = typeof value === 'object' ? JSON.stringify(value, null, 2) : (key === 'size_bytes' ? `${(Number(value) / 1024 / 1024).toFixed(1)} MB` : String(value));
             return `<div class="inspector-row"><span>${escapeHtml(labels[key] || key)}</span><code>${escapeHtml(rendered)}</code></div>`;

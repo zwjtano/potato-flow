@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from bilibili_danmaku_importer import BilibiliDanmakuImporter
 from danmaku_pipeline import (
     build_ass,
     burn_ass,
@@ -537,39 +536,13 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             if not ok:
                 raise RuntimeError(f"bilibili 上传失败: {result}")
             previous.update({"bilibili": result, "ass_path": str(ass_path) if ass_path else None})
-            # Persist the BVID before importing danmaku. If the latter fails,
-            # retry must not create a duplicate video submission.
+            # Persist the BVID immediately so a process restart cannot create a
+            # duplicate video submission.
             store.finish(key, "video_uploaded", previous)
-
-        if (
-            comments
-            and bool(cfg.get("danmaku_native_import", True))
-            and not previous.get("danmaku_import")
-        ):
-            root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
-            if str(root) not in sys.path:
-                sys.path.insert(0, str(root))
-            from modules.bilibili_auth import load_credential_from_file  # type: ignore
-
-            importer = BilibiliDanmakuImporter(load_credential_from_file(str(cookie)))
-            imported = importer.import_comments(
-                str(result["bvid"]),
-                comments,
-                max_comments=int(cfg.get("danmaku_native_max_comments", 0)),
-                interval_seconds=float(cfg.get("danmaku_native_interval_seconds", 0.6)),
-                cid_wait_seconds=int(cfg.get("danmaku_cid_wait_seconds", 300)),
-            )
-            previous["danmaku_import"] = {
-                "cid": imported.cid,
-                "requested": imported.requested,
-                "imported": imported.imported,
-                "skipped": imported.skipped,
-            }
 
         store.stage(key, "upload", "completed", {
             "title": title, "description": description, "cover": str(cover),
             "bilibili": previous.get("bilibili"),
-            "danmaku_import": previous.get("danmaku_import"),
         })
         store.finish(key, "completed", previous)
         if bool(cfg.get("delete_recording_after_upload", True)):

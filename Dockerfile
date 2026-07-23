@@ -34,7 +34,9 @@ RUN python -m venv /opt/venv \
           "torch==2.6.0" "torchaudio==2.6.0" \
           --index-url https://download.pytorch.org/whl/cpu \
         || /opt/venv/bin/pip install "torch==2.6.0" "torchaudio==2.6.0") \
-    && /opt/venv/bin/pip install -r requirements.txt
+    && /opt/venv/bin/pip install -r requirements.txt \
+    && /opt/venv/bin/pip uninstall -y pip setuptools wheel \
+    && find /opt/venv -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
 
 FROM python:3.11-slim-bookworm AS runtime
@@ -73,18 +75,19 @@ RUN apt-get update \
     && useradd --create-home --home-dir /home/biliup-y2a --shell /bin/bash biliup-y2a
 
 WORKDIR /app
-COPY --from=python-builder /opt/venv/ /app/y2a-auto/.venv/
-COPY --from=recorder-builder \
+COPY --from=python-builder --chown=biliup-y2a:biliup-y2a \
+    /opt/venv/ /app/y2a-auto/.venv/
+COPY --from=recorder-builder --chown=biliup-y2a:biliup-y2a \
     /tmp/biliup \
     /app/upstream-biliup/target/release/biliup
-COPY . /app
+COPY --chown=biliup-y2a:biliup-y2a . /app
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN chmod 0755 \
       /usr/local/bin/docker-entrypoint.sh \
       /app/upstream-biliup/target/release/biliup \
     && mkdir -p /data \
-    && chown -R biliup-y2a:biliup-y2a /app /home/biliup-y2a
+    && chown biliup-y2a:biliup-y2a /data
 
 EXPOSE 5001
 VOLUME ["/data"]
