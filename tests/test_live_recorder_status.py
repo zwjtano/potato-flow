@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import sys
 import tempfile
@@ -320,6 +321,25 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 state_path = manager._pipeline_state_path()
 
         self.assertEqual(state_path, (data_root / ".bridge" / "state.sqlite3").resolve())
+
+    def test_stale_pid_reused_by_web_process_is_not_treated_as_worker(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pid_path = root / "recorder.pid"
+            status_path = root / "status.json"
+            pid_path.write_text(str(os.getpid()), encoding="utf-8")
+            status_path.write_text(
+                json.dumps({"pid": os.getpid(), "updated_at": time.time() - 90}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(recorder_module, "PID_PATH", pid_path), mock.patch.object(
+                recorder_module, "STATUS_PATH", status_path
+            ):
+                pid = manager._pid()
+
+            self.assertIsNone(pid)
+            self.assertFalse(pid_path.exists())
 
     def test_add_room_reloads_running_idle_worker(self):
         manager = LiveRecorderManager()

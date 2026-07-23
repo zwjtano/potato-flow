@@ -669,29 +669,18 @@ class LiveRecorderManager:
             return self._process.pid
         try:
             pid = int(PID_PATH.read_text(encoding="utf-8").strip())
-            os.kill(pid, 0)
-            return pid
-        except PermissionError:
-            # 在容器或受限运行环境中，同一服务的子进程可能不允许发送
-            # signal 0；这代表无法探测，不代表进程不存在。
-            return pid
-        except (FileNotFoundError, ValueError, ProcessLookupError):
-            PID_PATH.unlink(missing_ok=True)
-        try:
             payload = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
             status_pid = int(payload.get("pid") or 0)
-            if status_pid and time.time() - float(payload.get("updated_at") or 0) <= 5:
-                try:
-                    os.kill(status_pid, 0)
-                except PermissionError:
-                    return status_pid
-                except ProcessLookupError:
-                    pass
-                else:
-                    PID_PATH.write_text(str(status_pid), encoding="utf-8")
-                    return status_pid
+            heartbeat_fresh = time.time() - float(payload.get("updated_at") or 0) <= 5
+            if status_pid != pid or not heartbeat_fresh:
+                raise ProcessLookupError
+            try:
+                os.kill(pid, 0)
+            except PermissionError:
+                return pid
+            return pid
         except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
-            pass
+            PID_PATH.unlink(missing_ok=True)
         return None
 
     def status(self) -> dict[str, Any]:
