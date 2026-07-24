@@ -136,8 +136,8 @@ def fingerprint(path: Path, sidecar: Path | None = None) -> str:
 
 
 def recording_part_title(video: Path, index: int) -> str:
-    match = re.search(r"20\d{2}-\d{2}-\d{2}_(\d{2})-(\d{2})-(\d{2})", video.stem)
-    clock = ":".join(match.groups()) if match else ""
+    match = re.search(r"20\d{2}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:-(\d{2}))?", video.stem)
+    clock = ":".join(value for value in match.groups() if value is not None) if match else ""
     return f"P{max(1, index)} {clock}".strip()
 
 
@@ -641,12 +641,20 @@ def recording_metadata_values(
     ai_topic: str = "",
 ) -> dict[str, str]:
     stem = video.stem
-    datetime_match = re.search(r"(20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", stem)
+    datetime_match = re.search(r"(20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}(?:-\d{2})?)", stem)
     time_match = re.search(r"20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+)$", stem)
+    current_filename_match = re.match(
+        r"(.+?)_[0-9a-f]{6}_(.+)_(20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}(?:-\d{2})?)$",
+        stem,
+        re.IGNORECASE,
+    )
     marker_match = re.match(r"(.+?)_[0-9a-f]{6}(?=20\d{2}-\d{2}-\d{2})", stem, re.IGNORECASE)
     streamer = str(cfg.get("streamer_name") or "").strip()
-    if not streamer and marker_match:
-        streamer = marker_match.group(1).strip("_- ")
+    if not streamer:
+        if current_filename_match:
+            streamer = current_filename_match.group(1).strip("_- ")
+        elif marker_match:
+            streamer = marker_match.group(1).strip("_- ")
     normalized_streamer = re.sub(r"[\s_\-]+", "", streamer).casefold()
     if normalized_streamer in YYF_STREAMER_ALIASES or re.fullmatch(
         r"yyf(?:yyf)?\d*", normalized_streamer
@@ -657,10 +665,19 @@ def recording_metadata_values(
         or normalized_streamer.startswith("果小果")
     ):
         streamer = "果小果"
-    live_title = time_match.group(1).strip("_- ") if time_match else ""
+    if current_filename_match:
+        live_title = current_filename_match.group(2).strip("_- ")
+    else:
+        live_title = time_match.group(1).strip("_- ") if time_match else ""
     topic = re.sub(r"[\r\n｜|]+", " ", str(ai_topic or live_title or "直播精彩内容")).strip()
     if datetime_match:
-        recorded_at = datetime.strptime(datetime_match.group(1), "%Y-%m-%d_%H-%M-%S")
+        recorded_text = datetime_match.group(1)
+        recorded_format = (
+            "%Y-%m-%d_%H-%M-%S"
+            if re.search(r"_\d{2}-\d{2}-\d{2}$", recorded_text)
+            else "%Y-%m-%d_%H-%M"
+        )
+        recorded_at = datetime.strptime(recorded_text, recorded_format)
     elif video.exists():
         recorded_at = datetime.fromtimestamp(video.stat().st_mtime)
     else:

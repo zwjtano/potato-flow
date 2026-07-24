@@ -94,6 +94,7 @@
                                 {% endif %}
                             </td>
                             <td>
+                                <button type="button" class="recording-progress-trigger" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
                                 <div class="d-flex justify-content-between gap-2 small mb-1">
                                     <span>
                                         {% if job.failed_stage %}{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage) }}失败
@@ -106,6 +107,8 @@
                                 <div class="progress progress-thin" role="progressbar" aria-label="录播处理进度" aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
                                     <div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div>
                                 </div>
+                                <small class="recording-progress-hint">点击查看每一步详情</small>
+                                </button>
                             </td>
                             <td class="text-center"><span class="task-datetime" data-datetime="{{ job.updated_at }}">{{ job.updated_at }}</span></td>
                             <td class="text-end">
@@ -118,7 +121,6 @@
                                             data-task-id="{{ job.short_id }}" data-task-title="{{ job.title or job.video_name }}"
                                             data-error-message="{{ job.error }}"><i class="bi bi-exclamation-circle"></i> 错误</button>
                                     {% endif %}
-                                    <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3"></i> 流水线</a>
                                     {% if job.status == 'failed' %}
                                     <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>
                                     {% endif %}
@@ -153,10 +155,12 @@
                         {% elif job.status == 'video_uploaded' %}<span class="badge rounded-pill text-bg-info">导入弹幕中</span>
                         {% else %}<span class="badge rounded-pill text-bg-primary">处理中</span>{% endif %}
                     </div>
-                    <div class="d-flex justify-content-between small mt-3 mb-1"><span>{{ job.completed_stages }}/{{ job.total_stages }} 步</span><span>{{ progress }}%</span></div>
-                    <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
+                    <button type="button" class="recording-progress-trigger mt-3" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
+                        <div class="d-flex justify-content-between small mb-1"><span>{{ job.completed_stages }}/{{ job.total_stages }} 步</span><span>{{ progress }}%</span></div>
+                        <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
+                        <small class="recording-progress-hint">点击查看每一步详情</small>
+                    </button>
                     <div class="d-flex flex-wrap gap-2 mt-3">
-                        <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3"></i> 查看流水线</a>
                         {% if job.status == 'failed' %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
                         {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
@@ -417,6 +421,29 @@
     </div>
 </div>
 
+<!-- 录播任务详情 -->
+<div class="modal fade" id="recordingJobDetailModal" tabindex="-1" aria-labelledby="recordingJobDetailTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="min-w-0">
+                    <h5 class="modal-title text-truncate" id="recordingJobDetailTitle">录播任务详情</h5>
+                    <div class="small text-muted mt-1 text-truncate" data-role="recording-detail-meta"></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body" data-role="recording-detail-body">
+                <div class="recording-detail-loading"><span class="spinner-border spinner-border-sm"></span> 正在读取任务进度…</div>
+            </div>
+            <div class="modal-footer">
+                <a class="btn btn-warning d-none" data-role="recording-detail-review"><i class="bi bi-pencil-square"></i> 人工审核</a>
+                <a class="btn btn-outline-success d-none" data-role="recording-detail-bilibili" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> 查看 B站稿件</a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- 错误详情浮窗 -->
 <div class="modal fade" id="taskErrorModal" tabindex="-1" aria-labelledby="taskErrorModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -621,9 +648,46 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-room-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
 .recording-room-avatar.fallback { display: inline-flex; align-items: center; justify-content: center; color: #738096; background: #eef2f7; }
 .recording-task-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: .4rem; }
+.recording-progress-trigger { display: block; width: 100%; padding: .35rem .45rem; color: inherit; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; transition: border-color .15s ease, background .15s ease; }
+.recording-progress-trigger:hover, .recording-progress-trigger:focus-visible { border-color: #b8d5fb; outline: none; background: #f4f8ff; }
+.recording-progress-hint { display: block; margin-top: .35rem; color: #8a94a6; font-size: .68rem; }
+.recording-progress-trigger:hover .recording-progress-hint, .recording-progress-trigger:focus-visible .recording-progress-hint { color: #0d6efd; }
 .task-section-empty { display: flex; align-items: center; justify-content: center; gap: .65rem; min-height: 84px; padding: 1rem; color: #7c8799; background: #f8fafc; border: 1px dashed #dbe2ec; border-radius: 14px; }
 .recording-task-cards { display: grid; gap: .75rem; }
 .recording-task-card { padding: 1rem; background: #fff; border: 1px solid #e8edf4; border-radius: 14px; }
+.recording-detail-loading { display: flex; min-height: 220px; align-items: center; justify-content: center; gap: .65rem; color: #7d8798; }
+.recording-detail-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding: 1rem; border: 1px solid #e6ebf2; border-radius: 12px; background: #f8fafc; }
+.recording-detail-summary strong { display: block; margin-bottom: .25rem; }
+.recording-detail-stages { display: grid; gap: .7rem; }
+.recording-detail-stage { border: 1px solid #e3e8ef; border-radius: 12px; background: #fff; overflow: hidden; }
+.recording-detail-stage > summary { display: grid; grid-template-columns: 34px minmax(120px, 1fr) auto 14px; align-items: center; gap: .75rem; padding: .85rem 1rem; cursor: pointer; list-style: none; }
+.recording-detail-stage > summary::-webkit-details-marker { display: none; }
+.recording-detail-stage > summary::after { content: "›"; color: #98a2b3; font-size: 1.25rem; transform: rotate(90deg); }
+.recording-detail-stage:not([open]) > summary::after { transform: rotate(0deg); }
+.recording-detail-stage-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; color: #7b8798; background: #eef2f6; }
+.recording-detail-stage.completed .recording-detail-stage-icon { color: #fff; background: #35b875; }
+.recording-detail-stage.running .recording-detail-stage-icon { color: #fff; background: #0d6efd; }
+.recording-detail-stage.failed .recording-detail-stage-icon { color: #fff; background: #dc3545; }
+.recording-detail-stage-title strong, .recording-detail-stage-title small { display: block; }
+.recording-detail-stage-title small { margin-top: .15rem; color: #8a94a6; }
+.recording-detail-stage-status { font-size: .75rem; font-weight: 650; }
+.recording-detail-stage-body { padding: 0 1rem 1rem 3.95rem; }
+.recording-detail-error { margin-bottom: .75rem; padding: .75rem; color: #a61e2d; border-radius: 8px; background: #fff0f2; white-space: pre-wrap; word-break: break-word; }
+.recording-detail-fields { display: grid; gap: .45rem; margin: 0; }
+.recording-detail-field { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: .75rem; padding-top: .45rem; border-top: 1px dashed #e8ecf2; }
+.recording-detail-field dt { color: #778195; font-weight: 500; }
+.recording-detail-field dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.recording-detail-cover { display: block; max-width: min(100%, 540px); max-height: 320px; margin-top: .8rem; border-radius: 10px; object-fit: contain; background: #eef2f6; }
+.recording-detail-log { margin-top: 1rem; border: 1px solid #e3e8ef; border-radius: 12px; overflow: hidden; }
+.recording-detail-log summary { padding: .8rem 1rem; cursor: pointer; font-weight: 650; }
+.recording-detail-log pre { max-height: 360px; margin: 0; padding: 1rem; color: #d6deeb; background: #18202a; white-space: pre-wrap; word-break: break-word; font-size: .78rem; }
+@media (max-width: 767.98px) {
+    .recording-detail-stage > summary { grid-template-columns: 34px 1fr 14px; }
+    .recording-detail-stage-status { grid-column: 2; }
+    .recording-detail-stage > summary::after { grid-column: 3; grid-row: 1 / span 2; }
+    .recording-detail-stage-body { padding-left: 1rem; }
+    .recording-detail-field { grid-template-columns: 1fr; gap: .2rem; }
+}
 .min-w-0 { min-width: 0; }
 </style>
 {% endblock %}
@@ -710,6 +774,192 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
             button.disabled = false;
             showTaskErrorMessage(jobId.slice(0, 12), '录播任务重试失败', error.message);
         }
+    }
+
+    const recordingStageMeta = {
+        detect: {name: '直播检测', icon: 'bi-radar'},
+        record: {name: '视频录制', icon: 'bi-record-circle'},
+        ass: {name: '生成 ASS', icon: 'bi-badge-cc'},
+        ai: {name: 'AI 简介与投稿信息', icon: 'bi-stars'},
+        cover: {name: 'AI 封面', icon: 'bi-image'},
+        upload: {name: '投稿 B站', icon: 'bi-cloud-arrow-up'},
+    };
+    const recordingStageStatusNames = {
+        pending: '等待中',
+        running: '正在处理',
+        completed: '已完成',
+        failed: '失败',
+        skipped: '已跳过',
+    };
+    const recordingJobStatusNames = {
+        processing: '处理中',
+        video_uploaded: '导入弹幕中',
+        completed: '已完成',
+        failed: '待人工审核',
+        dry_run: '待投稿',
+    };
+    const recordingDetailLabels = {
+        video_path: '录播文件',
+        size_bytes: '文件大小',
+        danmaku_xml: '弹幕 XML',
+        ass_path: 'ASS 字幕',
+        danmaku_count: '弹幕数量',
+        burn_in: '烧录字幕',
+        comment_count: '分析弹幕',
+        title_topic: 'AI 核心主题',
+        title: '投稿标题',
+        description: '投稿简介',
+        generated_tags: 'AI 生成标签',
+        final_tags: '最终标签',
+        selected_partition_id: '投稿分区',
+        recommended_partition_id: 'AI 推荐分区',
+        partition_reason: '分区推荐理由',
+        partition_confidence: '推荐置信度',
+        partition_cover_path: '分区参考封面',
+        ai_cover_model: '图片模型',
+        ai_cover_path: 'AI 封面',
+        ai_cover_headline: '封面主题',
+        ai_cover_reference_name: '人物底稿',
+        ai_cover_reference_kind: '底稿类型',
+        ai_cover_error: '封面生成错误',
+        cover_fallback: '封面回退方式',
+        cover_used_for_upload: '最终投稿封面',
+        original_cover_path: '原始视频截图',
+        existing_bvid: '追加到稿件',
+        part_number: '分P序号',
+        partition_id: '投稿分区',
+        cover: '投稿封面',
+        tags: '投稿标签',
+        bilibili: 'B站投稿结果',
+    };
+    const escapeRecordingDetail = value => String(value ?? '').replace(
+        /[&<>"']/g,
+        char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])
+    );
+    let activeRecordingDetailJobId = '';
+    let recordingDetailTimer = null;
+    let recordingDetailRequestInFlight = false;
+
+    function formatRecordingDetailDate(value) {
+        if (!value) return '—';
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime())
+            ? String(value)
+            : parsed.toLocaleString('zh-CN', {hour12: false});
+    }
+
+    function formatRecordingDetailValue(key, value) {
+        if (key === 'size_bytes') {
+            const bytes = Number(value || 0);
+            if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+            if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+            if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${bytes} B`;
+        }
+        if (typeof value === 'boolean') return value ? '是' : '否';
+        if (value && typeof value === 'object') return JSON.stringify(value, null, 2);
+        return String(value ?? '—');
+    }
+
+    function renderRecordingJobDetail(job) {
+        const modal = document.getElementById('recordingJobDetailModal');
+        const body = modal?.querySelector('[data-role="recording-detail-body"]');
+        if (!modal || !body) return;
+        modal.querySelector('#recordingJobDetailTitle').textContent = job.title || job.video_name || '录播任务详情';
+        modal.querySelector('[data-role="recording-detail-meta"]').textContent =
+            `${job.room_name || '未匹配直播间'} · ${job.video_name || ''} · ${job.short_id || job.id?.slice(0, 12) || ''}`;
+
+        const stagesByKey = new Map((job.stages || []).map(stage => [stage.key, stage]));
+        const stageHtml = Object.entries(recordingStageMeta).map(([key, meta]) => {
+            const stage = stagesByKey.get(key) || {key, status: 'pending', details: {}};
+            const status = stage.status || 'pending';
+            const details = stage.details && typeof stage.details === 'object' ? stage.details : {};
+            const fields = Object.entries(details).map(([detailKey, value]) => `
+                <div class="recording-detail-field">
+                    <dt>${escapeRecordingDetail(recordingDetailLabels[detailKey] || detailKey)}</dt>
+                    <dd>${escapeRecordingDetail(formatRecordingDetailValue(detailKey, value))}</dd>
+                </div>`).join('');
+            const cover = key === 'cover' && (details.ai_cover_path || details.cover_used_for_upload)
+                ? `<img class="recording-detail-cover" src="/live-recording/jobs/${encodeURIComponent(job.id)}/cover?v=${encodeURIComponent(stage.updated_at || '')}" alt="当前任务封面">`
+                : '';
+            const timing = [
+                stage.started_at ? `开始 ${formatRecordingDetailDate(stage.started_at)}` : '',
+                stage.finished_at ? `完成 ${formatRecordingDetailDate(stage.finished_at)}` : '',
+            ].filter(Boolean).join(' · ') || `更新 ${formatRecordingDetailDate(stage.updated_at)}`;
+            const open = status === 'running' || status === 'failed';
+            return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" ${open ? 'open' : ''}>
+                <summary>
+                    <span class="recording-detail-stage-icon"><i class="bi ${escapeRecordingDetail(meta.icon)}"></i></span>
+                    <span class="recording-detail-stage-title"><strong>${escapeRecordingDetail(meta.name)}</strong><small>${escapeRecordingDetail(timing)}</small></span>
+                    <span class="recording-detail-stage-status">${escapeRecordingDetail(recordingStageStatusNames[status] || status)}</span>
+                </summary>
+                <div class="recording-detail-stage-body">
+                    ${stage.error ? `<div class="recording-detail-error">${escapeRecordingDetail(stage.error)}</div>` : ''}
+                    ${fields ? `<dl class="recording-detail-fields">${fields}</dl>` : '<span class="text-muted small">当前步骤暂无更多产物信息。</span>'}
+                    ${cover}
+                </div>
+            </details>`;
+        }).join('');
+        const completed = Number(job.completed_stages || 0);
+        const total = Number(job.total_stages || 6);
+        const statusLabel = job.status === 'completed' ? '全部完成'
+            : job.status === 'failed' ? '等待人工审核'
+            : job.active_stage ? `正在${recordingStageMeta[job.active_stage]?.name || job.active_stage}`
+            : `${completed}/${total} 步已完成`;
+        body.innerHTML = `
+            <div class="recording-detail-summary">
+                <div><strong>${escapeRecordingDetail(statusLabel)}</strong><span class="text-muted small">创建于 ${escapeRecordingDetail(formatRecordingDetailDate(job.created_at))}，更新于 ${escapeRecordingDetail(formatRecordingDetailDate(job.updated_at))}</span></div>
+                <span class="badge ${job.status === 'failed' ? 'text-bg-warning' : job.status === 'completed' ? 'text-bg-success' : 'text-bg-primary'}">${escapeRecordingDetail(recordingJobStatusNames[job.status] || job.status || '处理中')}</span>
+            </div>
+            <div class="recording-detail-stages">${stageHtml}</div>
+            <details class="recording-detail-log" ${job.status === 'failed' ? 'open' : ''}>
+                <summary><i class="bi bi-terminal me-2"></i>完整任务日志</summary>
+                <pre>${escapeRecordingDetail(job.log || '暂无任务日志。')}</pre>
+            </details>`;
+
+        const review = modal.querySelector('[data-role="recording-detail-review"]');
+        review.href = `/live-recording/jobs/${encodeURIComponent(job.id)}/review`;
+        review.classList.toggle('d-none', job.status !== 'failed');
+        const bilibili = modal.querySelector('[data-role="recording-detail-bilibili"]');
+        bilibili.href = job.bilibili_url || (job.bvid ? `https://www.bilibili.com/video/${encodeURIComponent(job.bvid)}` : '#');
+        bilibili.classList.toggle('d-none', !job.bvid);
+    }
+
+    async function loadRecordingJobDetail(jobId, showLoading = false) {
+        if (!jobId || recordingDetailRequestInFlight) return;
+        const modal = document.getElementById('recordingJobDetailModal');
+        const body = modal?.querySelector('[data-role="recording-detail-body"]');
+        if (!modal || !body) return;
+        recordingDetailRequestInFlight = true;
+        if (showLoading) {
+            body.innerHTML = '<div class="recording-detail-loading"><span class="spinner-border spinner-border-sm"></span> 正在读取任务进度…</div>';
+        }
+        try {
+            const response = await fetch(`/live-recording/jobs/${encodeURIComponent(jobId)}`, {
+                cache: 'no-store',
+                headers: {'Accept': 'application/json', 'Cache-Control': 'no-cache'},
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '任务详情读取失败');
+            if (activeRecordingDetailJobId !== jobId) return;
+            renderRecordingJobDetail(result);
+        } catch (error) {
+            if (activeRecordingDetailJobId === jobId) {
+                body.innerHTML = `<div class="recording-detail-loading text-danger"><i class="bi bi-exclamation-triangle"></i> ${escapeRecordingDetail(error.message)}</div>`;
+            }
+        } finally {
+            recordingDetailRequestInFlight = false;
+        }
+    }
+
+    function openRecordingJobDetail(jobId) {
+        const modalElement = document.getElementById('recordingJobDetailModal');
+        if (!modalElement || !jobId) return;
+        activeRecordingDetailJobId = jobId;
+        window.clearInterval(recordingDetailTimer);
+        bootstrap.Modal.getOrCreateInstance(modalElement).show();
+        loadRecordingJobDetail(jobId, true);
+        recordingDetailTimer = window.setInterval(() => loadRecordingJobDetail(jobId), 2000);
     }
 
     function showTaskErrorMessage(taskId, taskTitle, errorMessage) {
@@ -1182,6 +1432,12 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
             btn.dataset.bindRecordingRetry = '1';
             btn.addEventListener('click', () => retryRecordingTask(btn));
         });
+
+        queryAllWithin(root, '.recording-progress-trigger').forEach(btn => {
+            if (btn.dataset.bindRecordingDetail === '1') return;
+            btn.dataset.bindRecordingDetail = '1';
+            btn.addEventListener('click', () => openRecordingJobDetail(btn.dataset.jobId));
+        });
     }
 
     function disposeTooltips(root = document) {
@@ -1399,6 +1655,11 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         document.addEventListener('pointerdown', () => { pointerIsDown = true; }, { passive: true });
         document.addEventListener('pointerup', () => { pointerIsDown = false; }, { passive: true });
         document.addEventListener('pointercancel', () => { pointerIsDown = false; }, { passive: true });
+        document.getElementById('recordingJobDetailModal')?.addEventListener('hidden.bs.modal', function() {
+            activeRecordingDetailJobId = '';
+            window.clearInterval(recordingDetailTimer);
+            recordingDetailTimer = null;
+        });
 
         bindTasksEvents();
         initTooltips();

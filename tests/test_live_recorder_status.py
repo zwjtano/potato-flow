@@ -734,6 +734,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("recording_jobs", tasks_source)
         self.assertIn("recording-retry-btn", tasks_source)
         self.assertIn("live_recording_job_delete", tasks_source)
+        self.assertIn('class="recording-progress-trigger', tasks_source)
+        self.assertIn('id="recordingJobDetailModal"', tasks_source)
+        self.assertIn("openRecordingJobDetail", tasks_source)
+        self.assertIn("完整任务日志", tasks_source)
+        self.assertNotIn("url_for('live_recording', job=job.id)", tasks_source)
+        self.assertNotIn("> 查看流水线</a>", tasks_source)
+        self.assertNotIn("> 流水线</a>", tasks_source)
         self.assertGreaterEqual(tasks_source.count("'recording'"), 2)
         self.assertIn("t.source == 'recording'", overview_source)
         self.assertIn("直播录播", overview_source)
@@ -741,7 +748,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertNotIn('data-role="job-select"', live_source)
         self.assertNotIn("requestedPipelineJob", live_source)
         self.assertIn("直播结束后，该步骤会自动转入", live_source)
-        self.assertIn("查看上传任务", live_source)
+        self.assertNotIn("查看上传任务", live_source)
 
     def test_orphan_recording_scan_finds_only_old_unclaimed_room_videos(self):
         manager = LiveRecorderManager()

@@ -82,7 +82,7 @@
             </div>
 
             <section class="pipeline-card">
-                <div class="section-heading pipeline-heading"><div><h3>当前录制流程</h3><p>这里只显示直播检测与当前录制状态</p></div><div class="pipeline-toolbar"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('tasks') }}"><i class="bi bi-list-task"></i> 查看上传任务</a><span><i class="bi bi-lightning-charge-fill"></i> 自动执行</span></div></div>
+                <div class="section-heading pipeline-heading"><div><h3>当前录制流程</h3><p>这里只显示直播检测与当前录制状态</p></div><div class="pipeline-toolbar"><span><i class="bi bi-lightning-charge-fill"></i> 自动执行</span></div></div>
                 <div class="pipeline-flow">
                     <button class="pipeline-step {{ 'completed' if room.runtime.recording else ('active' if recorder_status.running) }}" type="button" data-stage="detect"><span><i class="bi bi-radar"></i></span><strong>直播检测</strong><small data-role="step-label">{{ '已检测开播' if room.runtime.recording else ('持续检测' if recorder_status.running else '等待中') }}</small></button>
                     <button class="pipeline-step {{ 'active' if room.runtime.recording }}" type="button" data-stage="record"><span><i class="bi bi-record-circle"></i></span><strong>视频录制</strong><small data-role="step-label">{{ '录制中' if room.runtime.recording else '等待中' }}</small></button>

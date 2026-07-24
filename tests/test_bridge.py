@@ -1,8 +1,10 @@
 import json
+import os
 import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -48,6 +50,24 @@ class BridgeTests(unittest.TestCase):
                 {"title_template": bridge.DEFAULT_TITLE_TEMPLATE},
             )
         self.assertEqual(title, "主播｜深夜歌回｜07-23 09:45｜【直播回放】")
+
+    def test_current_filename_uses_recording_start_time_not_finalize_time(self):
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "果小果是个弟弟_c3bc3d_备战宝可梦_2026-07-24_13-00.flv"
+            video.write_bytes(b"video")
+            finalized_at = datetime(2026, 7, 24, 14, 6).timestamp()
+            os.utime(video, (finalized_at, finalized_at))
+            title, _, _ = bridge.render_metadata(
+                video,
+                {
+                    "title_template": bridge.DEFAULT_TITLE_TEMPLATE,
+                    "streamer_name": "果小果是个弟弟",
+                },
+                ai_topic="凤凰翻盘",
+            )
+
+        self.assertEqual(title, "果小果｜凤凰翻盘｜07-24 13:00｜【直播回放】")
+        self.assertEqual(bridge.recording_part_title(video, 1), "P1 13:00")
 
     def test_default_recording_title_uses_canonical_streamer_names(self):
         cases = (
