@@ -729,6 +729,7 @@ class LiveRecorderManager:
                 "match": f"*{_slug(str(room['name']))}_{str(room['id'])[:6]}*",
                 "source_url": room["url"],
                 "streamer_name": str(room["name"]),
+                "streamer_avatar_url": str(room.get("avatar_url") or ""),
                 "tags": [str(room["name"]), "直播录播"],
             }
             for room in rooms

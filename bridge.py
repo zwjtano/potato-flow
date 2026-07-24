@@ -449,6 +449,40 @@ def recording_cover_reference_instruction(reference_name: str) -> str:
     )
 
 
+def download_recording_avatar_reference(url: str, cfg: dict[str, Any]) -> Path:
+    """Download and persist a room avatar for reuse by later recording parts."""
+    avatar_url = str(url or "").strip()
+    if not re.match(r"^https?://", avatar_url, re.IGNORECASE):
+        raise ValueError("直播间头像地址无效")
+    cache_root = resolve_path(".avatar-cache", cfg)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    destination = cache_root / f"{hashlib.sha256(avatar_url.encode()).hexdigest()[:24]}.jpg"
+    if destination.is_file() and destination.stat().st_size > 0:
+        return destination
+    request = urllib.request.Request(
+        avatar_url,
+        headers={"User-Agent": "Mozilla/5.0 PotatoFlow/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as remote:
+        raw = remote.read(8 * 1024 * 1024 + 1)
+    if not raw:
+        raise ValueError("直播间头像为空")
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError("直播间头像超过 8 MB")
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_bytes(raw)
+    temporary.replace(destination)
+    return destination
+
+
+def recording_avatar_reference_instruction(streamer: str) -> str:
+    return (
+        f"上传的参考图是主播 {streamer or '主播'} 的直播间头像。请优先以头像中的人物、"
+        "角色、吉祥物或标志性形象作为封面主体底稿，保持发型、五官、配色、服装特征和"
+        "角色辨识度；可以根据直播主题扩展横向背景与动作，但不要替换成无关人物或角色。"
+    )
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -484,9 +518,21 @@ def generate_recording_cover_with_ai(
         client_config["OPENAI_BASE_URL"] = image_base_url
     reference = recording_cover_reference(streamer)
     reference_name = reference[0] if reference else ""
-    reference_instruction = (
-        recording_cover_reference_instruction(reference_name) if reference else ""
-    )
+    reference_kind = "dedicated" if reference else ""
+    avatar_url = str(cfg.get("streamer_avatar_url") or "").strip()
+    if not reference and avatar_url:
+        try:
+            reference = (streamer or "直播间头像", download_recording_avatar_reference(avatar_url, cfg))
+            reference_name = reference[0]
+            reference_kind = "avatar"
+        except (OSError, ValueError) as exc:
+            details["ai_cover_avatar_reference_error"] = str(exc)
+    if reference_kind == "dedicated":
+        reference_instruction = recording_cover_reference_instruction(reference_name)
+    elif reference_kind == "avatar":
+        reference_instruction = recording_avatar_reference_instruction(streamer)
+    else:
+        reference_instruction = ""
     prompt = f"""
 为哔哩哔哩直播回放生成一张横向 16:10 视频封面，画面精致、主体明确、对比强烈，在手机缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -512,6 +558,7 @@ AI 生成的核心标题：{headline}
             "ai_cover_reference_used": True,
             "ai_cover_reference_name": reference_name,
             "ai_cover_reference_path": str(reference[1]),
+            "ai_cover_reference_kind": reference_kind,
         })
     else:
         response = image_client.generate(

@@ -527,7 +527,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_path):
-                manager._sync_bridge_profiles(self.rooms)
+                rooms = [dict(self.rooms[0], avatar_url="https://example.com/a.jpg"), self.rooms[1]]
+                manager._sync_bridge_profiles(rooms)
             config = json.loads(config_path.read_text(encoding="utf-8"))
 
         self.assertEqual(
@@ -535,6 +536,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "【直播回放】{streamer}｜{ai_topic}｜{date}",
         )
         self.assertEqual(config["profiles"][0]["streamer_name"], "开播主播")
+        self.assertEqual(
+            config["profiles"][0]["streamer_avatar_url"],
+            "https://example.com/a.jpg",
+        )
         self.assertEqual(
             config["bilibili_cookies"],
             str(recorder_module.APP_ROOT / "cookies" / "bili_cookies.json"),

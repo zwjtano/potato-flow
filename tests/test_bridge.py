@@ -492,13 +492,20 @@ class BridgeTests(unittest.TestCase):
             with patch.dict(sys.modules, {
                 "modules.ai_enhancer": ai_module,
                 "modules.config_manager": config_module,
-            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
+            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg), patch.object(
+                bridge, "download_recording_avatar_reference"
+            ) as avatar_download:
                 cover, details = bridge.generate_recording_cover_with_ai(
                     title="【直播回放】YYF｜天梯翻盘局｜2026-07-24",
                     ai_topic="天梯翻盘局",
                     description="YYF进行天梯对局并完成翻盘。",
                     streamer="yyfyyf",
-                    cfg={"_config_dir": str(root), "y2a_root": str(y2a_root), "ffmpeg": "ffmpeg"},
+                    cfg={
+                        "_config_dir": str(root),
+                        "y2a_root": str(y2a_root),
+                        "ffmpeg": "ffmpeg",
+                        "streamer_avatar_url": "https://example.com/yyf-avatar.jpg",
+                    },
                     work_dir=work_dir,
                 )
 
@@ -517,6 +524,67 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(Path(edit_kwargs["image"].name), bridge.YYF_COVER_REFERENCE)
         self.assertIn("参考照片是主播 YYF 本人", edit_kwargs["prompt"])
         self.assertIn("保持其脸型、五官、发型和身份辨识度", edit_kwargs["prompt"])
+        self.assertEqual(details["ai_cover_reference_kind"], "dedicated")
+        avatar_download.assert_not_called()
+
+    def test_unknown_streamer_cover_uses_room_avatar_as_reference(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work_dir = root / "artifacts"
+            avatar = root / "avatar.jpg"
+            avatar.write_bytes(b"avatar")
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_edit = Mock(return_value=response)
+            image_generate = Mock()
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=image_edit,
+                generate=image_generate,
+            ))
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg), patch.object(
+                bridge, "download_recording_avatar_reference", return_value=avatar
+            ) as avatar_download:
+                cover, details = bridge.generate_recording_cover_with_ai(
+                    title="【直播回放】新主播｜欢乐游戏｜07-24 11:20",
+                    ai_topic="欢乐游戏",
+                    description="直播间欢乐游戏。",
+                    streamer="新主播",
+                    cfg={
+                        "_config_dir": str(root),
+                        "y2a_root": str(y2a_root),
+                        "ffmpeg": "ffmpeg",
+                        "streamer_avatar_url": "https://example.com/avatar.jpg",
+                    },
+                    work_dir=work_dir,
+                )
+
+        self.assertEqual(cover.name, "ai_cover.jpg")
+        self.assertEqual(details["ai_cover_reference_kind"], "avatar")
+        self.assertEqual(details["ai_cover_reference_path"], str(avatar))
+        avatar_download.assert_called_once()
+        image_edit.assert_called_once()
+        image_generate.assert_not_called()
+        self.assertIn("直播间头像", image_edit.call_args.kwargs["prompt"])
+        self.assertIn("作为封面主体底稿", image_edit.call_args.kwargs["prompt"])
 
     def test_yyf_reference_aliases_are_recognized(self):
         for alias in ("YYF", "yyfyyf", "月夜枫", "枫哥", "姜岑"):
