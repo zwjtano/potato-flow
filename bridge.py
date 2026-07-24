@@ -136,10 +136,50 @@ def fingerprint(path: Path, sidecar: Path | None = None) -> str:
     return digest.hexdigest()
 
 
-def recording_part_title(video: Path, index: int) -> str:
-    match = re.search(r"20\d{2}-\d{2}-\d{2}_(\d{2})-(\d{2})(?:-(\d{2}))?", video.stem)
-    clock = ":".join(value for value in match.groups() if value is not None) if match else ""
-    return f"P{max(1, index)} {clock}".strip()
+def recording_part_title(video: Path, index: int, topic: str = "") -> str:
+    clean_topic = re.sub(r"[\r\n｜|]+", " ", str(topic or "")).strip()
+    clean_topic = clean_topic or "直播精彩内容"
+    return f"{max(1, index):02d}、{clean_topic[:60]}"[:80]
+
+
+def _multipart_summary_body(description: str) -> str:
+    return re.sub(
+        r"^直播录播[：:].*?[。.!！]\s*",
+        "",
+        str(description or "").strip(),
+        count=1,
+    ).strip()
+
+
+def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -> str:
+    """Build one Bilibili archive description containing each part's own summary."""
+    normalized = [
+        item for item in parts
+        if isinstance(item, dict) and int(item.get("part_number") or 0) > 0
+    ]
+    normalized.sort(key=lambda item: int(item.get("part_number") or 0))
+    if not normalized:
+        return str(intro or "").strip()[:1900]
+
+    headings = []
+    for item in normalized:
+        fields = [f"P{int(item.get('part_number') or 1)}"]
+        topic = re.sub(r"[\r\n｜|]+", " ", str(item.get("title_topic") or "")).strip()
+        recorded_at = str(item.get("recorded_at") or "").strip()
+        if topic:
+            fields.append(topic[:40])
+        if recorded_at:
+            fields.append(recorded_at)
+        headings.append(f"【{'｜'.join(fields)}】")
+
+    clean_intro = str(intro or "").strip()
+    overhead = len(clean_intro) + sum(len(item) + 2 for item in headings)
+    body_budget = max(80, (1850 - overhead) // max(1, len(normalized)))
+    sections = []
+    for heading, item in zip(headings, normalized):
+        body = _multipart_summary_body(str(item.get("description") or ""))
+        sections.append(f"{heading}\n{body[:body_budget].rstrip()}")
+    return "\n\n".join(([clean_intro] if clean_intro else []) + sections)[:1900].rstrip()
 
 
 class StateStore:
@@ -1045,9 +1085,12 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 ai_details.update(metadata_automation)
                 print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
 
+        part_values = recording_metadata_values(video, cfg, ai_topic=ai_topic)
+        part_topic = str(ai_topic or part_values["ai_topic"]).strip()
+        part_description = description
+        part_generated_title = title
         if multipart:
             title = str(multipart.get("title") or title)
-            description = str(multipart.get("description") or description)
             tags = list(multipart.get("tags") or tags)
             source_url = str(multipart.get("source_url") or source_url)
             partition = str(multipart.get("partition_id") or partition)
@@ -1055,25 +1098,68 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 metadata_automation = dict(multipart["metadata_automation"])
                 ai_details.update(metadata_automation)
 
+        if review_override:
+            title = str(review_override.get("title") or title).strip()
+            description = str(review_override.get("description") or description).strip()
+            part_description = description
+            override_tags = review_override.get("tags")
+            if isinstance(override_tags, list):
+                tags = [str(tag).strip() for tag in override_tags if str(tag).strip()][:6]
+            partition = str(review_override.get("partition_id") or partition).strip()
+
+        page_title = recording_part_title(video, part_number, part_topic)
+        multipart_parts: list[dict[str, Any]] = []
+        recording_intro = part_values["recording_intro"]
+        if multipart:
+            multipart_parts = [
+                dict(item)
+                for item in (multipart.get("parts") or [])
+                if isinstance(item, dict)
+            ]
+            # Upgrade an active session created before per-part metadata existed.
+            if existing_submission and not multipart_parts and multipart.get("description"):
+                legacy_title = str(multipart.get("title") or "")
+                legacy_fields = [field.strip() for field in legacy_title.split("｜")]
+                legacy_topic = legacy_fields[1] if len(legacy_fields) > 1 else "直播精彩内容"
+                multipart_parts.append({
+                    "part_number": 1,
+                    "title_topic": legacy_topic,
+                    "page_title": f"P1｜{legacy_topic}",
+                    "description": str(multipart.get("description") or ""),
+                    "recorded_at": "",
+                })
+            multipart_parts = [
+                item for item in multipart_parts
+                if int(item.get("part_number") or 0) != part_number
+            ]
+            multipart_parts.append({
+                "part_number": part_number,
+                "title_topic": part_topic,
+                "page_title": page_title,
+                "title": part_generated_title,
+                "description": part_description,
+                "recorded_at": part_values["date"],
+            })
+            recording_intro = str(
+                multipart.get("recording_intro") or recording_intro
+            ).strip()
+            description = render_multipart_description(
+                multipart_parts,
+                recording_intro,
+            )
+
         ai_details.update({
+            "title_topic": part_topic,
+            "part_title": part_generated_title,
+            "part_description": part_description,
+            "page_title": page_title,
             "title": title,
             "description": description,
             "final_tags": tags,
             "selected_partition_id": partition or None,
         })
-
         if review_override:
-            title = str(review_override.get("title") or title).strip()
-            description = str(review_override.get("description") or description).strip()
-            override_tags = review_override.get("tags")
-            if isinstance(override_tags, list):
-                tags = [str(tag).strip() for tag in override_tags if str(tag).strip()][:6]
-            partition = str(review_override.get("partition_id") or partition).strip()
             ai_details.update({
-                "title": title,
-                "description": description,
-                "final_tags": tags,
-                "selected_partition_id": partition or None,
                 "manual_review_applied": True,
                 "manual_review_updated_at": review_override.get("updated_at"),
             })
@@ -1163,7 +1249,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                    "title": title, "description": description, "tags": tags, "source_url": source_url,
                    "partition_id": partition, "metadata_automation": metadata_automation,
                    "cover_generation": cover_generation,
-                   "multipart_session": session_key or None, "part_number": part_number}
+                   "multipart_session": session_key or None, "part_number": part_number,
+                   "page_title": page_title, "part_title": part_generated_title,
+                   "part_description": part_description}
         if dry_run:
             store.stage(key, "upload", "skipped", {"reason": "试运行未投稿"})
             store.finish(key, "dry_run", summary)
@@ -1177,6 +1265,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "tags": tags,
             "partition_id": partition,
             "part_number": part_number,
+            "page_title": page_title,
             "existing_bvid": (
                 existing_submission.get("bvid")
                 if isinstance(existing_submission, dict)
@@ -1204,7 +1293,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 video_file_path=str(upload_video), cover_file_path=str(cover), title=title,
                 description=description, tags=tags, partition_id=partition,
                 youtube_url=source_url, task_id=None,
-                page_titles=[recording_part_title(video, part_number)],
+                page_titles=[page_title],
                 existing_submission=existing_submission,
                 is_original=True,
             )
@@ -1258,6 +1347,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "cover_generation": cover_generation,
                 "cover_path": str(cover),
                 "last_video": str(video),
+                "recording_intro": recording_intro,
+                "parts": multipart_parts,
             }
             store.save_multipart_session(
                 session_key,
@@ -1271,6 +1362,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "bilibili": previous.get("bilibili"),
             "description_comment": previous.get("description_comment"),
             "part_number": part_number,
+            "page_title": page_title,
+            "part_title": part_generated_title,
+            "part_description": part_description,
         })
         store.finish(key, "completed", previous)
         if bool(cfg.get("delete_recording_after_upload", True)):

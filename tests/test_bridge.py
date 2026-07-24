@@ -67,7 +67,10 @@ class BridgeTests(unittest.TestCase):
             )
 
         self.assertEqual(title, "果小果｜凤凰翻盘｜07-24 13:00｜【直播回放】")
-        self.assertEqual(bridge.recording_part_title(video, 1), "P1 13:00")
+        self.assertEqual(
+            bridge.recording_part_title(video, 1, "凤凰翻盘"),
+            "01、凤凰翻盘",
+        )
 
     def test_default_description_hides_internal_room_marker_and_recording_time(self):
         video = Path(
@@ -311,12 +314,22 @@ class BridgeTests(unittest.TestCase):
             root = Path(temp)
             cover = root / "cover.jpg"
             cookie = root / "cookie.json"
-            first = root / "主播_abcdef2026-07-23_09-00-00_直播.flv"
-            second = root / "主播_abcdef2026-07-23_10-00-00_直播.flv"
+            first = root / "主播_abcdef2026-07-23_09-00-00_第一局.flv"
+            second = root / "主播_abcdef2026-07-23_10-00-00_第二局.flv"
+            first_xml = root / "第一局.xml"
+            second_xml = root / "第二局.xml"
             cover.write_bytes(b"cover")
             cookie.write_text("[]", encoding="utf-8")
             first.write_bytes(b"part-one")
             second.write_bytes(b"part-two")
+            first_xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">第一段弹幕</d></i>',
+                encoding="utf-8",
+            )
+            second_xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">第二段弹幕</d></i>',
+                encoding="utf-8",
+            )
             cfg = {
                 "_config_dir": str(root),
                 "source_url": "https://example.com/live",
@@ -325,8 +338,8 @@ class BridgeTests(unittest.TestCase):
                 "cover_path": str(cover),
                 "stable_checks": 1,
                 "stable_interval_seconds": 0.01,
-                "danmaku_enabled": False,
-                "ai_danmaku_summary_enabled": False,
+                "danmaku_enabled": True,
+                "ai_danmaku_summary_enabled": True,
                 "delete_recording_after_upload": False,
             }
             calls = []
@@ -369,19 +382,40 @@ class BridgeTests(unittest.TestCase):
                 return_value=(None, {"ai_cover_enabled": False}),
             ) as generate_cover, patch.object(
                 bridge, "import_y2a", return_value=(FakeUploader, None)
+            ), patch.object(
+                bridge,
+                "generate_danmaku_metadata_with_ai",
+                side_effect=[
+                    ("直播录播：主播《第一局》。第一段 AI 总结", "第一段 AI 主题"),
+                    ("直播录播：主播《第二局》。第二段 AI 总结", "第二段 AI 主题"),
+                ],
+            ) as generate_summary, patch.object(
+                bridge, "probe_video_size", return_value=(1920, 1080)
             ):
-                self.assertTrue(bridge.upload_one(first, cfg, store, session_key="room-1"))
-                self.assertTrue(bridge.upload_one(second, cfg, store, session_key="room-1"))
+                self.assertTrue(bridge.upload_one(
+                    first, cfg, store, danmaku_xml=first_xml, session_key="room-1"
+                ))
+                self.assertTrue(bridge.upload_one(
+                    second, cfg, store, danmaku_xml=second_xml, session_key="room-1"
+                ))
 
             enhance_metadata.assert_called_once()
             generate_cover.assert_called_once()
+            self.assertEqual(generate_summary.call_count, 2)
             self.assertIsNone(calls[0]["existing_submission"])
-            self.assertEqual(calls[0]["page_titles"], ["P1 09:00:00"])
+            self.assertEqual(calls[0]["page_titles"], ["01、第一段 AI 主题"])
+            self.assertIn("【P1｜第一段 AI 主题｜07-23 09:00】", calls[0]["description"])
+            self.assertIn("第一段 AI 总结", calls[0]["description"])
+            self.assertNotIn("第二段 AI 总结", calls[0]["description"])
             self.assertEqual(calls[0]["tags"], ["主播", "AI标签"])
             self.assertEqual(calls[0]["partition_id"], "129")
             self.assertTrue(calls[0]["is_original"])
             self.assertEqual(calls[1]["existing_submission"]["bvid"], "BV1multipart")
-            self.assertEqual(calls[1]["page_titles"], ["P2 10:00:00"])
+            self.assertEqual(calls[1]["page_titles"], ["02、第二段 AI 主题"])
+            self.assertIn("【P1｜第一段 AI 主题｜07-23 09:00】", calls[1]["description"])
+            self.assertIn("【P2｜第二段 AI 主题｜07-23 10:00】", calls[1]["description"])
+            self.assertIn("第一段 AI 总结", calls[1]["description"])
+            self.assertIn("第二段 AI 总结", calls[1]["description"])
             self.assertEqual(calls[1]["tags"], ["主播", "AI标签"])
             self.assertEqual(calls[1]["partition_id"], "129")
             self.assertTrue(calls[1]["is_original"])
@@ -390,6 +424,10 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(session["partition_id"], "129")
             self.assertTrue(session["metadata_automation"]["cover_for_partition_ai"])
             self.assertEqual(Path(session["cover_path"]), cover.resolve())
+            self.assertEqual(
+                [part["title_topic"] for part in session["parts"]],
+                ["第一段 AI 主题", "第二段 AI 主题"],
+            )
             self.assertTrue(store.close_multipart_session("room-1"))
             self.assertEqual(store.multipart_session("room-1"), {})
 

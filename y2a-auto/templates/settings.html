@@ -176,6 +176,7 @@
                                                     <label class="checkbox-label">
                                                         <input type="checkbox" name="RECORDING_MULTIPART_ENABLED" {% if config.get('RECORDING_MULTIPART_ENABLED', False) %}checked{% endif %}>
                                                         同一场直播合并为分P
+                                                        <small class="text-muted d-block">每一 P 根据本段弹幕生成独立页面标题和摘要，稿件简介自动汇总全部分段。</small>
                                                     </label>
                                                 </div>
                                                 <p class="help-text mt-2 mb-0">分P默认关闭：每个录制分段独立投稿。开启后，P1 创建稿件，后续分段追加到同一个 BVID。录制中修改会在当前分段安全结束后生效。</p>
