@@ -619,6 +619,22 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "{streamer}｜{ai_topic}｜{date}｜【直播回放】",
         )
 
+    def test_bridge_profiles_migrate_legacy_description_and_enable_pinned_comment(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "bridge.config.json"
+            config_path.write_text(
+                json.dumps({"description_template": "直播录播：{stem}"}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_path):
+                manager._sync_bridge_profiles(self.rooms)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(config["description_template"], "{recording_intro}")
+        self.assertTrue(config["post_description_comment"])
+        self.assertTrue(config["pin_description_comment"])
+
     def test_headless_status_file_drives_room_state(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -665,7 +681,11 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertNotIn("const jobLogStates = new Map()", source)
         self.assertNotIn("loadJobLog(", source)
         self.assertNotIn('data-role="job-select"', source)
-        self.assertIn("bindCurrentPipeline", source)
+        self.assertNotIn("bindCurrentPipeline", source)
+        self.assertNotIn("当前录制流程", source)
+        self.assertNotIn("最近事件", source)
+        self.assertIn("generated-files-card", source)
+        self.assertIn("显示该直播间最近生成的视频、XML 弹幕和 ASS", source)
 
     def test_pipeline_jobs_expose_unified_task_metadata(self):
         manager = LiveRecorderManager()
@@ -747,7 +767,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("live_recording_job_delete", overview_source)
         self.assertNotIn('data-role="job-select"', live_source)
         self.assertNotIn("requestedPipelineJob", live_source)
-        self.assertIn("直播结束后，该步骤会自动转入", live_source)
+        self.assertNotIn("直播结束后，该步骤会自动转入", live_source)
+        self.assertIn("录制文件", live_source)
         self.assertNotIn("查看上传任务", live_source)
 
     def test_orphan_recording_scan_finds_only_old_unclaimed_room_videos(self):

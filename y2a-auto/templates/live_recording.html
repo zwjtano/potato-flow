@@ -22,6 +22,7 @@
     </div>
     <div class="recorder-header-actions">
         <a class="btn btn-light border" href="{{ url_for('live_recording') }}"><i class="bi bi-arrow-clockwise"></i> 刷新</a>
+        <button class="btn btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#rawLogModal"><i class="bi bi-terminal"></i> 原始日志</button>
         <button class="btn btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal"><i class="bi bi-folder2-open"></i> 文件管理</button>
         <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addRoomModal"><i class="bi bi-plus-lg"></i> 新增直播间</button>
     </div>
@@ -81,30 +82,31 @@
                 <div><span>弹幕采集</span><strong data-role="danmaku-state">{{ '录制中' if room.runtime.recording else ('已启用' if recorder_status.running else '待命') }}</strong><small>XML 与视频同步保存</small></div>
             </div>
 
-            <section class="pipeline-card">
-                <div class="section-heading pipeline-heading"><div><h3>当前录制流程</h3><p>这里只显示直播检测与当前录制状态</p></div><div class="pipeline-toolbar"><span><i class="bi bi-lightning-charge-fill"></i> 自动执行</span></div></div>
-                <div class="pipeline-flow">
-                    <button class="pipeline-step {{ 'completed' if room.runtime.recording else ('active' if recorder_status.running) }}" type="button" data-stage="detect"><span><i class="bi bi-radar"></i></span><strong>直播检测</strong><small data-role="step-label">{{ '已检测开播' if room.runtime.recording else ('持续检测' if recorder_status.running else '等待中') }}</small></button>
-                    <button class="pipeline-step {{ 'active' if room.runtime.recording }}" type="button" data-stage="record"><span><i class="bi bi-record-circle"></i></span><strong>视频录制</strong><small data-role="step-label">{{ '录制中' if room.runtime.recording else '等待中' }}</small></button>
-                    <button class="pipeline-step" type="button" data-stage="ass"><span><i class="bi bi-badge-cc"></i></span><strong>生成 ASS</strong><small data-role="step-label">上传任务查看</small></button>
-                    <button class="pipeline-step" type="button" data-stage="ai"><span><i class="bi bi-stars"></i></span><strong>AI 简介</strong><small data-role="step-label">上传任务查看</small></button>
-                    <button class="pipeline-step" type="button" data-stage="cover"><span><i class="bi bi-image"></i></span><strong>AI 封面</strong><small data-role="step-label">上传任务查看</small></button>
-                    <button class="pipeline-step" type="button" data-stage="upload"><span><i class="bi bi-cloud-arrow-up"></i></span><strong>投稿 B站</strong><small data-role="step-label">上传任务查看</small></button>
+            <section class="generated-files-card">
+                <div class="section-heading">
+                    <div><h3>录制文件</h3><p>显示该直播间最近生成的视频、XML 弹幕和 ASS</p></div>
+                    <button class="btn btn-sm btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal"><i class="bi bi-folder2-open"></i> 管理全部文件</button>
                 </div>
-                <div class="pipeline-inspector" data-role="pipeline-inspector">
-                    <div class="inspector-empty"><i class="bi bi-info-circle"></i><span>直播结束后，ASS、AI 简介、AI 封面和投稿进度会自动转入“上传任务”。</span></div>
-                </div>
-                <div class="pipeline-note"><i class="bi bi-info-circle"></i> 每场直播的 P1 会立即创建稿件，后续分段边录边追加为 P2、P3；XML 弹幕生成 ASS 供查看和下载，不烧录视频。</div>
-            </section>
-
-            <section class="events-card">
-                <div class="section-heading"><div><h3>最近事件</h3><p>仅展示关键状态，原始日志可按需查看</p></div><button class="btn btn-sm btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#rawLogModal"><i class="bi bi-terminal"></i> 原始日志</button></div>
-                <div class="event-list">
-                    <div class="event-row"><span class="event-icon success"><i class="bi bi-check2"></i></span><div><strong>直播间配置已加载</strong><small>{{ room.name }} · {{ '哔哩哔哩' if room.platform == 'bilibili' else '斗鱼' }}</small></div><time>当前</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-broadcast"></i></span><div><strong data-role="event-state-title">{{ room.runtime.primary }}</strong><small data-role="event-state-detail">{{ room.runtime.secondary }}</small></div><time>实时</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-chat-square-text"></i></span><div><strong>弹幕采集已配置</strong><small>XML 与视频同步保存，每个分段完成后生成 ASS</small></div><time>系统</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-badge-cc"></i></span><div><strong>字幕策略已加载</strong><small>ASS 独立保存，不执行耗时的视频烧录</small></div><time>系统</time></div>
-                    <div class="event-row"><span class="event-icon"><i class="bi bi-diagram-3"></i></span><div><strong>逐文件投稿已就绪</strong><small>P1 创建稿件，后续分段自动追加到同一个 BVID</small></div><time>系统</time></div>
+                <div class="generated-file-list">
+                    {% set file_state = namespace(count=0) %}
+                    {% for file in recording_files %}
+                    {% if file.room_id == room.id and file_state.count < 10 %}
+                    <div class="generated-file-row">
+                        <span class="generated-file-icon {{ file.type }}"><i class="bi {{ 'bi-camera-video' if file.type == 'video' else ('bi-chat-square-text' if file.type == 'xml' else 'bi-badge-cc') }}"></i></span>
+                        <div class="generated-file-copy">
+                            <strong title="{{ file.name }}">{{ file.name }}</strong>
+                            <small>{{ '录播视频' if file.type == 'video' else ('XML 弹幕' if file.type == 'xml' else 'ASS 字幕') }} · {{ file.modified_at }}</small>
+                        </div>
+                        <span class="generated-file-size">{{ file.size_bytes|filesizeformat }}</span>
+                        {% if file.locked %}<span class="generated-file-lock"><i class="bi bi-record-circle"></i> {{ file.lock_reason }}</span>{% endif %}
+                        <a class="btn btn-sm btn-light border" href="{{ url_for('live_recording_file_download', file_id=file.id) }}" title="下载"><i class="bi bi-download"></i></a>
+                    </div>
+                    {% set file_state.count = file_state.count + 1 %}
+                    {% endif %}
+                    {% endfor %}
+                    {% if file_state.count == 0 %}
+                    <div class="generated-files-empty"><i class="bi bi-folder2-open"></i><strong>还没有生成文件</strong><span>开始录制后，视频和弹幕文件会直接显示在这里</span></div>
+                    {% endif %}
                 </div>
             </section>
         </article>
@@ -390,34 +392,12 @@ document.addEventListener('DOMContentLoaded', function () {
             ? `已写入 ${formatBytes(room.current_file_size_bytes)} · 每 60 分钟分段`
             : '每 60 分钟自动分段';
         panel.querySelector('[data-role="danmaku-state"]').textContent = room.recording ? '录制中' : '已启用';
-        panel.querySelector('[data-role="event-state-title"]').textContent = room.primary;
-        panel.querySelector('[data-role="event-state-detail"]').textContent = room.secondary;
         const recordingToggle = panel.querySelector('[data-action="room-recording"]');
         const enabled = Boolean(engineRunning && room.manual_enabled);
         recordingToggle.dataset.enabled = enabled ? 'true' : 'false';
         recordingToggle.className = `btn btn-sm manual-record-toggle ${enabled ? 'btn-outline-danger' : 'btn-primary'}`;
         recordingToggle.title = enabled ? '安全停止当前录制并暂停自动检测' : '启动引擎并开始检测录制';
         recordingToggle.innerHTML = enabled ? '<i class="bi bi-stop-fill"></i> <span>停止录制</span>' : '<i class="bi bi-record-circle"></i> <span>开始录制</span>';
-        const detect = panel.querySelector('[data-stage="detect"]');
-        const record = panel.querySelector('[data-stage="record"]');
-        detect.className = `pipeline-step ${room.recording ? 'completed' : (engineRunning ? 'active' : '')}`;
-        detect.querySelector('[data-role="step-label"]').textContent = room.recording ? '已检测开播' : (engineRunning ? '持续检测' : '等待中');
-        record.className = `pipeline-step ${room.recording ? 'active' : ''}`;
-        record.querySelector('[data-role="step-label"]').textContent = room.recording ? '录制中' : '等待中';
-    }
-    function renderCurrentInspector(panel, stageKey) {
-        const inspector = panel.querySelector('[data-role="pipeline-inspector"]');
-        const messages = {
-            detect: '录制引擎会持续检测直播状态，检测开播后自动进入录制。',
-            record: '这里只展示当前录制状态、文件名、写入大小和录制时长。',
-        };
-        inspector.innerHTML = `<div class="inspector-empty"><i class="bi bi-info-circle"></i><span>${messages[stageKey] || '直播结束后，该步骤会自动转入“上传任务”页面继续执行和展示。'}</span></div>`;
-    }
-    function bindCurrentPipeline(panel) {
-        panel.querySelectorAll('.pipeline-step').forEach(node => node.onclick = () => {
-            panel.querySelectorAll('.pipeline-step').forEach(item => item.classList.toggle('selected', item === node));
-            renderCurrentInspector(panel, node.dataset.stage);
-        });
     }
     async function refreshLiveStatus() {
         try {
@@ -498,7 +478,6 @@ document.addEventListener('DOMContentLoaded', function () {
         resolve(false);
     });
     document.querySelectorAll('[data-action="room-recording"]').forEach(button => button.addEventListener('click', controlRoomRecording));
-    panels.forEach(bindCurrentPipeline);
     refreshLiveStatus();
     window.setInterval(refreshLiveStatus, 5000);
 });

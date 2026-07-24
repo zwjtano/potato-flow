@@ -11,6 +11,7 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 from .bili_sdk import video_uploader
 from .bili_sdk.exceptions import ArgsException, ResponseCodeException
+from .bili_sdk.utils.network import Api
 
 from .bilibili_runtime import configure_bilibili_runtime
 from .bilibili_auth import load_credential_from_file, validate_credential_remote
@@ -229,6 +230,101 @@ class BilibiliUploader:
             self.logger.info(message)
         else:
             print(message)
+
+    def publish_description_comment(
+        self,
+        result: dict,
+        description: str,
+        pin: bool = True,
+    ) -> dict:
+        """Publish the final description as a comment and optionally pin it."""
+        aid = result.get("aid") if isinstance(result, dict) else None
+        bvid = str(result.get("bvid") or "") if isinstance(result, dict) else ""
+        normalized = _normalize_multiline_text(description)
+        message = normalized[:1000].strip()
+        details = {
+            "enabled": True,
+            "posted": False,
+            "pinned": False,
+            "aid": aid,
+            "bvid": bvid,
+            "truncated": len(normalized) > len(message),
+        }
+        if not aid:
+            details["error"] = "投稿结果缺少 aid，无法发布简介评论"
+            return details
+        if not message:
+            details["error"] = "简介为空，未发布评论"
+            return details
+
+        try:
+            credential = load_credential_from_file(self.cookie_file)
+
+            async def _publish():
+                reply = await Api(
+                    url="https://api.bilibili.com/x/v2/reply/add",
+                    method="POST",
+                    verify=True,
+                    credential=credential,
+                ).update_data(
+                    type=1,
+                    oid=int(aid),
+                    message=message,
+                    plat=1,
+                ).request()
+                reply = reply if isinstance(reply, dict) else {}
+                reply_info = reply.get("reply")
+                if not isinstance(reply_info, dict):
+                    reply_info = reply
+                rpid = reply_info.get("rpid") or reply_info.get("rpid_str")
+                if not rpid:
+                    raise RuntimeError(f"B站发评论成功但未返回 rpid: {reply}")
+
+                pinned = False
+                pin_error = ""
+                if pin:
+                    try:
+                        await Api(
+                            url="https://api.bilibili.com/x/v2/reply/top",
+                            method="POST",
+                            verify=True,
+                            credential=credential,
+                        ).update_data(
+                            type=1,
+                            oid=int(aid),
+                            rpid=int(rpid),
+                            action=1,
+                        ).request()
+                        pinned = True
+                    except Exception as exc:
+                        pin_error = _compact_exception_text(str(exc))
+                return str(rpid), pinned, pin_error
+
+            try:
+                rpid, pinned, pin_error = asyncio.run(_publish())
+            except RuntimeError:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    rpid, pinned, pin_error = pool.submit(
+                        asyncio.run, _publish()
+                    ).result()
+
+            details.update({
+                "posted": True,
+                "pinned": pinned,
+                "rpid": rpid,
+                "message_length": len(message),
+            })
+            if pin_error:
+                details["pin_error"] = pin_error
+            self.log(
+                "Bilibili 简介评论发布成功"
+                + ("并已置顶" if pinned else ("，但置顶失败" if pin else ""))
+            )
+        except Exception as exc:
+            details["error"] = _compact_exception_text(str(exc))
+            self.log(f"Bilibili 简介评论发布失败（不影响投稿）: {details['error']}")
+        return details
 
     def upload_video(
         self,

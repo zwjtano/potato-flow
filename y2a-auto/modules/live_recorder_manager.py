@@ -45,10 +45,16 @@ RECORDING_FILE_SUFFIXES = {
     ".xml": "xml", ".ass": "ass",
 }
 DEFAULT_RECORDING_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}｜【直播回放】"
+DEFAULT_RECORDING_DESCRIPTION_TEMPLATE = "{recording_intro}"
 LEGACY_RECORDING_TITLE_TEMPLATES = {
     "",
     "{stem}",
     "【直播回放】{streamer}｜{ai_topic}｜{date}",
+}
+LEGACY_RECORDING_DESCRIPTION_TEMPLATES = {
+    "",
+    "{stem}",
+    "直播录播：{stem}",
 }
 DEFAULT_RECORDING_SEGMENT_TIME = "01:00:00"
 
@@ -729,6 +735,13 @@ class LiveRecorderManager:
         )
         if str(config.get("title_template") or "").strip() in LEGACY_RECORDING_TITLE_TEMPLATES:
             config["title_template"] = DEFAULT_RECORDING_TITLE_TEMPLATE
+        if (
+            str(config.get("description_template") or "").strip()
+            in LEGACY_RECORDING_DESCRIPTION_TEMPLATES
+        ):
+            config["description_template"] = DEFAULT_RECORDING_DESCRIPTION_TEMPLATE
+        config.setdefault("post_description_comment", True)
+        config.setdefault("pin_description_comment", True)
         if (FFMPEG_DIR / "ffmpeg").is_file():
             config["ffmpeg"] = str(FFMPEG_DIR / "ffmpeg")
         if (FFMPEG_DIR / "ffprobe").is_file():

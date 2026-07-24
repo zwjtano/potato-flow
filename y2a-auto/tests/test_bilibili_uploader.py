@@ -361,6 +361,43 @@ class BilibiliProgressTests(unittest.TestCase):
         self.assertEqual(edit_calls[0]["cover_url"], "https://example.com/cover.jpg")
         self.assertEqual([item["filename"] for item in edit_calls[0]["videos"]], ["part-1", "new-part"])
 
+    def test_publish_description_comment_and_pin(self):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.data = {}
+
+            def update_data(self, **kwargs):
+                self.data = kwargs
+                return self
+
+            async def request(self):
+                calls.append((self.url, self.data))
+                if self.url.endswith("/add"):
+                    return {"reply": {"rpid": 987654}}
+                return {}
+
+        with patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=object(),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ):
+            details = BilibiliUploader("cookies.json").publish_description_comment(
+                {"aid": 123, "bvid": "BV1test"},
+                "直播录播：YYF《陪伴每一天》。精彩内容",
+                pin=True,
+            )
+
+        self.assertTrue(details["posted"])
+        self.assertTrue(details["pinned"])
+        self.assertEqual(details["rpid"], "987654")
+        self.assertEqual(calls[0][1]["oid"], 123)
+        self.assertEqual(calls[1][1]["action"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

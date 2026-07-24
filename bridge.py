@@ -31,6 +31,7 @@ from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}｜【直播回放】"
+DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
 WORKSPACE_ROOT = Path(__file__).resolve().parent
 YYF_COVER_REFERENCE = WORKSPACE_ROOT / "assets" / "streamer-references" / "yyf.png"
 YYF_STREAMER_ALIASES = {"yyf", "yyfyyf", "月夜枫", "枫哥", "姜岑"}
@@ -690,6 +691,11 @@ def recording_metadata_values(
         "ai_topic": topic[:28],
         "date": recorded_at.strftime("%m-%d %H:%M"),
         "live_title": live_title,
+        "recording_intro": (
+            f"直播录播：{streamer or '主播'}《{live_title}》。"
+            if live_title
+            else f"直播录播：{streamer or '主播'}。"
+        ),
     }
 
 
@@ -700,7 +706,9 @@ def render_metadata(
 ) -> tuple[str, str, list[str]]:
     values = recording_metadata_values(video, cfg, ai_topic)
     title = str(cfg.get("title_template") or DEFAULT_TITLE_TEMPLATE).format_map(values).strip()
-    description = str(cfg.get("description_template", "{stem}")).format_map(values).strip()
+    description = str(
+        cfg.get("description_template") or DEFAULT_DESCRIPTION_TEMPLATE
+    ).format_map(values).strip()
     tags = [str(tag).strip() for tag in cfg.get("tags", []) if str(tag).strip()]
     if not title:
         raise ValueError("渲染后的标题为空")
@@ -843,7 +851,8 @@ def generate_danmaku_metadata_with_ai(
         system_prompt = str(cfg.get("ai_danmaku_prompt") or """
 你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和简洁中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
-不要引用用户名、UID、广告或重复刷屏。保留 base_description 中有用的基础信息。
+不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
+description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
 title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
 返回 JSON 对象：{"title_topic":"...","description":"..."}，description 不超过 1200 个中文字符。
 """).strip()
@@ -858,7 +867,18 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             logger_obj=None,
             scene_name="biliup_danmaku_summary",
         )
-        description = str((result or {}).get("description", "")).strip()
+        generated_description = str((result or {}).get("description", "")).strip()
+        generated_description = re.sub(
+            r"^直播录播[：:].*?[。.!！]\s*",
+            "",
+            generated_description,
+            count=1,
+        ).strip()
+        description = (
+            f"{base_description}{generated_description}"
+            if generated_description
+            else base_description
+        )
         title_topic = re.sub(
             r"[\r\n｜|]+",
             " ",
@@ -1176,6 +1196,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "cover_path": str(cover),
         })
         result = previous.get("bilibili")
+        uploader = None
+        uploaded_now = False
         if not isinstance(result, dict) or not result.get("bvid"):
             uploader = BilibiliUploader(cookie_file=str(cookie))
             ok, result = uploader.upload_video(
@@ -1189,8 +1211,39 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             if not ok:
                 raise RuntimeError(f"bilibili 上传失败: {result}")
             previous.update({"bilibili": result, "ass_path": str(ass_path) if ass_path else None})
+            uploaded_now = True
             # Persist the BVID immediately so a process restart cannot create a
             # duplicate video submission.
+            store.finish(key, "video_uploaded", previous)
+
+        description_comment = previous.get("description_comment")
+        if (
+            uploaded_now
+            and not (
+                isinstance(existing_submission, dict)
+                and existing_submission.get("bvid")
+            )
+            and bool(cfg.get("post_description_comment", True))
+            and not (
+                isinstance(description_comment, dict)
+                and description_comment.get("posted")
+            )
+        ):
+            if hasattr(uploader, "publish_description_comment"):
+                description_comment = uploader.publish_description_comment(
+                    result=previous.get("bilibili") or {},
+                    description=description,
+                    pin=bool(cfg.get("pin_description_comment", True)),
+                )
+            else:
+                description_comment = {
+                    "enabled": True,
+                    "posted": False,
+                    "pinned": False,
+                    "error": "当前上传器不支持简介评论",
+                }
+            previous["description_comment"] = description_comment
+            # 评论失败不回滚已经成功的投稿，但保留原因供任务详情查看。
             store.finish(key, "video_uploaded", previous)
 
         if session_key:
@@ -1216,6 +1269,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "title": title, "description": description, "cover": str(cover),
             "tags": tags, "partition_id": partition,
             "bilibili": previous.get("bilibili"),
+            "description_comment": previous.get("description_comment"),
             "part_number": part_number,
         })
         store.finish(key, "completed", previous)

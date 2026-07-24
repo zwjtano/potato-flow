@@ -1164,9 +1164,11 @@ def login_required(f):
 @login_required
 def live_recording():
     rooms = live_recorder_manager.rooms_with_status()
+    recording_files = live_recorder_manager.recording_files(limit=500).get("files", [])
     return render_template(
         'live_recording.html',
         rooms=rooms,
+        recording_files=recording_files,
         recorder_status=live_recorder_manager.status(),
         recorder_log=live_recorder_manager.tail_log(),
     )

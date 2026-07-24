@@ -69,6 +69,16 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(title, "果小果｜凤凰翻盘｜07-24 13:00｜【直播回放】")
         self.assertEqual(bridge.recording_part_title(video, 1), "P1 13:00")
 
+    def test_default_description_hides_internal_room_marker_and_recording_time(self):
+        video = Path(
+            "yyfyyf_50e0b32026-07-23_20-24-08_陪伴每一天.flv"
+        )
+        _, description, _ = bridge.render_metadata(video, {})
+
+        self.assertEqual(description, "直播录播：YYF《陪伴每一天》。")
+        self.assertNotIn("50e0b3", description)
+        self.assertNotIn("2026-07-23", description)
+
     def test_default_recording_title_uses_canonical_streamer_names(self):
         cases = (
             ("yyfyyf", "YYF"),
