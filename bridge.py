@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,23 @@ GUOXIAOGUO_COVER_REFERENCE = (
 )
 GUOXIAOGUO_STREAMER_ALIASES = {"果小果", "果小果是个弟弟"}
 DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("YYF", ("YYF", "yyfyyf", "月夜枫", "枫哥", "姜岑")),
+    (
+        "YYF",
+        (
+            "YYF",
+            "yyfyyf",
+            "月夜枫",
+            "枫哥",
+            "峰哥",
+            "姜岑",
+            "胖头鱼",
+            "石佛",
+            "僵尸王",
+            "毒瘤枫",
+            "吃人枫",
+            "姜瘤儿",
+        ),
+    ),
     ("BurNIng", ("BurNIng", "B神", "徐志雷")),
     ("xiao8", ("xiao8", "小八", "八师傅", "张宁")),
     ("Zhou", ("Zhou", "周神", "陈尧")),
@@ -526,8 +543,10 @@ def recording_cover_reference_instruction(reference_name: str) -> str:
     if reference_name == "果小果":
         return (
             "上传的参考图是主播果小果的固定角色形象。必须以图中角色为唯一原型，"
-            "保留深棕色长发、红棕色星光大眼、脸颊红晕、两侧红色蝴蝶结和头顶蛋壳；"
-            "保持二次元 Q 版插画风格，禁止改成真人、禁止把蛋壳改成煎蛋，也不要生成成其他角色。"
+            "保留深棕色长发、红棕色星光大眼、脸颊红晕、两侧红色蝴蝶结和头顶荷包蛋发饰；"
+            "头顶标志必须是荷包蛋发饰：不规则白色蛋白包住圆润的金黄色蛋黄，荷包蛋下方是"
+            "醒目的红色大蝴蝶结；绝对不能画成蛋壳、破壳小鸡、普通帽子、花朵或只剩黄色圆点。"
+            "保持二次元 Q 版插画风格，禁止改成真人，也不要生成成其他角色。"
             "可以根据直播主题更换背景、服装和姿势。"
         )
     return (
@@ -731,6 +750,26 @@ def recording_cover_dota2_streamer_instruction(
     )
 
 
+def recording_cover_streamer_expression_instruction(
+    streamer: str,
+    *content: str,
+) -> str:
+    """Let known streamer references react to the segment without losing identity."""
+    if normalize_dota2_streamer_name(streamer) != "YYF":
+        return ""
+    context = "\n".join(str(value or "") for value in content)
+    return (
+        "YYF 表情与本段对局联动：先根据核心标题和内容摘要判断本段最主要的比赛情绪，再调整"
+        "参考照片中 YYF 的表情与轻微姿态。优势、高光或连胜可表现为兴奋、自信或得意；"
+        "失误、被翻盘或惨败可表现为震惊、懊恼、无奈或气急；逆风、关键团战或翻盘过程可表现为"
+        "紧张、专注、坚定；欢乐整活或节目效果可表现为大笑、憋笑或夸张惊讶。"
+        "没有明确结果时使用专注、自然的对局表情。表情强度要适合视频封面、清楚但不过度扭曲；"
+        "必须保持 YYF 的脸型、五官比例、发型、年龄和身份辨识度，不能换脸、年轻化、卡通化成"
+        "另一个人，也不能仅照抄底稿中的原始表情。"
+        f"本段判断依据：{context[:600]}"
+    )
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -767,12 +806,17 @@ def generate_recording_cover_with_ai(
     reference = recording_cover_reference(streamer)
     reference_name = reference[0] if reference else ""
     reference_kind = "dedicated" if reference else ""
+    reference_paths: list[Path] = [reference[1]] if reference else []
     avatar_url = str(cfg.get("streamer_avatar_url") or "").strip()
-    if not reference and avatar_url:
+    if avatar_url:
         try:
-            reference = (streamer or "直播间头像", download_recording_avatar_reference(avatar_url, cfg))
-            reference_name = reference[0]
-            reference_kind = "avatar"
+            avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
+            if avatar_reference not in reference_paths:
+                reference_paths.append(avatar_reference)
+            if not reference:
+                reference = (streamer or "直播间头像", avatar_reference)
+                reference_name = reference[0]
+                reference_kind = "avatar"
         except (OSError, ValueError) as exc:
             details["ai_cover_avatar_reference_error"] = str(exc)
     if reference_kind == "dedicated":
@@ -792,6 +836,12 @@ def generate_recording_cover_with_ai(
         ai_topic,
         description,
     )
+    streamer_expression_instruction = recording_cover_streamer_expression_instruction(
+        streamer,
+        title,
+        ai_topic,
+        description,
+    )
     prompt = f"""
 为哔哩哔哩直播回放生成一张横向 16:10 视频封面，画面精致、主体明确、对比强烈，在手机缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -801,24 +851,35 @@ AI 生成的核心标题：{headline}
 只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 {dota2_instruction}
 {dota2_streamer_instruction}
+{streamer_expression_instruction}
 {reference_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
 """.strip()
     image_client = get_openai_client(client_config).images
     image_size = str(ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024")
-    if reference:
-        with reference[1].open("rb") as reference_handle:
+    if reference_paths:
+        with ExitStack() as stack:
+            reference_handles = [
+                stack.enter_context(path.open("rb"))
+                for path in reference_paths
+            ]
             response = image_client.edit(
                 model=image_model,
-                image=reference_handle,
+                image=(
+                    reference_handles
+                    if len(reference_handles) > 1
+                    else reference_handles[0]
+                ),
                 prompt=prompt,
                 size=image_size,
             )
         details.update({
             "ai_cover_reference_used": True,
             "ai_cover_reference_name": reference_name,
-            "ai_cover_reference_path": str(reference[1]),
+            "ai_cover_reference_path": str(reference_paths[0]),
+            "ai_cover_reference_paths": [str(path) for path in reference_paths],
+            "ai_cover_reference_count": len(reference_paths),
             "ai_cover_reference_kind": reference_kind,
         })
     else:
