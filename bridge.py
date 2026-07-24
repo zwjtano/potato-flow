@@ -40,6 +40,50 @@ GUOXIAOGUO_COVER_REFERENCE = (
     WORKSPACE_ROOT / "assets" / "streamer-references" / "guoxiaoguo.png"
 )
 GUOXIAOGUO_STREAMER_ALIASES = {"果小果", "果小果是个弟弟"}
+DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("YYF", ("YYF", "yyfyyf", "月夜枫", "枫哥", "姜岑")),
+    ("BurNIng", ("BurNIng", "B神", "徐志雷")),
+    ("xiao8", ("xiao8", "小八", "八师傅", "张宁")),
+    ("Zhou", ("Zhou", "周神", "陈尧")),
+    ("Hao", ("Hao", "豪哥", "陈智豪")),
+    ("Mu", ("Mu", "Mu神", "张盼")),
+    ("Faith_bian", ("Faith_bian", "faithbian", "小明鞭", "张睿达")),
+    ("Somnus", ("Somnus", "Maybe", "超哥", "路垚")),
+    ("Chalice", ("Chalice", "查理斯", "杨沈仪")),
+    ("fy", ("fy", "fy神", "徐林森")),
+    ("Ame", ("Ame", "萧瑟", "王淳煜")),
+    ("XinQ", ("XinQ", "赵子星")),
+    ("Sccc", ("Sccc", "军体拳", "宋淳")),
+    ("Paparazi", ("Paparazi", "Eurus", "拒绝者", "张成俊")),
+    ("Monet", ("Monet", "圣子华炼", "杜鹏")),
+    ("Ori", ("Ori", "曾焦阳")),
+    ("Dy", ("Dy", "丁聪")),
+    ("Kaka", ("Kaka", "卡卡", "胡良智")),
+    ("LaNm", ("LaNm", "国土", "张志成")),
+    ("LongDD", ("LongDD", "龙神", "龙弟弟", "黄翔")),
+    ("820", ("820", "八二零", "邹倚天")),
+    ("DDC", ("DDC", "大狗", "梁发")),
+    ("PIS", ("PIS", "Pis", "姚羿成")),
+    ("Inflame", ("Inflame", "小书童", "何雍正")),
+)
+
+
+def _compact_alias(value: str) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").casefold())
+
+
+def normalize_dota2_streamer_name(streamer: str) -> str:
+    """Return a stable public name for known Dota 2 streamer aliases."""
+    original = str(streamer or "").strip()
+    normalized = _compact_alias(original)
+    if re.fullmatch(r"yyf(?:yyf)?\d*", normalized):
+        return "YYF"
+    if normalized.startswith("果小果"):
+        return "果小果"
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        if any(normalized == _compact_alias(alias) for alias in aliases):
+            return canonical_name
+    return original
 
 
 def utc_now() -> str:
@@ -468,11 +512,11 @@ def recording_cover_headline(title: str, ai_topic: str = "") -> str:
 
 def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     """Return a curated identity reference for a known streamer."""
-    normalized = re.sub(r"[\s_\-]+", "", str(streamer or "")).casefold()
-    if normalized in YYF_STREAMER_ALIASES or re.fullmatch(r"yyf(?:yyf)?\d*", normalized):
+    normalized = normalize_dota2_streamer_name(streamer)
+    if normalized == "YYF":
         if YYF_COVER_REFERENCE.is_file():
             return "YYF", YYF_COVER_REFERENCE
-    if normalized in GUOXIAOGUO_STREAMER_ALIASES or normalized.startswith("果小果"):
+    if normalized == "果小果":
         if GUOXIAOGUO_COVER_REFERENCE.is_file():
             return "果小果", GUOXIAOGUO_COVER_REFERENCE
     return None
@@ -527,6 +571,166 @@ def recording_avatar_reference_instruction(streamer: str) -> str:
     )
 
 
+_DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("风暴之灵（Storm Spirit）", ("蓝猫", "storm spirit")),
+    ("灰烬之灵（Ember Spirit）", ("火猫", "ember spirit")),
+    ("大地之灵（Earth Spirit）", ("土猫", "earth spirit")),
+    ("虚无之灵（Void Spirit）", ("紫猫", "void spirit")),
+    ("变体精灵（Morphling）", ("水人", "morphling")),
+    ("天穹守望者（Arc Warden）", ("电狗", "arc warden")),
+    ("狙击手（Sniper）", ("火枪", "矮子", "sniper")),
+    ("裂魂人（Spirit Breaker）", ("白牛", "spirit breaker")),
+    ("撼地者（Earthshaker）", ("小牛", "神牛", "earthshaker")),
+    ("上古巨神（Elder Titan）", ("大牛", "elder titan")),
+    ("熊战士（Ursa）", ("拍拍", "拍拍熊", "ursa")),
+    ("影魔（Shadow Fiend）", ("影魔", "sf", "shadow fiend")),
+    ("敌法师（Anti-Mage）", ("敌法", "am", "anti-mage")),
+    ("幻影长矛手（Phantom Lancer）", ("猴子", "pl", "phantom lancer")),
+    ("幻影刺客（Phantom Assassin）", ("幻刺", "pa", "phantom assassin")),
+    ("圣堂刺客（Templar Assassin）", ("圣堂", "ta", "templar assassin")),
+    ("矮人直升机（Gyrocopter）", ("飞机", "gyrocopter")),
+    ("编织者（Weaver）", ("蚂蚁", "weaver")),
+    ("斯拉克（Slark）", ("小鱼", "小鱼人", "slark")),
+    ("斯拉达（Slardar）", ("大鱼", "大鱼人", "slardar")),
+    ("卓尔游侠（Drow Ranger）", ("小黑", "drow ranger")),
+    ("美杜莎（Medusa）", ("大娜迦", "美杜莎", "medusa")),
+    ("娜迦海妖（Naga Siren）", ("小娜迦", "娜迦", "naga siren")),
+    ("克林克兹（Clinkz）", ("骨弓", "小骷髅", "clinkz")),
+    ("帕格纳（Pugna）", ("骨法", "pugna")),
+    ("水晶室女（Crystal Maiden）", ("冰女", "cm", "crystal maiden")),
+    ("莉娜（Lina）", ("火女", "lina")),
+    ("痛苦女王（Queen of Pain）", ("女王", "qop", "queen of pain")),
+    ("殁境神蚀者（Outworld Destroyer）", ("黑鸟", "od", "outworld destroyer")),
+    ("祈求者（Invoker）", ("卡尔", "invoker")),
+    ("修补匠（Tinker）", ("tk", "修补匠", "tinker")),
+    ("死亡先知（Death Prophet）", ("死亡先知", "dp", "death prophet")),
+    ("帕克（Puck）", ("仙女龙", "puck")),
+    ("莱席拉克（Leshrac）", ("老鹿", "leshrac")),
+    ("食人魔魔法师（Ogre Magi）", ("蓝胖", "ogre magi")),
+    ("光之守卫（Keeper of the Light）", ("光法", "kotl", "keeper of the light")),
+    ("瘟疫法师（Necrophos）", ("死灵法", "nec", "necrophos")),
+    ("自然先知（Nature's Prophet）", ("先知", "furion", "nature's prophet")),
+    ("暗影萨满（Shadow Shaman）", ("小y", "小歪", "shadow shaman")),
+    ("干扰者（Disruptor）", ("萨尔", "disruptor")),
+    ("戴泽（Dazzle）", ("暗牧", "戴泽", "dazzle")),
+    ("工程师（Techies）", ("炸弹人", "炸弹", "techies")),
+    ("赏金猎人（Bounty Hunter）", ("赏金", "bh", "bounty hunter")),
+    ("力丸（Riki）", ("隐刺", "力丸", "riki")),
+    ("噬魂鬼（Lifestealer）", ("小狗", "噬魂鬼", "lifestealer")),
+    ("齐天大圣（Monkey King）", ("大圣", "mk", "monkey king")),
+    ("主宰（Juggernaut）", ("剑圣", "jugg", "juggernaut")),
+    ("冥魂大帝（Wraith King）", ("骷髅王", "wk", "wraith king")),
+    ("混沌骑士（Chaos Knight）", ("混沌", "ck", "chaos knight")),
+    ("露娜（Luna）", ("月骑", "露娜", "luna")),
+    ("恐怖利刃（Terrorblade）", ("tb", "恐怖利刃", "terrorblade")),
+    ("虚空假面（Faceless Void）", ("虚空", "faceless void")),
+    ("巨魔战将（Troll Warlord）", ("巨魔", "troll", "troll warlord")),
+    ("龙骑士（Dragon Knight）", ("龙骑", "dk", "dragon knight")),
+    ("钢背兽（Bristleback）", ("钢背", "刚背", "刚被", "bristleback")),
+    ("半人马战行者（Centaur Warrunner）", ("人马", "centaur", "centaur warrunner")),
+    ("马格纳斯（Magnus）", ("猛犸", "马格纳斯", "magnus")),
+    ("潮汐猎人（Tidehunter）", ("潮汐", "tide", "tidehunter")),
+    ("军团指挥官（Legion Commander）", ("军团", "lc", "legion commander")),
+    ("末日使者（Doom）", ("末日", "doom")),
+    ("昆卡（Kunkka）", ("船长", "kunkka")),
+    ("孽主（Underlord）", ("大屁股", "孽主", "underlord")),
+    ("石鳞剑士（Pangolier）", ("滚滚", "pangolier")),
+    ("伐木机（Timbersaw）", ("伐木机", "花母鸡", "timbersaw")),
+    ("发条技师（Clockwerk）", ("发条", "clockwerk")),
+    ("炼金术士（Alchemist）", ("炼金", "alchemist")),
+    ("沙王（Sand King）", ("沙王", "sk", "sand king")),
+    ("剃刀（Razor）", ("电魂", "电棍", "razor")),
+    ("哈斯卡（Huskar）", ("神灵", "huskar")),
+    ("蝙蝠骑士（Batrider）", ("蝙蝠", "batrider")),
+    ("兽王（Beastmaster）", ("兽王", "beastmaster")),
+    ("斧王（Axe）", ("斧王", "axe")),
+    ("帕吉（Pudge）", ("屠夫", "胖子", "pudge")),
+)
+
+
+def recording_cover_dota2_instruction(*content: str) -> str:
+    """Resolve common Chinese Dota 2 hero nicknames for the image prompt."""
+    combined = "\n".join(str(value or "") for value in content)
+    folded = combined.casefold()
+    matched: list[str] = []
+    for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
+        for alias in sorted(aliases, key=len, reverse=True):
+            alias_folded = alias.casefold()
+            if re.fullmatch(r"[a-z][a-z0-9' -]*", alias_folded):
+                found = re.search(
+                    rf"(?<![a-z0-9]){re.escape(alias_folded)}(?![a-z0-9])",
+                    folded,
+                )
+            else:
+                found = alias_folded in folded
+            if found:
+                matched.append(f"{alias}＝{canonical_name}")
+                break
+
+    resolved = "；".join(matched) if matched else "本次未检出可确定的英雄俗称"
+    storm_spirit_rule = ""
+    if any("Storm Spirit" in item for item in matched):
+        storm_spirit_rule = (
+            "特别注意：蓝猫只能是风暴之灵（Storm Spirit）——蓝色皮肤、宽体型男性元素之灵、"
+            "蓝色东方长袍与圆帽、环绕闪电能量；绝对不能画成蓝色猫、猫咪吉祥物或其他作品的猫。"
+        )
+    return (
+        "Dota 2 游戏角色消歧规则：如果标题或摘要涉及 DOTA、Dota 2、刀塔，或出现英雄俗称，"
+        "必须把它理解为 Valve《Dota 2》的对应英雄，并按该英雄在 Dota 2 中可辨识的体型、"
+        "服装、主色、武器与技能特效来设计；禁止按词语字面画成动物、普通人物，也禁止混入"
+        "《英雄联盟》、宝可梦或其他作品的角色。"
+        f"本次识别结果：{resolved}。"
+        f"{storm_spirit_rule}"
+        "若摘要里还有未列出的 Dota 2 俗称，应先在语义上还原为该英雄的中英文正式名再作画；"
+        "无法确定时宁可使用 Dota 2 对局氛围和技能特效，不要凭字面臆造角色。"
+    )
+
+
+def recording_cover_dota2_streamer_instruction(
+    streamer: str,
+    *content: str,
+) -> str:
+    """Resolve common Dota 2 streamer nicknames without replacing the cover subject."""
+    combined = "\n".join((str(streamer or ""), *(str(value or "") for value in content)))
+    folded = combined.casefold()
+    normalized_streamer = normalize_dota2_streamer_name(streamer)
+    matched: list[str] = []
+    seen: set[str] = set()
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        found_alias = ""
+        for alias in sorted(aliases, key=len, reverse=True):
+            alias_folded = alias.casefold()
+            if re.fullmatch(r"[a-z][a-z0-9_ -]*", alias_folded):
+                found = re.search(
+                    rf"(?<![a-z0-9]){re.escape(alias_folded)}(?![a-z0-9])",
+                    folded,
+                )
+            else:
+                found = alias_folded in folded
+            if found:
+                found_alias = alias
+                break
+        if (
+            canonical_name == normalized_streamer
+            or found_alias
+        ) and canonical_name not in seen:
+            seen.add(canonical_name)
+            matched.append(
+                f"{found_alias or streamer}＝Dota 2 主播/选手 {canonical_name}"
+            )
+    if not matched:
+        return (
+            "斗鱼 Dota 2 主播昵称规则：遇到主播昵称或职业选手外号时，应结合 Dota 2 语境理解，"
+            "不要把昵称按字面画成动物、职业或陌生虚构人物；无法确认身份时不要擅自换脸。"
+        )
+    return (
+        "斗鱼 Dota 2 主播昵称消歧："
+        + "；".join(matched)
+        + "。这些映射只用于理解标题和事件；封面主体仍必须以当前直播间主播及上传的头像/"
+        "专用参考图为准，其他被提及选手不能取代主播成为另一张脸。"
+    )
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -577,6 +781,17 @@ def generate_recording_cover_with_ai(
         reference_instruction = recording_avatar_reference_instruction(streamer)
     else:
         reference_instruction = ""
+    dota2_instruction = recording_cover_dota2_instruction(
+        title,
+        ai_topic,
+        description,
+    )
+    dota2_streamer_instruction = recording_cover_dota2_streamer_instruction(
+        streamer,
+        title,
+        ai_topic,
+        description,
+    )
     prompt = f"""
 为哔哩哔哩直播回放生成一张横向 16:10 视频封面，画面精致、主体明确、对比强烈，在手机缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -584,6 +799,8 @@ AI 生成的核心标题：{headline}
 内容摘要：{str(description or "")[:500]}
 
 只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+{dota2_instruction}
+{dota2_streamer_instruction}
 {reference_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
@@ -721,16 +938,7 @@ def recording_metadata_values(
             streamer = current_filename_match.group(1).strip("_- ")
         elif marker_match:
             streamer = marker_match.group(1).strip("_- ")
-    normalized_streamer = re.sub(r"[\s_\-]+", "", streamer).casefold()
-    if normalized_streamer in YYF_STREAMER_ALIASES or re.fullmatch(
-        r"yyf(?:yyf)?\d*", normalized_streamer
-    ):
-        streamer = "YYF"
-    elif (
-        normalized_streamer in GUOXIAOGUO_STREAMER_ALIASES
-        or normalized_streamer.startswith("果小果")
-    ):
-        streamer = "果小果"
+    streamer = normalize_dota2_streamer_name(streamer)
     if current_filename_match:
         live_title = current_filename_match.group(2).strip("_- ")
     else:
