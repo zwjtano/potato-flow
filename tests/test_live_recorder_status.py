@@ -148,6 +148,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             content = config_path.read_text(encoding="utf-8")
             self.assertIn("file_size: null", content)
             self.assertIn('segment_time: "01:00:00"', content)
+            self.assertIn('filename_prefix: "{streamer}_{title}_%Y-%m-%d_%H-%M"', content)
             self.assertNotIn("file_size: 2621440000", content)
             self.assertIn("filtering_threshold: 0", content)
             self.assertIn("segment_processor:", content)

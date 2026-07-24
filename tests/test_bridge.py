@@ -567,6 +567,51 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result["danmaku_count"], 1)
             self.assertTrue(Path(result["ass_path"]).is_file())
 
+    def test_retry_prefers_saved_manual_review_over_generated_defaults(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.mp4"
+            cover = root / "cover.jpg"
+            manual_cover = root / "manual-cover.jpg"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            manual_cover.write_bytes(b"manual-cover")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.claim(key, video, "bilibili")
+            store.finish(key, "failed", error="upload failed")
+            override = {
+                "title": "人工确认后的标题",
+                "description": "人工补充简介",
+                "tags": ["录播", "精彩"],
+                "partition_id": "17",
+                "cover_path": str(manual_cover),
+                "updated_at": "2026-07-24T00:00:00+00:00",
+            }
+            with store.connect() as db:
+                db.execute(
+                    """INSERT INTO recording_review_overrides
+                       (fingerprint, metadata_json, updated_at) VALUES (?, ?, ?)""",
+                    (key, json.dumps(override, ensure_ascii=False), override["updated_at"]),
+                )
+
+            self.assertTrue(bridge.upload_one(video, cfg, store, retry=True, dry_run=True))
+            result = store.results(key)
+            self.assertEqual(result["title"], override["title"])
+            self.assertEqual(result["description"], override["description"])
+            self.assertEqual(result["tags"], override["tags"])
+            self.assertEqual(result["partition_id"], override["partition_id"])
+            self.assertEqual(result["cover"], str(manual_cover))
+
 
 if __name__ == "__main__":
     unittest.main()

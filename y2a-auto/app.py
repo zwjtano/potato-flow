@@ -1200,6 +1200,47 @@ def live_recording_job_retry(fingerprint):
         return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
+@app.route('/live-recording/jobs/<fingerprint>/review', methods=['GET', 'POST'])
+@login_required
+def live_recording_job_review(fingerprint):
+    job = live_recorder_manager.pipeline_job(fingerprint)
+    if not job:
+        flash('没有找到该录播任务。', 'danger')
+        return redirect(url_for('manual_review'))
+
+    if request.method == 'POST':
+        try:
+            try:
+                tags = json.loads(request.form.get('tags_json', '[]'))
+            except json.JSONDecodeError:
+                tags = []
+            if not isinstance(tags, list):
+                tags = []
+            live_recorder_manager.save_pipeline_review(
+                fingerprint,
+                title=request.form.get('title', '') or job.get('title', ''),
+                description=request.form.get('description', '') or job.get('description', ''),
+                tags=tags or job.get('tags', []),
+                partition_id=request.form.get('partition_id', '') or job.get('partition_id', ''),
+                cover_file=request.files.get('cover_file'),
+            )
+            if request.form.get('action', 'save') == 'save_and_retry':
+                live_recorder_manager.retry_pipeline_job(fingerprint)
+                flash('人工修改已保存，并开始按修改后的信息重新投稿。', 'success')
+                return redirect(url_for('live_recording', job=fingerprint))
+            flash('人工修改已保存。', 'success')
+            return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
+        except RecorderConfigError as exc:
+            flash(str(exc), 'danger')
+
+    job = live_recorder_manager.pipeline_job(fingerprint) or job
+    return render_template(
+        'recording_review_edit.html',
+        job=job,
+        bilibili_id_mapping=_build_bilibili_partition_mapping(),
+    )
+
+
 @app.route('/live-recording/files')
 @login_required
 def live_recording_files():

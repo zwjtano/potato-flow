@@ -61,11 +61,9 @@
                         <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-outline-secondary">
                             <i class="bi bi-diagram-3"></i> 查看流水线与日志
                         </a>
-                        {% if job.retryable %}
-                        <button type="button" class="btn btn-primary recording-review-retry" data-job-id="{{ job.id }}">
-                            <i class="bi bi-arrow-repeat"></i> 审核后重试
-                        </button>
-                        {% endif %}
+                        <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-warning">
+                            <i class="bi bi-pencil-square"></i> 进入编辑审核
+                        </a>
                     </div>
                 </article>
             </div>

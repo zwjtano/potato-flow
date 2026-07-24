@@ -1,0 +1,211 @@
+{% extends 'base.html' %}
+
+{% block title %}PotatoFlow - 录播人工审核{% endblock %}
+
+{% block content %}
+<div class="recording-review-editor">
+    <div class="studio-page-header">
+        <div>
+            <div class="page-eyebrow">RECORDING REVIEW</div>
+            <h1>录播人工审核</h1>
+            <p>默认使用已生成的 AI 投稿内容；AI 未生成的项目再手动补充。</p>
+        </div>
+        <a href="{{ url_for('manual_review') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> 返回人工审核
+        </a>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-4">
+            <div class="card mb-4">
+                <div class="card-header">任务信息</div>
+                <div class="card-body small">
+                    <dl class="review-facts mb-0">
+                        <dt>主播</dt><dd>{{ job.room_name }}</dd>
+                        <dt>录播文件</dt><dd class="text-break">{{ job.video_name }}</dd>
+                        <dt>失败步骤</dt><dd>{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage or '处理') }}</dd>
+                        <dt>任务编号</dt><dd class="text-monospace text-break">{{ job.id }}</dd>
+                    </dl>
+                    {% if job.error %}
+                    <div class="alert alert-danger mt-3 mb-0 text-break">
+                        <i class="bi bi-exclamation-triangle"></i> {{ job.error }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">当前投稿封面</div>
+                <div class="review-cover">
+                    <img src="{{ url_for('live_recording_job_cover', fingerprint=job.id) }}"
+                         alt="录播投稿封面"
+                         onerror="this.closest('.review-cover').classList.add('cover-missing');this.remove();">
+                    <div class="cover-placeholder">
+                        <i class="bi bi-image"></i>
+                        <span>当前没有可预览封面</span>
+                    </div>
+                </div>
+                <div class="card-body small text-muted">
+                    上传新封面后会优先使用人工封面，不再使用本次任务原有的 AI 封面。
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">流水线检查</div>
+                <div class="list-group list-group-flush">
+                    {% for stage in job.stages %}
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','upload':'投稿 B站'}.get(stage.key, stage.key) }}</span>
+                        <span class="badge rounded-pill text-bg-{{ 'success' if stage.status in ['completed','skipped'] else ('danger' if stage.status == 'failed' else 'secondary') }}">
+                            {{ {'completed':'完成','skipped':'跳过','failed':'失败','running':'执行中','pending':'等待'}.get(stage.status, stage.status) }}
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="card-body">
+                    <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-sm btn-outline-secondary w-100">
+                        <i class="bi bi-terminal"></i> 查看完整流水线和日志
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-8">
+            <form method="post" enctype="multipart/form-data" id="recording-review-form">
+                <div class="card mb-4">
+                    <div class="card-header">编辑视频信息</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="review-title" class="form-label">视频标题</label>
+                            <input id="review-title" name="title" class="form-control" maxlength="80"
+                                   value="{{ job.title }}" required>
+                            <div class="form-text">
+                                {% if job.title %}<i class="bi bi-stars text-success"></i> 已带入 AI/流水线结果，{% else %}<i class="bi bi-pencil text-warning"></i> AI 未生成标题，请手动填写，{% endif %}
+                                <span id="title-count">0</span>/80
+                            </div>
+                        </div>
+                        <div class="mb-0">
+                            <label for="review-description" class="form-label">视频简介</label>
+                            <textarea id="review-description" name="description" class="form-control"
+                                      rows="11" maxlength="2000">{{ job.description }}</textarea>
+                            <div class="form-text">
+                                {% if job.description %}<i class="bi bi-stars text-success"></i> 已带入 AI 简介，{% else %}<i class="bi bi-pencil text-warning"></i> AI 未生成简介，可手动填写，{% endif %}
+                                <span id="description-count">0</span>/2000
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">B站分区与标签</div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <label for="review-partition" class="form-label">投稿分区</label>
+                            <select id="review-partition" name="partition_id" class="form-select" required>
+                                <option value="">-- 请选择 B站分区 --</option>
+                                {% for category in bilibili_id_mapping %}
+                                <optgroup label="{{ category.category }}">
+                                    {% for partition in category.partitions %}
+                                    <option value="{{ partition.id }}" {% if job.partition_id == partition.id %}selected{% endif %}>{{ partition.name }} ({{ partition.id }})</option>
+                                    {% for sub in partition.sub_partitions %}
+                                    <option value="{{ sub.id }}" {% if job.partition_id == sub.id %}selected{% endif %}>&nbsp;&nbsp;└ {{ sub.name }} ({{ sub.id }})</option>
+                                    {% endfor %}
+                                    {% endfor %}
+                                </optgroup>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">
+                                {% if job.partition_id %}<i class="bi bi-stars text-success"></i> 已带入 AI 推荐或流程分区。{% else %}<i class="bi bi-pencil text-warning"></i> 尚无分区，请手动选择。{% endif %}
+                            </div>
+                        </div>
+
+                        <label class="form-label">视频标签（最多 6 个）</label>
+                        <div class="row g-2">
+                            {% set tags = job.tags if job.tags is iterable and job.tags is not string else [] %}
+                            {% for i in range(6) %}
+                            <div class="col-6 col-md-4">
+                                <input class="form-control review-tag" maxlength="20"
+                                       placeholder="标签 {{ i + 1 }}"
+                                       value="{{ tags[i] if tags|length > i else '' }}">
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <input type="hidden" name="tags_json" id="review-tags-json" value="[]">
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">更换投稿封面</div>
+                    <div class="card-body">
+                        <input type="file" name="cover_file" class="form-control"
+                               accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+                        <div class="form-text">默认保留 AI 封面；仅在 AI 封面不可用或你想更换时选择文件。支持 JPG、PNG、WEBP。</div>
+                    </div>
+                </div>
+
+                <div class="review-actions">
+                    <a href="{{ url_for('manual_review') }}" class="btn btn-outline-secondary">取消</a>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="submit" name="action" value="save" class="btn btn-primary">
+                            <i class="bi bi-floppy"></i> 保存修改
+                        </button>
+                        <button type="submit" name="action" value="save_and_retry" class="btn btn-success" {% if not job.retryable %}disabled{% endif %}>
+                            <i class="bi bi-cloud-upload"></i> 保存并重新投稿
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const title = document.getElementById('review-title');
+    const description = document.getElementById('review-description');
+    const tags = Array.from(document.querySelectorAll('.review-tag'));
+    const tagsJson = document.getElementById('review-tags-json');
+    const form = document.getElementById('recording-review-form');
+
+    function refreshCounts() {
+        document.getElementById('title-count').textContent = title.value.length;
+        document.getElementById('description-count').textContent = description.value.length;
+    }
+    function collectTags() {
+        const values = [];
+        tags.forEach(function (input) {
+            const value = input.value.trim();
+            if (value && !values.includes(value)) values.push(value);
+        });
+        tagsJson.value = JSON.stringify(values.slice(0, 6));
+    }
+    title.addEventListener('input', refreshCounts);
+    description.addEventListener('input', refreshCounts);
+    tags.forEach(function (input) { input.addEventListener('input', collectTags); });
+    form.addEventListener('submit', collectTags);
+    refreshCounts();
+    collectTags();
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.recording-review-editor { max-width: 1500px; margin: 0 auto; }
+.review-facts { display: grid; grid-template-columns: 82px 1fr; gap: .7rem 1rem; }
+.review-facts dt { color: var(--bs-secondary-color); font-weight: 500; }
+.review-facts dd { margin: 0; }
+.review-cover { min-height: 210px; background: #111827; display: grid; place-items: center; position: relative; overflow: hidden; }
+.review-cover img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+.cover-placeholder { display: none; color: #94a3b8; flex-direction: column; align-items: center; gap: .5rem; }
+.cover-placeholder i { font-size: 2rem; }
+.review-cover.cover-missing .cover-placeholder { display: flex; }
+.review-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; }
+@media (max-width: 575.98px) {
+    .review-actions { align-items: stretch; flex-direction: column-reverse; }
+    .review-actions > div, .review-actions .btn { width: 100%; }
+}
+</style>
+{% endblock %}

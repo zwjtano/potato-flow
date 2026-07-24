@@ -648,7 +648,7 @@ class LiveRecorderManager:
             # 手动录制允许随时停止；不能让 biliup 把短录播当作碎片删除，
             # 否则视频不会进入 segment_processor / ASS 流程。
             "filtering_threshold: 0",
-            'filename_prefix: "{streamer}%Y-%m-%d_%H-%M-%S_{title}"',
+            'filename_prefix: "{streamer}_{title}_%Y-%m-%d_%H-%M"',
             "uploader: Noop",
             "delay: 30",
             "event_loop_interval: 30",
@@ -1176,8 +1176,25 @@ class LiveRecorderManager:
                 stage_rows = db.execute(
                     "SELECT * FROM upload_stages ORDER BY updated_at"
                 ).fetchall()
+                db.execute(
+                    """CREATE TABLE IF NOT EXISTS recording_review_overrides (
+                        fingerprint TEXT PRIMARY KEY,
+                        metadata_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                override_rows = db.execute(
+                    "SELECT fingerprint, metadata_json, updated_at FROM recording_review_overrides"
+                ).fetchall()
         except sqlite3.Error:
             return []
+        overrides = {
+            row["fingerprint"]: {
+                **self._decode_json(row["metadata_json"]),
+                "updated_at": row["updated_at"],
+            }
+            for row in override_rows
+        }
         stages_by_job: dict[str, list[dict[str, Any]]] = {}
         for row in stage_rows:
             stages_by_job.setdefault(row["fingerprint"], []).append({
@@ -1217,11 +1234,32 @@ class LiveRecorderManager:
             ai_details = ai_stage.get("details") if isinstance(ai_stage, dict) else {}
             upload_details = upload_details if isinstance(upload_details, dict) else {}
             ai_details = ai_details if isinstance(ai_details, dict) else {}
+            review = overrides.get(row["fingerprint"], {})
             bilibili_result = result.get("bilibili")
             if not isinstance(bilibili_result, dict):
                 bilibili_result = upload_details.get("bilibili")
             bilibili_result = bilibili_result if isinstance(bilibili_result, dict) else {}
-            title = str(upload_details.get("title") or ai_details.get("title") or Path(video_path).stem)
+            title = str(
+                review.get("title")
+                or upload_details.get("title")
+                or ai_details.get("title")
+                or Path(video_path).stem
+            )
+            description = str(
+                review.get("description")
+                or upload_details.get("description")
+                or ai_details.get("description")
+                or ""
+            )
+            tags = review.get("tags")
+            if not isinstance(tags, list):
+                tags = upload_details.get("tags") or ai_details.get("final_tags") or []
+            partition_id = str(
+                review.get("partition_id")
+                or upload_details.get("partition_id")
+                or ai_details.get("selected_partition_id")
+                or ""
+            )
             completed_stages = sum(
                 1 for stage in stages if stage.get("status") in {"completed", "skipped"}
             )
@@ -1231,6 +1269,10 @@ class LiveRecorderManager:
                 "id": row["fingerprint"], "short_id": row["fingerprint"][:12],
                 "video_path": video_path, "video_name": Path(video_path).name,
                 "title": title,
+                "description": description,
+                "tags": tags,
+                "partition_id": partition_id,
+                "review_override": review,
                 "platform": row["platform"], "status": row["status"],
                 "attempts": row["attempts"], "result": result, "error": row["error"],
                 "created_at": row["created_at"], "updated_at": row["updated_at"],
@@ -1249,6 +1291,83 @@ class LiveRecorderManager:
             })
         return jobs
 
+    def save_pipeline_review(
+        self,
+        fingerprint: str,
+        *,
+        title: str,
+        description: str,
+        tags: list[str],
+        partition_id: str,
+        cover_file: Any = None,
+    ) -> dict[str, Any]:
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise RecorderConfigError("任务编号无效")
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        clean_title = str(title or "").strip()
+        clean_description = str(description or "").strip()
+        clean_partition = str(partition_id or "").strip()
+        clean_tags = []
+        for tag in tags:
+            value = str(tag or "").strip()[:20]
+            if value and value not in clean_tags:
+                clean_tags.append(value)
+        clean_tags = clean_tags[:6]
+        if not clean_title:
+            raise RecorderConfigError("标题不能为空")
+        if len(clean_title) > 80:
+            raise RecorderConfigError("B站标题不能超过 80 个字符")
+        if len(clean_description) > 2000:
+            raise RecorderConfigError("B站简介不能超过 2000 个字符")
+        if not clean_partition.isdigit():
+            raise RecorderConfigError("请选择有效的 B站分区")
+
+        previous = job.get("review_override")
+        previous = previous if isinstance(previous, dict) else {}
+        cover_path = str(previous.get("cover_path") or "").strip()
+        if cover_file and str(getattr(cover_file, "filename", "") or "").strip():
+            suffix = Path(str(cover_file.filename)).suffix.lower()
+            if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+                raise RecorderConfigError("封面只支持 JPG、PNG 或 WEBP")
+            artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            destination = artifact_dir / f"manual-review-cover{suffix}"
+            cover_file.save(destination)
+            if not destination.is_file() or destination.stat().st_size <= 0:
+                raise RecorderConfigError("封面保存失败")
+            cover_path = str(destination)
+
+        now = datetime.now(timezone.utc).isoformat()
+        metadata = {
+            "title": clean_title,
+            "description": clean_description,
+            "tags": clean_tags,
+            "partition_id": clean_partition,
+            "cover_path": cover_path or None,
+            "updated_at": now,
+        }
+        state_path = self._pipeline_state_path()
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(state_path, timeout=30) as db:
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS recording_review_overrides (
+                    fingerprint TEXT PRIMARY KEY,
+                    metadata_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            db.execute(
+                """INSERT INTO recording_review_overrides
+                   (fingerprint, metadata_json, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT(fingerprint) DO UPDATE SET
+                     metadata_json=excluded.metadata_json,
+                     updated_at=excluded.updated_at""",
+                (fingerprint, json.dumps(metadata, ensure_ascii=False), now),
+            )
+        return metadata
+
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
         return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)
 
@@ -1258,13 +1377,20 @@ class LiveRecorderManager:
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
+        review = job.get("review_override")
+        review = review if isinstance(review, dict) else {}
         cover_stage = next(
             (stage for stage in job.get("stages", []) if stage.get("key") == "cover"),
             {},
         )
         details = cover_stage.get("details") if isinstance(cover_stage, dict) else {}
         details = details if isinstance(details, dict) else {}
-        candidate = str(details.get("ai_cover_path") or "").strip()
+        candidate = str(
+            review.get("cover_path")
+            or details.get("ai_cover_path")
+            or details.get("cover_used_for_upload")
+            or ""
+        ).strip()
         if not candidate:
             raise RecorderConfigError("该任务暂无可预览的 AI 封面")
         path = Path(candidate).resolve()

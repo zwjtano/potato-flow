@@ -183,6 +183,14 @@ class StateStore:
                     updated_at TEXT NOT NULL
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS recording_review_overrides (
+                    fingerprint TEXT PRIMARY KEY,
+                    metadata_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (fingerprint) REFERENCES uploads(fingerprint)
+                )"""
+            )
 
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -270,6 +278,20 @@ class StateStore:
             return {}
         try:
             value = json.loads(row["result_json"])
+            return value if isinstance(value, dict) else {}
+        except (TypeError, json.JSONDecodeError):
+            return {}
+
+    def review_override(self, key: str) -> dict[str, Any]:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT metadata_json FROM recording_review_overrides WHERE fingerprint=?",
+                (key,),
+            ).fetchone()
+        if not row:
+            return {}
+        try:
+            value = json.loads(row["metadata_json"])
             return value if isinstance(value, dict) else {}
         except (TypeError, json.JSONDecodeError):
             return {}
@@ -785,6 +807,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         if isinstance(previous_session.get("bilibili"), dict):
             session_key = previous_session_key
     prior_result = store.results(key)
+    review_override = store.review_override(key)
     if not store.claim(key, video, platform, retry=retry):
         print(f"SKIP 已处理或正在处理: {video}")
         return True
@@ -929,6 +952,22 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "final_tags": tags,
             "selected_partition_id": partition or None,
         })
+
+        if review_override:
+            title = str(review_override.get("title") or title).strip()
+            description = str(review_override.get("description") or description).strip()
+            override_tags = review_override.get("tags")
+            if isinstance(override_tags, list):
+                tags = [str(tag).strip() for tag in override_tags if str(tag).strip()][:6]
+            partition = str(review_override.get("partition_id") or partition).strip()
+            ai_details.update({
+                "title": title,
+                "description": description,
+                "final_tags": tags,
+                "selected_partition_id": partition or None,
+                "manual_review_applied": True,
+                "manual_review_updated_at": review_override.get("updated_at"),
+            })
         ai_was_used = bool(
             comments and bool(cfg.get("ai_danmaku_summary_enabled", True))
         ) or bool(
@@ -940,8 +979,18 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "cover"
         cover_generation: dict[str, Any] = {}
+        manual_cover_path = str(review_override.get("cover_path") or "").strip()
         session_cover = str(multipart.get("cover_path") or "").strip() if multipart else ""
-        if session_cover and Path(session_cover).is_file():
+        if manual_cover_path and Path(manual_cover_path).is_file():
+            cover = Path(manual_cover_path)
+            cover_generation = {
+                "manual_review_cover": True,
+                "ai_cover_path": str(cover),
+                "cover_used_for_upload": str(cover),
+                "original_cover_path": str(original_cover),
+            }
+            store.stage(key, "cover", "completed", cover_generation)
+        elif session_cover and Path(session_cover).is_file():
             cover = Path(session_cover)
             cover_generation = dict(multipart.get("cover_generation") or {})
             cover_generation.update({

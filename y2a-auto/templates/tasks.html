@@ -120,7 +120,7 @@
                                     {% endif %}
                                     <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3"></i> 流水线</a>
                                     {% if job.status == 'failed' %}
-                                    <a href="{{ url_for('manual_review') }}#recording-{{ job.id }}" class="btn btn-sm btn-warning"><i class="bi bi-patch-check"></i> 人工审核</a>
+                                    <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>
                                     {% endif %}
                                     {% if job.retryable %}
                                     <button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>
@@ -152,7 +152,7 @@
                     <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
                     <div class="d-flex flex-wrap gap-2 mt-3">
                         <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3"></i> 查看流水线</a>
-                        {% if job.status == 'failed' %}<a href="{{ url_for('manual_review') }}#recording-{{ job.id }}" class="btn btn-sm btn-warning"><i class="bi bi-patch-check"></i> 人工审核</a>{% endif %}
+                        {% if job.status == 'failed' %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
                         {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
                     </div>

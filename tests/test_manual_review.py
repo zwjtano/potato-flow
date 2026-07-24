@@ -20,8 +20,27 @@ class ManualReviewTests(unittest.TestCase):
 
         self.assertIn("录播失败任务", template)
         self.assertIn("查看流水线与日志", template)
-        self.assertIn("审核后重试", template)
-        self.assertIn("/live-recording/jobs/${button.dataset.jobId}/retry", template)
+        self.assertIn("进入编辑审核", template)
+        self.assertIn("live_recording_job_review", template)
+
+    def test_recording_review_has_full_editor_and_persistent_override(self):
+        app_source = (ROOT / "y2a-auto" / "app.py").read_text(encoding="utf-8")
+        manager_source = (
+            ROOT / "y2a-auto" / "modules" / "live_recorder_manager.py"
+        ).read_text(encoding="utf-8")
+        bridge_source = (ROOT / "bridge.py").read_text(encoding="utf-8")
+        template = (
+            ROOT / "y2a-auto" / "templates" / "recording_review_edit.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("def live_recording_job_review(fingerprint)", app_source)
+        self.assertIn("save_pipeline_review(", app_source)
+        self.assertIn("保存并重新投稿", template)
+        self.assertIn('name="cover_file"', template)
+        self.assertIn('name="partition_id"', template)
+        self.assertIn("recording_review_overrides", manager_source)
+        self.assertIn("review_override = store.review_override(key)", bridge_source)
+        self.assertIn('"manual_review_applied": True', bridge_source)
 
     def test_overview_review_count_includes_failed_recordings(self):
         app_source = (ROOT / "y2a-auto" / "app.py").read_text(encoding="utf-8")
