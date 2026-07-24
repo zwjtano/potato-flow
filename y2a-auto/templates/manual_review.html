@@ -58,6 +58,12 @@
                         </div>
                     </div>
                     <div class="card-footer d-flex flex-wrap justify-content-end gap-2">
+                        <form method="post" action="{{ url_for('live_recording_job_delete', fingerprint=job.id) }}">
+                            <input type="hidden" name="delete_files" value="false">
+                            <button type="submit" class="btn btn-outline-danger">
+                                <i class="bi bi-trash3"></i> 删除任务
+                            </button>
+                        </form>
                         <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-outline-secondary">
                             <i class="bi bi-diagram-3"></i> 查看流水线与日志
                         </a>

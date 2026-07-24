@@ -125,6 +125,11 @@
                                     {% if job.retryable %}
                                     <button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>
                                     {% endif %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                            data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}"
+                                            onclick="confirmDelete(this.dataset.taskId, this.dataset.taskTitle, 'recording')">
+                                        <i class="bi bi-trash3"></i> 删除
+                                    </button>
                                 </div>
                             </td>
                         </tr>
@@ -155,6 +160,11 @@
                         {% if job.status == 'failed' %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
                         {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
+                        <button type="button" class="btn btn-sm btn-outline-danger"
+                                data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}"
+                                onclick="confirmDelete(this.dataset.taskId, this.dataset.taskTitle, 'recording')">
+                            <i class="bi bi-trash3"></i> 删除
+                        </button>
                     </div>
                 </article>
             {% endfor %}
@@ -639,13 +649,18 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
     }
 
     // 删除任务确认框
-    function confirmDelete(taskId, taskTitle) {
+    function confirmDelete(taskId, taskTitle, taskSource = 'standard') {
         document.getElementById('deleteTaskTitle').textContent = taskTitle;
-        document.getElementById('deleteTaskForm').action = "{{ url_for('delete_task_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+        const standardUrl = "{{ url_for('delete_task_route', task_id='TASK_ID') }}";
+        const recordingUrl = "{{ url_for('live_recording_job_delete', fingerprint='TASK_ID') }}";
+        document.getElementById('deleteTaskForm').action =
+            (taskSource === 'recording' ? recordingUrl : standardUrl).replace('TASK_ID', taskId);
 
         const deleteFilesCheckbox = document.getElementById('deleteFiles');
         const deleteFilesInput = document.getElementById('deleteFilesInput');
         if (deleteFilesCheckbox && deleteFilesInput) {
+            deleteFilesCheckbox.checked = true;
+            deleteFilesInput.value = 'true';
             deleteFilesCheckbox.onchange = function() {
                 deleteFilesInput.value = this.checked ? 'true' : 'false';
             };
@@ -1116,7 +1131,11 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
     function bindTasksEvents(root = document) {
         queryAllWithin(root, '[onclick*="confirmDelete"]').forEach(btn => {
             btn.onclick = function() {
-                confirmDelete(this.dataset.taskId, this.dataset.taskTitle);
+                confirmDelete(
+                    this.dataset.taskId,
+                    this.dataset.taskTitle,
+                    this.closest('.recording-task-row, .recording-task-card') ? 'recording' : 'standard'
+                );
             };
         });
 

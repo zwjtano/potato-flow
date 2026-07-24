@@ -22,6 +22,7 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn("查看流水线与日志", template)
         self.assertIn("进入编辑审核", template)
         self.assertIn("live_recording_job_review", template)
+        self.assertIn("live_recording_job_delete", template)
 
     def test_recording_review_has_full_editor_and_persistent_override(self):
         app_source = (ROOT / "y2a-auto" / "app.py").read_text(encoding="utf-8")

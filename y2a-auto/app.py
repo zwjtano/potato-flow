@@ -1200,6 +1200,25 @@ def live_recording_job_retry(fingerprint):
         return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
+@app.route('/live-recording/jobs/<fingerprint>/delete', methods=['POST'])
+@login_required
+def live_recording_job_delete(fingerprint):
+    delete_files = request.form.get('delete_files', 'false').lower() in ('true', 'yes', '1', 'on')
+    try:
+        result = live_recorder_manager.delete_pipeline_job(
+            fingerprint,
+            delete_files=delete_files,
+        )
+        flash(
+            f"录播任务已删除"
+            + (f"，同时删除 {result['deleted_file_count']} 个关联文件" if delete_files else ""),
+            'success',
+        )
+    except RecorderConfigError as exc:
+        flash(str(exc), 'danger')
+    return redirect(url_for('tasks'))
+
+
 @app.route('/live-recording/jobs/<fingerprint>/review', methods=['GET', 'POST'])
 @login_required
 def live_recording_job_review(fingerprint):

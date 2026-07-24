@@ -679,8 +679,11 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("直播录播任务", tasks_source)
         self.assertIn("recording_jobs", tasks_source)
         self.assertIn("recording-retry-btn", tasks_source)
+        self.assertIn("live_recording_job_delete", tasks_source)
+        self.assertGreaterEqual(tasks_source.count("'recording'"), 2)
         self.assertIn("t.source == 'recording'", overview_source)
         self.assertIn("直播录播", overview_source)
+        self.assertIn("live_recording_job_delete", overview_source)
         self.assertIn("requestedPipelineJob", live_source)
 
     def test_orphan_recording_scan_finds_only_old_unclaimed_room_videos(self):

@@ -9,6 +9,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -1370,6 +1371,95 @@ class LiveRecorderManager:
 
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
         return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)
+
+    def delete_pipeline_job(self, fingerprint: str, delete_files: bool = False) -> dict[str, Any]:
+        """Delete one finished recording pipeline job and, optionally, its files."""
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise RecorderConfigError("任务编号无效")
+        state_path = self._pipeline_state_path()
+        if not state_path.is_file():
+            raise RecorderConfigError("没有找到该录播任务")
+
+        with self._lock, sqlite3.connect(state_path, timeout=30) as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute(
+                "SELECT * FROM uploads WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            if not row:
+                raise RecorderConfigError("没有找到该录播任务")
+            if row["status"] in {"processing", "video_uploaded"}:
+                raise RecorderConfigError("任务仍在处理中，请等待完成或失败后再删除")
+
+            stage_rows = db.execute(
+                "SELECT details_json FROM upload_stages WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchall()
+            tables = {
+                item[0]
+                for item in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            review = {}
+            if "recording_review_overrides" in tables:
+                review_row = db.execute(
+                    "SELECT metadata_json FROM recording_review_overrides WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                review = self._decode_json(review_row["metadata_json"]) if review_row else {}
+                db.execute(
+                    "DELETE FROM recording_review_overrides WHERE fingerprint=?",
+                    (fingerprint,),
+                )
+            db.execute("DELETE FROM upload_stages WHERE fingerprint=?", (fingerprint,))
+            db.execute("DELETE FROM uploads WHERE fingerprint=?", (fingerprint,))
+
+        deleted_files: list[str] = []
+        if delete_files:
+            candidates: set[Path] = {Path(str(row["video_path"]))}
+            video_path = Path(str(row["video_path"]))
+            candidates.update(video_path.with_suffix(suffix) for suffix in (".xml", ".ass"))
+            for stage_row in stage_rows:
+                details = self._decode_json(stage_row["details_json"])
+                for key, value in details.items():
+                    if isinstance(value, str) and (
+                        key.endswith("_path") or key in {"danmaku_xml", "ass_path", "cover"}
+                    ):
+                        candidates.add(Path(value))
+            manual_cover = str(review.get("cover_path") or "").strip()
+            if manual_cover:
+                candidates.add(Path(manual_cover))
+
+            roots = tuple(self._recording_file_roots().values())
+            for candidate in candidates:
+                resolved = candidate.expanduser().resolve()
+                if not any(
+                    resolved == root or root in resolved.parents
+                    for root in roots
+                ):
+                    continue
+                try:
+                    if resolved.is_file():
+                        resolved.unlink()
+                        deleted_files.append(str(resolved))
+                except OSError:
+                    continue
+
+            artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
+            if artifact_dir.is_dir():
+                shutil.rmtree(artifact_dir, ignore_errors=True)
+
+        log_path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
+        try:
+            log_path.unlink()
+        except FileNotFoundError:
+            pass
+        return {
+            "fingerprint": fingerprint,
+            "deleted_files": deleted_files,
+            "deleted_file_count": len(deleted_files),
+        }
 
     def pipeline_cover(self, fingerprint: str) -> Path:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):

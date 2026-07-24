@@ -1,4 +1,6 @@
+import json
 import os
+import sqlite3
 import sys
 import tempfile
 import time
@@ -109,6 +111,87 @@ class RecordingFilesTests(unittest.TestCase):
 
         self.assertTrue(info["locked"])
         self.assertEqual(info["lock_reason"], "流水线处理中")
+
+    def _create_pipeline_job(self, fingerprint: str, video: Path, status: str = "failed"):
+        state_path = self.root / ".bridge" / "state.sqlite3"
+        with sqlite3.connect(state_path) as db:
+            db.execute(
+                """CREATE TABLE uploads (
+                    fingerprint TEXT PRIMARY KEY,
+                    video_path TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )"""
+            )
+            db.execute(
+                """CREATE TABLE upload_stages (
+                    fingerprint TEXT NOT NULL,
+                    details_json TEXT
+                )"""
+            )
+            db.execute(
+                """CREATE TABLE recording_review_overrides (
+                    fingerprint TEXT PRIMARY KEY,
+                    metadata_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            db.execute("INSERT INTO uploads VALUES (?, ?, ?)", (fingerprint, str(video), status))
+        return state_path
+
+    def test_delete_pipeline_job_can_keep_original_files(self):
+        fingerprint = "a" * 64
+        video = self.recordings / "finished.flv"
+        video.write_bytes(b"video")
+        state_path = self._create_pipeline_job(fingerprint, video)
+
+        result = self.manager.delete_pipeline_job(fingerprint, delete_files=False)
+
+        self.assertEqual(result["deleted_file_count"], 0)
+        self.assertTrue(video.exists())
+        with sqlite3.connect(state_path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 0)
+
+    def test_delete_pipeline_job_removes_related_files_and_rejects_active_job(self):
+        fingerprint = "b" * 64
+        video = self.recordings / "finished.flv"
+        xml = video.with_suffix(".xml")
+        ass = self.artifacts / fingerprint[:16] / "finished.ass"
+        cover = self.artifacts / fingerprint[:16] / "cover.jpg"
+        video.write_bytes(b"video")
+        xml.write_text("<i/>", encoding="utf-8")
+        ass.parent.mkdir(parents=True)
+        ass.write_text("[Script Info]", encoding="utf-8")
+        cover.write_bytes(b"cover")
+        state_path = self._create_pipeline_job(fingerprint, video)
+        with sqlite3.connect(state_path) as db:
+            db.execute(
+                "INSERT INTO upload_stages VALUES (?, ?)",
+                (fingerprint, json.dumps({"ass_path": str(ass)})),
+            )
+            db.execute(
+                "INSERT INTO recording_review_overrides VALUES (?, ?, ?)",
+                (fingerprint, json.dumps({"cover_path": str(cover)}), "now"),
+            )
+
+        result = self.manager.delete_pipeline_job(fingerprint, delete_files=True)
+
+        self.assertGreaterEqual(result["deleted_file_count"], 3)
+        self.assertFalse(video.exists())
+        self.assertFalse(xml.exists())
+        self.assertFalse(ass.exists())
+        self.assertFalse(cover.exists())
+
+        active_fingerprint = "c" * 64
+        active_video = self.recordings / "active.flv"
+        active_video.write_bytes(b"active")
+        with sqlite3.connect(state_path) as db:
+            db.execute(
+                "INSERT INTO uploads VALUES (?, ?, ?)",
+                (active_fingerprint, str(active_video), "processing"),
+            )
+        with self.assertRaisesRegex(RecorderConfigError, "仍在处理中"):
+            self.manager.delete_pipeline_job(active_fingerprint, delete_files=True)
+        self.assertTrue(active_video.exists())
 
 
 if __name__ == "__main__":
