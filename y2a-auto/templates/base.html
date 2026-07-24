@@ -13,7 +13,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/potato-flow.svg') }}">
     {% block extra_css %}{% endblock %}
 </head>
-<body class="app-shell-body {% block body_class %}{% endblock %}">
+<body class="app-shell-body {% block body_class %}{% endblock %}" data-app-version="{{ app_version }}">
     <aside class="app-sidebar" id="appSidebar">
         <a class="app-brand" href="{{ url_for('index') }}">
             <img src="{{ url_for('static', filename='img/potato-flow.svg') }}" alt="" width="34" height="34">

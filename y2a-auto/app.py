@@ -76,6 +76,25 @@ def inject_app_settings():
         ),
     }
 
+
+@app.after_request
+def attach_app_version(response):
+    """Expose one authoritative version and prevent stale rendered pages."""
+    response.headers['X-PotatoFlow-Version'] = __version__
+    if response.mimetype == 'text/html':
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return response
+
+
+@app.route('/api/version')
+def app_version():
+    return jsonify({
+        'name': 'PotatoFlow',
+        'version': __version__,
+        'author': __author__,
+    })
+
+
 ALLOWED_COVER_EXTENSIONS = {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
