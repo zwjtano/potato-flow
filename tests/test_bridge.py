@@ -69,7 +69,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(title, "果小果｜凤凰翻盘｜07-24 13:00｜【直播回放】")
         self.assertEqual(
             bridge.recording_part_title(video, 1, "凤凰翻盘"),
-            "01、凤凰翻盘",
+            "13:00 凤凰翻盘",
         )
 
     def test_default_description_hides_internal_room_marker_and_recording_time(self):
@@ -403,7 +403,7 @@ class BridgeTests(unittest.TestCase):
             generate_cover.assert_called_once()
             self.assertEqual(generate_summary.call_count, 2)
             self.assertIsNone(calls[0]["existing_submission"])
-            self.assertEqual(calls[0]["page_titles"], ["01、第一段 AI 主题"])
+            self.assertEqual(calls[0]["page_titles"], ["09:00 第一段 AI 主题"])
             self.assertIn("【P1｜第一段 AI 主题｜07-23 09:00】", calls[0]["description"])
             self.assertIn("第一段 AI 总结", calls[0]["description"])
             self.assertNotIn("第二段 AI 总结", calls[0]["description"])
@@ -411,7 +411,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(calls[0]["partition_id"], "129")
             self.assertTrue(calls[0]["is_original"])
             self.assertEqual(calls[1]["existing_submission"]["bvid"], "BV1multipart")
-            self.assertEqual(calls[1]["page_titles"], ["02、第二段 AI 主题"])
+            self.assertEqual(calls[1]["page_titles"], ["10:00 第二段 AI 主题"])
             self.assertIn("【P1｜第一段 AI 主题｜07-23 09:00】", calls[1]["description"])
             self.assertIn("【P2｜第二段 AI 主题｜07-23 10:00】", calls[1]["description"])
             self.assertIn("第一段 AI 总结", calls[1]["description"])

@@ -137,9 +137,11 @@ def fingerprint(path: Path, sidecar: Path | None = None) -> str:
 
 
 def recording_part_title(video: Path, index: int, topic: str = "") -> str:
+    match = re.search(r"20\d{2}-\d{2}-\d{2}_(\d{2})-(\d{2})", video.stem)
+    clock = f"{match.group(1)}:{match.group(2)}" if match else f"{max(1, index):02d}"
     clean_topic = re.sub(r"[\r\n｜|]+", " ", str(topic or "")).strip()
     clean_topic = clean_topic or "直播精彩内容"
-    return f"{max(1, index):02d}、{clean_topic[:60]}"[:80]
+    return f"{clock} {clean_topic[:60]}"[:80]
 
 
 def _multipart_summary_body(description: str) -> str:
