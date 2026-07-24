@@ -508,6 +508,54 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(chinese_date, "游戏挑战")
         self.assertNotRegex(chinese_date, r"07月23日|21:30")
 
+    def test_dota2_cover_prompt_resolves_common_hero_aliases(self):
+        instruction = bridge.recording_cover_dota2_instruction(
+            "蓝猫中路对线",
+            "火猫与紫猫切入",
+            "DOTA2 对局中小鱼人和白牛连续追击。",
+        )
+        self.assertIn("蓝猫＝风暴之灵（Storm Spirit）", instruction)
+        self.assertIn("火猫＝灰烬之灵（Ember Spirit）", instruction)
+        self.assertIn("紫猫＝虚无之灵（Void Spirit）", instruction)
+        self.assertIn("小鱼人＝斯拉克（Slark）", instruction)
+        self.assertIn("白牛＝裂魂人（Spirit Breaker）", instruction)
+        self.assertIn("绝对不能画成蓝色猫", instruction)
+        self.assertIn("禁止混入《英雄联盟》、宝可梦或其他作品", instruction)
+
+    def test_dota2_cover_prompt_does_not_force_storm_spirit_without_blue_cat(self):
+        instruction = bridge.recording_cover_dota2_instruction(
+            "宝可梦挑战",
+            "新地图探索",
+        )
+        self.assertNotIn("绝对不能画成蓝色猫", instruction)
+
+    def test_dota2_streamer_aliases_use_stable_public_names(self):
+        cases = {
+            "B神": "BurNIng",
+            "八师傅": "xiao8",
+            "小明鞭": "Faith_bian",
+            "拒绝者": "Paparazi",
+            "龙神": "LongDD",
+            "军体拳": "Sccc",
+        }
+        for alias, expected in cases.items():
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    bridge.normalize_dota2_streamer_name(alias),
+                    expected,
+                )
+
+    def test_dota2_streamer_prompt_keeps_room_owner_as_cover_subject(self):
+        instruction = bridge.recording_cover_dota2_streamer_instruction(
+            "yyfyyf",
+            "B神和拒绝者复盘比赛",
+        )
+        self.assertIn("yyfyyf＝Dota 2 主播/选手 YYF", instruction)
+        self.assertIn("B神＝Dota 2 主播/选手 BurNIng", instruction)
+        self.assertIn("拒绝者＝Dota 2 主播/选手 Paparazi", instruction)
+        self.assertIn("封面主体仍必须以当前直播间主播", instruction)
+        self.assertIn("其他被提及选手不能取代主播", instruction)
+
     def test_ai_recording_cover_uses_ai_title_and_forbids_time(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
         with tempfile.TemporaryDirectory() as temp:
@@ -553,6 +601,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(details["ai_cover_headline"], "新地图极限挑战")
         prompt = image_generate.call_args.kwargs["prompt"]
         self.assertIn("AI 生成的核心标题：新地图极限挑战", prompt)
+        self.assertIn("Dota 2 游戏角色消歧规则", prompt)
+        self.assertIn("斗鱼 Dota 2 主播昵称规则", prompt)
         self.assertIn("绝对禁止出现日期", prompt)
         self.assertNotIn("2026-07-23", prompt)
 
