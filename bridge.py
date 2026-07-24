@@ -647,6 +647,16 @@ def recording_metadata_values(
     streamer = str(cfg.get("streamer_name") or "").strip()
     if not streamer and marker_match:
         streamer = marker_match.group(1).strip("_- ")
+    normalized_streamer = re.sub(r"[\s_\-]+", "", streamer).casefold()
+    if normalized_streamer in YYF_STREAMER_ALIASES or re.fullmatch(
+        r"yyf(?:yyf)?\d*", normalized_streamer
+    ):
+        streamer = "YYF"
+    elif (
+        normalized_streamer in GUOXIAOGUO_STREAMER_ALIASES
+        or normalized_streamer.startswith("果小果")
+    ):
+        streamer = "果小果"
     live_title = time_match.group(1).strip("_- ") if time_match else ""
     topic = re.sub(r"[\r\n｜|]+", " ", str(ai_topic or live_title or "直播精彩内容")).strip()
     if datetime_match:

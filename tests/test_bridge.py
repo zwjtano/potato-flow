@@ -49,6 +49,22 @@ class BridgeTests(unittest.TestCase):
             )
         self.assertEqual(title, "主播｜深夜歌回｜07-23 09:45｜【直播回放】")
 
+    def test_default_recording_title_uses_canonical_streamer_names(self):
+        cases = (
+            ("yyfyyf", "YYF"),
+            ("YYFYYF", "YYF"),
+            ("果小果是个弟弟", "果小果"),
+            ("果小果", "果小果"),
+        )
+        for configured_name, expected_name in cases:
+            with self.subTest(configured_name=configured_name):
+                values = bridge.recording_metadata_values(
+                    Path("recording.flv"),
+                    {"streamer_name": configured_name},
+                    ai_topic="直播主题",
+                )
+                self.assertEqual(values["streamer"], expected_name)
+
     def test_input_keeps_xml_and_pairs_by_stem(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
