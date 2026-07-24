@@ -299,15 +299,25 @@ class BridgeTests(unittest.TestCase):
             video = root / "clip.flv"
             xml = root / "clip.xml"
             upload_video = root / "artifacts" / "clip.mp4"
+            ass = root / "artifacts" / "clip.ass"
+            ai_cover = root / "artifacts" / "ai_cover.jpg"
             upload_video.parent.mkdir()
-            for path in (video, xml, upload_video):
+            for path in (video, xml, upload_video, ass, ai_cover):
                 path.write_bytes(b"data")
 
-            result = bridge.cleanup_uploaded_recording(video, xml, upload_video)
+            result = bridge.cleanup_uploaded_recording(
+                video,
+                xml,
+                upload_video,
+                artifact_dir=upload_video.parent,
+            )
 
             self.assertEqual(result["failed"], [])
-            self.assertEqual(len(result["deleted"]), 3)
-            self.assertTrue(all(not path.exists() for path in (video, xml, upload_video)))
+            self.assertTrue(all(
+                not path.exists()
+                for path in (video, xml, upload_video, ass, ai_cover)
+            ))
+            self.assertFalse(upload_video.parent.exists())
 
     def test_live_segments_append_to_one_bilibili_submission(self):
         with tempfile.TemporaryDirectory() as temp:

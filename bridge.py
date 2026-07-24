@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -652,8 +653,9 @@ def cleanup_uploaded_recording(
     video: Path,
     danmaku_xml: Path | None,
     upload_video: Path,
+    artifact_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Remove large recording inputs after the complete upload state is durable."""
+    """Remove recording inputs and generated artifacts after upload is durable."""
     candidates = [
         ("video", video),
         ("danmaku_xml", danmaku_xml),
@@ -675,6 +677,27 @@ def cleanup_uploaded_recording(
             deleted.append(str(path))
         except OSError as exc:
             failed.append({"kind": kind, "path": str(path), "error": str(exc)})
+    if artifact_dir is not None:
+        artifact_path = artifact_dir.resolve()
+        try:
+            if artifact_path.is_dir():
+                artifact_files = [
+                    str(item.resolve())
+                    for item in artifact_path.rglob("*")
+                    if item.is_file() or item.is_symlink()
+                ]
+                shutil.rmtree(artifact_path)
+                deleted.extend(
+                    item for item in artifact_files
+                    if item not in deleted
+                )
+                deleted.append(str(artifact_path))
+        except OSError as exc:
+            failed.append({
+                "kind": "artifacts",
+                "path": str(artifact_path),
+                "error": str(exc),
+            })
     return {"deleted": deleted, "failed": failed}
 
 
@@ -1370,7 +1393,12 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         })
         store.finish(key, "completed", previous)
         if bool(cfg.get("delete_recording_after_upload", True)):
-            previous["source_cleanup"] = cleanup_uploaded_recording(video, danmaku_xml, upload_video)
+            previous["source_cleanup"] = cleanup_uploaded_recording(
+                video,
+                danmaku_xml,
+                upload_video,
+                artifact_dir=work_dir,
+            )
             store.finish(key, "completed", previous)
         print(f"OK 上传完成: {video}")
         return True
