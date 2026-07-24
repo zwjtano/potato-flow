@@ -604,14 +604,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('"recorder"', source)
         self.assertIn('"--status-file"', source)
 
-    def test_pipeline_log_stays_open_across_status_refreshes(self):
+    def test_live_page_does_not_load_finished_pipeline_history(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
-        self.assertIn("const jobLogStates = new Map()", source)
-        self.assertIn("logState.open = event.currentTarget.open", source)
-        self.assertIn("${logState.open ? 'open' : ''}", source)
-        self.assertIn("loadJobLog(job.id, logPre, true)", source)
-        self.assertIn("logState.stickToBottom", source)
+        self.assertNotIn("const jobLogStates = new Map()", source)
+        self.assertNotIn("loadJobLog(", source)
+        self.assertNotIn('data-role="job-select"', source)
+        self.assertIn("bindCurrentPipeline", source)
 
     def test_pipeline_jobs_expose_unified_task_metadata(self):
         manager = LiveRecorderManager()
@@ -684,8 +683,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("t.source == 'recording'", overview_source)
         self.assertIn("直播录播", overview_source)
         self.assertIn("live_recording_job_delete", overview_source)
-        self.assertIn("requestedPipelineJob", live_source)
-        self.assertIn("job.status !== 'completed'", live_source)
+        self.assertNotIn('data-role="job-select"', live_source)
+        self.assertNotIn("requestedPipelineJob", live_source)
+        self.assertIn("直播结束后，该步骤会自动转入", live_source)
+        self.assertIn("查看上传任务", live_source)
 
     def test_orphan_recording_scan_finds_only_old_unclaimed_room_videos(self):
         manager = LiveRecorderManager()

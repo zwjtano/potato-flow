@@ -413,6 +413,7 @@ def recording_cover_headline(title: str, ai_topic: str = "") -> str:
         candidate = parts[1] if len(parts) >= 2 else (parts[0] if parts else "直播精彩内容")
     candidate = re.sub(r"【[^】]*(?:直播|回放)[^】]*】", "", candidate)
     candidate = re.sub(r"\b20\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?\b", "", candidate)
+    candidate = re.sub(r"\b\d{1,2}月\d{1,2}日\b", "", candidate)
     candidate = re.sub(r"\b\d{1,2}[:：]\d{2}(?::\d{2})?\b", "", candidate)
     candidate = re.sub(r"\b(?:上午|下午|凌晨|早上|晚上|深夜)?\d{1,2}\s*[点时]\b", "", candidate)
     candidate = re.sub(r"(?:今天|今日|今晚|昨天|明天|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜)", "", candidate)
@@ -593,7 +594,7 @@ def recording_metadata_values(
     ai_topic: str = "",
 ) -> dict[str, str]:
     stem = video.stem
-    date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", stem)
+    datetime_match = re.search(r"(20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", stem)
     time_match = re.search(r"20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+)$", stem)
     marker_match = re.match(r"(.+?)_[0-9a-f]{6}(?=20\d{2}-\d{2}-\d{2})", stem, re.IGNORECASE)
     streamer = str(cfg.get("streamer_name") or "").strip()
@@ -601,17 +602,19 @@ def recording_metadata_values(
         streamer = marker_match.group(1).strip("_- ")
     live_title = time_match.group(1).strip("_- ") if time_match else ""
     topic = re.sub(r"[\r\n｜|]+", " ", str(ai_topic or live_title or "直播精彩内容")).strip()
+    if datetime_match:
+        recorded_at = datetime.strptime(datetime_match.group(1), "%Y-%m-%d_%H-%M-%S")
+    elif video.exists():
+        recorded_at = datetime.fromtimestamp(video.stat().st_mtime)
+    else:
+        recorded_at = datetime.now()
     return {
         "stem": stem,
         "name": video.name,
         "suffix": video.suffix.lstrip("."),
         "streamer": streamer or "主播",
         "ai_topic": topic[:28],
-        "date": date_match.group(1) if date_match else (
-            datetime.fromtimestamp(video.stat().st_mtime).strftime("%Y-%m-%d")
-            if video.exists()
-            else datetime.now().strftime("%Y-%m-%d")
-        ),
+        "date": recorded_at.strftime("%m月%d日 %H:%M"),
         "live_title": live_title,
     }
 

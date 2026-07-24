@@ -1150,17 +1150,13 @@ def live_recording():
         rooms=rooms,
         recorder_status=live_recorder_manager.status(),
         recorder_log=live_recorder_manager.tail_log(),
-        selected_pipeline_job=request.args.get('job', '').strip(),
     )
 
 
 @app.route('/live-recording/status')
 @login_required
 def live_recording_status():
-    payload = live_recorder_manager.live_status_payload()
-    room_id = request.args.get('room_id', '').strip() or None
-    payload['jobs'] = live_recorder_manager.pipeline_jobs(30, room_id=room_id)
-    return jsonify(payload)
+    return jsonify(live_recorder_manager.live_status_payload())
 
 
 @app.route('/live-recording/jobs')

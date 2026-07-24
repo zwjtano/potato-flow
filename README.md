@@ -232,7 +232,7 @@ cp bridge.config.example.json bridge.config.json
 }
 ```
 
-默认投稿标题为 `【直播回放】{streamer}｜{ai_topic}｜{date}`。其中 `{streamer}` 是主播名，`{ai_topic}` 是 AI 根据弹幕生成的核心主题，`{date}` 是录制日期；AI 不可用或没有有效弹幕时，核心主题会回退为直播标题。
+默认投稿标题为 `【直播回放】{streamer}｜{ai_topic}｜{date}`。其中 `{streamer}` 是主播名，`{ai_topic}` 是 AI 根据弹幕生成的核心主题，`{date}` 使用“月日时分”格式（例如 `07月24日 10:52`）；AI 不可用或没有有效弹幕时，核心主题会回退为直播标题。
 
 `delete_recording_after_upload` 默认开启：视频投稿完成后删除源视频与 XML；如需保留原文件，将它设为 `false`。生成的 ASS 与任务日志不会删除。
 

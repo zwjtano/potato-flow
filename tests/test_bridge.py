@@ -37,7 +37,7 @@ class BridgeTests(unittest.TestCase):
                 },
                 ai_topic="中韩流行歌单·点歌闲聊",
             )
-        self.assertEqual(title, "【直播回放】妮可罗宾｜中韩流行歌单·点歌闲聊｜2026-07-23")
+        self.assertEqual(title, "【直播回放】妮可罗宾｜中韩流行歌单·点歌闲聊｜07月23日 09:45")
 
     def test_default_recording_title_falls_back_to_live_title(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -47,7 +47,7 @@ class BridgeTests(unittest.TestCase):
                 video,
                 {"title_template": bridge.DEFAULT_TITLE_TEMPLATE},
             )
-        self.assertEqual(title, "【直播回放】主播｜深夜歌回｜2026-07-23")
+        self.assertEqual(title, "【直播回放】主播｜深夜歌回｜07月23日 09:45")
 
     def test_input_keeps_xml_and_pairs_by_stem(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -405,6 +405,12 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertEqual(headline, "游戏挑战")
         self.assertNotRegex(headline, r"2026|21:30")
+
+        chinese_date = bridge.recording_cover_headline(
+            "【直播回放】土豆｜深夜游戏挑战｜07月23日 21:30",
+        )
+        self.assertEqual(chinese_date, "游戏挑战")
+        self.assertNotRegex(chinese_date, r"07月23日|21:30")
 
     def test_ai_recording_cover_uses_ai_title_and_forbids_time(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
