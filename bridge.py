@@ -614,7 +614,7 @@ def recording_metadata_values(
         "suffix": video.suffix.lstrip("."),
         "streamer": streamer or "主播",
         "ai_topic": topic[:28],
-        "date": recorded_at.strftime("%m月%d日 %H:%M"),
+        "date": recorded_at.strftime("%m-%d %H:%M"),
         "live_title": live_title,
     }
 

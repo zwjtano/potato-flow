@@ -37,7 +37,7 @@ class BridgeTests(unittest.TestCase):
                 },
                 ai_topic="中韩流行歌单·点歌闲聊",
             )
-        self.assertEqual(title, "【直播回放】妮可罗宾｜中韩流行歌单·点歌闲聊｜07月23日 09:45")
+        self.assertEqual(title, "【直播回放】妮可罗宾｜中韩流行歌单·点歌闲聊｜07-23 09:45")
 
     def test_default_recording_title_falls_back_to_live_title(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -47,7 +47,7 @@ class BridgeTests(unittest.TestCase):
                 video,
                 {"title_template": bridge.DEFAULT_TITLE_TEMPLATE},
             )
-        self.assertEqual(title, "【直播回放】主播｜深夜歌回｜07月23日 09:45")
+        self.assertEqual(title, "【直播回放】主播｜深夜歌回｜07-23 09:45")
 
     def test_input_keeps_xml_and_pairs_by_stem(self):
         with tempfile.TemporaryDirectory() as temp:
