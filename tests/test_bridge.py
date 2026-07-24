@@ -567,20 +567,43 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result["danmaku_count"], 1)
             self.assertTrue(Path(result["ass_path"]).is_file())
 
+    def test_find_cover_retries_earlier_timestamps_for_truncated_recording(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "truncated.flv"
+            video.write_bytes(b"broken-video")
+            work_dir = root / "artifacts"
+            commands = []
+
+            def fake_run(command, **_kwargs):
+                commands.append(command)
+                if len(commands) == 2:
+                    Path(command[-1]).write_bytes(b"recovered-cover")
+                    return types.SimpleNamespace(returncode=0, stderr="")
+                return types.SimpleNamespace(returncode=1, stderr="Invalid NAL unit size")
+
+            with patch.object(bridge.subprocess, "run", side_effect=fake_run):
+                cover = bridge.find_cover(
+                    video,
+                    {"_config_dir": str(root), "cover_seek_seconds": 10},
+                    work_dir,
+                )
+
+            self.assertEqual(cover.read_bytes(), b"recovered-cover")
+            self.assertEqual(commands[0][commands[0].index("-ss") + 1], "10")
+            self.assertEqual(commands[1][commands[1].index("-ss") + 1], "3")
+
     def test_retry_prefers_saved_manual_review_over_generated_defaults(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "clip.mp4"
-            cover = root / "cover.jpg"
             manual_cover = root / "manual-cover.jpg"
             video.write_bytes(b"video")
-            cover.write_bytes(b"cover")
             manual_cover.write_bytes(b"manual-cover")
             cfg = {
                 "_config_dir": str(root),
                 "source_url": "https://example.com/live",
                 "bilibili_partition_id": "171",
-                "cover_path": str(cover),
                 "stable_checks": 1,
                 "stable_interval_seconds": 0.01,
                 "danmaku_enabled": False,
@@ -604,13 +627,49 @@ class BridgeTests(unittest.TestCase):
                     (key, json.dumps(override, ensure_ascii=False), override["updated_at"]),
                 )
 
-            self.assertTrue(bridge.upload_one(video, cfg, store, retry=True, dry_run=True))
+            with patch.object(
+                bridge,
+                "find_cover",
+                side_effect=AssertionError("manual review cover must bypass FFmpeg extraction"),
+            ):
+                self.assertTrue(bridge.upload_one(video, cfg, store, retry=True, dry_run=True))
             result = store.results(key)
             self.assertEqual(result["title"], override["title"])
             self.assertEqual(result["description"], override["description"])
             self.assertEqual(result["tags"], override["tags"])
             self.assertEqual(result["partition_id"], override["partition_id"])
             self.assertEqual(result["cover"], str(manual_cover))
+
+    def test_cover_extraction_failure_is_reported_as_cover_stage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "broken.flv"
+            video.write_bytes(b"broken-video")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+
+            with patch.object(bridge, "find_cover", side_effect=RuntimeError("broken frames")):
+                self.assertFalse(bridge.upload_one(video, cfg, store, dry_run=True))
+
+            with store.connect() as db:
+                stages = {
+                    row["stage"]: dict(row)
+                    for row in db.execute(
+                        "SELECT stage, status, error FROM upload_stages WHERE fingerprint=?",
+                        (key,),
+                    )
+                }
+            self.assertEqual(stages["cover"]["status"], "failed")
+            self.assertIn("broken frames", stages["cover"]["error"])
+            self.assertEqual(stages["ass"]["status"], "pending")
 
 
 if __name__ == "__main__":

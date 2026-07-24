@@ -387,14 +387,22 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
     work_dir.mkdir(parents=True, exist_ok=True)
     cover = work_dir / "cover.jpg"
     ffmpeg = str(cfg.get("ffmpeg", "ffmpeg"))
-    seek = str(max(0, int(cfg.get("cover_seek_seconds", 10))))
-    command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", seek,
-               "-i", str(video), "-frames:v", "1", "-q:v", "2", str(cover)]
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    if completed.returncode != 0 or not cover.is_file():
-        message = completed.stderr.strip()[-1000:]
-        raise RuntimeError(f"FFmpeg 自动截取封面失败: {message}")
-    return cover
+    configured_seek = max(0, int(cfg.get("cover_seek_seconds", 10)))
+    seek_candidates = list(dict.fromkeys((configured_seek, 3, 1, 0)))
+    errors: list[str] = []
+    for seek_seconds in seek_candidates:
+        cover.unlink(missing_ok=True)
+        command = [
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+            "-ss", str(seek_seconds), "-i", str(video),
+            "-frames:v", "1", "-q:v", "2", str(cover),
+        ]
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        if completed.returncode == 0 and cover.is_file() and cover.stat().st_size > 0:
+            return cover
+        message = completed.stderr.strip()[-500:]
+        errors.append(f"{seek_seconds}秒: {message or '未生成图片'}")
+    raise RuntimeError(f"FFmpeg 自动截取封面失败（已尝试多个时间点）: {' | '.join(errors)[-1600:]}")
 
 
 def recording_cover_headline(title: str, ai_topic: str = "") -> str:
@@ -854,12 +862,18 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             raise RuntimeError("前一分P尚未上传成功，请先重试前一分P")
 
         title, description, tags = render_metadata(video, cfg)
-        original_cover = find_cover(video, cfg, work_dir)
+        manual_cover_path = str(review_override.get("cover_path") or "").strip()
+        if manual_cover_path and Path(manual_cover_path).is_file():
+            original_cover = Path(manual_cover_path)
+        else:
+            current_stage = "cover"
+            original_cover = find_cover(video, cfg, work_dir)
         cover = original_cover
         source_url = str(cfg.get("source_url", "")).strip()
         if not source_url:
             raise ValueError("Y2A 的 bilibili 上传强制使用转载模式，必须配置 source_url")
 
+        current_stage = "ass"
         upload_video = video
         ass_path = None
         comments = []
@@ -979,7 +993,6 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "cover"
         cover_generation: dict[str, Any] = {}
-        manual_cover_path = str(review_override.get("cover_path") or "").strip()
         session_cover = str(multipart.get("cover_path") or "").strip() if multipart else ""
         if manual_cover_path and Path(manual_cover_path).is_file():
             cover = Path(manual_cover_path)
