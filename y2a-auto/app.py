@@ -722,6 +722,9 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
     try:
         report('saving_config', '正在保存配置', '正在校验并写入设置。')
+        previous_multipart_enabled = _coerce_checkbox_value(
+            load_config().get('RECORDING_MULTIPART_ENABLED', False)
+        )
         form_data.pop('save_operation_id', None)
 
         new_password = form_data.get('new_password')
@@ -740,6 +743,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'UPLOAD_APPEND_REPOST_NOTICE',
             'GENERATE_TAGS', 'YOUTUBE_UPLOADER_AS_FIRST_TAG', 'RECOMMEND_PARTITION',
             'RECOMMEND_PARTITION_WITH_COVER', 'AI_GENERATE_RECORDING_COVER',
+            'RECORDING_MULTIPART_ENABLED',
             'CONTENT_MODERATION_ENABLED',
             'OPENAI_THINKING_ENABLED', 'SUBTITLE_OPENAI_THINKING_ENABLED', 'SUBTITLE_QC_THINKING_ENABLED',
             'LOG_CLEANUP_ENABLED', 'SUBTITLE_TRANSLATION_ENABLED', 'SUBTITLE_EMBED_IN_VIDEO',
@@ -869,6 +873,15 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
         _persist_settings_uploads(form_data, uploads)
         updated_config = update_config(form_data)
+
+        if previous_multipart_enabled != _coerce_checkbox_value(
+            updated_config.get('RECORDING_MULTIPART_ENABLED', False)
+        ):
+            try:
+                live_recorder_manager.apply_recording_upload_mode()
+                logger.info("录播分P设置已同步到录制引擎")
+            except Exception as e:
+                logger.warning(f"同步录播分P设置失败: {e}")
 
         try:
             from modules.task_manager import get_global_task_processor

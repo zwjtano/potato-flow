@@ -142,7 +142,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
                     mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
-                    mock.patch.object(manager, "_sync_bridge_profiles"):
+                    mock.patch.object(manager, "_sync_bridge_profiles"), \
+                    mock.patch.object(manager, "recording_multipart_enabled", return_value=True):
                 manager.sync_configs([self.rooms[0]])
 
             content = config_path.read_text(encoding="utf-8")
@@ -155,6 +156,26 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIn("ingest --session-key", content)
             self.assertIn("aaaaaa111111", content)
             self.assertIn("finalize-session --session-key", content)
+
+    def test_config_uploads_segments_as_independent_videos_by_default(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "biliup.yaml"
+            with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
+                    mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
+                    mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
+                    mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
+                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(manager, "_sync_bridge_profiles"), \
+                    mock.patch.object(manager, "recording_multipart_enabled", return_value=False):
+                manager.sync_configs([self.rooms[0]])
+
+            content = config_path.read_text(encoding="utf-8")
+            self.assertIn("segment_processor:", content)
+            self.assertIn(" ingest", content)
+            self.assertNotIn("ingest --session-key", content)
+            self.assertNotIn("finalize-session", content)
 
     def test_readding_legacy_room_updates_profile_without_duplicate(self):
         manager = LiveRecorderManager()
@@ -813,7 +834,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 return_value=[(first, "room-1"), (second, "room-1")],
             ), mock.patch.object(recorder_module, "APP_ROOT", root), mock.patch.object(
                 recorder_module.subprocess, "run", return_value=completed
-            ) as run:
+            ) as run, mock.patch.object(
+                manager, "recording_multipart_enabled", return_value=True
+            ):
                 recovered = manager.recover_orphan_recordings()
 
         self.assertEqual(recovered, 2)
@@ -827,6 +850,27 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ["--session-key", "room-1", str(second)],
         )
 
+    def test_orphan_recordings_are_independent_when_multipart_is_disabled(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "segment.flv"
+            video.write_bytes(b"video")
+            with mock.patch.object(
+                manager,
+                "_orphan_recording_candidates",
+                return_value=[(video, "room-1")],
+            ), mock.patch.object(recorder_module, "APP_ROOT", root), mock.patch.object(
+                recorder_module.subprocess, "run", return_value=mock.Mock(returncode=0)
+            ) as run, mock.patch.object(
+                manager, "recording_multipart_enabled", return_value=False
+            ):
+                recovered = manager.recover_orphan_recordings()
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(run.call_args.args[0][-2:], ["ingest", str(video)])
+        self.assertNotIn("--session-key", run.call_args.args[0])
+
     def test_add_room_form_only_requires_room_url(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
@@ -836,6 +880,17 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("room.avatar_url", source)
         self.assertIn("每 60 分钟自动分段", source)
         self.assertNotIn("按 2.5 GB 自动分段", source)
+
+    def test_settings_expose_optional_multipart_mode_with_independent_default(self):
+        settings_source = (Y2A_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
+        config_source = (Y2A_ROOT / "modules" / "config_manager.py").read_text(encoding="utf-8")
+        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn('name="RECORDING_MULTIPART_ENABLED"', settings_source)
+        self.assertIn("同一场直播合并为分P", settings_source)
+        self.assertIn('"RECORDING_MULTIPART_ENABLED": False', config_source)
+        self.assertIn("'RECORDING_MULTIPART_ENABLED'", app_source)
+        self.assertIn("apply_recording_upload_mode", app_source)
 
     def test_delete_room_button_is_enabled_while_worker_runs(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")

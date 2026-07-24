@@ -173,8 +173,12 @@
                                                         <input type="checkbox" name="AI_GENERATE_RECORDING_COVER" {% if config.get('AI_GENERATE_RECORDING_COVER', False) %}checked{% endif %}>
                                                         AI 生成录播封面
                                                     </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="RECORDING_MULTIPART_ENABLED" {% if config.get('RECORDING_MULTIPART_ENABLED', False) %}checked{% endif %}>
+                                                        同一场直播合并为分P
+                                                    </label>
                                                 </div>
-                                                <p class="help-text mt-2 mb-0">录播封面会参考 AI 核心标题生成，并禁止日期、具体时间和时间戳；生成失败时自动使用视频截图。</p>
+                                                <p class="help-text mt-2 mb-0">分P默认关闭：每个录制分段独立投稿。开启后，P1 创建稿件，后续分段追加到同一个 BVID。录制中修改会在当前分段安全结束后生效。</p>
                                             </div>
                                         </article>
                                     </div>

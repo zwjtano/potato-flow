@@ -24,7 +24,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-
 APP_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = APP_ROOT.parent
 CONFIG_DIR = APP_ROOT / "config"
@@ -630,6 +629,33 @@ class LiveRecorderManager:
         except sqlite3.Error:
             return False
 
+    @staticmethod
+    def recording_multipart_enabled() -> bool:
+        try:
+            from .config_manager import load_config
+
+            value = load_config().get("RECORDING_MULTIPART_ENABLED", False)
+            if isinstance(value, str):
+                return value.strip().lower() in {"true", "1", "on", "yes"}
+            return bool(value)
+        except Exception:
+            return False
+
+    def apply_recording_upload_mode(self) -> str:
+        """Regenerate hooks and safely reload a running worker after the current segment."""
+        with self._lock:
+            was_running = self._pid() is not None
+            self.sync_configs()
+            if not was_running:
+                return "saved"
+            if any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status()):
+                _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
+                self._ensure_reload_thread()
+                return "pending"
+            self.stop()
+            self.start()
+            return "reloaded"
+
     def set_room_recording(self, room_id: str, enabled: bool) -> dict[str, Any]:
         """Enable or gracefully pause one room without stopping the whole engine."""
         with self._lock:
@@ -649,6 +675,7 @@ class LiveRecorderManager:
 
     def sync_configs(self, rooms: list[dict[str, Any]] | None = None) -> None:
         rooms = rooms if rooms is not None else self.list_rooms()
+        multipart_enabled = self.recording_multipart_enabled()
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
         (RECORDINGS_DIR / "data").mkdir(parents=True, exist_ok=True)
@@ -658,7 +685,7 @@ class LiveRecorderManager:
         lines = [
             "# 由统一管理后台自动生成，请勿手动编辑。",
             "downloader: ffmpeg",
-            # 固定按时长切分，同一场直播的各段会依次投稿为 P1、P2……。
+            # 固定按时长切分；是否合并到同一个 BVID 由投稿模式设置决定。
             "file_size: null",
             f'segment_time: "{DEFAULT_RECORDING_SEGMENT_TIME}"',
             # 手动录制允许随时停止；不能让 biliup 把短录播当作碎片删除，
@@ -687,30 +714,30 @@ class LiveRecorderManager:
                 "--config",
                 _yaml_string(str(BRIDGE_CONFIG_PATH)),
             ]
-            segment_command = " ".join([
-                *bridge_base,
-                "ingest",
-                "--session-key",
-                _yaml_string(session_key),
-            ])
-            finalize_command = " ".join([
-                *bridge_base,
-                "finalize-session",
-                "--session-key",
-                _yaml_string(session_key),
-            ])
-            lines.extend(
-                [
-                    f"  {_yaml_string(key)}:",
-                    "    url:",
-                    f"      - {_yaml_string(str(room['url']))}",
-                    "    uploader: Noop",
-                    "    segment_processor:",
-                    f"      - run: {_yaml_string(segment_command)}",
+            segment_args = [*bridge_base, "ingest"]
+            if multipart_enabled:
+                segment_args.extend(["--session-key", _yaml_string(session_key)])
+            segment_command = " ".join(segment_args)
+            room_lines = [
+                f"  {_yaml_string(key)}:",
+                "    url:",
+                f"      - {_yaml_string(str(room['url']))}",
+                "    uploader: Noop",
+                "    segment_processor:",
+                f"      - run: {_yaml_string(segment_command)}",
+            ]
+            if multipart_enabled:
+                finalize_command = " ".join([
+                    *bridge_base,
+                    "finalize-session",
+                    "--session-key",
+                    _yaml_string(session_key),
+                ])
+                room_lines.extend([
                     "    postprocessor:",
                     f"      - run: {_yaml_string(finalize_command)}",
-                ]
-            )
+                ])
+            lines.extend(room_lines)
         BILIUP_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self._sync_bridge_profiles(rooms)
 
@@ -971,7 +998,7 @@ class LiveRecorderManager:
         return candidates
 
     def recover_orphan_recordings(self, minimum_age_seconds: float = 120) -> int:
-        """Sequentially feed missed segments back into their room's multipart session."""
+        """Feed missed segments back into independent or multipart upload flows."""
         candidates = self._orphan_recording_candidates(minimum_age_seconds)
         if not candidates:
             return 0
@@ -980,17 +1007,18 @@ class LiveRecorderManager:
         recovered = 0
         with log_path.open("a", encoding="utf-8") as log_handle:
             for video, room_id in candidates:
+                command = [
+                    sys.executable,
+                    str(WORKSPACE_ROOT / "bridge.py"),
+                    "--config",
+                    str(BRIDGE_CONFIG_PATH),
+                    "ingest",
+                ]
+                if self.recording_multipart_enabled():
+                    command.extend(["--session-key", room_id])
+                command.append(str(video))
                 result = subprocess.run(
-                    [
-                        sys.executable,
-                        str(WORKSPACE_ROOT / "bridge.py"),
-                        "--config",
-                        str(BRIDGE_CONFIG_PATH),
-                        "ingest",
-                        "--session-key",
-                        room_id,
-                        str(video),
-                    ],
+                    command,
                     cwd=WORKSPACE_ROOT,
                     stdout=log_handle,
                     stderr=subprocess.STDOUT,
