@@ -251,6 +251,34 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(enriched[0]["runtime"]["current_file"], recording_path.name)
         self.assertEqual(enriched[0]["runtime"]["current_file_size_bytes"], 5)
 
+    def test_prefers_current_ffmpeg_part_over_previous_finalized_segment(self):
+        manager = LiveRecorderManager()
+        rooms = LiveRecorderManager._merge_room_runtime(
+            self.rooms[:1],
+            True,
+            {
+                "rooms": [{
+                    "downloader_status": "Ok(Working)",
+                    "live_streamer": {
+                        "remark": "开播主播_aaaaaa",
+                        "url": "https://www.douyu.com/100",
+                    },
+                }]
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            previous = root / "开播主播_aaaaaa_2026-07-24_13-00.flv"
+            current = root / "开播主播_aaaaaa_2026-07-24_14-00.flv.part"
+            previous.write_bytes(b"previous")
+            current.write_bytes(b"current")
+            os.utime(previous, (time.time() - 60, time.time() - 60))
+            with mock.patch.object(recorder_module, "RECORDINGS_DIR", root):
+                enriched = manager._attach_current_recording_files(rooms)
+
+        self.assertEqual(enriched[0]["runtime"]["current_file"], current.name)
+        self.assertEqual(enriched[0]["runtime"]["current_file_size_bytes"], 7)
+
     def test_engine_stopped_does_not_claim_room_is_monitored(self):
         rooms = LiveRecorderManager._merge_room_runtime(self.rooms, False)
 

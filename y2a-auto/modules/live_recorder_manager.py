@@ -74,6 +74,14 @@ def _slug(value: str) -> str:
     return cleaned.strip("_") or "直播间"
 
 
+def _recording_file_type(path: Path) -> str | None:
+    """Classify finalized recordings and FFmpeg's actively-written *.part files."""
+    suffix = path.suffix.lower()
+    if suffix == ".part":
+        suffix = path.with_suffix("").suffix.lower()
+    return RECORDING_FILE_SUFFIXES.get(suffix)
+
+
 def _workspace_runtime_path(value: Any, default: str) -> str:
     """Convert repository-relative paths into paths valid in the active runtime."""
     raw = str(value or default).strip()
@@ -292,12 +300,8 @@ class LiveRecorderManager:
             return rooms
 
         latest_by_marker: dict[str, tuple[float, Path, int]] = {}
-        video_suffixes = {
-            suffix for suffix, file_type in RECORDING_FILE_SUFFIXES.items()
-            if file_type == "video"
-        }
         for path in RECORDINGS_DIR.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in video_suffixes:
+            if not path.is_file() or _recording_file_type(path) != "video":
                 continue
             marker = next((value for value in active_markers if value in path.name), "")
             if not marker:
@@ -1031,7 +1035,7 @@ class LiveRecorderManager:
             candidate.relative_to(root)
         except ValueError as exc:
             raise RecorderConfigError("文件路径超出录播目录") from exc
-        if not candidate.is_file() or candidate.suffix.lower() not in RECORDING_FILE_SUFFIXES:
+        if not candidate.is_file() or _recording_file_type(candidate) is None:
             raise RecorderConfigError("文件不存在或不属于可管理的录播文件")
         return candidate, source, relative_path
 
@@ -1083,8 +1087,12 @@ class LiveRecorderManager:
             "name": path.name,
             "relative_path": relative_path,
             "source": source,
-            "type": RECORDING_FILE_SUFFIXES[path.suffix.lower()],
-            "extension": path.suffix.lower().lstrip("."),
+            "type": _recording_file_type(path),
+            "extension": (
+                f"{path.with_suffix('').suffix.lower().lstrip('.')}.part"
+                if path.suffix.lower() == ".part"
+                else path.suffix.lower().lstrip(".")
+            ),
             "size_bytes": stat.st_size,
             "modified_at": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
             "modified_timestamp": stat.st_mtime,
@@ -1100,7 +1108,7 @@ class LiveRecorderManager:
             if not root.is_dir():
                 continue
             for path in root.rglob("*"):
-                if not path.is_file() or path.suffix.lower() not in RECORDING_FILE_SUFFIXES:
+                if not path.is_file() or _recording_file_type(path) is None:
                     continue
                 relative_path = path.relative_to(root).as_posix()
                 try:

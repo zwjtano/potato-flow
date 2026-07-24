@@ -186,6 +186,10 @@ document.addEventListener('DOMContentLoaded', function () {
     let recordingFiles = [];
     const selectedRecordingFileIds = new Set();
     let filter = 'all';
+    const escapeHtml = value => String(value ?? '').replace(
+        /[&<>"']/g,
+        char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])
+    );
     function confirmStopRecording(button) {
         if (!stopConfirmModalElement || !window.bootstrap?.Modal) return Promise.resolve(false);
         const roomName = button.closest('.room-detail-panel')?.querySelector('.selected-room-title h2')?.textContent?.trim();

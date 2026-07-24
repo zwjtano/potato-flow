@@ -51,6 +51,12 @@ class RecordingFilesTests(unittest.TestCase):
         self.assertEqual({item["type"] for item in payload["files"]}, {"video", "xml", "ass"})
         self.assertEqual(payload["total_size_bytes"], 5 + 4 + 13)
 
+    def test_file_manager_defines_html_escaping_before_rendering_rows(self):
+        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+
+        self.assertIn("const escapeHtml =", source)
+        self.assertLess(source.index("const escapeHtml ="), source.index("function renderFiles()"))
+
     def test_delete_rejects_traversal_and_removes_an_inactive_file(self):
         video = self.recordings / "finished.mp4"
         video.write_bytes(b"safe")
@@ -96,6 +102,23 @@ class RecordingFilesTests(unittest.TestCase):
         with self.assertRaisesRegex(RecorderConfigError, "正在录制"):
             self.manager.delete_recording_file(info["id"])
         self.assertTrue(video.exists())
+
+    def test_active_ffmpeg_part_file_is_visible_and_locked(self):
+        room_id = "abcdef123456"
+        video = self.recordings / "主播_abcdef-live.flv.part"
+        video.write_bytes(b"growing")
+        os.utime(video, (time.time(), time.time()))
+        self.manager.list_rooms.return_value = [{"id": room_id, "name": "主播"}]
+        self.manager.rooms_with_status.return_value = [
+            {"id": room_id, "name": "主播", "runtime": {"recording": True}}
+        ]
+
+        info = self.manager.recording_files()["files"][0]
+
+        self.assertEqual(info["type"], "video")
+        self.assertEqual(info["extension"], "flv.part")
+        self.assertTrue(info["locked"])
+        self.assertEqual(info["lock_reason"], "正在录制")
 
     def test_pipeline_artifact_is_locked(self):
         ass = self.artifacts / "job" / "finished.ass"
