@@ -252,7 +252,7 @@ class BilibiliProgressTests(unittest.TestCase):
             ), patch(
                 "modules.bilibili_uploader.video_uploader.VideoMeta",
                 return_value=object(),
-            ), patch(
+            ) as video_meta, patch(
                 "modules.bilibili_uploader.video_uploader.VideoUploaderPage",
                 FakePage,
             ), patch(
@@ -273,6 +273,11 @@ class BilibiliProgressTests(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertEqual(result["bvid"], "BV1test")
+        self.assertFalse(video_meta.call_args.kwargs["original"])
+        self.assertEqual(
+            video_meta.call_args.kwargs["source"],
+            "https://www.youtube.com/watch?v=test",
+        )
         self.assertEqual(
             progress,
             ["0.0%", "31.7%", "63.3%", "95.0%", "96.0%", "98.0%", "99.0%", "100.0%"],

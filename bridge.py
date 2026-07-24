@@ -947,8 +947,6 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             original_cover = find_cover(video, cfg, work_dir)
         cover = original_cover
         source_url = str(cfg.get("source_url", "")).strip()
-        if not source_url:
-            raise ValueError("Y2A 的 bilibili 上传强制使用转载模式，必须配置 source_url")
 
         current_stage = "ass"
         upload_video = video
@@ -1186,6 +1184,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 youtube_url=source_url, task_id=None,
                 page_titles=[recording_part_title(video, part_number)],
                 existing_submission=existing_submission,
+                is_original=True,
             )
             if not ok:
                 raise RuntimeError(f"bilibili 上传失败: {result}")
