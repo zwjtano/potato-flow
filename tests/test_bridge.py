@@ -556,6 +556,36 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("封面主体仍必须以当前直播间主播", instruction)
         self.assertIn("其他被提及选手不能取代主播", instruction)
 
+    def test_yyf_cover_expression_follows_segment_performance(self):
+        instruction = bridge.recording_cover_streamer_expression_instruction(
+            "枫哥",
+            "蓝猫关键失误后惨遭翻盘",
+            "YYF 最后一波团战无奈落败。",
+        )
+        self.assertIn("YYF 表情与本段对局联动", instruction)
+        self.assertIn("失误、被翻盘或惨败", instruction)
+        self.assertIn("震惊、懊恼、无奈或气急", instruction)
+        self.assertIn("必须保持 YYF 的脸型、五官比例、发型", instruction)
+        self.assertIn("不能仅照抄底稿中的原始表情", instruction)
+
+    def test_expression_rule_is_not_forced_on_other_streamers(self):
+        self.assertEqual(
+            bridge.recording_cover_streamer_expression_instruction(
+                "果小果",
+                "关键团战翻盘",
+            ),
+            "",
+        )
+
+    def test_guoxiaoguo_reference_requires_fried_egg_hair_accessory(self):
+        instruction = bridge.recording_cover_reference_instruction("果小果")
+        self.assertIn("荷包蛋发饰", instruction)
+        self.assertIn("不规则白色蛋白", instruction)
+        self.assertIn("圆润的金黄色蛋黄", instruction)
+        self.assertIn("荷包蛋下方", instruction)
+        self.assertIn("红色大蝴蝶结", instruction)
+        self.assertIn("绝对不能画成蛋壳", instruction)
+
     def test_ai_recording_cover_uses_ai_title_and_forbids_time(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
         with tempfile.TemporaryDirectory() as temp:
@@ -612,6 +642,8 @@ class BridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
+            avatar = root / "yyf-current-avatar.jpg"
+            avatar.write_bytes(b"current-avatar")
             response = types.SimpleNamespace(data=[
                 types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
             ])
@@ -639,7 +671,9 @@ class BridgeTests(unittest.TestCase):
                 "modules.ai_enhancer": ai_module,
                 "modules.config_manager": config_module,
             }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg), patch.object(
-                bridge, "download_recording_avatar_reference"
+                bridge,
+                "download_recording_avatar_reference",
+                return_value=avatar,
             ) as avatar_download:
                 cover, details = bridge.generate_recording_cover_with_ai(
                     title="【直播回放】YYF｜天梯翻盘局｜2026-07-24",
@@ -667,11 +701,23 @@ class BridgeTests(unittest.TestCase):
         edit_kwargs = image_edit.call_args.kwargs
         self.assertEqual(edit_kwargs["model"], "gpt-image-2")
         self.assertEqual(edit_kwargs["size"], "1536x1024")
-        self.assertEqual(Path(edit_kwargs["image"].name), bridge.YYF_COVER_REFERENCE)
+        self.assertIsInstance(edit_kwargs["image"], list)
+        self.assertEqual(
+            [Path(handle.name) for handle in edit_kwargs["image"]],
+            [bridge.YYF_COVER_REFERENCE, avatar],
+        )
         self.assertIn("参考照片是主播 YYF 本人", edit_kwargs["prompt"])
         self.assertIn("保持其脸型、五官、发型和身份辨识度", edit_kwargs["prompt"])
+        self.assertIn("YYF 表情与本段对局联动", edit_kwargs["prompt"])
+        self.assertIn("优势、高光或连胜", edit_kwargs["prompt"])
+        self.assertIn("失误、被翻盘或惨败", edit_kwargs["prompt"])
         self.assertEqual(details["ai_cover_reference_kind"], "dedicated")
-        avatar_download.assert_not_called()
+        self.assertEqual(details["ai_cover_reference_count"], 2)
+        self.assertEqual(
+            details["ai_cover_reference_paths"],
+            [str(bridge.YYF_COVER_REFERENCE), str(avatar)],
+        )
+        avatar_download.assert_called_once()
 
     def test_unknown_streamer_cover_uses_room_avatar_as_reference(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
@@ -733,7 +779,18 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("作为封面主体底稿", image_edit.call_args.kwargs["prompt"])
 
     def test_yyf_reference_aliases_are_recognized(self):
-        for alias in ("YYF", "yyfyyf", "月夜枫", "枫哥", "姜岑"):
+        for alias in (
+            "YYF",
+            "yyfyyf",
+            "月夜枫",
+            "枫哥",
+            "峰哥",
+            "姜岑",
+            "胖头鱼",
+            "石佛",
+            "僵尸王",
+            "毒瘤枫",
+        ):
             with self.subTest(alias=alias):
                 reference = bridge.recording_cover_reference(alias)
                 self.assertIsNotNone(reference)
@@ -748,8 +805,8 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(reference[0], "果小果")
                 self.assertEqual(reference[1], bridge.GUOXIAOGUO_COVER_REFERENCE)
         instruction = bridge.recording_cover_reference_instruction("果小果")
-        self.assertIn("头顶蛋壳", instruction)
-        self.assertIn("禁止把蛋壳改成煎蛋", instruction)
+        self.assertIn("头顶荷包蛋发饰", instruction)
+        self.assertIn("绝对不能画成蛋壳", instruction)
         self.assertIn("禁止改成真人", instruction)
 
     def test_load_config_rejects_non_object(self):
