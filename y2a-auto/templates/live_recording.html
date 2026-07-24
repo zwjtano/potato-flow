@@ -493,7 +493,9 @@ document.addEventListener('DOMContentLoaded', function () {
     let requestedPipelineJob = {{ selected_pipeline_job|tojson }};
     function renderRoomPipeline(panel, jobs) {
         const select = panel.querySelector('[data-role="job-select"]');
-        const roomJobs = jobs.filter(job => job.room_id === panel.dataset.panel);
+        const roomJobs = jobs.filter(
+            job => job.room_id === panel.dataset.panel && job.status !== 'completed'
+        );
         const previous = select.value;
         select.innerHTML = '<option value="">当前直播状态</option>' + roomJobs.map(job => `<option value="${job.id}">${escapeHtml(job.video_name)} · ${escapeHtml(statusNames[job.status] || job.status)}</option>`).join('');
         const requested = roomJobs.some(job => job.id === requestedPipelineJob) ? requestedPipelineJob : '';

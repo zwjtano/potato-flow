@@ -685,6 +685,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("直播录播", overview_source)
         self.assertIn("live_recording_job_delete", overview_source)
         self.assertIn("requestedPipelineJob", live_source)
+        self.assertIn("job.status !== 'completed'", live_source)
 
     def test_orphan_recording_scan_finds_only_old_unclaimed_room_videos(self):
         manager = LiveRecorderManager()
