@@ -7,6 +7,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BrandingTests(unittest.TestCase):
+    def test_tasks_page_uses_manual_refresh_without_detail_polling(self):
+        template = (ROOT / "y2a-auto" / "templates" / "tasks.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('data-auto-refresh="off"', template)
+        self.assertIn('id="manualRefreshTasksBtn"', template)
+        self.assertIn('id="manualRefreshRecordingDetailBtn"', template)
+        self.assertNotIn(
+            "recordingDetailTimer = window.setInterval",
+            template,
+        )
+        dom_ready = template.rsplit(
+            "document.addEventListener('DOMContentLoaded', function()",
+            1,
+        )[-1]
+        self.assertNotIn("initTasksEventStream();", dom_ready)
+        self.assertNotIn("refreshTasksData(true), 400", dom_ready)
+
     def test_sidebar_shows_centralized_version_and_author(self):
         version_source = (ROOT / "y2a-auto" / "version.py").read_text(encoding="utf-8")
         base_template = (ROOT / "y2a-auto" / "templates" / "base.html").read_text(encoding="utf-8")

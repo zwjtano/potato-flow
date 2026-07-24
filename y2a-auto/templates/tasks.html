@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="tasks-container"
-     data-tasks-stream="{{ url_for('tasks_event_stream') }}"
+     data-auto-refresh="off"
      data-task-fragment-template="{{ url_for('task_fragment', task_id='__TASK_ID__') }}">
     {% set failed_tasks = tasks|selectattr('status', 'equalto', 'failed')|list if tasks else [] %}
     <div class="studio-page-header">
@@ -15,6 +15,9 @@
             </div>
         </div>
         <div class="page-actions">
+            <button type="button" class="btn btn-outline-primary" id="manualRefreshTasksBtn" onclick="refreshTasksData(true)">
+                <i class="bi bi-arrow-clockwise"></i> 手动刷新
+            </button>
             <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal">
                 <i class="bi bi-plus-circle"></i> 新建任务
             </button>
@@ -436,6 +439,9 @@
                 <div class="recording-detail-loading"><span class="spinner-border spinner-border-sm"></span> 正在读取任务进度…</div>
             </div>
             <div class="modal-footer">
+                <button type="button" class="btn btn-outline-primary" id="manualRefreshRecordingDetailBtn" onclick="refreshActiveRecordingDetail()">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新详情
+                </button>
                 <a class="btn btn-warning d-none" data-role="recording-detail-review"><i class="bi bi-pencil-square"></i> 人工审核</a>
                 <a class="btn btn-outline-success d-none" data-role="recording-detail-bilibili" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> 查看 B站稿件</a>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
@@ -837,7 +843,6 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])
     );
     let activeRecordingDetailJobId = '';
-    let recordingDetailTimer = null;
     let recordingDetailRequestInFlight = false;
 
     function formatRecordingDetailDate(value) {
@@ -956,10 +961,13 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         const modalElement = document.getElementById('recordingJobDetailModal');
         if (!modalElement || !jobId) return;
         activeRecordingDetailJobId = jobId;
-        window.clearInterval(recordingDetailTimer);
         bootstrap.Modal.getOrCreateInstance(modalElement).show();
         loadRecordingJobDetail(jobId, true);
-        recordingDetailTimer = window.setInterval(() => loadRecordingJobDetail(jobId), 2000);
+    }
+
+    function refreshActiveRecordingDetail() {
+        if (!activeRecordingDetailJobId) return;
+        loadRecordingJobDetail(activeRecordingDetailJobId);
     }
 
     function showTaskErrorMessage(taskId, taskTitle, errorMessage) {
@@ -1657,8 +1665,6 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         document.addEventListener('pointercancel', () => { pointerIsDown = false; }, { passive: true });
         document.getElementById('recordingJobDetailModal')?.addEventListener('hidden.bs.modal', function() {
             activeRecordingDetailJobId = '';
-            window.clearInterval(recordingDetailTimer);
-            recordingDetailTimer = null;
         });
 
         bindTasksEvents();
@@ -1667,20 +1673,6 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         updateProgressBars();
 
         setInterval(updateTaskDateTimes, 60000);
-
-        initTasksEventStream();
-        setTimeout(() => refreshTasksData(true), 400);
-
-        document.addEventListener('visibilitychange', function() {
-            if (!fallbackMode) {
-                return;
-            }
-            if (document.hidden) {
-                clearScheduledRefresh();
-            } else {
-                refreshTasksData(true);
-            }
-        });
     });
 </script>
 {% endblock %} 
