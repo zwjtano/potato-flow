@@ -30,7 +30,7 @@ from danmaku_pipeline import (
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
-DEFAULT_TITLE_TEMPLATE = "【直播回放】{streamer}｜{ai_topic}｜{date}"
+DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}｜【直播回放】"
 WORKSPACE_ROOT = Path(__file__).resolve().parent
 YYF_COVER_REFERENCE = WORKSPACE_ROOT / "assets" / "streamer-references" / "yyf.png"
 YYF_STREAMER_ALIASES = {"yyf", "yyfyyf", "月夜枫", "枫哥", "姜岑"}

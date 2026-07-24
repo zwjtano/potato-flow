@@ -533,7 +533,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         self.assertEqual(
             config["title_template"],
-            "【直播回放】{streamer}｜{ai_topic}｜{date}",
+            "{streamer}｜{ai_topic}｜{date}｜【直播回放】",
         )
         self.assertEqual(config["profiles"][0]["streamer_name"], "开播主播")
         self.assertEqual(
@@ -568,6 +568,28 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         self.assertEqual(config["bilibili_cookies"], "/custom/cookies.json")
         self.assertEqual(config["danmaku_fonts_dir"], "/custom/fonts")
+
+    def test_bridge_profiles_migrate_previous_default_title_template(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "bridge.config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "title_template": "【直播回放】{streamer}｜{ai_topic}｜{date}",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_path):
+                manager._sync_bridge_profiles(self.rooms)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            config["title_template"],
+            "{streamer}｜{ai_topic}｜{date}｜【直播回放】",
+        )
 
     def test_headless_status_file_drives_room_state(self):
         manager = LiveRecorderManager()

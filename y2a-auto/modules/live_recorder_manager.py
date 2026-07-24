@@ -44,7 +44,12 @@ RECORDING_FILE_SUFFIXES = {
     ".ts": "video", ".m2ts": "video", ".mov": "video",
     ".xml": "xml", ".ass": "ass",
 }
-DEFAULT_RECORDING_TITLE_TEMPLATE = "【直播回放】{streamer}｜{ai_topic}｜{date}"
+DEFAULT_RECORDING_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}｜【直播回放】"
+LEGACY_RECORDING_TITLE_TEMPLATES = {
+    "",
+    "{stem}",
+    "【直播回放】{streamer}｜{ai_topic}｜{date}",
+}
 DEFAULT_RECORDING_SEGMENT_TIME = "01:00:00"
 
 
@@ -718,7 +723,7 @@ class LiveRecorderManager:
             config.get("danmaku_fonts_dir"),
             "y2a-auto/fonts",
         )
-        if str(config.get("title_template") or "").strip() in {"", "{stem}"}:
+        if str(config.get("title_template") or "").strip() in LEGACY_RECORDING_TITLE_TEMPLATES:
             config["title_template"] = DEFAULT_RECORDING_TITLE_TEMPLATE
         if (FFMPEG_DIR / "ffmpeg").is_file():
             config["ffmpeg"] = str(FFMPEG_DIR / "ffmpeg")
