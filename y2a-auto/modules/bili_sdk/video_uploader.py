@@ -1171,6 +1171,8 @@ class VideoUploader(AsyncEvent):
         url = self._get_upload_url(preupload)
 
         real_chunk_size = len(chunk)
+        chunk_event_callback_data["chunk_size"] = real_chunk_size
+        chunk_event_callback_data["page_size"] = page.get_size()
 
         params = {
             "partNumber": str(chunk_number + 1),

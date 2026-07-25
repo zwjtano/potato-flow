@@ -1603,7 +1603,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             return True
 
         current_stage = "upload"
-        store.stage(key, "upload", "running", {
+        upload_stage_details = {
             "title": title,
             "cover": str(cover),
             "tags": tags,
@@ -1615,7 +1615,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 if isinstance(existing_submission, dict)
                 else None
             ),
-        })
+        }
+        store.stage(key, "upload", "running", upload_stage_details)
         BilibiliUploader, _ = import_y2a(cfg)
         cookie = resolve_path(str(cfg.get("bilibili_cookies", "")), cfg)
         if not cookie.is_file() or not partition:
@@ -1633,6 +1634,15 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         uploaded_now = False
         if not isinstance(result, dict) or not result.get("bvid"):
             uploader = BilibiliUploader(cookie_file=str(cookie))
+
+            def _on_upload_progress(progress: dict) -> None:
+                store.stage(
+                    key,
+                    "upload",
+                    "running",
+                    {**upload_stage_details, "upload_progress": progress},
+                )
+
             ok, result = uploader.upload_video(
                 video_file_path=str(upload_video), cover_file_path=str(cover), title=title,
                 description=description, tags=tags, partition_id=partition,
@@ -1640,6 +1650,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 page_titles=[page_title],
                 existing_submission=existing_submission,
                 is_original=True,
+                progress_detail_callback=_on_upload_progress,
             )
             if not ok:
                 raise RuntimeError(f"bilibili 上传失败: {result}")

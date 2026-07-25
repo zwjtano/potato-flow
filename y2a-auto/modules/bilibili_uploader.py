@@ -8,6 +8,7 @@ import os
 import re
 import time
 import traceback
+from collections import deque
 from logging.handlers import RotatingFileHandler
 from typing import Any, Callable, List, Optional, Tuple, Union
 
@@ -194,11 +195,18 @@ def _bilibili_406_hint() -> str:
 
 
 class _BilibiliChunkProgress:
-    def __init__(self):
+    def __init__(self, pages=None):
         self._completed = {}
         self._totals = {}
+        self._total_bytes = sum(
+            max(0, int(page.get_size()))
+            for page in (pages or [])
+            if hasattr(page, "get_size")
+        )
+        self._started_at = time.monotonic()
+        self._samples = deque([(self._started_at, 0)])
 
-    def record(self, payload: Any) -> Optional[float]:
+    def record(self, payload: Any) -> Optional[dict[str, Any]]:
         if not isinstance(payload, dict):
             return None
         page = payload.get("page")
@@ -211,12 +219,47 @@ class _BilibiliChunkProgress:
 
         page_key = id(page)
         self._totals[page_key] = total_chunk_count
-        self._completed.setdefault(page_key, set()).add(chunk_number)
+        completed_chunks = self._completed.setdefault(page_key, {})
+        if chunk_number not in completed_chunks:
+            chunk_size = payload.get("chunk_size")
+            if not isinstance(chunk_size, int) or chunk_size < 0:
+                page_size = int(payload.get("page_size") or page.get_size() or 0)
+                offset = max(0, int(payload.get("offset") or 0))
+                chunk_size = max(0, min(page_size - offset, (page_size + total_chunk_count - 1) // total_chunk_count))
+            completed_chunks[chunk_number] = chunk_size
+
+        if not self._total_bytes:
+            known_pages = {
+                id(item): int(item.get_size())
+                for item in [payload.get("page")]
+                if item is not None and hasattr(item, "get_size")
+            }
+            self._total_bytes = sum(known_pages.values())
+
         completed = sum(len(chunks) for chunks in self._completed.values())
         total = sum(self._totals.values())
         if total <= 0:
             return None
-        return min(95.0, completed / total * 95.0)
+        uploaded_bytes = sum(
+            size for chunks in self._completed.values() for size in chunks.values()
+        )
+        now = time.monotonic()
+        if self._samples[-1][1] != uploaded_bytes:
+            self._samples.append((now, uploaded_bytes))
+        while len(self._samples) > 2 and now - self._samples[0][0] > 8:
+            self._samples.popleft()
+        sample_time, sample_bytes = self._samples[0]
+        elapsed = max(now - sample_time, 0.001)
+        speed = max(0.0, (uploaded_bytes - sample_bytes) / elapsed)
+        remaining = max(0, self._total_bytes - uploaded_bytes)
+        eta = (remaining / speed) if speed > 0 else None
+        return {
+            "percent": min(95.0, completed / total * 95.0),
+            "uploaded_bytes": uploaded_bytes,
+            "total_bytes": self._total_bytes,
+            "speed_bytes_per_second": speed,
+            "eta_seconds": eta,
+        }
 
 
 class BilibiliUploader:
@@ -514,6 +557,7 @@ class BilibiliUploader:
         youtube_url: str = "",
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
+        progress_detail_callback: Optional[Callable[[dict[str, Any]], None]] = None,
         title_limit: int = BILIBILI_TITLE_LIMIT,
         description_limit: int = BILIBILI_DESCRIPTION_LIMIT,
         page_titles: Optional[List[str]] = None,
@@ -598,7 +642,7 @@ class BilibiliUploader:
             )
 
             last_emitted_text = ""
-            chunk_progress = _BilibiliChunkProgress()
+            chunk_progress = _BilibiliChunkProgress(uploader.pages)
             page_positions = {
                 id(item): index for index, item in enumerate(uploader.pages, 1)
             }
@@ -619,6 +663,14 @@ class BilibiliUploader:
                 except Exception:
                     pass
 
+            def _emit_progress_detail(detail: dict[str, Any]):
+                if not progress_detail_callback:
+                    return
+                try:
+                    progress_detail_callback(dict(detail))
+                except Exception:
+                    pass
+
             def _page_label(data: Any) -> str:
                 page_obj = data.get("page") if isinstance(data, dict) else None
                 page_number = page_positions.get(id(page_obj), 1)
@@ -631,11 +683,12 @@ class BilibiliUploader:
             @uploader.on(video_uploader.VideoUploaderEvents.AFTER_CHUNK.value)
             def on_after_chunk(data):
                 try:
-                    percent = chunk_progress.record(data)
-                    if percent is None:
+                    detail = chunk_progress.record(data)
+                    if detail is None:
                         _emit_progress("上传中...")
                         return
-                    _emit_progress(f"{percent:.1f}%")
+                    _emit_progress(f"{detail['percent']:.1f}%")
+                    _emit_progress_detail(detail)
                 except Exception:
                     pass
 

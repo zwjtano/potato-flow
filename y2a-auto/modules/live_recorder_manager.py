@@ -1424,6 +1424,24 @@ class LiveRecorderManager:
             )
             failed_stage = next((stage.get("key") for stage in stages if stage.get("status") == "failed"), None)
             active_stage = next((stage.get("key") for stage in stages if stage.get("status") == "running"), None)
+            upload_progress = (
+                upload_details.get("upload_progress")
+                if upload_stage.get("status") == "running"
+                else None
+            )
+            upload_progress = upload_progress if isinstance(upload_progress, dict) else None
+            upload_progress_text = ""
+            if upload_progress:
+                uploaded = float(upload_progress.get("uploaded_bytes") or 0)
+                total_bytes = float(upload_progress.get("total_bytes") or 0)
+                speed = float(upload_progress.get("speed_bytes_per_second") or 0)
+                eta = upload_progress.get("eta_seconds")
+                if total_bytes > 0 and speed > 0 and eta is not None:
+                    upload_progress_text = (
+                        f"已经上传：{uploaded / 1024 / 1024:.1f}MB/{total_bytes / 1024 / 1024:.1f}MB　"
+                        f"当前速度：{speed / 1024 / 1024:.1f}MB/s　"
+                        f"剩余时间：{float(eta):.1f}秒"
+                    )
             jobs.append({
                 "id": row["fingerprint"], "short_id": row["fingerprint"][:12],
                 "video_path": video_path, "video_name": Path(video_path).name,
@@ -1446,6 +1464,8 @@ class LiveRecorderManager:
                 "total_stages": 6,
                 "failed_stage": failed_stage,
                 "active_stage": active_stage,
+                "upload_progress": upload_progress,
+                "upload_progress_text": upload_progress_text,
                 "retryable": row["status"] in {"failed", "dry_run"},
                 "stages": stages,
             })

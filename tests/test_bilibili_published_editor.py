@@ -68,6 +68,34 @@ class _FakeApi:
     bilibili_uploader is None,
     "本机未安装完整 Bilibili SDK 运行依赖",
 )
+class BilibiliUploadProgressTests(unittest.TestCase):
+    def test_chunk_progress_reports_bytes_speed_and_eta(self):
+        class Page:
+            def get_size(self):
+                return 10 * 1024 * 1024
+
+        page = Page()
+        with patch.object(bilibili_uploader.time, "monotonic", side_effect=[10.0, 12.0]):
+            progress = bilibili_uploader._BilibiliChunkProgress([page])
+            detail = progress.record({
+                "page": page,
+                "chunk_number": 0,
+                "total_chunk_count": 2,
+                "offset": 0,
+                "chunk_size": 4 * 1024 * 1024,
+                "page_size": 10 * 1024 * 1024,
+            })
+
+        self.assertEqual(detail["uploaded_bytes"], 4 * 1024 * 1024)
+        self.assertEqual(detail["total_bytes"], 10 * 1024 * 1024)
+        self.assertAlmostEqual(detail["speed_bytes_per_second"], 2 * 1024 * 1024)
+        self.assertAlmostEqual(detail["eta_seconds"], 3.0)
+
+
+@unittest.skipIf(
+    bilibili_uploader is None,
+    "本机未安装完整 Bilibili SDK 运行依赖",
+)
 class PublishedMetadataEditorTests(unittest.TestCase):
     def test_update_preserves_every_existing_page(self):
         _FakeApi.calls = []
