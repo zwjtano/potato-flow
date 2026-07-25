@@ -289,7 +289,7 @@ fn ytdlp_backend(
 pub fn danmaku_client(
     source: Option<&DanmakuSource>,
     filename_prefix: Option<&str>,
-    name: &str,
+    streamer_info: &StreamerInfo,
 ) -> Option<Arc<dyn crate::server::core::downloader::DanmakuClient + Send + Sync>> {
     let source = source?;
     let mut context = PlatformContext::new();
@@ -303,10 +303,11 @@ pub fn danmaku_client(
     context.movie_id = source.movie_id.clone();
     context.password = source.password.clone();
 
-    let config = RecorderConfig::new(
-        source.url.clone(),
-        PathBuf::from(danmaku_filename_template(filename_prefix, name)),
-    )
+    let output_path = PathBuf::from(danmaku_filename_template(filename_prefix, streamer_info));
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let config = RecorderConfig::new(source.url.clone(), output_path)
     .with_context(context)
     .with_raw(source.raw)
     .with_detail(source.detail);

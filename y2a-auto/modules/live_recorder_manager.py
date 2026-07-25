@@ -80,6 +80,11 @@ def _slug(value: str) -> str:
     return cleaned.strip("_") or "直播间"
 
 
+def _room_file_marker(room: dict[str, Any]) -> str:
+    """Stable, reader-facing marker used by folders and generated filenames."""
+    return _slug(str(room.get("name") or "直播间"))
+
+
 def _recording_file_type(path: Path) -> str | None:
     """Classify finalized recordings and FFmpeg's actively-written *.part files."""
     suffix = path.suffix.lower()
@@ -404,7 +409,7 @@ class LiveRecorderManager:
     def _attach_current_recording_files(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Attach the most recently written video to each actively recording room."""
         active_markers = {
-            f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}": room
+            _room_file_marker(room): room
             for room in rooms
             if room.get("runtime", {}).get("recording")
         }
@@ -874,6 +879,11 @@ class LiveRecorderManager:
             lines.append("streamers:")
         for room in rooms:
             key = f"{_slug(str(room['name']))}_{str(room['id'])[:6]}"
+            file_marker = _room_file_marker(room)
+            filename_prefix = (
+                f"{file_marker}_{{title}}_{{live_start}}/"
+                f"{file_marker}_{{title}}_%Y-%m-%d_%H-%M"
+            )
             session_key = str(room["id"])
             segment_time = self._room_segment_time(room)
             record_only = bool(room.get("record_only", False))
@@ -895,6 +905,7 @@ class LiveRecorderManager:
                 "    url:",
                 f"      - {_yaml_string(str(room['url']))}",
                 "    uploader: Noop",
+                f"    filename_prefix: {_yaml_string(filename_prefix)}",
                 "    override:",
                 f"      segment_time: {_yaml_string(segment_time) if segment_time else 'null'}",
                 "      file_size: null",
@@ -951,7 +962,7 @@ class LiveRecorderManager:
         profiles = []
         for room in rooms:
             profile = {
-                "match": f"*{_slug(str(room['name']))}_{str(room['id'])[:6]}*",
+                "match": f"*{_room_file_marker(room)}*",
                 "source_url": room["url"],
                 "streamer_name": str(room["name"]),
                 "streamer_avatar_url": str(room.get("avatar_url") or ""),
@@ -1156,7 +1167,7 @@ class LiveRecorderManager:
         room_markers = [
             (
                 str(room.get("id") or ""),
-                f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}",
+                _room_file_marker(room),
             )
             for room in self.list_rooms()
             if not room.get("record_only", False)
@@ -1292,7 +1303,7 @@ class LiveRecorderManager:
                     if isinstance(value, str) and value:
                         processing_files.add(Path(value).resolve())
         active_markers = [
-            f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}"
+            _room_file_marker(room)
             for room in self.rooms_with_status()
             if room.get("runtime", {}).get("recording")
         ]
@@ -1308,7 +1319,7 @@ class LiveRecorderManager:
     ) -> dict[str, Any]:
         stat = path.stat()
         room_markers = [
-            (str(room.get("id") or ""), f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}")
+            (str(room.get("id") or ""), _room_file_marker(room))
             for room in self.list_rooms()
         ]
         room_id = next((room_id for room_id, marker in room_markers if marker and marker in path.name), None)
@@ -1458,14 +1469,14 @@ class LiveRecorderManager:
         if room_id:
             room = next((item for item in self.list_rooms() if item.get("id") == room_id), None)
             if room:
-                room_marker = f"{_slug(str(room.get('name') or ''))}_{room_id[:6]}"
+                room_marker = _room_file_marker(room)
         jobs = []
         room_markers = [
             {
                 "id": str(item.get("id") or ""),
                 "name": str(item.get("name") or "直播间"),
                 "avatar_url": str(item.get("avatar_url") or ""),
-                "marker": f"{_slug(str(item.get('name') or ''))}_{str(item.get('id') or '')[:6]}",
+                "marker": _room_file_marker(item),
             }
             for item in self.list_rooms()
         ]

@@ -50,7 +50,11 @@ impl DownloadConfig {
     /// # 返回
     /// 返回完整的输出文件路径
     fn generate_output_filename(&self, suffix: &str) -> PathBuf {
-        self.output_dir.join(self.recorder.generate_path(suffix))
+        let output = self.output_dir.join(self.recorder.generate_path(suffix));
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        output
     }
 }
 

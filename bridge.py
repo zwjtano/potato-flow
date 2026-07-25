@@ -1759,6 +1759,31 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         return False
 
 
+def generate_record_only_ass(
+    video: Path,
+    base_cfg: dict[str, Any],
+    received_paths: list[Path] | None = None,
+) -> Path | None:
+    """Generate a side-by-side ASS file without creating an upload task."""
+    cfg = effective_config(base_cfg, video)
+    danmaku_xml = find_danmaku_xml(video, received_paths)
+    if danmaku_xml is None:
+        print(f"WARN 仅录制文件未找到同名 XML，无法生成 ASS: {video}", file=sys.stderr)
+        return None
+    comments = parse_biliup_xml(danmaku_xml)
+    width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
+    return build_ass(
+        comments,
+        video.with_suffix(".ass"),
+        width=width,
+        height=height,
+        font_name=str(cfg.get("danmaku_font_name", "Noto Sans CJK SC")),
+        font_size=int(cfg.get("danmaku_font_size", 42)),
+        duration=float(cfg.get("danmaku_duration_seconds", 9)),
+        opacity=float(cfg.get("danmaku_opacity", 0.92)),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="将 biliup 录制产物交给 Y2A-Auto 上传")
     parser.add_argument("--config", default="bridge.config.json", help="JSON 配置文件")
@@ -1817,7 +1842,14 @@ def main(argv: list[str] | None = None) -> int:
                 ok = False
                 continue
             store.exclude_recording(path, str(args.room_id))
-            print(f"OK 仅录制文件已保留并跳过自动投稿: {path}")
+            try:
+                ass_path = generate_record_only_ass(path, cfg, received_paths)
+            except Exception as exc:
+                print(f"ERROR 仅录制 ASS 生成失败: {path}: {exc}", file=sys.stderr)
+                ok = False
+                continue
+            ass_detail = f"，ASS: {ass_path}" if ass_path else "，未找到 XML"
+            print(f"OK 仅录制文件已保留并跳过自动投稿: {path}{ass_detail}")
         return 0 if ok else 1
 
     retry = args.command == "retry" or bool(getattr(args, "retry", False))

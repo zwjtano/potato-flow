@@ -230,6 +230,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIn("file_size: null", content)
             self.assertIn('segment_time: "01:00:00"', content)
             self.assertIn('filename_prefix: "{streamer}_{title}_%Y-%m-%d_%H-%M"', content)
+            self.assertIn(
+                'filename_prefix: "开播主播_{title}_{live_start}/'
+                '开播主播_{title}_%Y-%m-%d_%H-%M"',
+                content,
+            )
+            self.assertNotIn("aaaaaa", content.split("filename_prefix:", 2)[-1].splitlines()[0])
             self.assertNotIn("file_size: 2621440000", content)
             self.assertIn("filtering_threshold: 0", content)
             self.assertIn("segment_processor:", content)

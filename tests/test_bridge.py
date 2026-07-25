@@ -123,18 +123,24 @@ class BridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "record-only.flv"
+            xml = root / "record-only.xml"
             state = root / "state.sqlite3"
             config = root / "bridge.config.json"
             video.write_bytes(b"video")
+            xml.write_text(
+                '<i><d p="1.2,1,25,16777215,0,0,0,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
             config.write_text(
                 json.dumps({"state_db": str(state)}),
                 encoding="utf-8",
             )
 
-            result = bridge.main([
-                "--config", str(config),
-                "record-only", "--room-id", "room-1", str(video),
-            ])
+            with patch.object(bridge, "probe_video_size", return_value=(1280, 720)):
+                result = bridge.main([
+                    "--config", str(config),
+                    "record-only", "--room-id", "room-1", str(video), str(xml),
+                ])
 
             self.assertEqual(result, 0)
             with sqlite3.connect(state) as db:
@@ -144,6 +150,9 @@ class BridgeTests(unittest.TestCase):
                 upload_count = db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0]
             self.assertEqual(row, (str(video.resolve()), "room-1", "record_only"))
             self.assertEqual(upload_count, 0)
+            ass = video.with_suffix(".ass")
+            self.assertTrue(ass.is_file())
+            self.assertIn("测试弹幕", ass.read_text(encoding="utf-8-sig"))
 
     def test_finalize_session_ingests_final_video_before_closing(self):
         with tempfile.TemporaryDirectory() as temp:

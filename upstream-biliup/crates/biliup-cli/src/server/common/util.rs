@@ -37,10 +37,17 @@ impl Recorder {
     }
 
     fn template_with(&self, template: &str) -> String {
+        let live_start = self
+            .streamer_info
+            .date
+            .with_timezone(&Local)
+            .format("%Y-%m-%d_%H-%M")
+            .to_string();
         template
             .replace("{streamer}", &self.streamer_info.name)
             .replace("{title}", &self.streamer_info.title)
             .replace("{url}", &self.streamer_info.url)
+            .replace("{live_start}", &live_start)
     }
 
     /// 生成“基名”（不带扩展名），时间冲突时按秒+1继续尝试，直到唯一
@@ -85,28 +92,41 @@ impl Recorder {
     }
 }
 
-/// 非法字符清洗（最小可用实现）
-/// - 替换常见非法字符为 '_'；去掉末尾空格与点（Windows 兼容）
+/// 路径模板清洗。
+/// - 允许 `/` 创建场次目录，但移除空目录、`.` 和 `..`
+/// - 替换各目录名中的非法字符为 '_'；去掉末尾空格与点
 /// - 保留 '%'，以便 strftime 能正常工作
 fn sanitize_filename(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for ch in name.chars() {
-        match ch {
-            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => out.push('_'),
-            c if c.is_control() => out.push('_'),
-            _ => out.push(ch),
-        }
+    let normalized = name.replace('\\', "/");
+    let parts: Vec<String> = normalized
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .map(|part| {
+            let mut out = String::with_capacity(part.len());
+            for ch in part.chars() {
+                match ch {
+                    ':' | '*' | '?' | '"' | '<' | '>' | '|' => out.push('_'),
+                    c if c.is_control() => out.push('_'),
+                    _ => out.push(ch),
+                }
+            }
+            let out = out.trim_end_matches([' ', '.']).to_string();
+            if out.is_empty() { "_".to_string() } else { out }
+        })
+        .collect();
+    if parts.is_empty() {
+        "_".to_string()
+    } else {
+        parts.join("/")
     }
-    let out = out.trim_end_matches([' ', '.']).to_string();
-    if out.is_empty() { "_".to_string() } else { out }
 }
 
 /// 生成弹幕文件名模板（包含时间格式占位符），并清洗非法字符
-pub fn danmaku_filename_template(filename_prefix: Option<&str>, name: &str) -> String {
-    let template = filename_prefix
-        .map(|prefix| prefix.replace("{streamer}", name))
-        .unwrap_or_else(|| format!("{}%Y-%m-%dT%H_%M_%S", name));
-    sanitize_filename(&template)
+pub fn danmaku_filename_template(
+    filename_prefix: Option<&str>,
+    streamer_info: &StreamerInfo,
+) -> String {
+    Recorder::new(filename_prefix.map(str::to_string), streamer_info.clone()).filename_template()
 }
 
 /// 从 URL 中提取媒体扩展名（小写），例如 "flv", "mp4" 等。
@@ -173,7 +193,10 @@ pub fn parse_time(segment_time: &str) -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
+    use super::Recorder;
     use crate::server::common::util::media_ext_from_url;
+    use crate::server::infrastructure::models::StreamerInfo;
+    use chrono::{Local, TimeZone, Utc};
 
     #[test]
     fn it_works() {
@@ -182,6 +205,37 @@ mod tests {
                 "https://hwa.douyucdn2.cn/live/6512r9pAbb5Ercd1.flv?wsAuth=c77de01c8fcbc7b04b3d6daf66e523f5&token=web-h5-0-6512-f52253ea808109b3e2b66f385345c5e4ebdd692a847af73b&logo=0&expire=0&did=b6b79db91ca484562dcd6a1d5cdd9639&ver=219032101&pt=2&st=0&sid=420338944&mcid2=0&origin=dy&fcdn=hw&fo=0&mix=0&isp="
             ),
             Some("flv".to_string())
+        );
+    }
+
+    #[test]
+    fn recording_template_supports_one_folder_per_live_session() {
+        let info = StreamerInfo::new(
+            "YYF",
+            "https://www.douyu.com/9999",
+            "陪伴每一天: DOTA2",
+            Utc.with_ymd_and_hms(2026, 7, 26, 12, 30, 0).unwrap(),
+            "",
+        );
+        let live_start = info
+            .date
+            .with_timezone(&Local)
+            .format("%Y-%m-%d_%H-%M")
+            .to_string();
+        let recorder = Recorder::new(
+            Some(
+                "{streamer}_{title}_{live_start}/{streamer}_{title}_%Y-%m-%d_%H-%M"
+                    .to_string(),
+            ),
+            info,
+        );
+        let template = recorder.filename_template();
+
+        assert_eq!(
+            template,
+            format!(
+                "YYF_陪伴每一天_ DOTA2_{live_start}/YYF_陪伴每一天_ DOTA2_%Y-%m-%d_%H-%M"
+            )
         );
     }
 }

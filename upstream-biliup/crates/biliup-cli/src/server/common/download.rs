@@ -150,7 +150,7 @@ impl DownloadTask {
         let danmaku_client = danmaku_client(
             stream.danmaku.as_ref(),
             filename_prefix.as_deref(),
-            &stream.name,
+            ctx.streamer_info(),
         );
         // 启动弹幕客户端
         if let Some(ref client) = danmaku_client {
