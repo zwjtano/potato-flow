@@ -19,11 +19,11 @@ run_root() {
 if command -v apt-get >/dev/null 2>&1; then
   run_root apt-get update
   run_root apt-get install -y \
-    ca-certificates curl ffmpeg build-essential pkg-config libssl-dev \
+    ca-certificates chromium curl ffmpeg build-essential pkg-config libssl-dev \
     python3 python3-venv python3-pip
 elif command -v dnf >/dev/null 2>&1; then
   run_root dnf install -y \
-    ca-certificates curl ffmpeg gcc gcc-c++ make pkgconf-pkg-config openssl-devel \
+    ca-certificates chromium curl ffmpeg gcc gcc-c++ make pkgconf-pkg-config openssl-devel \
     python3 python3-pip
 else
   echo "未识别包管理器，请手动安装 Python 3、FFmpeg、编译工具、OpenSSL 和 CA 证书。" >&2

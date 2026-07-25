@@ -1133,7 +1133,7 @@ def enhance_recording_metadata(
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     from modules.ai_enhancer import (  # type: ignore
-        generate_acfun_tags,
+        generate_video_tags,
         recommend_bilibili_partition,
     )
     from modules.bilibili_zones import get_zone_list_sub  # type: ignore
@@ -1149,7 +1149,6 @@ def enhance_recording_metadata(
         "OPENAI_MODEL_NAME": ai_cfg.get("OPENAI_MODEL_NAME", "gpt-3.5-turbo"),
         "OPENAI_THINKING_ENABLED": ai_cfg.get("OPENAI_THINKING_ENABLED", False),
         "OPENAI_TIMEOUT_SECONDS": ai_cfg.get("OPENAI_TIMEOUT_SECONDS", 600),
-        "FIXED_PARTITION_ID": ai_cfg.get("FIXED_PARTITION_ID", ""),
         "FIXED_PARTITION_ID_BILIBILI": ai_cfg.get("FIXED_PARTITION_ID_BILIBILI", ""),
         "RECOMMEND_PARTITION_WITH_COVER": include_cover,
     }
@@ -1160,7 +1159,7 @@ def enhance_recording_metadata(
         generated_tags = [
             str(tag).strip()
             for tag in (
-                generate_acfun_tags(
+                generate_video_tags(
                     title,
                     description,
                     openai_config=openai_config,

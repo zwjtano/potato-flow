@@ -176,6 +176,29 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["name"], "yyfyyf")
         self.assertEqual(room["avatar_url"], "https://apic.douyucdn.cn/avatar.jpg")
 
+    def test_resolves_douyin_streamer_name_avatar_and_room_id(self):
+        manager = LiveRecorderManager()
+        page = b"""
+        <script id="RENDER_DATA" type="application/json">
+        %7B%22web_rid%22%3A%22778899%22%2C%22id_str%22%3A%221234567%22%2C
+        %22nickname%22%3A%22DouyinHost%22%2C%22title%22%3A%22TonightLive%22%2C
+        %22avatar_thumb%22%3A%7B%22url_list%22%3A%5B%22https%3A%2F%2Fexample.com%2Favatar.jpg%22%5D%7D%7D
+        </script>
+        """
+        with mock.patch.object(
+            recorder_module,
+            "_open_url",
+            return_value=(page, "https://live.douyin.com/778899"),
+        ), mock.patch.object(recorder_module, "_douyin_cookie_header", return_value=""):
+            room = manager.resolve_room("https://live.douyin.com/778899")
+
+        self.assertEqual(room["platform"], "douyin")
+        self.assertEqual(room["platform_name"], "抖音")
+        self.assertEqual(room["room_id"], "1234567")
+        self.assertEqual(room["name"], "DouyinHost")
+        self.assertEqual(room["avatar_url"], "https://example.com/avatar.jpg")
+        self.assertEqual(room["url"], "https://live.douyin.com/778899")
+
     def test_resolves_numeric_douyu_vanity_room_id(self):
         manager = LiveRecorderManager()
         response = {
@@ -242,6 +265,24 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIn("ingest --session-key", content)
             self.assertIn("aaaaaa111111", content)
             self.assertIn("finalize-session --session-key", content)
+
+    def test_config_enables_douyin_danmaku_and_persisted_cookie(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "biliup.yaml"
+            with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
+                    mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
+                    mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
+                    mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
+                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "_douyin_cookie_header", return_value="sessionid=secret"), \
+                    mock.patch.object(manager, "_sync_bridge_profiles"):
+                manager.sync_configs([self.rooms[0]])
+
+            content = config_path.read_text(encoding="utf-8")
+            self.assertIn("douyin_danmaku: true", content)
+            self.assertIn('douyin_cookie: "sessionid=secret"', content)
 
     def test_config_uploads_segments_as_independent_videos_by_default(self):
         manager = LiveRecorderManager()

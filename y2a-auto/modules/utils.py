@@ -3,7 +3,6 @@
 
 import os
 import sys
-from PIL import Image
 
 def get_app_root_dir():
     """
@@ -40,66 +39,6 @@ import copy
 import json
 from typing import Optional
 from urllib.parse import urlparse
-
-def process_cover(image_path, output_path=None, mode='crop'):
-    """
-    处理视频封面图片，使其适合AcFun上传要求（16:10比例）
-    
-    Args:
-        image_path (str): 输入图片路径
-        output_path (str, optional): 输出图片路径，如果不提供则覆盖原图片
-        mode (str): 处理模式，'crop'表示裁剪，'pad'表示添加黑边
-        
-    Returns:
-        str: 处理后的图片路径
-    """
-    if not output_path:
-        output_path = image_path
-        
-    try:
-        # 打开图片
-        img = Image.open(image_path)
-        width, height = img.size
-        
-        # 目标比例 16:10
-        target_ratio = 16 / 10
-        current_ratio = width / height
-        
-        if mode == 'crop':
-            # 裁剪模式
-            if current_ratio > target_ratio:
-                # 图片太宽，需要裁剪宽度
-                new_width = int(height * target_ratio)
-                left = (width - new_width) // 2
-                img = img.crop((left, 0, left + new_width, height))
-            elif current_ratio < target_ratio:
-                # 图片太高，需要裁剪高度
-                new_height = int(width / target_ratio)
-                top = (height - new_height) // 2
-                img = img.crop((0, top, width, top + new_height))
-        elif mode == 'pad':
-            # 填充模式
-            if current_ratio > target_ratio:
-                # 图片太宽，需要增加高度
-                new_height = int(width / target_ratio)
-                new_img = Image.new('RGB', (width, new_height), (0, 0, 0))
-                paste_y = (new_height - height) // 2
-                new_img.paste(img, (0, paste_y))
-                img = new_img
-            elif current_ratio < target_ratio:
-                # 图片太高，需要增加宽度
-                new_width = int(height * target_ratio)
-                new_img = Image.new('RGB', (new_width, height), (0, 0, 0))
-                paste_x = (new_width - width) // 2
-                new_img.paste(img, (paste_x, 0))
-                img = new_img
-        
-        # 保存处理后的图片
-        img.save(output_path, quality=95)
-        return output_path
-    except Exception as e:
-        print(f"处理封面图片时出错: {str(e)}")
-        return image_path 
 
 # -----------------------------
 # LLM 输出清洗与兼容辅助函数

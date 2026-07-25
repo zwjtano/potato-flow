@@ -57,7 +57,6 @@
     {% set qc_tooltip = '原因: ' ~ qc_reason ~ ' | 阈值: ' ~ ('%.3f'|format(qc_threshold)) %}
 {% endif %}
 {% set show_progress = (task.status in ['uploading', 'downloading', 'translating_subtitle', 'encoding_video', 'asr_transcribing']) and task.upload_progress %}
-{% set target = (task.upload_target or 'acfun')|lower %}
 {% set icon = 'circle' %}
 {% if task.status == 'downloading' %}{% set icon = 'download' %}
 {% elif task.status == 'uploading' %}{% set icon = 'cloud-upload' %}
@@ -139,37 +138,16 @@
             <div><i class="bi bi-clock me-1"></i><span class="task-datetime" data-task-datetime data-datetime="{{ task.updated_at or task.created_at }}">{{ task.updated_at or task.created_at }}</span></div>
             <div class="vr mx-1"></div>
             <div>
-                {% if target == 'bilibili' %}
-                    <span class="badge-platform badge-platform-bilibili"><i class="bi bi-play-btn-fill"></i>bilibili</span>
-                {% elif target == 'both' %}
-                    <span class="badge-platform badge-platform-both"><i class="bi bi-collection-play-fill"></i>双平台</span>
-                {% else %}
-                    <span class="badge-platform badge-platform-acfun"><i class="bi bi-camera-video-fill"></i>AcFun</span>
-                {% endif %}
+                <span class="badge-platform badge-platform-bilibili"><i class="bi bi-play-btn-fill"></i>bilibili</span>
             </div>
             <div class="vr mx-1"></div>
             <div>
                 <i class="bi bi-diagram-3 me-1"></i>
-                {% if target == 'both' %}
-                    {% set ac_pid = task.selected_partition_id_acfun or task.recommended_partition_id_acfun %}
-                    {% set bili_pid = task.selected_partition_id_bilibili or task.recommended_partition_id_bilibili %}
-                    {% if ac_pid %}AcFun: {{ get_partition_name(ac_pid, 'acfun') or ac_pid }}{% if (not task.selected_partition_id_acfun) and task.recommended_partition_id_acfun %}<span class="text-secondary ms-1">(荐)</span>{% endif %}{% endif %}
-                    {% if ac_pid and bili_pid %} / {% endif %}
-                    {% if bili_pid %}bili: {{ get_partition_name(bili_pid, 'bilibili') or bili_pid }}{% if (not task.selected_partition_id_bilibili) and task.recommended_partition_id_bilibili %}<span class="text-secondary ms-1">(荐)</span>{% endif %}{% endif %}
-                {% elif target == 'bilibili' %}
-                    {% set bili_pid = task.selected_partition_id_bilibili or task.recommended_partition_id_bilibili or task.selected_partition_id or task.recommended_partition_id %}
-                    {% if bili_pid %}
-                        {{ get_partition_name(bili_pid, 'bilibili') or bili_pid }}
-                    {% else %}
-                        未设置
-                    {% endif %}
+                {% set bili_pid = task.selected_partition_id_bilibili or task.recommended_partition_id_bilibili or task.selected_partition_id or task.recommended_partition_id %}
+                {% if bili_pid %}
+                    {{ get_partition_name(bili_pid, 'bilibili') or bili_pid }}
                 {% else %}
-                    {% set ac_pid = task.selected_partition_id_acfun or task.recommended_partition_id_acfun or task.selected_partition_id or task.recommended_partition_id %}
-                    {% if ac_pid %}
-                        {{ get_partition_name(ac_pid, 'acfun') or ac_pid }}
-                    {% else %}
-                        未设置
-                    {% endif %}
+                    未设置
                 {% endif %}
             </div>
         </div>
@@ -191,52 +169,7 @@
         </div>
 
         <div class="mt-2">
-            {% if target == 'both' and (task.acfun_upload_response or task.bilibili_upload_response) %}
-                {% set ac_result = parse_json(task.acfun_upload_response) if task.acfun_upload_response else {} %}
-                {% set bili_result = parse_json(task.bilibili_upload_response) if task.bilibili_upload_response else {} %}
-                {% if bili_result and bili_result.bvid %}
-                    <a href="{{ bili_result.url or ('https://www.bilibili.com/video/' ~ bili_result.bvid) }}" target="_blank" rel="noopener" class="badge bg-success text-decoration-none">{{ bili_result.bvid }}</a>
-                {% elif task.status == 'failed' and task.error_message %}
-                    {% if ac_result and ac_result.ac_number %}
-                    <button type="button"
-                            class="badge bg-warning text-dark error-message-badge error-message-trigger border-0"
-                            title="点击查看B站上传错误详情"
-                            data-error-message="[B站] {{ task.error_message }}"
-                            data-task-title="{{ display_title }}"
-                            data-task-id="{{ task.id }}">B站上传错误</button>
-                    {% else %}
-                    <button type="button"
-                            class="badge bg-danger error-message-badge error-message-trigger border-0"
-                            title="点击查看B站上传失败详情"
-                            data-error-message="[B站] {{ task.error_message }}"
-                            data-task-title="{{ display_title }}"
-                            data-task-id="{{ task.id }}">B站上传失败</button>
-                    {% endif %}
-                {% else %}
-                    <span class="badge bg-secondary">BV待上传</span>
-                {% endif %}
-                {% if ac_result and ac_result.ac_number %}
-                    <a href="https://www.acfun.cn/v/ac{{ ac_result.ac_number }}" target="_blank" rel="noopener" class="badge bg-success text-decoration-none">AC{{ ac_result.ac_number }}</a>
-                {% elif task.status == 'failed' and task.error_message %}
-                    {% if bili_result and bili_result.bvid %}
-                    <button type="button"
-                            class="badge bg-warning text-dark error-message-badge error-message-trigger border-0"
-                            title="点击查看AcFun上传错误详情"
-                            data-error-message="[AcFun] {{ task.error_message }}"
-                            data-task-title="{{ display_title }}"
-                            data-task-id="{{ task.id }}">AC上传错误</button>
-                    {% else %}
-                    <button type="button"
-                            class="badge bg-danger error-message-badge error-message-trigger border-0"
-                            title="点击查看AcFun上传失败详情"
-                            data-error-message="[AcFun] {{ task.error_message }}"
-                            data-task-title="{{ display_title }}"
-                            data-task-id="{{ task.id }}">AC上传失败</button>
-                    {% endif %}
-                {% else %}
-                    <span class="badge bg-secondary">AC待上传</span>
-                {% endif %}
-            {% elif task.status == 'completed' and target == 'bilibili' and task.bilibili_upload_response %}
+            {% if task.status == 'completed' and task.bilibili_upload_response %}
                 {% set upload_result = parse_json(task.bilibili_upload_response) %}
                 {% if upload_result and upload_result.bvid %}
                     <a href="{{ upload_result.url or ('https://www.bilibili.com/video/' ~ upload_result.bvid) }}" target="_blank" rel="noopener" class="badge bg-success text-decoration-none">{{ upload_result.bvid }}</a>
@@ -245,16 +178,6 @@
                     </button>
                 {% else %}
                     <span class="badge bg-secondary">未获取BV号</span>
-                {% endif %}
-            {% elif task.status == 'completed' and target != 'bilibili' and task.acfun_upload_response %}
-                {% set upload_result = parse_json(task.acfun_upload_response) %}
-                {% if upload_result and upload_result.ac_number %}
-                    <a href="https://www.acfun.cn/v/ac{{ upload_result.ac_number }}" target="_blank" rel="noopener" class="badge bg-success text-decoration-none">AC{{ upload_result.ac_number }}</a>
-                    <button type="button" class="btn btn-sm btn-outline-success ms-1 copy-ac-btn" title="复制AC号" data-ac-number="{{ upload_result.ac_number }}">
-                        <i class="bi bi-clipboard"></i>
-                    </button>
-                {% else %}
-                    <span class="badge bg-secondary">未获取AC号</span>
                 {% endif %}
             {% elif task.status == 'ready_for_upload' and task.error_message %}
                 {% set error_msg = task.error_message %}
@@ -304,7 +227,7 @@
                 </form>
             {% elif task.status == 'ready_for_upload' %}
                 <form method="post" action="{{ url_for('force_upload_task_route', task_id=task.id) }}" class="m-0 p-0 d-inline">
-                    <button type="submit" class="btn btn-sm btn-success w-100"><i class="bi bi-cloud-upload me-1"></i> 上传到{{ '双平台' if target == 'both' else ('bilibili' if target == 'bilibili' else 'AcFun') }}</button>
+                    <button type="submit" class="btn btn-sm btn-success w-100"><i class="bi bi-cloud-upload me-1"></i> 上传到bilibili</button>
                 </form>
             {% endif %}
             <a href="{{ url_for('edit_task', task_id=task.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i> 编辑</a>

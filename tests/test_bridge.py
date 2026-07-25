@@ -492,7 +492,7 @@ class BridgeTests(unittest.TestCase):
                 "alternatives": ["171"],
             }
             ai_module = types.ModuleType("modules.ai_enhancer")
-            ai_module.generate_acfun_tags = Mock(
+            ai_module.generate_video_tags = Mock(
                 return_value=["游戏", "直播回放", "", "游戏"]
             )
             recommend = Mock(return_value=selection)

@@ -10,15 +10,17 @@
 {%- endmacro %}
 {% macro room_avatar(room, large=false) -%}
 <span class="room-avatar {{ 'large' if large }}" aria-hidden="true">
-    {% if room.avatar_url %}<img src="{{ room.avatar_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% else %}<span class="platform-mark {{ 'large' if large }} {{ room.platform }}"><i class="bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }}"></i></span>{% endif %}
-    <i class="room-avatar-platform bi {{ 'bi-tv' if room.platform == 'bilibili' else 'bi-controller' }} {{ room.platform }}"></i>
+    {% set platform_icon = 'bi-tv' if room.platform == 'bilibili' else ('bi-music-note-beamed' if room.platform == 'douyin' else 'bi-controller') %}
+    {% if room.avatar_url %}<img src="{{ room.avatar_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% else %}<span class="platform-mark {{ 'large' if large }} {{ room.platform }}"><i class="bi {{ platform_icon }}"></i></span>{% endif %}
+    <i class="room-avatar-platform bi {{ platform_icon }} {{ room.platform }}"></i>
 </span>
 {%- endmacro %}
+{% macro platform_name(platform) -%}{{ '哔哩哔哩直播' if platform == 'bilibili' else ('抖音直播' if platform == 'douyin' else '斗鱼直播') }}{%- endmacro %}
 <section class="recorder-header">
     <div>
         <div class="recorder-eyebrow">LIVE RECORDER</div>
         <h1>直播录制</h1>
-        <p>B站与斗鱼自动监控，每个录制分段完成后立即进入弹幕与上传流水线。</p>
+        <p>B站、斗鱼与抖音自动监控，每个录制分段完成后立即进入弹幕与上传流水线。</p>
     </div>
     <div class="recorder-header-actions">
         <a class="btn btn-light border" href="{{ url_for('live_recording') }}"><i class="bi bi-arrow-clockwise"></i> 刷新</a>
@@ -49,11 +51,11 @@
             {% for room in rooms %}
             <button class="room-item {{ 'active' if room.id == selected_room_id }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}">
                 {{ room_avatar(room) }}
-                <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }} · {{ room.display_room_id }}</small></span>
+                <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ platform_name(room.platform) }} · {{ room.display_room_id }}</small></span>
                 <span class="room-state {{ room.runtime.state }}" data-role="room-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
             </button>
             {% else %}
-            <div class="room-empty"><i class="bi bi-camera-video-off"></i><strong>还没有直播间</strong><span>新增一个 B站或斗鱼直播间开始监控</span></div>
+            <div class="room-empty"><i class="bi bi-camera-video-off"></i><strong>还没有直播间</strong><span>新增一个 B站、斗鱼或抖音直播间开始监控</span></div>
             {% endfor %}
         </div>
         <div class="room-pane-footer"><i class="bi bi-folder2-open"></i><span title="{{ recorder_status.recordings_path }}">{{ recorder_status.recordings_path }}</span></div>
@@ -66,7 +68,7 @@
             <header class="room-detail-header">
                 <div class="selected-room-title">
                     {{ room_avatar(room, true) }}
-                    <div><div class="selected-room-meta"><span>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }}</span><span>房间 {{ room.display_room_id }}</span></div><h2>{{ room.name }}</h2><a href="{{ room.url }}" target="_blank" rel="noopener">{{ room.display_url }} <i class="bi bi-box-arrow-up-right"></i></a></div>
+                    <div><div class="selected-room-meta"><span>{{ platform_name(room.platform) }}</span><span>房间 {{ room.display_room_id }}</span></div><h2>{{ room.name }}</h2><a href="{{ room.url }}" target="_blank" rel="noopener">{{ room.display_url }} <i class="bi bi-box-arrow-up-right"></i></a></div>
                 </div>
                 <div class="detail-actions">
                     <span class="detail-status {{ room.runtime.state }}" data-role="detail-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
@@ -275,15 +277,15 @@
         </article>
         {% endfor %}
         {% else %}
-        <div class="detail-empty"><i class="bi bi-broadcast-pin"></i><h2>添加第一个直播间</h2><p>目前仅支持哔哩哔哩直播与斗鱼，录制后自动进入上传流程。</p><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRoomModal"><i class="bi bi-plus-lg"></i> 新增直播间</button></div>
+        <div class="detail-empty"><i class="bi bi-broadcast-pin"></i><h2>添加第一个直播间</h2><p>支持哔哩哔哩、斗鱼与抖音，录制后自动进入上传流程。</p><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRoomModal"><i class="bi bi-plus-lg"></i> 新增直播间</button></div>
         {% endif %}
     </div>
 </section>
 
 <div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="addRoomForm" method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">粘贴链接，自动识别主播名称和头像</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body">
-    <label class="form-label">B站或斗鱼直播间链接</label>
+    <label class="form-label">B站、斗鱼或抖音直播间链接</label>
     <div class="room-resolve-input"><i class="bi bi-link-45deg"></i><input class="form-control" name="url" type="url" data-role="room-url" placeholder="https://live.bilibili.com/123" autocomplete="off" required><span class="spinner-border spinner-border-sm d-none" data-role="room-resolve-spinner"></span></div>
-    <div class="form-text">支持 live.bilibili.com、b23.tv 和 douyu.com 直播间链接</div>
+    <div class="form-text">支持 live.bilibili.com、b23.tv、douyu.com、live.douyin.com 和 v.douyin.com</div>
     <div class="room-resolve-error d-none" data-role="room-resolve-error"></div>
     <div class="room-resolve-preview d-none" data-role="room-resolve-preview">
         <div class="room-resolve-avatar"><img data-role="room-resolve-avatar" alt="" referrerpolicy="no-referrer"><i class="bi" data-role="room-resolve-platform-icon"></i></div>
@@ -423,8 +425,8 @@ document.addEventListener('DOMContentLoaded', function () {
             roomResolvePreview.querySelector('[data-role="room-resolve-name"]').textContent = room.name;
             roomResolvePreview.querySelector('[data-role="room-resolve-title"]').textContent = room.live_title || '主播资料识别成功';
             const platformIcon = roomResolvePreview.querySelector('[data-role="room-resolve-platform-icon"]');
-            platformIcon.className = `bi ${room.platform === 'bilibili' ? 'bi-tv' : 'bi-controller'}`;
-            platformIcon.style.background = room.platform === 'bilibili' ? '#f35b8a' : '#ff7a22';
+            platformIcon.className = `bi ${room.platform === 'bilibili' ? 'bi-tv' : (room.platform === 'douyin' ? 'bi-music-note-beamed' : 'bi-controller')}`;
+            platformIcon.style.background = room.platform === 'bilibili' ? '#f35b8a' : (room.platform === 'douyin' ? '#111827' : '#ff7a22');
             resolvedRoomUrl = requestedUrl;
             roomResolvePreview.classList.remove('d-none');
             roomSubmit.disabled = false;

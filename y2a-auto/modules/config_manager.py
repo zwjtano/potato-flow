@@ -65,8 +65,8 @@ DEFAULT_CONFIG = {
     "LOGIN_LOCKOUT_MINUTES": 15,     # 被锁定后持续的分钟数
     "LOGIN_SESSION_TIMEOUT_MINUTES": 30,  # 登录空闲超时时长（分钟）
     "YOUTUBE_COOKIES_PATH": "cookies/yt_cookies.txt", # 相对于项目根目录
-    "ACFUN_COOKIES_PATH": "cookies/ac_cookies.json", # AcFun Cookie文件路径
     "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径
+    "DOUYIN_COOKIES_PATH": "cookies/douyin_cookies.json", # 抖音扫码登录 Cookie
     # CookieCloud（首版仅用于手动拉取 YouTube Cookies）
     "COOKIECLOUD_ENABLED": False,
     "COOKIECLOUD_SERVER_URL": "",
@@ -77,8 +77,6 @@ DEFAULT_CONFIG = {
     "COOKIECLOUD_LAST_SYNC_AT": "",
     "COOKIECLOUD_LAST_SYNC_STATUS": "",
     "COOKIECLOUD_LAST_SYNC_MESSAGE": "",
-    "ACFUN_USERNAME": "",
-    "ACFUN_PASSWORD": "",
     "UPLOAD_TARGET_DEFAULT": "bilibili",  # 本整合版仅投稿到 bilibili
     "OPENAI_API_KEY": "",
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
@@ -88,8 +86,6 @@ DEFAULT_CONFIG = {
     "OPENAI_IMAGE_SIZE": "1536x1024",
     "OPENAI_THINKING_ENABLED": False,
     "OPENAI_TIMEOUT_SECONDS": 600,  # OpenAI API 请求超时秒数；思考模型输出可达64k token，建议不低于300
-    # 固定分区ID（可选）：如设置则推荐分区将直接使用该ID
-    "FIXED_PARTITION_ID": "",
     # bilibili固定分区ID（可选）：如设置则bilibili推荐分区将直接使用该ID
     "FIXED_PARTITION_ID_BILIBILI": "",
     # 字幕翻译可单独指定OpenAI Base URL；为空则回退到 OPENAI_BASE_URL

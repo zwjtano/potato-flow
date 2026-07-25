@@ -3,7 +3,7 @@
 {% block title %}PotatoFlow - 编辑任务{% endblock %}
 
 {% block content %}
-<div class="edit-task-container" data-upload-target="{{ upload_target|default('acfun') }}">
+<div class="edit-task-container" data-upload-target="bilibili">
     <div class="studio-page-header">
         <div><div class="page-eyebrow">TASK EDITOR</div><h1>编辑任务</h1><p>检查素材并调整投稿信息。</p></div>
         <a href="{{ url_for('tasks') }}" class="btn btn-outline-secondary">返回任务列表</a>
@@ -25,7 +25,7 @@
                                 {{ task_status_display(task.status) }}
                             </span>
                         </p>
-                        <p><strong>目标平台:</strong> {{ '双平台' if (upload_target|default('acfun')) == 'both' else ('bilibili' if (upload_target|default('acfun')) == 'bilibili' else 'AcFun') }}</p>
+                        <p><strong>目标平台:</strong> bilibili</p>
                         <p><strong>YouTube网址:</strong> <a href="{{ task.youtube_url }}" target="_blank" rel="noopener">{{ task.youtube_url }}</a></p>
                     </div>
                 </div>
@@ -188,9 +188,7 @@
                                 <label for="video_title_translated" class="form-label">视频标题</label>
                                 <input type="text" class="form-control" id="video_title_translated" name="video_title_translated" 
                                        value="{{ task.video_title_translated or task.video_title_original }}" required>
-                                {% if (upload_target|default('acfun')) in ['acfun', 'bilibili', 'both'] %}
-                                    <div class="form-text" id="metadata-title-hint"></div>
-                                {% endif %}
+                                <div class="form-text" id="metadata-title-hint"></div>
                                 {% if not task.video_title_translated and task.video_title_original %}
                                     <div class="form-text text-warning">
                                         当前显示的是原标题。自动翻译未成功，请确认或手动修改后再上传。
@@ -209,9 +207,7 @@
                                         当前显示的是原始简介。自动翻译未成功，请确认或手动修改后再上传。
                                     </div>
                                 {% endif %}
-                                {% if (upload_target|default('acfun')) in ['acfun', 'bilibili', 'both'] %}
-                                    <div class="form-text" id="metadata-description-hint"></div>
-                                {% endif %}
+                                <div class="form-text" id="metadata-description-hint"></div>
                                 {% if task.description_original %}
                                     <button type="button" class="btn btn-sm btn-outline-secondary mt-2" data-bs-toggle="collapse" 
                                             data-bs-target="#original-description">
@@ -232,75 +228,27 @@
                             分区设置
                         </div>
                         <div class="card-body">
-                            {% if (upload_target|default('acfun')) == 'both' %}
-                                <div class="mb-3">
-                                    <label for="selected_partition_id_acfun" class="form-label">AcFun 分区</label>
-                                    <select class="form-select" id="selected_partition_id_acfun" name="selected_partition_id_acfun" required>
-                                        <option value="">-- 请选择 AcFun 分区 --</option>
-                                        {% for category in acfun_id_mapping %}
-                                            <optgroup label="{{ category.category }}">
-                                                {% for partition in category.partitions %}
-                                                    <option value="{{ partition.id }}" {% if task.selected_partition_id_acfun == partition.id or (not task.selected_partition_id_acfun and task.recommended_partition_id_acfun == partition.id) %}selected{% endif %}>{{ partition.name }} ({{ partition.id }})</option>
-                                                    {% for sub_partition in partition.sub_partitions %}
-                                                        <option value="{{ sub_partition.id }}" {% if task.selected_partition_id_acfun == sub_partition.id or (not task.selected_partition_id_acfun and task.recommended_partition_id_acfun == sub_partition.id) %}selected{% endif %}>&nbsp;&nbsp;└ {{ sub_partition.name }} ({{ sub_partition.id }})</option>
-                                                    {% endfor %}
+                            {% set current_selected_partition_id = task.selected_partition_id_bilibili or task.selected_partition_id %}
+                            {% set current_recommended_partition_id = task.recommended_partition_id_bilibili or task.recommended_partition_id %}
+                            <div class="mb-3">
+                                <label for="selected_partition_id" class="form-label">选择分区</label>
+                                <select class="form-select" id="selected_partition_id" name="selected_partition_id" required>
+                                    <option value="">-- 请选择分区 --</option>
+                                    {% for category in id_mapping %}
+                                        <optgroup label="{{ category.category }}">
+                                            {% for partition in category.partitions %}
+                                                <option value="{{ partition.id }}" {% if current_selected_partition_id == partition.id or (not current_selected_partition_id and current_recommended_partition_id == partition.id) %}selected{% endif %}>{{ partition.name }} ({{ partition.id }})</option>
+                                                {% for sub_partition in partition.sub_partitions %}
+                                                    <option value="{{ sub_partition.id }}" {% if current_selected_partition_id == sub_partition.id or (not current_selected_partition_id and current_recommended_partition_id == sub_partition.id) %}selected{% endif %}>&nbsp;&nbsp;└ {{ sub_partition.name }} ({{ sub_partition.id }})</option>
                                                 {% endfor %}
-                                            </optgroup>
-                                        {% endfor %}
-                                    </select>
-                                    {% if task.recommended_partition_id_acfun %}
-                                        <div class="form-text">AcFun AI推荐: {{ get_partition_name(task.recommended_partition_id_acfun, 'acfun') }} ({{ task.recommended_partition_id_acfun }})</div>
-                                    {% endif %}
-                                </div>
-
-                                <div class="mb-3">
-                                    <label for="selected_partition_id_bilibili" class="form-label">bilibili 分区</label>
-                                    <select class="form-select" id="selected_partition_id_bilibili" name="selected_partition_id_bilibili" required>
-                                        <option value="">-- 请选择 bilibili 分区 --</option>
-                                        {% for category in bilibili_id_mapping %}
-                                            <optgroup label="{{ category.category }}">
-                                                {% for partition in category.partitions %}
-                                                    <option value="{{ partition.id }}" {% if task.selected_partition_id_bilibili == partition.id or (not task.selected_partition_id_bilibili and task.recommended_partition_id_bilibili == partition.id) %}selected{% endif %}>{{ partition.name }} ({{ partition.id }})</option>
-                                                    {% for sub_partition in partition.sub_partitions %}
-                                                        <option value="{{ sub_partition.id }}" {% if task.selected_partition_id_bilibili == sub_partition.id or (not task.selected_partition_id_bilibili and task.recommended_partition_id_bilibili == sub_partition.id) %}selected{% endif %}>&nbsp;&nbsp;└ {{ sub_partition.name }} ({{ sub_partition.id }})</option>
-                                                    {% endfor %}
-                                                {% endfor %}
-                                            </optgroup>
-                                        {% endfor %}
-                                    </select>
-                                    {% if task.recommended_partition_id_bilibili %}
-                                        <div class="form-text">bilibili AI推荐: {{ get_partition_name(task.recommended_partition_id_bilibili, 'bilibili') }} ({{ task.recommended_partition_id_bilibili }})</div>
-                                    {% endif %}
-                                </div>
-                            {% else %}
-                                {% set current_target = upload_target|default('acfun') %}
-                                {% if current_target == 'bilibili' %}
-                                    {% set current_selected_partition_id = task.selected_partition_id_bilibili or task.selected_partition_id %}
-                                    {% set current_recommended_partition_id = task.recommended_partition_id_bilibili or task.recommended_partition_id %}
-                                {% else %}
-                                    {% set current_selected_partition_id = task.selected_partition_id_acfun or task.selected_partition_id %}
-                                    {% set current_recommended_partition_id = task.recommended_partition_id_acfun or task.recommended_partition_id %}
+                                            {% endfor %}
+                                        </optgroup>
+                                    {% endfor %}
+                                </select>
+                                {% if current_recommended_partition_id %}
+                                    <div class="form-text">AI推荐分区: {{ get_partition_name(current_recommended_partition_id, 'bilibili') }} ({{ current_recommended_partition_id }})</div>
                                 {% endif %}
-                                <div class="mb-3">
-                                    <label for="selected_partition_id" class="form-label">选择分区</label>
-                                    <select class="form-select" id="selected_partition_id" name="selected_partition_id" required>
-                                        <option value="">-- 请选择分区 --</option>
-                                        {% for category in id_mapping %}
-                                            <optgroup label="{{ category.category }}">
-                                                {% for partition in category.partitions %}
-                                                    <option value="{{ partition.id }}" {% if current_selected_partition_id == partition.id or (not current_selected_partition_id and current_recommended_partition_id == partition.id) %}selected{% endif %}>{{ partition.name }} ({{ partition.id }})</option>
-                                                    {% for sub_partition in partition.sub_partitions %}
-                                                        <option value="{{ sub_partition.id }}" {% if current_selected_partition_id == sub_partition.id or (not current_selected_partition_id and current_recommended_partition_id == sub_partition.id) %}selected{% endif %}>&nbsp;&nbsp;└ {{ sub_partition.name }} ({{ sub_partition.id }})</option>
-                                                    {% endfor %}
-                                                {% endfor %}
-                                            </optgroup>
-                                        {% endfor %}
-                                    </select>
-                                    {% if current_recommended_partition_id %}
-                                        <div class="form-text">AI推荐分区: {{ get_partition_name(current_recommended_partition_id, current_target) }} ({{ current_recommended_partition_id }})</div>
-                                    {% endif %}
-                                </div>
-                            {% endif %}
+                            </div>
                         </div>
                     </div>
                     
@@ -332,7 +280,7 @@
                                 <i class="bi bi-floppy me-1"></i> 保存修改
                             </button>
                             <button type="submit" name="action" value="force_upload" class="btn btn-success" {% if not can_upload %}disabled{% endif %}>
-                                <i class="bi bi-cloud-upload me-1"></i> 上传到{{ '双平台' if (upload_target|default('acfun')) == 'both' else ('bilibili' if (upload_target|default('acfun')) == 'bilibili' else 'AcFun') }}
+                                <i class="bi bi-cloud-upload me-1"></i> 上传到bilibili
                             </button>
                         </div>
                         <a href="{{ url_for('tasks') }}" class="btn btn-outline-secondary">取消</a>
@@ -340,7 +288,7 @@
                     
                     <div class="mt-3">
                         <div class="alert alert-info small mb-0">
-                            <i class="bi bi-info-circle"></i> “保存修改”只更新标题、描述、分区和标签；“上传到{{ '双平台' if (upload_target|default('acfun')) == 'both' else ('bilibili' if (upload_target|default('acfun')) == 'bilibili' else 'AcFun') }}”会先保存当前修改，再在后台启动上传。
+                            <i class="bi bi-info-circle"></i> “保存修改”只更新标题、描述、分区和标签；“上传到bilibili”会先保存当前修改，再在后台启动上传。
                             {% if can_upload %}
                                 <br><strong>当前状态：{{ task_status_display(task.status) }}，可以直接上传。</strong>
                             {% else %}
@@ -363,11 +311,16 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         var _platformConfig = {
-            'both':     { titleSoft: 50,  titleHard: 50,  descSoft: 1000, descHard: 1000, titleMsg: '已开启双平台投稿，标题按共同最低限制 50 字执行，超出部分会在上传时自动截断。', descMsg: '已开启双平台投稿，简介按共同最低限制 1000 字执行，超出部分会在上传时自动截断。' },
-            'bilibili': { titleSoft: 80,  titleHard: 80,  descSoft: 2000, descHard: 2000, titleMsg: 'bilibili 标题上限为 80 字，超出部分会在上传时自动截断。', descMsg: 'bilibili 简介上限为 2000 字，超出部分会在上传时自动截断。' },
-            'acfun':    { titleSoft: 50,  titleHard: 50,  descSoft: 1000, descHard: 1000, titleMsg: 'AcFun 标题上限为 50 字，超出部分会在上传时自动截断。', descMsg: 'AcFun 简介上限为 1000 字，超出部分会在上传时自动截断。' }
+            'bilibili': {
+                titleSoft: 80,
+                titleHard: 80,
+                descSoft: 2000,
+                descHard: 2000,
+                titleMsg: 'bilibili 标题上限为 80 字，超出部分会在上传时自动截断。',
+                descMsg: 'bilibili 简介上限为 2000 字，超出部分会在上传时自动截断。'
+            }
         };
-        var _cfg = _platformConfig[document.querySelector('.edit-task-container').dataset.uploadTarget] || _platformConfig['acfun'];
+        var _cfg = _platformConfig[document.querySelector('.edit-task-container').dataset.uploadTarget] || _platformConfig['bilibili'];
 
         const titleInput = document.getElementById('video_title_translated');
         const descriptionTextarea = document.getElementById('description_translated');

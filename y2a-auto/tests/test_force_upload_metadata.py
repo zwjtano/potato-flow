@@ -31,14 +31,12 @@ class ForceUploadMetadataTests(unittest.TestCase):
         task_id = 'task-force-upload'
         task = {
             'id': task_id,
-            'upload_target': 'both',
+            'upload_target': 'bilibili',
             'video_title_original': 'Matching game in ASMR',
             'description_original': 'Ys: 45\nTo: 90',
             'video_title_translated': 'ASMR中的配对游戏',
             'description_translated': '',
             'tags_generated': None,
-            'selected_partition_id_acfun': '',
-            'recommended_partition_id_acfun': '',
             'selected_partition_id_bilibili': '',
             'recommended_partition_id_bilibili': '',
         }
@@ -61,8 +59,6 @@ class ForceUploadMetadataTests(unittest.TestCase):
             'tags_generated': '["ASMR", "配对游戏"]'
         }) or True)
         processor._recommend_partition = MagicMock(side_effect=lambda *_args: task.update({
-            'recommended_partition_id_acfun': '1001',
-            'selected_partition_id_acfun': '1001',
             'recommended_partition_id_bilibili': '2001',
             'selected_partition_id_bilibili': '2001',
         }) or True)
@@ -75,7 +71,6 @@ class ForceUploadMetadataTests(unittest.TestCase):
             result = processor._ensure_force_upload_metadata_ready(task_id, MagicMock())
 
         self.assertEqual(result['tags_generated'], '["ASMR", "配对游戏"]')
-        self.assertEqual(result['selected_partition_id_acfun'], '1001')
         self.assertEqual(result['selected_partition_id_bilibili'], '2001')
         self.assertEqual(result['moderation_result'], '{"overall_pass": true}')
         processor._generate_tags.assert_called_once()
@@ -86,14 +81,12 @@ class ForceUploadMetadataTests(unittest.TestCase):
         task_id = 'task-existing-metadata'
         task = {
             'id': task_id,
-            'upload_target': 'both',
+            'upload_target': 'bilibili',
             'video_title_original': 'Original title',
             'description_original': 'Original description',
             'video_title_translated': '',
             'description_translated': '',
             'tags_generated': '["手动标签"]',
-            'selected_partition_id_acfun': '1001',
-            'recommended_partition_id_acfun': '',
             'selected_partition_id_bilibili': '2001',
             'recommended_partition_id_bilibili': '',
             'moderation_result': '{"overall_pass": true}',
@@ -112,7 +105,6 @@ class ForceUploadMetadataTests(unittest.TestCase):
             result = processor._ensure_force_upload_metadata_ready(task_id, MagicMock())
 
         self.assertEqual(result['tags_generated'], '["手动标签"]')
-        self.assertEqual(result['selected_partition_id_acfun'], '1001')
         self.assertEqual(result['selected_partition_id_bilibili'], '2001')
         processor._generate_tags.assert_not_called()
         processor._recommend_partition.assert_not_called()
@@ -122,13 +114,13 @@ class ForceUploadMetadataTests(unittest.TestCase):
         task_id = 'task-moderation-review'
         task = {
             'id': task_id,
-            'upload_target': 'acfun',
+            'upload_target': 'bilibili',
             'status': tm.TASK_STATES['READY_FOR_UPLOAD'],
             'video_title_original': 'Original title',
             'description_original': 'Original description',
             'tags_generated': '["tag"]',
-            'selected_partition_id_acfun': '1001',
-            'recommended_partition_id_acfun': '',
+            'selected_partition_id_bilibili': '2001',
+            'recommended_partition_id_bilibili': '',
             'moderation_result': None,
         }
 
@@ -152,16 +144,14 @@ class ForceUploadMetadataTests(unittest.TestCase):
     def test_partition_precheck_blocks_only_when_no_recommendation_or_fixed_partition(self):
         missing_upload_partition_labels = _load_app_partition_helper()
         task = {
-            'upload_target': 'both',
-            'selected_partition_id_acfun': '',
-            'recommended_partition_id_acfun': '',
+            'upload_target': 'bilibili',
             'selected_partition_id_bilibili': '',
             'recommended_partition_id_bilibili': '',
         }
 
         self.assertEqual(
             missing_upload_partition_labels(task, {'RECOMMEND_PARTITION': 'false'}),
-            ['AcFun 分区', 'bilibili 分区'],
+            ['bilibili 分区'],
         )
         self.assertEqual(
             missing_upload_partition_labels(task, {'RECOMMEND_PARTITION': True}),
@@ -170,7 +160,6 @@ class ForceUploadMetadataTests(unittest.TestCase):
         self.assertEqual(
             missing_upload_partition_labels(task, {
                 'RECOMMEND_PARTITION': False,
-                'FIXED_PARTITION_ID': '1001',
                 'FIXED_PARTITION_ID_BILIBILI': '2001',
             }),
             [],

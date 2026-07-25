@@ -4,7 +4,7 @@
 
 本项目的边界很明确：
 
-- 录制平台仅保留 **哔哩哔哩直播**和**斗鱼**；
+- 录制平台支持 **哔哩哔哩直播**、**斗鱼**和**抖音直播**；
 - 投稿平台仅使用 **哔哩哔哩**；
 - 保留 Y2A 的 YouTube 下载、频道监控、字幕、翻译和 AI 功能；
 - 每个录制分段完成后立即生成 ASS、根据弹幕生成 AI 简介并投稿，不必等待下播；
@@ -13,10 +13,17 @@
 - ASS 作为独立文件保留，可在文件管理中查看和下载，不导入 B站原生弹幕；
 - Linux 上只运行一个主服务、只开放一个 Web 端口；biliup 以无 HTTP 的内部 worker 运行。
 
+## 本次代码清理
+
+- 删除已经停用的 AcFun 上传器、分区数据、双平台分发和对应页面分支；
+- 删除 `y2a-auto/` 子目录中遗留的独立 Docker、5000 端口、Windows 打包和嵌套 CI 配置，安装与构建只以仓库根目录为准；
+- 删除无调用的旧封面裁剪函数，并把通用 AI 标签函数从 AcFun 旧命名改为平台无关命名；
+- 旧数据库中的 AcFun/双平台任务会在启动时安全迁移为 Bilibili 目标；旧字段仅保留用于数据兼容，不再触发 AcFun 网络请求。
+
 ## 工作流程
 
 ```text
-B站直播 / 斗鱼
+B站直播 / 斗鱼 / 抖音
         ↓
 biliup 录制视频 + XML 弹幕（每 1 小时自动分段）
         ↓
@@ -33,11 +40,12 @@ ASS 会保存在 `.bridge/artifacts/` 中供归档、查看和下载，不会烧
 
 ### 直播录制
 
-- 统一管理 B站、斗鱼直播间；
+- 统一管理 B站、斗鱼和抖音直播间；
 - 添加直播间时只需粘贴链接，自动识别平台、真实房间号、主播名称和头像；
 - 一键启动或停止内置 biliup 录制引擎；
 - 搜索直播间并按“监控中 / 已停止”筛选；
-- 录制 B站与斗鱼 XML 弹幕；
+- 录制 B站、斗鱼与抖音 XML 弹幕；
+- 抖音支持在“系统设置 → 账号与网络”中扫码登录；扫码确认后自动保存 Cookie，并在不截断当前文件的前提下让录制 worker 安全加载；
 - 每满 1 小时自动结束当前录制分段并立即触发上传流水线，后续录制不受影响；手动停止时，不足 1 小时的最后一段也会正常处理；
 - 多个直播间的分段流水线并发运行，互不阻塞；后台每 5 分钟扫描一次已封口但没有任务记录的录播文件，并按所属直播间自动补回分P流水线；
 - 默认每个录制分段创建独立 B站稿件；开启“同一场直播合并为分P”后，首段创建稿件、后续文件依次追加为分P，各 P 使用本段弹幕生成自己的页面标题和摘要；
@@ -197,7 +205,7 @@ ARM64 Linux 请使用安装脚本在目标机器原生构建。
 
 ```bash
 sudo apt update
-sudo apt install -y ca-certificates curl python3 python3-venv python3-pip \
+sudo apt install -y ca-certificates chromium curl python3 python3-venv python3-pip \
   ffmpeg build-essential pkg-config libssl-dev
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
@@ -310,12 +318,13 @@ sudo ufw allow 5001/tcp
 
 ## 首次配置
 
-### 1. 登录哔哩哔哩
+### 1. 登录平台账号
 
-进入“系统设置”，使用 B站二维码登录或上传 Cookie 文件。默认 Cookie 路径为：
+进入“系统设置 → 账号与网络”。B站用于投稿，抖音 Cookie 用于直播检测、原画录制和弹幕采集；两者都支持二维码登录或手动上传 Cookie。默认路径为：
 
 ```text
 y2a-auto/cookies/bili_cookies.json
+y2a-auto/cookies/douyin_cookies.json
 ```
 
 Cookie、API Key、数据库和录播文件均已加入 `.gitignore`，不会提交到 GitHub。
@@ -410,7 +419,7 @@ y2a-auto/.venv/bin/python bridge.py --config bridge.config.json retry
 ├── bridge.py                      # biliup → Y2A 桥接器
 ├── danmaku_pipeline.py            # XML、ASS 与 AI 弹幕摘要
 ├── bridge.config.example.json     # 可提交的配置模板
-├── upstream-biliup/               # 定制录制引擎，仅 B站/斗鱼
+├── upstream-biliup/               # 定制录制引擎，支持 B站/斗鱼/抖音
 ├── y2a-auto/                      # 主 WebUI、YouTube 和 B站上传
 └── tests/                         # 整合层测试
 ```

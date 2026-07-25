@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import os
 import re
@@ -112,10 +113,18 @@ def detect_platform(url: str) -> str:
         return "bilibili"
     if host == "douyu.com" or host.endswith(".douyu.com"):
         return "douyu"
-    raise RecorderConfigError("只支持哔哩哔哩直播间和斗鱼直播间 URL")
+    if host == "douyin.com" or host.endswith(".douyin.com"):
+        return "douyin"
+    raise RecorderConfigError("只支持哔哩哔哩、斗鱼和抖音直播间 URL")
 
 
-def _open_url(url: str, *, referer: str = "", timeout: int = 12) -> tuple[bytes, str]:
+def _open_url(
+    url: str,
+    *,
+    referer: str = "",
+    cookie: str = "",
+    timeout: int = 12,
+) -> tuple[bytes, str]:
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -124,6 +133,8 @@ def _open_url(url: str, *, referer: str = "", timeout: int = 12) -> tuple[bytes,
     }
     if referer:
         headers["Referer"] = referer
+    if cookie:
+        headers["Cookie"] = cookie
     try:
         with urlopen(Request(url, headers=headers), timeout=timeout) as response:
             return response.read(), response.geturl()
@@ -159,6 +170,105 @@ def _resolve_douyu_real_room_id(room_ref: str) -> str:
     if not match:
         raise RecorderConfigError("无法从斗鱼链接识别真实房间号")
     return match.group(1)
+
+
+def _douyin_cookie_path() -> Path:
+    """Resolve the persisted QR-login cookie path without importing Flask."""
+    try:
+        config = json.loads((CONFIG_DIR / "config.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        config = {}
+    raw = str(config.get("DOUYIN_COOKIES_PATH") or "cookies/douyin_cookies.json")
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else APP_ROOT / path
+
+
+def _douyin_cookie_header() -> str:
+    from .douyin_auth import load_douyin_cookie
+
+    return load_douyin_cookie(_douyin_cookie_path())
+
+
+def _decode_json_string(value: str) -> str:
+    try:
+        return str(json.loads(f'"{value}"'))
+    except (json.JSONDecodeError, TypeError):
+        return html.unescape(value.replace(r"\/", "/"))
+
+
+def _first_json_text(text: str, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        match = re.search(
+            rf'"{re.escape(key)}"\s*:\s*"((?:\\.|[^"\\])*)"',
+            text,
+        )
+        if match:
+            value = _decode_json_string(match.group(1)).strip()
+            if value:
+                return value
+    return ""
+
+
+def _resolve_douyin_metadata(url: str) -> dict[str, str]:
+    """Resolve direct/short Douyin live URLs from the official room HTML."""
+    cookie = _douyin_cookie_header()
+    body, final_url = _open_url(
+        url,
+        referer="https://live.douyin.com/",
+        cookie=cookie,
+        timeout=20,
+    )
+    final_platform = detect_platform(final_url)
+    if final_platform != "douyin":
+        raise RecorderConfigError("抖音短链接没有指向抖音直播间")
+    parsed = urlparse(final_url)
+    room_ref = parsed.path.strip("/").split("/", 1)[0]
+    text = html.unescape(body.decode("utf-8", errors="replace"))
+    render_match = re.search(
+        r'<script[^>]+id=["\']RENDER_DATA["\'][^>]*>(.*?)</script>',
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if render_match:
+        from urllib.parse import unquote
+
+        text = f"{text}\n{unquote(render_match.group(1))}"
+
+    web_rid = _first_json_text(text, ("web_rid", "webRid")) or room_ref
+    room_id = _first_json_text(text, ("roomId", "room_id", "id_str")) or web_rid
+    name = _first_json_text(text, ("nickname", "nick_name", "user_name"))
+    title = _first_json_text(text, ("title", "room_title"))
+    avatar_url = ""
+    avatar_match = re.search(
+        r'"avatar_(?:thumb|medium|large)"\s*:\s*\{.*?'
+        r'"url_list"\s*:\s*\[\s*"((?:\\.|[^"\\])*)"',
+        text,
+        flags=re.DOTALL,
+    )
+    if avatar_match:
+        avatar_url = _decode_json_string(avatar_match.group(1))
+    if not avatar_url:
+        avatar_url = _first_json_text(text, ("avatar", "avatarUrl"))
+    if not title:
+        title_match = re.search(
+            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
+            text,
+            flags=re.IGNORECASE,
+        )
+        if title_match:
+            title = html.unescape(title_match.group(1)).strip()
+    if not name:
+        name = f"抖音主播{web_rid}"
+    if not web_rid:
+        raise RecorderConfigError("抖音直播间链接中没有有效房间号")
+    return {
+        "room_id": room_id,
+        "web_rid": web_rid,
+        "name": name,
+        "avatar_url": avatar_url,
+        "live_title": title,
+        "url": f"https://live.douyin.com/{web_rid}",
+    }
 
 
 class LiveRecorderManager:
@@ -520,6 +630,14 @@ class LiveRecorderManager:
                 "live_title": str(room_data.get("title") or "").strip(),
             }
 
+        if platform == "douyin":
+            resolved = _resolve_douyin_metadata(url)
+            return {
+                "platform": "douyin",
+                "platform_name": "抖音",
+                **resolved,
+            }
+
         parsed = urlparse(url)
         room_ref = parsed.path.strip("/").split("/", 1)[0]
         if not room_ref:
@@ -872,7 +990,14 @@ class LiveRecorderManager:
             "pool2_size: 1",
             "bilibili_danmaku: true",
             "douyu_danmaku: true",
+            "douyin_danmaku: true",
         ]
+        douyin_cookie = _douyin_cookie_header()
+        if douyin_cookie:
+            lines.extend([
+                "user:",
+                f"  douyin_cookie: {_yaml_string(douyin_cookie)}",
+            ])
         if not rooms:
             lines.append("streamers: {}")
         else:
@@ -926,6 +1051,23 @@ class LiveRecorderManager:
             lines.extend(room_lines)
         BILIUP_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self._sync_bridge_profiles(rooms)
+
+    def refresh_credentials(self) -> str:
+        """Regenerate recorder config and safely reload a running worker."""
+        with self._lock:
+            self.sync_configs()
+            if self._pid() is None:
+                return "saved"
+            if any(
+                item.get("runtime", {}).get("recording")
+                for item in self.rooms_with_status()
+            ):
+                _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
+                self._ensure_reload_thread()
+                return "pending"
+            self.stop()
+            self.start()
+            return "reloaded"
 
     def _sync_bridge_profiles(self, rooms: list[dict[str, Any]]) -> None:
         if BRIDGE_CONFIG_PATH.exists():

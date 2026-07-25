@@ -50,13 +50,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PORT=5001 \
     AUTO_START_RECORDER=1 \
     BILIUP_BIN=/app/upstream-biliup/target/release/biliup \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     PATH=/app/y2a-auto/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOME=/home/biliup-y2a \
     TZ=Asia/Shanghai
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl ffmpeg gosu libfontconfig1 libfreetype6 \
+        ca-certificates chromium curl ffmpeg gosu libfontconfig1 libfreetype6 \
         libfribidi0 libgomp1 libharfbuzz0b libsndfile1 libsox3 \
         libssl3 libunistring2 libxml2 passwd tzdata unzip \
     && arch="${TARGETARCH:-amd64}" \

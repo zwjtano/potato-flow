@@ -26,6 +26,7 @@ from modules.config_manager import load_config, update_config, reset_specific_co
 from modules.whisper_languages import WHISPER_LANGUAGE_LIST
 from modules.task_manager import add_task, start_task, get_task, get_tasks_paginated, get_tasks_by_status, update_task, delete_task, force_upload_task, TASK_STATES, clear_all_tasks, retry_failed_tasks, register_task_updates_listener, unregister_task_updates_listener, resolve_cookie_file_path
 from modules.bilibili_auth import BilibiliQrLoginSession
+from modules.douyin_auth import DouyinQrLoginSession
 from queue import Empty
 from modules.youtube_monitor import youtube_monitor
 from modules.live_recorder_manager import RecorderConfigError, live_recorder_manager
@@ -106,6 +107,9 @@ ALLOWED_COVER_EXTENSIONS = {
 _BILIBILI_QR_SESSIONS = {}
 _BILIBILI_QR_SESSION_LOCK = threading.Lock()
 _BILIBILI_QR_SESSION_TTL_SECONDS = 300
+_DOUYIN_QR_SESSIONS = {}
+_DOUYIN_QR_SESSION_LOCK = threading.Lock()
+_DOUYIN_QR_SESSION_TTL_SECONDS = 240
 # 登录安全状态存储
 def _get_security_state_path():
     try:
@@ -304,6 +308,42 @@ def _get_bilibili_qr_session(session_id: str):
     if not item:
         return None
     return item.get('session')
+
+
+def _cleanup_douyin_qr_sessions():
+    now_ts = time.time()
+    with _DOUYIN_QR_SESSION_LOCK:
+        stale_ids = [
+            sid for sid, item in _DOUYIN_QR_SESSIONS.items()
+            if now_ts - float(item.get('created_at', 0) or 0)
+            > _DOUYIN_QR_SESSION_TTL_SECONDS
+        ]
+        for sid in stale_ids:
+            _DOUYIN_QR_SESSIONS.pop(sid, None)
+
+
+def _create_douyin_qr_session(cookie_path: str):
+    _cleanup_douyin_qr_sessions()
+    session_id = str(uuid.uuid4())
+    session_obj = DouyinQrLoginSession(cookie_path)
+    with _DOUYIN_QR_SESSION_LOCK:
+        _DOUYIN_QR_SESSIONS[session_id] = {
+            'created_at': time.time(),
+            'session': session_obj,
+            'success_notified': False,
+            'failure_notified': False,
+            'config_synced': False,
+        }
+    return session_id, session_obj
+
+
+def _get_douyin_qr_session(session_id: str):
+    if not session_id:
+        return None
+    _cleanup_douyin_qr_sessions()
+    with _DOUYIN_QR_SESSION_LOCK:
+        item = _DOUYIN_QR_SESSIONS.get(session_id)
+    return item.get('session') if item else None
 
 
 def _mark_qr_notification_sent(session_store: dict, lock: threading.Lock, session_id: str, success: bool) -> bool:
@@ -649,7 +689,11 @@ def _is_ajax_request() -> bool:
 
 def _extract_settings_uploads(files_storage) -> dict:
     uploads = {}
-    for field_name in ('youtube_cookies_file', 'acfun_cookies_file', 'bilibili_cookies_file'):
+    for field_name in (
+        'youtube_cookies_file',
+        'bilibili_cookies_file',
+        'douyin_cookies_file',
+    ):
         file_storage = files_storage.get(field_name)
         if not file_storage or not getattr(file_storage, 'filename', ''):
             continue
@@ -666,8 +710,8 @@ def _persist_settings_uploads(form_data: dict, uploads: dict):
 
     file_specs = {
         'youtube_cookies_file': ('yt_cookies.txt', 'YOUTUBE_COOKIES_PATH', 'cookies/yt_cookies.txt', 'YouTube'),
-        'acfun_cookies_file': ('ac_cookies.json', 'ACFUN_COOKIES_PATH', 'cookies/ac_cookies.json', 'AcFun'),
         'bilibili_cookies_file': ('bili_cookies.json', 'BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json', 'Bilibili'),
+        'douyin_cookies_file': ('douyin_cookies.json', 'DOUYIN_COOKIES_PATH', 'cookies/douyin_cookies.json', '抖音'),
     }
 
     for field_name, payload in uploads.items():
@@ -869,6 +913,19 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
         _persist_settings_uploads(form_data, uploads)
         updated_config = update_config(form_data)
+        if (
+            'DOUYIN_COOKIES_PATH' in form_data
+            or 'douyin_cookies_file' in uploads
+        ):
+            try:
+                live_recorder_manager.refresh_credentials()
+            except RecorderConfigError as exc:
+                logger.warning("抖音 Cookie 已保存，但录制配置重载失败: %s", exc)
+                _append_settings_message(
+                    messages,
+                    'warning',
+                    f'抖音 Cookie 已保存，但录制 worker 未能自动重载：{exc}',
+                )
 
         try:
             from modules.task_manager import get_global_task_processor
@@ -1598,14 +1655,6 @@ except Exception:
 logger = logging.getLogger('PotatoFlow')
 logger.setLevel(logging.WARNING)
 
-def init_id_mapping():
-    """
-    初始化AcFun分区ID映射.
-    id_mapping.json 文件现在应该由 acfunid/ 目录直接提供，并包含在Docker镜像中。
-    此函数仅记录一条信息，不再执行文件生成或检查逻辑。
-    """
-    logger.info("AcFun分区ID映射 (id_mapping.json) 应由 'acfunid/' 目录提供。")
-
 # 模板辅助函数
 def task_status_display(status):
     """将任务状态代码转换为显示文本"""
@@ -1656,16 +1705,6 @@ def _get_bilibili_zone_data():
     return get_zone_list_sub()
 
 
-def _load_acfun_partition_mapping():
-    id_mapping_path = os.path.join(get_app_subdir('acfunid'), 'id_mapping.json')
-    try:
-        with open(id_mapping_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"读取AcFun分区映射失败: {e}")
-        return []
-
-
 def _build_bilibili_partition_mapping():
     id_mapping = []
     zone_data = _get_bilibili_zone_data()
@@ -1694,44 +1733,22 @@ def _build_bilibili_partition_mapping():
     return id_mapping
 
 
-def get_partition_name(partition_id, upload_target='acfun'):
-    """根据分区ID和平台获取分区名称"""
+def get_partition_name(partition_id, upload_target='bilibili'):
+    """根据 Bilibili 分区 ID 获取名称。"""
     if not partition_id:
         return None
 
-    target = str(upload_target or 'acfun').strip().lower()
     pid = str(partition_id)
-
-    if target == 'bilibili':
-        try:
-            zone_data = _get_bilibili_zone_data()
-            for parent in zone_data:
-                if str(parent.get('tid')) == pid:
-                    return parent.get('name')
-                for sub in parent.get('sub', []) or []:
-                    if str(sub.get('tid')) == pid:
-                        return sub.get('name')
-        except Exception as e:
-            logger.error(f"获取bilibili分区名称时出错: {str(e)}")
-        return None
-
-    # 默认 AcFun
-    id_mapping_path = os.path.join(get_app_subdir('acfunid'), 'id_mapping.json')
     try:
-        with open(id_mapping_path, 'r', encoding='utf-8') as f:
-            id_mapping = json.load(f)
-
-        for category in id_mapping:
-            for partition in category.get('partitions', []):
-                if str(partition.get('id')) == pid:
-                    return partition.get('name')
-
-                for sub_partition in partition.get('sub_partitions', []):
-                    if str(sub_partition.get('id')) == pid:
-                        return sub_partition.get('name')
+        zone_data = _get_bilibili_zone_data()
+        for parent in zone_data:
+            if str(parent.get('tid')) == pid:
+                return parent.get('name')
+            for sub in parent.get('sub', []) or []:
+                if str(sub.get('tid')) == pid:
+                    return sub.get('name')
     except Exception as e:
-        logger.error(f"获取AcFun分区名称时出错: {str(e)}")
-
+        logger.error(f"获取bilibili分区名称时出错: {str(e)}")
     return None
 
 def parse_json(json_str):
@@ -1965,33 +1982,16 @@ def index():
 
         # 最近任务（按更新时间倒序）
         cur.execute(
-            "SELECT id, video_title_translated, video_title_original, status, updated_at, upload_target, acfun_upload_response, bilibili_upload_response FROM tasks ORDER BY updated_at DESC LIMIT 10"
+            "SELECT id, video_title_translated, video_title_original, status, updated_at, bilibili_upload_response FROM tasks ORDER BY updated_at DESC LIMIT 10"
         )
         rows = cur.fetchall()
         recent_tasks = []
         for r in rows:
             upload_id = None
-            upload_target = (r[5] or 'acfun').lower()
             try:
-                if upload_target == 'both':
-                    resp_b = json.loads(r[7]) if r[7] else None
-                    resp_a = json.loads(r[6]) if r[6] else None
-                    bv = resp_b.get('bvid') if isinstance(resp_b, dict) else None
-                    ac = resp_a.get('ac_number') if isinstance(resp_a, dict) else None
-                    if bv and ac:
-                        upload_id = f"{bv} / AC{ac}"
-                    elif bv:
-                        upload_id = bv
-                    elif ac:
-                        upload_id = f"AC{ac}"
-                elif upload_target == 'bilibili':
-                    resp = json.loads(r[7]) if r[7] else None
-                    if isinstance(resp, dict):
-                        upload_id = resp.get('bvid') or resp.get('aid')
-                else:
-                    resp = json.loads(r[6]) if r[6] else None
-                    if isinstance(resp, dict):
-                        upload_id = resp.get('ac_number')
+                resp = json.loads(r[5]) if r[5] else None
+                if isinstance(resp, dict):
+                    upload_id = resp.get('bvid') or resp.get('aid')
             except Exception:
                 upload_id = None
             recent_tasks.append({
@@ -2137,33 +2137,18 @@ def task_fragment(task_id):
 
 
 def _missing_upload_partition_labels(task, config):
-    upload_target = str(task.get('upload_target') or 'acfun').lower()
     recommend_enabled = str(config.get('RECOMMEND_PARTITION', False)).strip().lower() in ('true', '1', 'on', 'yes')
     missing = []
-
-    if upload_target in ('acfun', 'both'):
-        fixed_acfun_pid = str(config.get('FIXED_PARTITION_ID', '') or '').strip()
-        acfun_partition = str(
-            task.get('selected_partition_id_acfun')
-            or task.get('recommended_partition_id_acfun')
-            or task.get('selected_partition_id')
-            or task.get('recommended_partition_id')
-            or ''
-        ).strip()
-        if not fixed_acfun_pid and not acfun_partition and not recommend_enabled:
-            missing.append('AcFun 分区')
-
-    if upload_target in ('bilibili', 'both'):
-        fixed_bili_pid = str(config.get('FIXED_PARTITION_ID_BILIBILI', '') or '').strip()
-        bili_partition = str(
-            task.get('selected_partition_id_bilibili')
-            or task.get('recommended_partition_id_bilibili')
-            or task.get('selected_partition_id')
-            or task.get('recommended_partition_id')
-            or ''
-        ).strip()
-        if not fixed_bili_pid and not bili_partition and not recommend_enabled:
-            missing.append('bilibili 分区')
+    fixed_bili_pid = str(config.get('FIXED_PARTITION_ID_BILIBILI', '') or '').strip()
+    bili_partition = str(
+        task.get('selected_partition_id_bilibili')
+        or task.get('recommended_partition_id_bilibili')
+        or task.get('selected_partition_id')
+        or task.get('recommended_partition_id')
+        or ''
+    ).strip()
+    if not fixed_bili_pid and not bili_partition and not recommend_enabled:
+        missing.append('bilibili 分区')
 
     return missing
 
@@ -2269,27 +2254,18 @@ def edit_task(task_id):
                 flash(f'恢复原封面失败: {e}', 'danger')
             return redirect(redirect_target)
 
-        upload_target = str(task.get('upload_target') or 'acfun').lower()
         # 处理表单提交
         video_title = request.form.get('video_title_translated', '')
         description = request.form.get('description_translated', '')
         legacy_partition_id = request.form.get('selected_partition_id', '')
-        partition_id_acfun = request.form.get('selected_partition_id_acfun', '')
         partition_id_bilibili = request.form.get('selected_partition_id_bilibili', '')
         tags_json = request.form.get('tags_json', '[]')
 
-        if upload_target == 'both':
-            partition_id_acfun = partition_id_acfun or legacy_partition_id
-            partition_id_bilibili = partition_id_bilibili or legacy_partition_id
-        elif upload_target == 'bilibili':
-            partition_id_bilibili = partition_id_bilibili or legacy_partition_id
-        else:
-            partition_id_acfun = partition_id_acfun or legacy_partition_id
+        partition_id_bilibili = partition_id_bilibili or legacy_partition_id
         # 更新任务信息
         update_data = {
             'video_title_translated': video_title,
             'description_translated': description,
-            'selected_partition_id_acfun': partition_id_acfun,
             'selected_partition_id_bilibili': partition_id_bilibili,
             'tags_generated': tags_json,
             'error_message': None,
@@ -2327,8 +2303,7 @@ def edit_task(task_id):
         updated_task = get_task(task_id)
         if action == 'force_upload':
             config = load_config()
-            upload_target = str((updated_task or task).get('upload_target') or 'acfun').lower()
-            platform_name = '双平台' if upload_target == 'both' else ('bilibili' if upload_target == 'bilibili' else 'AcFun')
+            platform_name = 'bilibili'
             missing_partitions = _missing_upload_partition_labels(updated_task or task, config)
             if missing_partitions:
                 flash(f'请先选择{ "、".join(missing_partitions) }，或开启分区推荐后再继续上传。', 'danger')
@@ -2347,10 +2322,7 @@ def edit_task(task_id):
     
     # GET请求，显示编辑页面
     # 封面图片现在直接从downloads目录提供
-    upload_target = str(task.get('upload_target') or 'acfun').lower()
-    acfun_id_mapping = _load_acfun_partition_mapping()
     bilibili_id_mapping = _build_bilibili_partition_mapping()
-    id_mapping = bilibili_id_mapping if upload_target == 'bilibili' else acfun_id_mapping
     
     # 准备标签字符串
     tags_string = ""
@@ -2389,12 +2361,11 @@ def edit_task(task_id):
     return render_template(
         'edit_task.html', 
         task=task, 
-        id_mapping=id_mapping, 
-        acfun_id_mapping=acfun_id_mapping,
+        id_mapping=bilibili_id_mapping,
         bilibili_id_mapping=bilibili_id_mapping,
         tags_string=tags_string,
         config=config,
-        upload_target=upload_target,
+        upload_target='bilibili',
         can_upload=can_upload,
         has_cover_preview=has_cover_preview,
         has_original_cover_backup=has_original_cover_backup,
@@ -2645,8 +2616,7 @@ def force_upload_task_route(task_id):
     
     # 获取当前配置
     config = load_config()
-    upload_target = str(task.get('upload_target') or 'acfun').lower()
-    platform_name = '双平台' if upload_target == 'both' else ('bilibili' if upload_target == 'bilibili' else 'AcFun')
+    platform_name = 'bilibili'
     missing_partitions = _missing_upload_partition_labels(task, config)
     if missing_partitions:
         flash(f'请先选择{ "、".join(missing_partitions) }，或开启分区推荐后再继续上传。', 'danger')
@@ -2875,7 +2845,6 @@ def system_health():
         },
         'database': {'status': 'unknown', 'message': ''},
         'youtube_cookies': {'status': 'unknown', 'message': ''},
-        'acfun_cookies': {'status': 'unknown', 'message': ''},
         'bilibili_cookies': {'status': 'unknown', 'message': ''},
         'stuck_tasks': {'count': 0, 'tasks': []},
         'recent_errors': [],
@@ -2991,44 +2960,6 @@ def system_health():
                 'message': '未配置YouTube cookies路径'
             }
         
-        # AcFun cookies
-        ac_cookies_path = resolve_cookie_file_path(
-            path_value=config.get('ACFUN_COOKIES_PATH', 'cookies/ac_cookies.json'),
-            default_relative_path='cookies/ac_cookies.json',
-            service_name='AcFun',
-            logger_obj=logger,
-            allow_json_txt_fallback=True
-        )
-        if ac_cookies_path:
-            try:
-                logger.debug(f"检查AcFun cookies文件: {ac_cookies_path}")
-                is_valid, message = validate_cookies(ac_cookies_path, "AcFun")
-                
-                # 获取文件详细信息
-                file_info = get_file_info(ac_cookies_path)
-                
-                health_status['acfun_cookies'] = {
-                    'status': 'ok' if is_valid else 'error',
-                    'message': message,
-                    'path': ac_cookies_path,
-                    'exists': file_info['exists'],
-                    'size': file_info['size'],
-                    'readable': file_info['readable'],
-                    'last_modified': file_info['last_modified']
-                }
-            except Exception:
-                logger.exception("AcFun cookies检查异常")
-                health_status['acfun_cookies'] = {
-                    'status': 'error',
-                    'message': _public_health_check_error_message('AcFun Cookies'),
-                    'path': ac_cookies_path,
-                    'debug_info': get_path_debug_info(ac_cookies_path)
-                }
-        else:
-            health_status['acfun_cookies'] = {
-                'status': 'warning',
-                'message': '未配置AcFun cookies路径'
-            }
 
         # Bilibili cookies
         bili_cookies_path = config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json')
@@ -3075,11 +3006,6 @@ def system_health():
         health_status['youtube_cookies'] = {
             'status': 'error',
             'message': _public_health_check_error_message('YouTube Cookies'),
-            'debug_info': _public_health_check_error_message('Cookies')
-        }
-        health_status['acfun_cookies'] = {
-            'status': 'error',
-            'message': _public_health_check_error_message('AcFun Cookies'),
             'debug_info': _public_health_check_error_message('Cookies')
         }
         health_status['bilibili_cookies'] = {
@@ -3148,7 +3074,6 @@ def settings():
     
     # GET请求，显示设置页面
     config = load_config()
-    acfun_partition_mapping = _load_acfun_partition_mapping()
     bilibili_partition_mapping = _build_bilibili_partition_mapping()
     try:
         from modules.prompt_manager import get_builtin_prompt_previews
@@ -3162,7 +3087,6 @@ def settings():
         tgbot_token_state=_tgbot_api_token_state(config),
         tgbot_token_csrf_token=_ensure_tgbot_token_csrf_token(),
         whisper_languages=WHISPER_LANGUAGE_LIST,
-        acfun_partition_mapping=acfun_partition_mapping,
         bilibili_partition_mapping=bilibili_partition_mapping,
         builtin_prompts=builtin_prompts,
     )
@@ -3427,6 +3351,68 @@ def bilibili_qrcode_status(session_id):
         return jsonify({'success': True, **status_data})
     except Exception as e:
         logger.error(f"查询 bilibili 二维码登录状态失败: {e}")
+        return jsonify({'success': False, 'message': '查询登录状态失败，请稍后重试'}), 500
+
+
+@app.route('/settings/douyin/qrcode/start', methods=['POST'])
+@login_required
+def douyin_qrcode_start():
+    """打开抖音官方登录页并返回浏览器中的登录二维码。"""
+    config = load_config()
+    cookie_path = resolve_cookie_file_path(
+        path_value=config.get('DOUYIN_COOKIES_PATH', 'cookies/douyin_cookies.json'),
+        default_relative_path='cookies/douyin_cookies.json',
+        service_name='抖音',
+        logger_obj=logger,
+        allow_json_txt_fallback=False,
+    )
+    try:
+        session_id, qr_session = _create_douyin_qr_session(cookie_path)
+        qr_data = qr_session.generate()
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'image_base64': qr_data.get('image_base64', ''),
+            'mime_type': qr_data.get('mime_type', 'image/png'),
+            'expires_in': 180,
+            'cookie_path': cookie_path,
+        })
+    except Exception as exc:
+        logger.error(f"发起抖音二维码登录失败: {exc}")
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@app.route('/settings/douyin/qrcode/status/<session_id>', methods=['GET'])
+@login_required
+def douyin_qrcode_status(session_id):
+    """查询抖音扫码状态；成功后让录制 worker 安全加载新 Cookie。"""
+    qr_session = _get_douyin_qr_session(session_id)
+    if not qr_session:
+        return jsonify({'success': False, 'message': '二维码会话不存在或已过期'}), 404
+    try:
+        status_data = qr_session.check_status()
+        status = status_data.get('status')
+        if status == 'done' and status_data.get('cookies_saved'):
+            with _DOUYIN_QR_SESSION_LOCK:
+                item = _DOUYIN_QR_SESSIONS.get(session_id)
+                needs_sync = bool(item and not item.get('config_synced'))
+                if item:
+                    item['config_synced'] = True
+            if needs_sync:
+                status_data['recorder_reload_state'] = (
+                    live_recorder_manager.refresh_credentials()
+                )
+        if status in ('done', 'timeout', 'failed'):
+            _emit_qr_login_event_once(
+                _DOUYIN_QR_SESSIONS,
+                _DOUYIN_QR_SESSION_LOCK,
+                session_id,
+                'douyin',
+                status_data,
+            )
+        return jsonify({'success': True, **status_data})
+    except Exception as exc:
+        logger.error(f"查询抖音二维码登录状态失败: {exc}")
         return jsonify({'success': False, 'message': '查询登录状态失败，请稍后重试'}), 500
 
 @app.route('/settings/reset', methods=['POST'])
@@ -4166,9 +4152,6 @@ def cookie_refresh_needed():
 
 if __name__ == '__main__':
     logger.info("PotatoFlow 启动中...")
-
-    # 初始化AcFun分区ID映射
-    init_id_mapping()
 
     # 加载配置
     config = load_config()

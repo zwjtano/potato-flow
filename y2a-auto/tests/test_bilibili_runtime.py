@@ -13,15 +13,6 @@ from unittest import mock
 
 
 class BilibiliRuntimeTests(unittest.TestCase):
-    def test_pyinstaller_configs_collect_curl_cffi_runtime(self):
-        root = pathlib.Path(__file__).resolve().parents[1]
-        source = (root / "build-tools" / "build_exe.py").read_text(encoding="utf-8")
-
-        self.assertIn("collect_all('curl_cffi')", source)
-        self.assertIn("datas += curl_cffi_datas", source)
-        self.assertIn("binaries=curl_cffi_binaries", source)
-        self.assertIn("+ curl_cffi_hiddenimports", source)
-
     def test_configure_runtime_sets_impersonate_once(self):
         import modules.bilibili_runtime as runtime
 

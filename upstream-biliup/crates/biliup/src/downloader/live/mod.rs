@@ -7,10 +7,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod bilibili;
+mod douyin;
 mod douyu;
 mod wbi;
 
 pub use bilibili::Bilibili;
+pub use douyin::Douyin;
 pub use douyu::Douyu;
 
 pub type LiveResult<T> = Result<T, LiveError>;
@@ -381,7 +383,11 @@ pub enum DownloaderHint {
 }
 
 pub fn builtin_plugins() -> Vec<Arc<dyn LivePlugin + Send + Sync>> {
-    vec![Arc::new(Bilibili::new()), Arc::new(Douyu::new())]
+    vec![
+        Arc::new(Bilibili::new()),
+        Arc::new(Douyu::new()),
+        Arc::new(Douyin::new()),
+    ]
 }
 
 #[cfg(test)]
@@ -389,13 +395,13 @@ mod builtin_plugin_tests {
     use super::builtin_plugins;
 
     #[test]
-    fn only_bilibili_and_douyu_are_enabled() {
+    fn bilibili_douyu_and_douyin_are_enabled() {
         let names = builtin_plugins()
             .iter()
             .map(|plugin| plugin.name())
             .collect::<Vec<_>>();
 
-        assert_eq!(names, vec!["Bilibili", "Douyu"]);
+        assert_eq!(names, vec!["Bilibili", "Douyu", "Douyin"]);
     }
 }
 

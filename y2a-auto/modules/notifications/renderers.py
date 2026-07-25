@@ -28,12 +28,7 @@ def _truncate(text: str, limit: int = 240) -> str:
 
 
 def _upload_target_label(upload_target: Any) -> str:
-    target = _as_text(upload_target).lower()
-    if target == "both":
-        return "AcFun + bilibili"
-    if target == "bilibili":
-        return "bilibili"
-    return "AcFun"
+    return "bilibili"
 
 
 def _task_title(payload: dict[str, Any]) -> str:
@@ -45,13 +40,8 @@ def _task_title(payload: dict[str, Any]) -> str:
 
 
 def _task_platform_result(payload: dict[str, Any]) -> str:
-    succeeded = []
-    if payload.get("acfun_uploaded"):
-        succeeded.append("AcFun")
     if payload.get("bilibili_uploaded"):
-        succeeded.append("bilibili")
-    if succeeded:
-        return "、".join(succeeded)
+        return "bilibili"
     return _upload_target_label(payload.get("upload_target"))
 
 

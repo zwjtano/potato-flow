@@ -109,6 +109,7 @@ body {
 .platform-mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #fff; border-radius: 7px; font-size: 15px; }
 .platform-mark.bilibili { background: #f35b8a; }
 .platform-mark.douyu { background: #ff7a22; }
+.platform-mark.douyin { background: #111827; }
 .platform-mark.large { width: 45px; height: 45px; border-radius: 9px; font-size: 20px; }
 .room-avatar { position: relative; display: block; width: 36px; height: 36px; flex: 0 0 auto; }
 .room-avatar.large { width: 48px; height: 48px; }
@@ -116,6 +117,7 @@ body {
 .room-avatar-platform { position: absolute; right: -2px; bottom: -2px; display: grid; width: 15px; height: 15px; place-items: center; color: #fff; border: 2px solid #fff; border-radius: 50%; font-size: 7px; }
 .room-avatar-platform.bilibili { background: #f35b8a; }
 .room-avatar-platform.douyu { background: #ff7a22; }
+.room-avatar-platform.douyin { background: #111827; }
 .room-avatar.large .room-avatar-platform { width: 18px; height: 18px; font-size: 8px; }
 .room-item-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .room-item-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1310,17 +1312,6 @@ body {
     color: #fff;
     text-shadow: 0 1px 2px rgba(0,0,0,.15);
 }
-.badge-platform-acfun {
-    background-color: #FF5500;
-    color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,.15);
-}
-.badge-platform-both {
-    background: linear-gradient(120deg, #FB7299 0%, #FF5500 100%);
-    color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,.15);
-}
-
 /* 表格列宽设置（总和≤100%，避免出现横向滚动条） */
 .tasks-table th.col-id { width: 7%; }
 .tasks-table th.col-title { width: 20%; }

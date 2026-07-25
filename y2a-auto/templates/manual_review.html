@@ -214,36 +214,11 @@
                             
                             <div class="mt-3">
                                 <h6><i class="bi bi-folder"></i> 当前分区:</h6>
-                                {% set target = (task.upload_target or 'acfun')|lower %}
-                                {% if target == 'both' %}
-                                    {% if task.selected_partition_id_acfun or task.recommended_partition_id_acfun %}
-                                        {% set ac_pid = task.selected_partition_id_acfun or task.recommended_partition_id_acfun %}
-                                        <span class="badge bg-info">AcFun: {{ get_partition_name(ac_pid, 'acfun') or ac_pid }}</span>
-                                        {% if (not task.selected_partition_id_acfun) and task.recommended_partition_id_acfun %}
-                                            <span class="badge bg-secondary"><i class="bi bi-stars"></i> AcFun推荐</span>
-                                        {% endif %}
-                                    {% endif %}
-                                    {% if task.selected_partition_id_bilibili or task.recommended_partition_id_bilibili %}
-                                        {% set bili_pid = task.selected_partition_id_bilibili or task.recommended_partition_id_bilibili %}
-                                        <span class="badge bg-info">bili: {{ get_partition_name(bili_pid, 'bilibili') or bili_pid }}</span>
-                                        {% if (not task.selected_partition_id_bilibili) and task.recommended_partition_id_bilibili %}
-                                            <span class="badge bg-secondary"><i class="bi bi-stars"></i> bili推荐</span>
-                                        {% endif %}
-                                    {% endif %}
-                                {% elif target == 'bilibili' %}
-                                    {% set bili_pid = task.selected_partition_id_bilibili or task.recommended_partition_id_bilibili or task.selected_partition_id or task.recommended_partition_id %}
-                                    {% if bili_pid %}
-                                        <span class="badge bg-info">{{ get_partition_name(bili_pid, 'bilibili') or bili_pid }}</span>
-                                    {% else %}
-                                        <span class="badge bg-secondary">未设置</span>
-                                    {% endif %}
+                                {% set bili_pid = task.selected_partition_id_bilibili or task.recommended_partition_id_bilibili or task.selected_partition_id or task.recommended_partition_id %}
+                                {% if bili_pid %}
+                                    <span class="badge bg-info">{{ get_partition_name(bili_pid, 'bilibili') or bili_pid }}</span>
                                 {% else %}
-                                    {% set ac_pid = task.selected_partition_id_acfun or task.recommended_partition_id_acfun or task.selected_partition_id or task.recommended_partition_id %}
-                                    {% if ac_pid %}
-                                        <span class="badge bg-info">{{ get_partition_name(ac_pid, 'acfun') or ac_pid }}</span>
-                                    {% else %}
-                                        <span class="badge bg-secondary">未设置</span>
-                                    {% endif %}
+                                    <span class="badge bg-secondary">未设置</span>
                                 {% endif %}
                             </div>
                             
@@ -271,8 +246,7 @@
                                         data-task-id="{{ task.id }}"
                                         data-task-title="{{ task.video_title_translated or task.video_title_original }}"
                                         onclick="confirmForceUpload(this.dataset.taskId, this.dataset.taskTitle)">
-                                    {% set target = (task.upload_target or 'acfun')|lower %}
-                                    <i class="bi bi-upload"></i> 强制上传到{{ '双平台' if target == 'both' else ('bilibili' if target == 'bilibili' else 'AcFun') }}
+                                    <i class="bi bi-upload"></i> 强制上传到bilibili
                                 </button>
                                 <button type="button" class="btn btn-outline-danger"
                                         data-task-id="{{ task.id }}"

@@ -1035,7 +1035,7 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                         else:
                             cover_path = file_path
                     elif (file.lower().endswith('.webp') or file.lower().endswith('.png')) and file.startswith('video'):
-                        # 直接使用 webp/png 作为封面（AcFun 已支持，不强制转 jpg）
+                        # 保留来源封面的 webp/png 格式，避免无意义转码
                         if not cover_path:
                             cover_path = file_path
                             logger.info(f"检测到封面 {os.path.basename(file_path)}，将直接作为封面文件")
@@ -1229,4 +1229,3 @@ def extract_video_urls_from_playlist(playlist_url, cookies_file_path=None):
     except Exception as e:
         logger.error(f"extract_video_urls_from_playlist异常: {str(e)}")
     return video_urls
-

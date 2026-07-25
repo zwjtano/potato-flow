@@ -249,6 +249,43 @@
                                         </article>
                                     </div>
 
+                                    <div class="col-xl-6">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">录制账号</span>
+                                                    <h4>抖音 Cookie</h4>
+                                                </div>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="form-group">
+                                                    <label for="douyin-cookies" class="form-label">Cookie 文件路径</label>
+                                                    <input type="text" id="douyin-cookies" name="DOUYIN_COOKIES_PATH" value="{{ config.get('DOUYIN_COOKIES_PATH', 'cookies/douyin_cookies.json') }}" class="form-control">
+                                                    <p class="help-text">用于抖音直播检测、原画录制和弹幕采集，不用于投稿。</p>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label for="douyin-cookies-file" class="form-label">手动上传 Cookie 文件</label>
+                                                    <input type="file" id="douyin-cookies-file" name="douyin_cookies_file" class="form-control" accept=".json,.txt">
+                                                </div>
+                                                <div class="settings-inline-actions">
+                                                    <button type="button" class="btn btn-outline-primary" id="douyin-qrcode-start-btn">
+                                                        <i class="bi bi-qr-code"></i> 抖音扫码登录
+                                                    </button>
+                                                    <span class="help-text">扫码确认后自动保存，并安全重载录制配置。</span>
+                                                </div>
+                                                <div class="settings-qrcode-panel d-none" id="douyin-qrcode-wrap">
+                                                    <img id="douyin-qrcode-image" alt="抖音登录二维码" class="qrcode-img">
+                                                    <div class="mt-2">
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="douyin-qrcode-check-btn">
+                                                            <i class="bi bi-arrow-repeat"></i> 检查状态
+                                                        </button>
+                                                        <span class="ms-2" id="douyin-qrcode-status-text"></span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
                                     <div class="col-12">
                                         <article class="settings-card">
                                             <div class="settings-card-header">
@@ -3073,6 +3110,84 @@ document.addEventListener('DOMContentLoaded', function () {
         biliCheckBtn.addEventListener('click', function () {
             checkBiliStatus();
         });
+    }
+
+    const douyinStartBtn = document.getElementById('douyin-qrcode-start-btn');
+    const douyinCheckBtn = document.getElementById('douyin-qrcode-check-btn');
+    const douyinWrap = document.getElementById('douyin-qrcode-wrap');
+    const douyinImage = document.getElementById('douyin-qrcode-image');
+    const douyinStatusText = document.getElementById('douyin-qrcode-status-text');
+    let douyinSessionId = null;
+    let douyinTimer = null;
+
+    const setDouyinStatus = function (text, tone) {
+        if (!douyinStatusText) return;
+        douyinStatusText.textContent = text || '';
+        applyStatusTone(douyinStatusText, tone || 'neutral');
+    };
+    const stopDouyinPolling = function () {
+        if (douyinTimer) clearInterval(douyinTimer);
+        douyinTimer = null;
+    };
+    const checkDouyinStatus = function () {
+        if (!douyinSessionId) return;
+        fetch('/settings/douyin/qrcode/status/' + douyinSessionId)
+            .then(function (resp) { return resp.json(); })
+            .then(function (data) {
+                if (!data.success) {
+                    setDouyinStatus(data.message || '状态查询失败', 'error');
+                    stopDouyinPolling();
+                    return;
+                }
+                if (data.status === 'done') {
+                    setDouyinStatus(
+                        data.recorder_reload_state === 'pending'
+                            ? '登录成功；当前录制结束后加载新 Cookie'
+                            : '登录成功，Cookie 已保存并生效',
+                        'success'
+                    );
+                    stopDouyinPolling();
+                } else if (data.status === 'timeout' || data.status === 'failed') {
+                    setDouyinStatus(data.message || '登录失败，请重新获取', 'error');
+                    stopDouyinPolling();
+                } else {
+                    setDouyinStatus(data.message || '等待扫码确认', 'neutral');
+                }
+            })
+            .catch(function (err) {
+                setDouyinStatus('状态请求失败: ' + err, 'error');
+                stopDouyinPolling();
+            });
+    };
+    if (douyinStartBtn) {
+        douyinStartBtn.addEventListener('click', function () {
+            douyinStartBtn.disabled = true;
+            setDouyinStatus('正在打开抖音登录页，请稍候…', 'neutral');
+            fetch('/settings/douyin/qrcode/start', {method: 'POST'})
+                .then(function (resp) { return resp.json(); })
+                .then(function (data) {
+                    douyinStartBtn.disabled = false;
+                    if (!data.success) {
+                        setDouyinStatus(data.message || '获取二维码失败', 'error');
+                        return;
+                    }
+                    douyinSessionId = data.session_id;
+                    if (douyinImage && data.image_base64) {
+                        douyinImage.src = 'data:' + (data.mime_type || 'image/png') + ';base64,' + data.image_base64;
+                    }
+                    if (douyinWrap) douyinWrap.classList.remove('d-none');
+                    setDouyinStatus('请使用抖音 App 扫码并在手机端确认', 'neutral');
+                    stopDouyinPolling();
+                    douyinTimer = setInterval(checkDouyinStatus, 2000);
+                })
+                .catch(function (err) {
+                    douyinStartBtn.disabled = false;
+                    setDouyinStatus('获取二维码失败: ' + err, 'error');
+                });
+        });
+    }
+    if (douyinCheckBtn) {
+        douyinCheckBtn.addEventListener('click', checkDouyinStatus);
     }
 });
 

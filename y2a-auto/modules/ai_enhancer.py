@@ -1195,9 +1195,9 @@ def translate_video_metadata(
         final_result["error_message"] = _build_metadata_failure_message(final_result["failed_fields"])
         return final_result
 
-def generate_acfun_tags(title, description, openai_config=None, task_id=None):
+def generate_video_tags(title, description, openai_config=None, task_id=None):
     """
-    使用OpenAI生成AcFun风格的标签
+    使用 OpenAI 生成 Bilibili 投稿标签
     
     Args:
         title (str): 视频标题
@@ -1209,7 +1209,7 @@ def generate_acfun_tags(title, description, openai_config=None, task_id=None):
         list: 标签列表，出错时返回空列表
     """
     logger = setup_task_logger(task_id or "unknown")
-    logger.info("开始生成AcFun标签")
+    logger.info("开始生成视频标签")
     title = _pre_clean(safe_str(title), content_type="title")
     description = _pre_clean(safe_str(description), content_type="description")
     if not _has_meaningful_content(title, content_type="title"):
@@ -1283,53 +1283,6 @@ def generate_acfun_tags(title, description, openai_config=None, task_id=None):
         logger.error(traceback.format_exc())
         return []
 
-def flatten_partitions(id_mapping_data):
-    """
-    将id_mapping_data扁平化为分区列表
-    
-    Args:
-        id_mapping_data (list): id_mapping.json解析后的数据
-        
-    Returns:
-        list: 分区列表，每个元素包含id, name等信息
-    """
-    if not id_mapping_data:
-        return []
-        
-    partitions = []
-    
-    for category_item in id_mapping_data:
-        # 兼容两种格式："name"或"category"作为分类名称
-        category_name = category_item.get('name', '') or category_item.get('category', '')
-        for partition in category_item.get('partitions', []):
-            # 记录一级分区信息
-            partition_id = partition.get('id')
-            partition_name = partition.get('name', '')
-            partition_desc = partition.get('description', '')
-            
-            if partition_id:
-                partitions.append({
-                    'id': partition_id,
-                    'name': partition_name,
-                    'description': partition_desc,
-                    'parent_name': category_name
-                })
-            
-            # 处理二级分区
-            for sub_partition in partition.get('sub_partitions', []):
-                sub_id = sub_partition.get('id')
-                sub_name = sub_partition.get('name', '')
-                sub_desc = sub_partition.get('description', '')
-                
-                if sub_id:
-                    partitions.append({
-                        'id': sub_id,
-                        'name': sub_name,
-                        'description': sub_desc,
-                        'parent_name': partition_name
-                    })
-    
-    return partitions
 
 def flatten_bilibili_partitions(zone_data):
     """
@@ -1901,7 +1854,7 @@ def _request_partition_selection(
         "single_player 更偏单机/主机，online 更偏网络游戏，esports 仅用于明显赛事/战队/职业内容，mobile 更偏手游。"
         "即使不确定，也要返回最佳猜测，但应降低 confidence。"
         "alternatives 最多返回 3 个同平台候选ID。"
-        '只返回 JSON，例如：{"acfun":{"id":"候选ID","confidence":0.82,"alternatives":["候选ID"],"reason_summary":""},"bilibili":{"id":"候选ID","confidence":0.70,"alternatives":[],"reason_summary":""}}。'
+        '只返回 JSON，例如：{"bilibili":{"id":"候选ID","confidence":0.70,"alternatives":[],"reason_summary":""}}。'
     )
     parsed = _request_json_object(
         client=client,
@@ -1986,14 +1939,8 @@ def _recommend_partition_core(
         platform: _make_partition_selection() for platform in platform_sources
     }
     unresolved_partitions: Dict[str, Sequence[Dict[str, Any]]] = {}
-    fixed_key_map = {
-        "acfun": "FIXED_PARTITION_ID",
-        "bilibili": "FIXED_PARTITION_ID_BILIBILI",
-    }
-    platform_label_map = {
-        "acfun": "AcFun",
-        "bilibili": "bilibili",
-    }
+    fixed_key_map = {"bilibili": "FIXED_PARTITION_ID_BILIBILI"}
+    platform_label_map = {"bilibili": "bilibili"}
 
     if not metadata.get("primary_title") and not metadata.get("primary_description"):
         logger.warning("缺少标题和描述，无法推荐分区")
@@ -2122,46 +2069,6 @@ def _recommend_partition_core(
     return result_map
 
 
-def recommend_partitions_aio(
-    title,
-    description,
-    *,
-    acfun_id_mapping_data=None,
-    bilibili_zone_data=None,
-    title_original: str = '',
-    description_original: str = '',
-    title_translated: str = '',
-    description_translated: str = '',
-    tags: Any = None,
-    openai_config=None,
-    task_id=None,
-    cover_path: Optional[str] = None,
-    include_cover_for_ai: bool = False,
-) -> Dict[str, Dict[str, Any]]:
-    logger = setup_task_logger(task_id or "unknown")
-    logger.info("开始AIO推荐多平台视频分区")
-
-    platform_sources: Dict[str, Sequence[Dict[str, Any]]] = {}
-    if acfun_id_mapping_data:
-        platform_sources["acfun"] = flatten_partitions(acfun_id_mapping_data)
-    if bilibili_zone_data:
-        platform_sources["bilibili"] = flatten_bilibili_partitions(bilibili_zone_data)
-
-    return _recommend_partition_core(
-        title=title,
-        description=description,
-        title_original=title_original,
-        description_original=description_original,
-        title_translated=title_translated,
-        description_translated=description_translated,
-        tags=tags,
-        platform_sources=platform_sources,
-        openai_config=openai_config,
-        logger=logger,
-        cover_path=cover_path,
-        include_cover_for_ai=include_cover_for_ai,
-    )
-
 
 def recommend_bilibili_partition(
     title,
@@ -2206,52 +2113,3 @@ def recommend_bilibili_partition(
         include_cover_for_ai=include_cover_for_ai,
     )
     return result_map.get("bilibili", _make_partition_selection())
-
-def recommend_acfun_partition(
-    title,
-    description,
-    id_mapping_data,
-    *,
-    title_original: str = '',
-    description_original: str = '',
-    title_translated: str = '',
-    description_translated: str = '',
-    tags: Any = None,
-    openai_config=None,
-    task_id=None,
-    cover_path: Optional[str] = None,
-    include_cover_for_ai: bool = False,
- ) -> Dict[str, Any]:
-    """
-    使用 AI 主判定 + 规则兜底策略推荐 AcFun 分区。
-    
-    Returns:
-        dict: partition_selection 结构
-    """
-    logger = setup_task_logger(task_id or "unknown")
-    logger.info(f"开始推荐AcFun视频分区")
-
-    if not id_mapping_data:
-        logger.warning("缺少分区映射数据 (id_mapping_data is empty or None)，无法推荐分区")
-        return _make_partition_selection()
-
-    partitions = flatten_partitions(id_mapping_data)
-    if not partitions:
-        logger.warning("分区映射数据格式错误或为空 (flatten_partitions returned empty list)，无法推荐分区")
-        return _make_partition_selection()
-
-    result_map = _recommend_partition_core(
-        title=title,
-        description=description,
-        title_original=title_original,
-        description_original=description_original,
-        title_translated=title_translated,
-        description_translated=description_translated,
-        tags=tags,
-        platform_sources={"acfun": partitions},
-        openai_config=openai_config,
-        logger=logger,
-        cover_path=cover_path,
-        include_cover_for_ai=include_cover_for_ai,
-    )
-    return result_map.get("acfun", _make_partition_selection())
