@@ -1377,6 +1377,7 @@ class LiveRecorderManager:
             }
             for item in self.list_rooms()
         ]
+        allowed_cover_root = self._recording_file_roots()["artifacts"].resolve()
         for row in uploads:
             video_path = str(row["video_path"])
             if room_marker and room_marker not in Path(video_path).name:
@@ -1389,15 +1390,33 @@ class LiveRecorderManager:
             stages = stages_by_job.get(row["fingerprint"], [])
             upload_stage = next((item for item in stages if item["key"] == "upload"), {})
             ai_stage = next((item for item in stages if item["key"] == "ai"), {})
+            cover_stage = next((item for item in stages if item["key"] == "cover"), {})
             upload_details = upload_stage.get("details") if isinstance(upload_stage, dict) else {}
             ai_details = ai_stage.get("details") if isinstance(ai_stage, dict) else {}
+            cover_details = cover_stage.get("details") if isinstance(cover_stage, dict) else {}
             upload_details = upload_details if isinstance(upload_details, dict) else {}
             ai_details = ai_details if isinstance(ai_details, dict) else {}
+            cover_details = cover_details if isinstance(cover_details, dict) else {}
             review = overrides.get(row["fingerprint"], {})
+            cover_candidate = str(
+                review.get("cover_path")
+                or cover_details.get("ai_cover_path")
+                or cover_details.get("cover_used_for_upload")
+                or ""
+            ).strip()
+            cover_path = Path(cover_candidate).resolve() if cover_candidate else None
+            local_cover_available = bool(
+                cover_path
+                and cover_path.is_file()
+                and cover_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+                and (cover_path == allowed_cover_root or allowed_cover_root in cover_path.parents)
+            )
             bilibili_result = result.get("bilibili")
             if not isinstance(bilibili_result, dict):
                 bilibili_result = upload_details.get("bilibili")
             bilibili_result = bilibili_result if isinstance(bilibili_result, dict) else {}
+            bilibili_cover_url = str(bilibili_result.get("cover_url") or "").strip()
+            cover_available = local_cover_available or urlparse(bilibili_cover_url).scheme in {"http", "https"}
             title = str(
                 review.get("title")
                 or upload_details.get("title")
@@ -1459,7 +1478,15 @@ class LiveRecorderManager:
                 "source": "recording",
                 "bvid": str(bilibili_result.get("bvid") or ""),
                 "bilibili_url": str(bilibili_result.get("url") or ""),
-                "bilibili_cover_url": str(bilibili_result.get("cover_url") or ""),
+                "bilibili_cover_url": bilibili_cover_url,
+                "cover_available": cover_available,
+                "local_cover_available": local_cover_available,
+                "cover_updated_at": str(
+                    review.get("updated_at")
+                    or cover_stage.get("updated_at")
+                    or row["updated_at"]
+                    or ""
+                ),
                 "completed_stages": completed_stages,
                 "total_stages": 6,
                 "failed_stage": failed_stage,

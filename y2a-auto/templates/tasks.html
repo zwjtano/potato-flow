@@ -70,8 +70,24 @@
                         {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
                         <tr class="recording-task-row">
                             <td>
-                                <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
-                                <code class="recording-task-file">{{ job.video_name }}</code>
+                                <div class="recording-video-cell">
+                                    {% if job.cover_available %}
+                                    {% set task_cover_url = (url_for('live_recording_job_cover', fingerprint=job.id) ~ '?v=' ~ (job.cover_updated_at|urlencode)) if job.local_cover_available else job.bilibili_cover_url %}
+                                    <button type="button" class="recording-cover-trigger"
+                                            data-cover-url="{{ task_cover_url }}"
+                                            data-cover-title="{{ job.title or job.video_name }}"
+                                            aria-label="查看“{{ job.title or job.video_name }}”封面">
+                                        <img src="{{ task_cover_url }}" alt="{{ job.title or job.video_name }}封面"
+                                             class="recording-task-cover" loading="lazy" referrerpolicy="no-referrer">
+                                    </button>
+                                    {% else %}
+                                    <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
+                                    {% endif %}
+                                    <div class="recording-video-copy">
+                                        <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
+                                        <code class="recording-task-file">{{ job.video_name }}</code>
+                                    </div>
+                                </div>
                             </td>
                             <td>
                                 <div class="d-flex align-items-center gap-2">
@@ -155,9 +171,23 @@
                 {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
                 <article class="recording-task-card">
                     <div class="d-flex justify-content-between gap-3">
-                        <div class="min-w-0">
-                            <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
-                            <div class="small text-muted mt-1">{{ job.room_name }}</div>
+                        <div class="recording-video-cell min-w-0">
+                            {% if job.cover_available %}
+                            {% set task_cover_url = (url_for('live_recording_job_cover', fingerprint=job.id) ~ '?v=' ~ (job.cover_updated_at|urlencode)) if job.local_cover_available else job.bilibili_cover_url %}
+                            <button type="button" class="recording-cover-trigger"
+                                    data-cover-url="{{ task_cover_url }}"
+                                    data-cover-title="{{ job.title or job.video_name }}"
+                                    aria-label="查看“{{ job.title or job.video_name }}”封面">
+                                <img src="{{ task_cover_url }}" alt="{{ job.title or job.video_name }}封面"
+                                     class="recording-task-cover" loading="lazy" referrerpolicy="no-referrer">
+                            </button>
+                            {% else %}
+                            <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
+                            {% endif %}
+                            <div class="recording-video-copy min-w-0">
+                                <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
+                                <div class="small text-muted mt-1">{{ job.room_name }}</div>
+                            </div>
                         </div>
                         {% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
                         {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-warning">待人工审核</span>
@@ -460,6 +490,21 @@
     </div>
 </div>
 
+<!-- 录播封面预览 -->
+<div class="modal fade" id="recordingCoverPreviewModal" tabindex="-1" aria-labelledby="recordingCoverPreviewTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content recording-cover-preview-content">
+            <div class="modal-header">
+                <h5 class="modal-title text-truncate" id="recordingCoverPreviewTitle">录播封面</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <img src="" alt="录播封面大图" class="recording-cover-preview-image" data-role="recording-cover-preview-image">
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- 错误详情浮窗 -->
 <div class="modal fade" id="taskErrorModal" tabindex="-1" aria-labelledby="taskErrorModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -661,6 +706,16 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-tasks-table td { padding: .8rem .65rem; }
 .recording-task-title { font-weight: 650; color: #202736; max-width: 420px; }
 .recording-task-file { display: block; max-width: 420px; margin-top: .25rem; color: #8a94a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .72rem; }
+.recording-video-cell { display: flex; align-items: center; gap: .8rem; min-width: 260px; }
+.recording-video-copy { min-width: 0; }
+.recording-cover-trigger { flex: 0 0 auto; padding: 0; border: 0; border-radius: 9px; background: transparent; box-shadow: 0 0 0 1px rgba(31,42,55,.08); overflow: hidden; transition: transform .15s ease, box-shadow .15s ease; }
+.recording-cover-trigger:hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(31,42,55,.16); }
+.recording-cover-trigger:focus-visible { outline: 2px solid #0d6efd; outline-offset: 2px; }
+.recording-task-cover { display: block; width: 104px; height: 65px; border-radius: 9px; object-fit: cover; background: #e9edf3; }
+.recording-task-cover.fallback { display: grid; flex: 0 0 auto; place-items: center; color: #9aa5b5; font-size: 1.15rem; background: #eef2f6; border: 1px solid #e2e7ee; }
+.recording-cover-preview-content { overflow: hidden; border: 0; border-radius: 16px; }
+.recording-cover-preview-content .modal-body { padding: 0; background: #11151b; }
+.recording-cover-preview-image { display: block; width: 100%; max-height: 72vh; object-fit: contain; }
 .recording-room-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
 .recording-room-avatar.fallback { display: inline-flex; align-items: center; justify-content: center; color: #738096; background: #eef2f7; }
 .recording-task-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: .4rem; }
@@ -1499,6 +1554,20 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
             if (btn.dataset.bindRecordingDetail === '1') return;
             btn.dataset.bindRecordingDetail = '1';
             btn.addEventListener('click', () => openRecordingJobDetail(btn.dataset.jobId));
+        });
+
+        queryAllWithin(root, '.recording-cover-trigger').forEach(btn => {
+            if (btn.dataset.bindCoverPreview === '1') return;
+            btn.dataset.bindCoverPreview = '1';
+            btn.addEventListener('click', () => {
+                const modal = document.getElementById('recordingCoverPreviewModal');
+                const image = modal?.querySelector('[data-role="recording-cover-preview-image"]');
+                const title = modal?.querySelector('#recordingCoverPreviewTitle');
+                if (!modal || !image || !title || !btn.dataset.coverUrl) return;
+                image.src = btn.dataset.coverUrl;
+                title.textContent = btn.dataset.coverTitle || '录播封面';
+                bootstrap.Modal.getOrCreateInstance(modal).show();
+            });
         });
     }
 
