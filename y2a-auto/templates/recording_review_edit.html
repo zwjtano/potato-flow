@@ -1,17 +1,23 @@
 {% extends 'base.html' %}
 
-{% block title %}PotatoFlow - 录播人工审核{% endblock %}
+{% block title %}PotatoFlow - {{ '编辑已上传稿件' if job.status == 'completed' else '录播人工审核' }}{% endblock %}
 
 {% block content %}
 <div class="recording-review-editor">
     <div class="studio-page-header">
         <div>
-            <div class="page-eyebrow">RECORDING REVIEW</div>
-            <h1>录播人工审核</h1>
-            <p>默认使用已生成的 AI 投稿内容；AI 未生成的项目再手动补充。</p>
+            <div class="page-eyebrow">{{ 'PUBLISHED ARCHIVE EDITOR' if job.status == 'completed' else 'RECORDING REVIEW' }}</div>
+            <h1>{{ '编辑已上传稿件' if job.status == 'completed' else '录播人工审核' }}</h1>
+            <p>
+                {% if job.status == 'completed' %}
+                AI 重新生成后先在本页预览，确认无误再同步到 B站；不会修改视频和分P。
+                {% else %}
+                默认使用已生成的 AI 投稿内容；AI 未生成的项目再手动补充。
+                {% endif %}
+            </p>
         </div>
-        <a href="{{ url_for('manual_review') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-arrow-left"></i> 返回人工审核
+        <a href="{{ url_for('tasks') if job.status == 'completed' else url_for('manual_review') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> 返回{{ '上传任务' if job.status == 'completed' else '人工审核' }}
         </a>
     </div>
 
@@ -23,7 +29,19 @@
                     <dl class="review-facts mb-0">
                         <dt>主播</dt><dd>{{ job.room_name }}</dd>
                         <dt>录播文件</dt><dd class="text-break">{{ job.video_name }}</dd>
+                        {% if job.status == 'completed' %}
+                        <dt>B站稿件</dt><dd><a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener">{{ job.bvid }}</a></dd>
+                        <dt>同步状态</dt>
+                        <dd>
+                            {% if job.review_override.pending_published_update %}
+                            <span class="badge text-bg-warning">有待确认修改</span>
+                            {% else %}
+                            <span class="badge text-bg-success">已同步</span>
+                            {% endif %}
+                        </dd>
+                        {% else %}
                         <dt>失败步骤</dt><dd>{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage or '处理') }}</dd>
+                        {% endif %}
                         <dt>任务编号</dt><dd class="text-monospace text-break">{{ job.id }}</dd>
                     </dl>
                     {% if job.error %}
@@ -35,18 +53,23 @@
             </div>
 
             <div class="card mb-4">
-                <div class="card-header">当前投稿封面</div>
+                <div class="card-header">{{ '待确认封面预览' if job.review_override.pending_published_update else '当前投稿封面' }}</div>
                 <div class="review-cover">
                     <img src="{{ url_for('live_recording_job_cover', fingerprint=job.id) }}"
+                         data-fallback-src="{{ job.bilibili_cover_url }}"
                          alt="录播投稿封面"
-                         onerror="this.closest('.review-cover').classList.add('cover-missing');this.remove();">
+                         onerror="if(this.dataset.fallbackSrc && !this.dataset.fallbackUsed){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc;}else{this.closest('.review-cover').classList.add('cover-missing');this.remove();}">
                     <div class="cover-placeholder">
                         <i class="bi bi-image"></i>
                         <span>当前没有可预览封面</span>
                     </div>
                 </div>
                 <div class="card-body small text-muted">
+                    {% if job.status == 'completed' %}
+                    本页显示准备同步的封面。只有点击“确认同步到 B站”后，线上稿件才会改变。
+                    {% else %}
                     上传新封面后会优先使用人工封面，不再使用本次任务原有的 AI 封面。
+                    {% endif %}
                 </div>
             </div>
 
@@ -75,6 +98,28 @@
                 <div class="card mb-4">
                     <div class="card-header">编辑视频信息</div>
                     <div class="card-body">
+                        {% if job.status == 'completed' %}
+                        <div class="ai-regenerate-panel mb-4">
+                            <div>
+                                <strong><i class="bi bi-stars"></i> AI 重新生成</strong>
+                                <div class="small text-muted mt-1">每次生成只保存为预览，不会立即修改线上稿件。</div>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 mt-3">
+                                <button type="submit" name="action" value="regenerate_title" class="btn btn-sm btn-outline-primary ai-generate-btn">
+                                    重新生成标题
+                                </button>
+                                <button type="submit" name="action" value="regenerate_description" class="btn btn-sm btn-outline-primary ai-generate-btn">
+                                    重新生成简介
+                                </button>
+                                <button type="submit" name="action" value="regenerate_cover" class="btn btn-sm btn-outline-primary ai-generate-btn">
+                                    重新生成封面
+                                </button>
+                                <button type="submit" name="action" value="regenerate_all" class="btn btn-sm btn-primary ai-generate-btn">
+                                    全部重新生成
+                                </button>
+                            </div>
+                        </div>
+                        {% endif %}
                         <div class="mb-3">
                             <label for="review-title" class="form-label">视频标题</label>
                             <input id="review-title" name="title" class="form-control" maxlength="80"
@@ -144,14 +189,21 @@
                 </div>
 
                 <div class="review-actions">
-                    <a href="{{ url_for('manual_review') }}" class="btn btn-outline-secondary">取消</a>
+                    <a href="{{ url_for('tasks') if job.status == 'completed' else url_for('manual_review') }}" class="btn btn-outline-secondary">取消</a>
                     <div class="d-flex flex-wrap gap-2">
                         <button type="submit" name="action" value="save" class="btn btn-primary">
-                            <i class="bi bi-floppy"></i> 保存修改
+                            <i class="bi bi-floppy"></i> 保存{{ '预览' if job.status == 'completed' else '修改' }}
                         </button>
+                        {% if job.status == 'completed' %}
+                        <button type="submit" name="action" value="apply_to_bilibili" class="btn btn-success"
+                                data-confirm-published-update="true">
+                            <i class="bi bi-cloud-check"></i> 确认同步到 B站
+                        </button>
+                        {% else %}
                         <button type="submit" name="action" value="save_and_retry" class="btn btn-success" {% if not job.retryable %}disabled{% endif %}>
                             <i class="bi bi-cloud-upload"></i> 保存并重新投稿
                         </button>
+                        {% endif %}
                     </div>
                 </div>
             </form>
@@ -184,7 +236,23 @@ document.addEventListener('DOMContentLoaded', function () {
     title.addEventListener('input', refreshCounts);
     description.addEventListener('input', refreshCounts);
     tags.forEach(function (input) { input.addEventListener('input', collectTags); });
-    form.addEventListener('submit', collectTags);
+    form.addEventListener('submit', function (event) {
+        collectTags();
+        const submitter = event.submitter;
+        if (submitter && submitter.dataset.confirmPublishedUpdate === 'true') {
+            const confirmed = window.confirm(
+                '确定把当前标题、简介和封面同步到 B站吗？\\n视频内容与分P不会改变，但稿件可能重新进入审核。'
+            );
+            if (!confirmed) {
+                event.preventDefault();
+                return;
+            }
+        }
+        if (submitter && submitter.classList.contains('ai-generate-btn')) {
+            submitter.disabled = true;
+            submitter.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>AI 生成中…';
+        }
+    });
     refreshCounts();
     collectTags();
 });
@@ -202,6 +270,7 @@ document.addEventListener('DOMContentLoaded', function () {
 .cover-placeholder { display: none; color: #94a3b8; flex-direction: column; align-items: center; gap: .5rem; }
 .cover-placeholder i { font-size: 2rem; }
 .review-cover.cover-missing .cover-placeholder { display: flex; }
+.ai-regenerate-panel { padding: 1rem; border: 1px solid #cfe2ff; border-radius: 12px; background: #f4f8ff; }
 .review-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; }
 @media (max-width: 575.98px) {
     .review-actions { align-items: stretch; flex-direction: column-reverse; }

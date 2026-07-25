@@ -127,6 +127,11 @@
                                     {% if job.status == 'failed' %}
                                     <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>
                                     {% endif %}
+                                    {% if job.status == 'completed' and job.bvid %}
+                                    <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-stars"></i> AI 编辑稿件
+                                    </a>
+                                    {% endif %}
                                     {% if job.retryable %}
                                     <button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>
                                     {% endif %}
@@ -165,6 +170,7 @@
                     </button>
                     <div class="d-flex flex-wrap gap-2 mt-3">
                         {% if job.status == 'failed' %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
+                        {% if job.status == 'completed' and job.bvid %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-stars"></i> AI 编辑稿件</a>{% endif %}
                         {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
                         <button type="button" class="btn btn-sm btn-outline-danger"

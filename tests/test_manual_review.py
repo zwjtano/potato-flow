@@ -51,6 +51,52 @@ class ManualReviewTests(unittest.TestCase):
             app_source,
         )
 
+    def test_completed_recording_can_regenerate_and_confirm_published_metadata(self):
+        app_source = (ROOT / "y2a-auto" / "app.py").read_text(encoding="utf-8")
+        manager_source = (
+            ROOT / "y2a-auto" / "modules" / "live_recorder_manager.py"
+        ).read_text(encoding="utf-8")
+        tasks_template = (
+            ROOT / "y2a-auto" / "templates" / "tasks.html"
+        ).read_text(encoding="utf-8")
+        editor_template = (
+            ROOT / "y2a-auto" / "templates" / "recording_review_edit.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("AI 编辑稿件", tasks_template)
+        for action in (
+            "regenerate_title",
+            "regenerate_description",
+            "regenerate_cover",
+            "regenerate_all",
+            "apply_to_bilibili",
+        ):
+            self.assertIn(action, editor_template)
+            self.assertIn(action, app_source)
+        self.assertIn("def regenerate_published_metadata(", manager_source)
+        self.assertIn("def update_published_metadata(", manager_source)
+        self.assertIn("pending_published_update", manager_source)
+        self.assertIn("视频内容与分P不会改变", editor_template)
+
+    def test_each_live_room_can_override_ai_prompts_with_visible_defaults(self):
+        app_source = (ROOT / "y2a-auto" / "app.py").read_text(encoding="utf-8")
+        manager_source = (
+            ROOT / "y2a-auto" / "modules" / "live_recorder_manager.py"
+        ).read_text(encoding="utf-8")
+        live_template = (
+            ROOT / "y2a-auto" / "templates" / "live_recording.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("live_recording_room_prompts", app_source)
+        self.assertIn("def save_room_prompts(", manager_source)
+        self.assertIn('"ai_title_prompt"', manager_source)
+        self.assertIn('"ai_description_prompt"', manager_source)
+        self.assertIn('"ai_cover_prompt"', manager_source)
+        self.assertIn("查看三个系统默认提示词", live_template)
+        self.assertIn('name="ai_title_prompt"', live_template)
+        self.assertIn('name="ai_description_prompt"', live_template)
+        self.assertIn('name="ai_cover_prompt"', live_template)
+
 
 if __name__ == "__main__":
     unittest.main()

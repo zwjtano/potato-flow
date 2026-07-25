@@ -47,7 +47,7 @@
         </div>
         <div class="room-list" id="roomList">
             {% for room in rooms %}
-            <button class="room-item {{ 'active' if loop.first }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}">
+            <button class="room-item {{ 'active' if room.id == selected_room_id }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}">
                 {{ room_avatar(room) }}
                 <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ '哔哩哔哩直播' if room.platform == 'bilibili' else '斗鱼直播' }} · {{ room.display_room_id }}</small></span>
                 <span class="room-state {{ room.runtime.state }}" data-role="room-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
@@ -62,7 +62,7 @@
     <div class="room-detail">
         {% if rooms %}
         {% for room in rooms %}
-        <article class="room-detail-panel {{ '' if loop.first else 'd-none' }}" data-panel="{{ room.id }}">
+        <article class="room-detail-panel {{ '' if room.id == selected_room_id else 'd-none' }}" data-panel="{{ room.id }}">
             <header class="room-detail-header">
                 <div class="selected-room-title">
                     {{ room_avatar(room, true) }}
@@ -81,6 +81,51 @@
                 <div><span>当前文件</span><strong data-role="current-file" title="{{ room.runtime.current_file }}">{{ room.runtime.current_file or '—' }}</strong><small data-role="segment-rule">每 60 分钟自动分段</small></div>
                 <div><span>弹幕采集</span><strong data-role="danmaku-state">{{ '录制中' if room.runtime.recording else ('已启用' if recorder_status.running else '待命') }}</strong><small>XML 与视频同步保存</small></div>
             </div>
+
+            <details class="room-ai-prompts-card">
+                <summary>
+                    <span class="room-ai-prompts-icon"><i class="bi bi-stars"></i></span>
+                    <span>
+                        <strong>AI 投稿提示词</strong>
+                        <small>分别控制这个直播间的标题、简介和封面生成</small>
+                    </span>
+                    {% set custom_prompt_count = (1 if room.ai_title_prompt else 0) + (1 if room.ai_description_prompt else 0) + (1 if room.ai_cover_prompt else 0) %}
+                    <span class="badge rounded-pill {{ 'text-bg-primary' if custom_prompt_count else 'text-bg-light' }}">
+                        {{ custom_prompt_count ~ ' 项自定义' if custom_prompt_count else '使用默认' }}
+                    </span>
+                    <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
+                </summary>
+                <form method="post" action="{{ url_for('live_recording_room_prompts', room_id=room.id) }}" class="room-ai-prompts-form">
+                    <div class="room-prompt-field">
+                        <label for="room-title-prompt-{{ room.id }}">标题提示词</label>
+                        <textarea id="room-title-prompt-{{ room.id }}" name="ai_title_prompt" rows="4" maxlength="6000"
+                                  placeholder="{{ recording_prompt_defaults.title }}">{{ room.ai_title_prompt or '' }}</textarea>
+                        <small>留空使用默认标题提示词。</small>
+                    </div>
+                    <div class="room-prompt-field">
+                        <label for="room-description-prompt-{{ room.id }}">简介提示词</label>
+                        <textarea id="room-description-prompt-{{ room.id }}" name="ai_description_prompt" rows="5" maxlength="6000"
+                                  placeholder="{{ recording_prompt_defaults.description }}">{{ room.ai_description_prompt or '' }}</textarea>
+                        <small>留空使用默认简介提示词。</small>
+                    </div>
+                    <div class="room-prompt-field">
+                        <label for="room-cover-prompt-{{ room.id }}">封面提示词</label>
+                        <textarea id="room-cover-prompt-{{ room.id }}" name="ai_cover_prompt" rows="5" maxlength="6000"
+                                  placeholder="{{ recording_prompt_defaults.cover }}">{{ room.ai_cover_prompt or '' }}</textarea>
+                        <small>会追加到人物底稿、DOTA2 英雄映射和禁止日期时间等系统约束之后。</small>
+                    </div>
+                    <details class="default-prompts-preview">
+                        <summary><i class="bi bi-info-circle"></i> 查看三个系统默认提示词</summary>
+                        <div><strong>标题默认</strong><p>{{ recording_prompt_defaults.title }}</p></div>
+                        <div><strong>简介默认</strong><p>{{ recording_prompt_defaults.description }}</p></div>
+                        <div><strong>封面默认</strong><p>{{ recording_prompt_defaults.cover }}</p></div>
+                    </details>
+                    <div class="room-ai-prompts-actions">
+                        <span><i class="bi bi-shield-check"></i> 自定义只对“{{ room.name }}”生效</span>
+                        <button class="btn btn-primary" type="submit"><i class="bi bi-floppy"></i> 保存提示词</button>
+                    </div>
+                </form>
+            </details>
 
             <section class="generated-files-card">
                 <div class="section-heading">

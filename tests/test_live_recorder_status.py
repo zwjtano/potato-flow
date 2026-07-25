@@ -51,6 +51,38 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"enabled": True})
             self.assertFalse((app_dir / "bridge.config.json.tmp").exists())
 
+    def test_room_prompt_overrides_are_saved_per_room(self):
+        manager = LiveRecorderManager()
+        rooms = [dict(item) for item in self.rooms]
+        with mock.patch.object(manager, "list_rooms", return_value=rooms), mock.patch.object(
+            manager,
+            "_sync_bridge_profiles",
+        ) as sync_profiles, mock.patch.object(
+            recorder_module,
+            "_atomic_json",
+        ) as atomic_json:
+            saved = manager.save_room_prompts(
+                "aaaaaa111111",
+                title_prompt="突出关键英雄",
+                description_prompt="按时间顺序总结",
+                cover_prompt="使用蓝紫色",
+            )
+
+        self.assertEqual(saved["ai_title_prompt"], "突出关键英雄")
+        self.assertEqual(saved["ai_description_prompt"], "按时间顺序总结")
+        self.assertEqual(saved["ai_cover_prompt"], "使用蓝紫色")
+        persisted_rooms = atomic_json.call_args.args[1]
+        self.assertNotIn("ai_title_prompt", persisted_rooms[1])
+        sync_profiles.assert_called_once_with(persisted_rooms)
+
+    def test_room_prompt_defaults_are_available_to_ui(self):
+        defaults = LiveRecorderManager.recording_prompt_defaults()
+
+        self.assertEqual(set(defaults), {"title", "description", "cover"})
+        self.assertIn("核心主题", defaults["title"])
+        self.assertIn("完整中文简介", defaults["description"])
+        self.assertIn("DOTA2", defaults["cover"])
+
     def test_resolves_bilibili_streamer_name_avatar_and_real_room_id(self):
         manager = LiveRecorderManager()
         room_response = {

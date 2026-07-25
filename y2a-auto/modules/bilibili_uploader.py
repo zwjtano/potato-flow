@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import re
+import time
 import traceback
 from logging.handlers import RotatingFileHandler
 from typing import Any, Callable, List, Optional, Tuple, Union
@@ -325,6 +327,181 @@ class BilibiliUploader:
             details["error"] = _compact_exception_text(str(exc))
             self.log(f"Bilibili 简介评论发布失败（不影响投稿）: {details['error']}")
         return details
+
+    def update_uploaded_metadata(
+        self,
+        *,
+        result: dict,
+        title: str,
+        description: str,
+        cover_file_path: str = "",
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Update one published Bilibili archive without touching its pages."""
+        bvid = str(result.get("bvid") or "").strip() if isinstance(result, dict) else ""
+        aid = result.get("aid") if isinstance(result, dict) else None
+        safe_title = _compact_text(title or "", BILIBILI_TITLE_LIMIT)
+        safe_description = _truncate_multiline_text(
+            description or "",
+            BILIBILI_DESCRIPTION_LIMIT,
+        )
+        if not bvid and not aid:
+            return False, "稿件任务缺少 BVID 和 aid，无法更新"
+        if not safe_title:
+            return False, "标题为空，无法更新 B站稿件"
+        if cover_file_path and not os.path.isfile(cover_file_path):
+            return False, f"新封面文件不存在: {cover_file_path}"
+
+        try:
+            configure_bilibili_runtime()
+            credential = load_credential_from_file(self.cookie_file)
+            credential_ok, credential_msg = validate_credential_remote(credential)
+            if not credential_ok:
+                return False, (
+                    f"Bilibili登录态无效: {credential_msg}。"
+                    "请在设置页重新扫码登录后重试。"
+                )
+
+            async def _update():
+                query = {"topic_grey": 1}
+                if bvid:
+                    query["bvid"] = bvid
+                else:
+                    query["aid"] = int(aid)
+                current = await (
+                    Api(
+                        url="https://member.bilibili.com/x/vupre/web/archive/view",
+                        method="GET",
+                        verify=True,
+                        credential=credential,
+                    )
+                    .update_params(**query)
+                    .result
+                )
+                current = current if isinstance(current, dict) else {}
+                archive = current.get("archive")
+                archive = archive if isinstance(archive, dict) else current
+                videos = current.get("videos")
+                if not isinstance(videos, list):
+                    videos = archive.get("videos")
+                if not isinstance(videos, list) or not videos:
+                    raise RuntimeError("B站没有返回原稿分P列表，已取消更新以保护现有视频")
+
+                safe_videos = []
+                for index, video in enumerate(videos, 1):
+                    if not isinstance(video, dict) or not str(video.get("filename") or "").strip():
+                        raise RuntimeError(
+                            f"B站返回的第 {index}P 缺少 filename，已取消更新以保护现有分P"
+                        )
+                    page = {
+                        "title": str(video.get("title") or f"P{index}")[:80],
+                        "desc": str(video.get("desc") or "")[:2000],
+                        "filename": str(video["filename"]),
+                    }
+                    if video.get("cid") is not None:
+                        page["cid"] = video["cid"]
+                    safe_videos.append(page)
+
+                tags = archive.get("tag") or archive.get("tags") or ""
+                if isinstance(tags, list):
+                    tags = ",".join(
+                        str(item.get("tag_name") or item.get("name") or item)
+                        if isinstance(item, dict)
+                        else str(item)
+                        for item in tags
+                    )
+                cover_url = str(archive.get("cover") or result.get("cover_url") or "").strip()
+                if cover_file_path:
+                    cover_url = await video_uploader.upload_cover(
+                        cover_file_path,
+                        credential,
+                    )
+                if not cover_url:
+                    raise RuntimeError("无法取得当前或新封面地址，已取消稿件更新")
+
+                resolved_aid = archive.get("aid") or aid
+                if not resolved_aid:
+                    raise RuntimeError("B站没有返回稿件 aid，无法提交更新")
+                copyright_value = int(archive.get("copyright") or 1)
+                payload = {
+                    "aid": int(resolved_aid),
+                    "title": safe_title,
+                    "copyright": copyright_value,
+                    "source": str(archive.get("source") or "") if copyright_value == 2 else "",
+                    "cover": cover_url,
+                    "desc": safe_description,
+                    "desc_format_id": int(archive.get("desc_format_id") or 0),
+                    "dynamic": str(archive.get("dynamic") or ""),
+                    "interactive": int(archive.get("interactive") or 0),
+                    "act_reserve_create": int(archive.get("act_reserve_create") or 0),
+                    "no_reprint": int(archive.get("no_reprint") or 0),
+                    "open_elec": int(archive.get("open_elec") or 0),
+                    "origin_state": int(archive.get("origin_state") or 0),
+                    "subtitle": (
+                        archive.get("subtitle")
+                        or archive.get("subtitles")
+                        or {"open": 0, "lan": ""}
+                    ),
+                    "tag": str(tags),
+                    "tid": int(archive.get("tid") or 0),
+                    "up_close_danmu": bool(
+                        archive.get("up_close_danmu", archive.get("up_close_danmaku", False))
+                    ),
+                    "up_close_reply": bool(archive.get("up_close_reply", False)),
+                    "up_selection_reply": bool(archive.get("up_selection_reply", False)),
+                    "videos": safe_videos,
+                    "csrf": credential.bili_jct,
+                }
+                if payload["tid"] <= 0:
+                    raise RuntimeError("B站没有返回原稿分区，已取消更新")
+                response = await (
+                    Api(
+                        url="https://member.bilibili.com/x/vu/web/edit",
+                        method="POST",
+                        verify=True,
+                        credential=credential,
+                        no_csrf=True,
+                        json_body=True,
+                    )
+                    .update_params(csrf=credential.bili_jct, t=time.time() * 1000)
+                    .update_data(**payload)
+                    .result
+                )
+                return response, int(resolved_aid), cover_url, len(safe_videos)
+
+            try:
+                response, resolved_aid, cover_url, page_count = asyncio.run(_update())
+            except RuntimeError as exc:
+                if "cannot be called from a running event loop" not in str(exc):
+                    raise
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    response, resolved_aid, cover_url, page_count = pool.submit(
+                        asyncio.run,
+                        _update(),
+                    ).result()
+
+            updated = dict(result or {})
+            if isinstance(response, dict):
+                response_data = response.get("data")
+                if isinstance(response_data, dict):
+                    updated.update({
+                        key: value for key, value in response_data.items()
+                        if key in {"aid", "bvid"} and value
+                    })
+                updated["edit_response"] = response
+            updated.update({
+                "aid": resolved_aid,
+                "bvid": bvid or updated.get("bvid"),
+                "cover_url": cover_url,
+                "part_count": page_count,
+                "metadata_updated": True,
+            })
+            self.log(f"Bilibili稿件信息更新成功: {updated.get('bvid') or resolved_aid}")
+            return True, updated
+        except Exception as exc:
+            pretty_error = _format_bilibili_exception(exc)
+            self.log(f"Bilibili稿件信息更新失败: {pretty_error}")
+            self.log(traceback.format_exc())
+            return False, f"Bilibili稿件信息更新失败: {pretty_error}"
 
     def upload_video(
         self,

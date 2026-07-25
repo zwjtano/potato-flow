@@ -1177,6 +1177,12 @@ def login_required(f):
 @login_required
 def live_recording():
     rooms = live_recorder_manager.rooms_with_status()
+    requested_room_id = request.args.get('room', '').strip()
+    selected_room_id = (
+        requested_room_id
+        if any(room.get('id') == requested_room_id for room in rooms)
+        else (str(rooms[0].get('id')) if rooms else '')
+    )
     recording_files = live_recorder_manager.recording_files(limit=500).get("files", [])
     return render_template(
         'live_recording.html',
@@ -1184,6 +1190,8 @@ def live_recording():
         recording_files=recording_files,
         recorder_status=live_recorder_manager.status(),
         recorder_log=live_recorder_manager.tail_log(),
+        recording_prompt_defaults=live_recorder_manager.recording_prompt_defaults(),
+        selected_room_id=selected_room_id,
     )
 
 
@@ -1259,6 +1267,7 @@ def live_recording_job_review(fingerprint):
 
     if request.method == 'POST':
         try:
+            action = request.form.get('action', 'save').strip().lower()
             try:
                 tags = json.loads(request.form.get('tags_json', '[]'))
             except json.JSONDecodeError:
@@ -1273,7 +1282,33 @@ def live_recording_job_review(fingerprint):
                 partition_id=request.form.get('partition_id', '') or job.get('partition_id', ''),
                 cover_file=request.files.get('cover_file'),
             )
-            if request.form.get('action', 'save') == 'save_and_retry':
+            regenerate_fields = {
+                'regenerate_title': {'title'},
+                'regenerate_description': {'description'},
+                'regenerate_cover': {'cover'},
+                'regenerate_all': {'title', 'description', 'cover'},
+            }
+            if action in regenerate_fields:
+                live_recorder_manager.regenerate_published_metadata(
+                    fingerprint,
+                    regenerate_fields[action],
+                )
+                field_names = {
+                    'title': '标题',
+                    'description': '简介',
+                    'cover': '封面',
+                }
+                selected_names = '、'.join(
+                    field_names[field] for field in ('title', 'description', 'cover')
+                    if field in regenerate_fields[action]
+                )
+                flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
+                return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
+            if action == 'apply_to_bilibili':
+                live_recorder_manager.update_published_metadata(fingerprint)
+                flash('标题、简介和封面已同步到 B站，视频与分P未改动。', 'success')
+                return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
+            if action == 'save_and_retry':
                 live_recorder_manager.retry_pipeline_job(fingerprint)
                 flash('人工修改已保存，并开始按修改后的信息重新投稿。', 'success')
                 return redirect(url_for('live_recording', job=fingerprint))
@@ -1379,6 +1414,26 @@ def live_recording_delete_room(room_id):
     except RecorderConfigError as exc:
         flash(str(exc), 'warning')
     return redirect(url_for('live_recording'))
+
+
+@app.route('/live-recording/rooms/<room_id>/prompts', methods=['POST'])
+@login_required
+def live_recording_room_prompts(room_id):
+    try:
+        room = live_recorder_manager.save_room_prompts(
+            room_id,
+            title_prompt=request.form.get('ai_title_prompt', ''),
+            description_prompt=request.form.get('ai_description_prompt', ''),
+            cover_prompt=request.form.get('ai_cover_prompt', ''),
+        )
+        flash(
+            f"“{room.get('name') or '直播间'}”的 AI 投稿提示词已保存；"
+            "留空的项目继续使用系统默认提示词。",
+            'success',
+        )
+    except RecorderConfigError as exc:
+        flash(str(exc), 'danger')
+    return redirect(url_for('live_recording', room=room_id))
 
 
 @app.route('/live-recording/rooms/<room_id>/recording', methods=['POST'])

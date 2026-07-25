@@ -34,6 +34,21 @@ from runtime_environment import configure_linux_ca_environment
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}｜【直播回放】"
 DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
+DEFAULT_RECORDING_TITLE_AI_PROMPT = (
+    "根据本段直播的实际内容和弹幕反应提炼一个自然、有信息量的核心主题；"
+    "突出关键对局、英雄、事件或节目效果，不使用夸张的虚假结论。"
+    "不要包含主播名、日期、时间和“直播回放”，最多18个中文字符。"
+)
+DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
+    "生成可直接用于哔哩哔哩投稿的完整中文简介，按事件发展概括本段的主要内容、"
+    "关键时刻和观众反应；只使用输入能够支持的事实，不虚构主播原话、比赛结果或人物。"
+    "不要出现文件名、任务编号、内部路径和机械化套话，不超过1800字。"
+)
+DEFAULT_RECORDING_COVER_AI_PROMPT = (
+    "围绕本段最核心的对局、英雄或节目效果构图，主体醒目、对比清楚、适合手机缩略图；"
+    "人物形象与指定参考图保持一致，DOTA2 英雄必须符合游戏原设。"
+    "画面不要出现日期、时间、房间号、平台界面、二维码或水印。"
+)
 WORKSPACE_ROOT = Path(__file__).resolve().parent
 YYF_COVER_REFERENCE = WORKSPACE_ROOT / "assets" / "streamer-references" / "yyf.png"
 YYF_STREAMER_ALIASES = {"yyf", "yyfyyf", "月夜枫", "枫哥", "姜岑"}
@@ -864,6 +879,7 @@ AI 生成的核心标题：{headline}
 {reference_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
+本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
 """.strip()
     image_client = get_openai_client(client_config).images
     image_size = str(ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024")
@@ -1191,14 +1207,23 @@ def generate_danmaku_metadata_with_ai(
             "comment_count": len(comments),
             "sampled_comments": format_comments_for_ai(selected),
         }
-        system_prompt = str(cfg.get("ai_danmaku_prompt") or """
+        legacy_prompt = str(cfg.get("ai_danmaku_prompt") or "").strip()
+        title_prompt = str(
+            cfg.get("ai_title_prompt") or DEFAULT_RECORDING_TITLE_AI_PROMPT
+        ).strip()
+        description_prompt = str(
+            cfg.get("ai_description_prompt") or DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
+        ).strip()
+        system_prompt = legacy_prompt or f"""
 你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和简洁中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
 description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
 title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
-返回 JSON 对象：{"title_topic":"...","description":"..."}，description 不超过 1200 个中文字符。
-""").strip()
+本直播间的标题要求：{title_prompt}
+本直播间的简介要求：{description_prompt}
+返回 JSON 对象：{{"title_topic":"...","description":"..."}}，description 不超过 1200 个中文字符。
+""".strip()
         result = _request_json_object(
             client=get_openai_client(ai_cfg),
             model_name=str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini")),

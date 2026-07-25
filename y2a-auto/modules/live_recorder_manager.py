@@ -181,6 +181,46 @@ class LiveRecorderManager:
             return []
         return data if isinstance(data, list) else []
 
+    @staticmethod
+    def recording_prompt_defaults() -> dict[str, str]:
+        """Return the built-in prompts displayed by each room editor."""
+        if str(WORKSPACE_ROOT) not in sys.path:
+            sys.path.insert(0, str(WORKSPACE_ROOT))
+        import bridge
+
+        return {
+            "title": bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT,
+            "description": bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT,
+            "cover": bridge.DEFAULT_RECORDING_COVER_AI_PROMPT,
+        }
+
+    def save_room_prompts(
+        self,
+        room_id: str,
+        *,
+        title_prompt: str = "",
+        description_prompt: str = "",
+        cover_prompt: str = "",
+    ) -> dict[str, Any]:
+        """Save optional per-room prompt overrides; blank values use defaults."""
+        values = {
+            "ai_title_prompt": str(title_prompt or "").strip(),
+            "ai_description_prompt": str(description_prompt or "").strip(),
+            "ai_cover_prompt": str(cover_prompt or "").strip(),
+        }
+        for value in values.values():
+            if len(value) > 6000:
+                raise RecorderConfigError("单个自定义提示词不能超过 6000 个字符")
+        with self._lock:
+            rooms = self.list_rooms()
+            room = next((item for item in rooms if item.get("id") == room_id), None)
+            if room is None:
+                raise RecorderConfigError("没有找到该直播间")
+            room.update(values)
+            _atomic_json(ROOMS_PATH, rooms)
+            self._sync_bridge_profiles(rooms)
+            return dict(room)
+
     def _worker_status_payload(self, pid: int) -> dict[str, Any]:
         try:
             payload = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
@@ -780,6 +820,9 @@ class LiveRecorderManager:
                 "streamer_name": str(room["name"]),
                 "streamer_avatar_url": str(room.get("avatar_url") or ""),
                 "tags": [str(room["name"]), "直播录播"],
+                "ai_title_prompt": str(room.get("ai_title_prompt") or ""),
+                "ai_description_prompt": str(room.get("ai_description_prompt") or ""),
+                "ai_cover_prompt": str(room.get("ai_cover_prompt") or ""),
             }
             for room in rooms
         ]
@@ -1338,6 +1381,7 @@ class LiveRecorderManager:
                 "source": "recording",
                 "bvid": str(bilibili_result.get("bvid") or ""),
                 "bilibili_url": str(bilibili_result.get("url") or ""),
+                "bilibili_cover_url": str(bilibili_result.get("cover_url") or ""),
                 "completed_stages": completed_stages,
                 "total_stages": 6,
                 "failed_stage": failed_stage,
@@ -1397,15 +1441,27 @@ class LiveRecorderManager:
 
         now = datetime.now(timezone.utc).isoformat()
         metadata = {
+            **previous,
             "title": clean_title,
             "description": clean_description,
             "tags": clean_tags,
             "partition_id": clean_partition,
             "cover_path": cover_path or None,
+            "pending_published_update": job.get("status") == "completed",
             "updated_at": now,
         }
+        self._store_pipeline_review_override(fingerprint, metadata)
+        return metadata
+
+    def _store_pipeline_review_override(
+        self,
+        fingerprint: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Persist a recording review/preview without changing the Bilibili archive."""
         state_path = self._pipeline_state_path()
         state_path.parent.mkdir(parents=True, exist_ok=True)
+        now = str(metadata.get("updated_at") or datetime.now(timezone.utc).isoformat())
         with sqlite3.connect(state_path, timeout=30) as db:
             db.execute(
                 """CREATE TABLE IF NOT EXISTS recording_review_overrides (
@@ -1422,7 +1478,222 @@ class LiveRecorderManager:
                      updated_at=excluded.updated_at""",
                 (fingerprint, json.dumps(metadata, ensure_ascii=False), now),
             )
-        return metadata
+
+    def regenerate_published_metadata(
+        self,
+        fingerprint: str,
+        fields: set[str],
+    ) -> dict[str, Any]:
+        """Generate a preview for an already-uploaded recording archive."""
+        allowed_fields = {"title", "description", "cover"}
+        selected = {str(field).strip().lower() for field in fields} & allowed_fields
+        if not selected:
+            raise RecorderConfigError("请选择要重新生成的标题、简介或封面")
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        if job.get("status") != "completed" or not job.get("bvid"):
+            raise RecorderConfigError("只有已成功上传到 B站的录播任务可以重新生成稿件信息")
+
+        try:
+            if str(WORKSPACE_ROOT) not in sys.path:
+                sys.path.insert(0, str(WORKSPACE_ROOT))
+            import bridge
+            from .ai_enhancer import (
+                _request_json_object,
+                get_openai_client,
+            )
+            from .config_manager import load_config
+
+            app_config = load_config()
+            if not app_config.get("OPENAI_API_KEY"):
+                raise RecorderConfigError("未配置 AI API Key，无法重新生成稿件信息")
+            bridge_config = bridge.load_config(BRIDGE_CONFIG_PATH)
+            video_path = Path(str(job.get("video_path") or "recording.flv"))
+            bridge_config = bridge.effective_config(bridge_config, video_path)
+            values = bridge.recording_metadata_values(video_path, bridge_config)
+            current_title = str(job.get("title") or "").strip()
+            current_description = str(job.get("description") or "").strip()
+            ai_stage = next(
+                (stage for stage in job.get("stages", []) if stage.get("key") == "ai"),
+                {},
+            )
+            ai_details = ai_stage.get("details") if isinstance(ai_stage, dict) else {}
+            ai_details = ai_details if isinstance(ai_details, dict) else {}
+            context = {
+                "streamer": job.get("room_name") or values.get("streamer") or "主播",
+                "recorded_at": values.get("date") or "",
+                "current_title": current_title,
+                "current_description": current_description,
+                "previous_topic": ai_details.get("title_topic") or "",
+                "part_title": ai_details.get("part_title") or "",
+                "part_description": ai_details.get("part_description") or "",
+                "live_title": values.get("live_title") or "",
+            }
+            title_prompt = str(
+                bridge_config.get("ai_title_prompt")
+                or bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
+            ).strip()
+            description_prompt = str(
+                bridge_config.get("ai_description_prompt")
+                or bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
+            ).strip()
+            system_prompt = f"""
+你是哔哩哔哩直播录播编辑。根据给出的现有稿件信息重新拟定核心标题和简介。
+只能使用输入中已经出现的事实、对局内容和观众反应，不得虚构主播说过的话、比赛结果或英雄。
+title_topic 是自然、有信息量的中文核心主题，不含主播名、日期、时间和“直播回放”，最多18个中文字符。
+description 是可直接用于B站投稿的完整中文简介，保留有价值的事件脉络和观众反应，不出现文件名、任务编号或内部路径，不超过1800字。
+本直播间的标题要求：{title_prompt}
+本直播间的简介要求：{description_prompt}
+返回 JSON：{{"title_topic":"...","description":"..."}}。
+""".strip()
+            generated: dict[str, Any] = {}
+            if selected & {"title", "description"}:
+                generated_result = _request_json_object(
+                    client=get_openai_client(app_config),
+                    model_name=str(app_config.get("OPENAI_MODEL_NAME") or "gpt-4o-mini"),
+                    system_prompt=system_prompt,
+                    payload=context,
+                    max_tokens=1100,
+                    temperature=0.35,
+                    thinking_enabled=bool(app_config.get("OPENAI_THINKING_ENABLED", False)),
+                    logger_obj=None,
+                    scene_name="recording_published_metadata_regenerate",
+                )
+                generated = generated_result if isinstance(generated_result, dict) else {}
+            title_topic = re.sub(
+                r"[\r\n｜|]+",
+                " ",
+                str(
+                    generated.get("title_topic")
+                    or ai_details.get("title_topic")
+                    or ""
+                ).strip(),
+            )[:28].strip()
+            generated_description = str(generated.get("description") or "").strip()[:1800]
+
+            title = current_title
+            description = current_description
+            if "title" in selected:
+                if not title_topic:
+                    raise RecorderConfigError("AI 没有返回可用的标题主题")
+                title, _, _ = bridge.render_metadata(
+                    video_path,
+                    bridge_config,
+                    ai_topic=title_topic,
+                )
+            if "description" in selected:
+                if not generated_description:
+                    raise RecorderConfigError("AI 没有返回可用的简介")
+                description = generated_description
+
+            previous = job.get("review_override")
+            previous = previous if isinstance(previous, dict) else {}
+            cover_path = str(previous.get("cover_path") or "").strip()
+            cover_details: dict[str, Any] = {}
+            if "cover" in selected:
+                artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
+                generated_cover, cover_details = bridge.generate_recording_cover_with_ai(
+                    title=title,
+                    ai_topic=title_topic or str(ai_details.get("title_topic") or ""),
+                    description=description,
+                    streamer=str(job.get("room_name") or values.get("streamer") or ""),
+                    cfg=bridge_config,
+                    work_dir=artifact_dir,
+                )
+                if not generated_cover:
+                    raise RecorderConfigError("AI 封面功能未启用，或没有生成可用封面")
+                cover_path = str(generated_cover)
+
+            now = datetime.now(timezone.utc).isoformat()
+            metadata = {
+                **previous,
+                "title": title,
+                "description": description,
+                "tags": list(job.get("tags") or []),
+                "partition_id": str(job.get("partition_id") or ""),
+                "cover_path": cover_path or None,
+                "ai_regenerated_fields": sorted(selected),
+                "ai_regenerated_at": now,
+                "ai_title_topic": title_topic or None,
+                "ai_cover_details": cover_details or previous.get("ai_cover_details"),
+                "pending_published_update": True,
+                "updated_at": now,
+            }
+            self._store_pipeline_review_override(fingerprint, metadata)
+            return metadata
+        except RecorderConfigError:
+            raise
+        except Exception as exc:
+            raise RecorderConfigError(f"AI 重新生成失败：{exc}") from exc
+
+    def update_published_metadata(self, fingerprint: str) -> dict[str, Any]:
+        """Apply the reviewed preview to Bilibili while preserving every page."""
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        if job.get("status") != "completed" or not job.get("bvid"):
+            raise RecorderConfigError("只有已成功上传的 B站稿件可以更新")
+        review = job.get("review_override")
+        review = review if isinstance(review, dict) else {}
+        title = str(review.get("title") or job.get("title") or "").strip()
+        description = str(review.get("description") or job.get("description") or "").strip()
+        cover_path = str(review.get("cover_path") or "").strip()
+        bilibili_result = job.get("result", {}).get("bilibili")
+        if not isinstance(bilibili_result, dict):
+            raise RecorderConfigError("任务中缺少原始 B站投稿结果，无法安全更新")
+
+        try:
+            if str(APP_ROOT) not in sys.path:
+                sys.path.insert(0, str(APP_ROOT))
+            from .bilibili_uploader import BilibiliUploader
+
+            bridge_config = json.loads(BRIDGE_CONFIG_PATH.read_text(encoding="utf-8"))
+            cookie_file = _workspace_runtime_path(
+                bridge_config.get("bilibili_cookies"),
+                "y2a-auto/cookies/bili_cookies.json",
+            )
+            uploader = BilibiliUploader(cookie_file=cookie_file)
+            ok, updated_result = uploader.update_uploaded_metadata(
+                result=bilibili_result,
+                title=title,
+                description=description,
+                cover_file_path=cover_path if cover_path and Path(cover_path).is_file() else "",
+            )
+            if not ok or not isinstance(updated_result, dict):
+                raise RecorderConfigError(str(updated_result))
+
+            whole_result = dict(job.get("result") or {})
+            whole_result["bilibili"] = updated_result
+            now = datetime.now(timezone.utc).isoformat()
+            state_path = self._pipeline_state_path()
+            with sqlite3.connect(state_path, timeout=30) as db:
+                db.execute(
+                    "UPDATE uploads SET result_json=?, updated_at=? WHERE fingerprint=?",
+                    (json.dumps(whole_result, ensure_ascii=False), now, fingerprint),
+                )
+            metadata = {
+                **review,
+                "title": title,
+                "description": description,
+                "tags": list(job.get("tags") or []),
+                "partition_id": str(job.get("partition_id") or ""),
+                "cover_path": cover_path or None,
+                "pending_published_update": False,
+                "published_updated_at": now,
+                "published_update_result": {
+                    "bvid": updated_result.get("bvid"),
+                    "aid": updated_result.get("aid"),
+                    "part_count": updated_result.get("part_count"),
+                },
+                "updated_at": now,
+            }
+            self._store_pipeline_review_override(fingerprint, metadata)
+            return metadata
+        except RecorderConfigError:
+            raise
+        except Exception as exc:
+            raise RecorderConfigError(f"更新 B站稿件失败：{exc}") from exc
 
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
         return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)

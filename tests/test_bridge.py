@@ -634,7 +634,12 @@ class BridgeTests(unittest.TestCase):
                     ai_topic="新地图极限挑战",
                     description="主播挑战新地图，弹幕反应热烈。",
                     streamer="土豆",
-                    cfg={"_config_dir": str(root), "y2a_root": str(y2a_root), "ffmpeg": "ffmpeg"},
+                    cfg={
+                        "_config_dir": str(root),
+                        "y2a_root": str(y2a_root),
+                        "ffmpeg": "ffmpeg",
+                        "ai_cover_prompt": "采用低饱和蓝紫色，并突出 Roshan 团战。",
+                    },
                     work_dir=work_dir,
                 )
 
@@ -646,6 +651,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("Dota 2 游戏角色消歧规则", prompt)
         self.assertIn("斗鱼 Dota 2 主播昵称规则", prompt)
         self.assertIn("绝对禁止出现日期", prompt)
+        self.assertIn("采用低饱和蓝紫色，并突出 Roshan 团战", prompt)
         self.assertNotIn("2026-07-23", prompt)
 
     def test_yyf_recording_cover_uses_identity_reference_image(self):
