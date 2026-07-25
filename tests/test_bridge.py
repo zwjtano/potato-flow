@@ -565,8 +565,20 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("YYF 表情与本段对局联动", instruction)
         self.assertIn("失误、被翻盘或惨败", instruction)
         self.assertIn("震惊、懊恼、无奈或气急", instruction)
-        self.assertIn("必须保持 YYF 的脸型、五官比例、发型", instruction)
+        self.assertIn("必须保持该 Q 版角色的脸型、五官比例", instruction)
+        self.assertIn("蓝色鱼形头套", instruction)
+        self.assertIn("不能换脸、真人化", instruction)
         self.assertIn("不能仅照抄底稿中的原始表情", instruction)
+
+    def test_yyf_reference_requires_fixed_fish_hat_character(self):
+        instruction = bridge.recording_cover_reference_instruction("YYF")
+        self.assertIn("唯一固定 Q 版角色形象", instruction)
+        self.assertIn("右侧脸颊小痣", instruction)
+        self.assertIn("黑红色连帽外套", instruction)
+        self.assertIn("胸前红色 YYF 字样", instruction)
+        self.assertIn("蓝色鱼形头套", instruction)
+        self.assertIn("头套顶部有提环和鱼鳍", instruction)
+        self.assertIn("禁止改成真人", instruction)
 
     def test_expression_rule_is_not_forced_on_other_streamers(self):
         self.assertEqual(
@@ -701,23 +713,20 @@ class BridgeTests(unittest.TestCase):
         edit_kwargs = image_edit.call_args.kwargs
         self.assertEqual(edit_kwargs["model"], "gpt-image-2")
         self.assertEqual(edit_kwargs["size"], "1536x1024")
-        self.assertIsInstance(edit_kwargs["image"], list)
-        self.assertEqual(
-            [Path(handle.name) for handle in edit_kwargs["image"]],
-            [bridge.YYF_COVER_REFERENCE, avatar],
-        )
-        self.assertIn("参考照片是主播 YYF 本人", edit_kwargs["prompt"])
-        self.assertIn("保持其脸型、五官、发型和身份辨识度", edit_kwargs["prompt"])
+        self.assertEqual(Path(edit_kwargs["image"].name), bridge.YYF_COVER_REFERENCE)
+        self.assertIn("唯一固定 Q 版角色形象", edit_kwargs["prompt"])
+        self.assertIn("蓝色鱼形头套", edit_kwargs["prompt"])
+        self.assertIn("右侧脸颊小痣", edit_kwargs["prompt"])
         self.assertIn("YYF 表情与本段对局联动", edit_kwargs["prompt"])
         self.assertIn("优势、高光或连胜", edit_kwargs["prompt"])
         self.assertIn("失误、被翻盘或惨败", edit_kwargs["prompt"])
         self.assertEqual(details["ai_cover_reference_kind"], "dedicated")
-        self.assertEqual(details["ai_cover_reference_count"], 2)
+        self.assertEqual(details["ai_cover_reference_count"], 1)
         self.assertEqual(
             details["ai_cover_reference_paths"],
-            [str(bridge.YYF_COVER_REFERENCE), str(avatar)],
+            [str(bridge.YYF_COVER_REFERENCE)],
         )
-        avatar_download.assert_called_once()
+        avatar_download.assert_not_called()
 
     def test_unknown_streamer_cover_uses_room_avatar_as_reference(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"

@@ -540,6 +540,15 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
 
 
 def recording_cover_reference_instruction(reference_name: str) -> str:
+    if reference_name == "YYF":
+        return (
+            "上传的参考图是主播 YYF 的唯一固定 Q 版角色形象，必须以该角色为封面人物原型。"
+            "严格保留黑色短发、深蓝色眼睛、右侧脸颊小痣、黑红色连帽外套和胸前红色 YYF 字样；"
+            "最重要的标志是完整的蓝色鱼形头套：头套顶部有提环和鱼鳍，正面有一对大眼睛与浅蓝色"
+            "鱼嘴，两侧鱼鳍内部为粉色，帽檐也是粉色。保持精致的二次元 Q 版插画风格和粗黑描边，"
+            "禁止改成真人、普通蓝帽、鲨鱼玩偶、蓝猫或其他角色。可以根据本段对局改变表情、动作、"
+            "服装细节和横向背景，但上述人物特征、鱼形头套及 YYF 身份标志必须始终清晰可辨。"
+        )
     if reference_name == "果小果":
         return (
             "上传的参考图是主播果小果的固定角色形象。必须以图中角色为唯一原型，"
@@ -760,12 +769,12 @@ def recording_cover_streamer_expression_instruction(
     context = "\n".join(str(value or "") for value in content)
     return (
         "YYF 表情与本段对局联动：先根据核心标题和内容摘要判断本段最主要的比赛情绪，再调整"
-        "参考照片中 YYF 的表情与轻微姿态。优势、高光或连胜可表现为兴奋、自信或得意；"
+        "参考角色中 YYF 的表情与轻微姿态。优势、高光或连胜可表现为兴奋、自信或得意；"
         "失误、被翻盘或惨败可表现为震惊、懊恼、无奈或气急；逆风、关键团战或翻盘过程可表现为"
         "紧张、专注、坚定；欢乐整活或节目效果可表现为大笑、憋笑或夸张惊讶。"
         "没有明确结果时使用专注、自然的对局表情。表情强度要适合视频封面、清楚但不过度扭曲；"
-        "必须保持 YYF 的脸型、五官比例、发型、年龄和身份辨识度，不能换脸、年轻化、卡通化成"
-        "另一个人，也不能仅照抄底稿中的原始表情。"
+        "必须保持该 Q 版角色的脸型、五官比例、黑色短发、右脸小痣、蓝色鱼形头套和身份辨识度，"
+        "不能换脸、真人化或变成另一个卡通人物，也不能仅照抄底稿中的原始表情。"
         f"本段判断依据：{context[:600]}"
     )
 
@@ -808,7 +817,7 @@ def generate_recording_cover_with_ai(
     reference_kind = "dedicated" if reference else ""
     reference_paths: list[Path] = [reference[1]] if reference else []
     avatar_url = str(cfg.get("streamer_avatar_url") or "").strip()
-    if avatar_url:
+    if avatar_url and not reference:
         try:
             avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
             if avatar_reference not in reference_paths:
