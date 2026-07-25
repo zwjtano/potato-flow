@@ -160,6 +160,7 @@ body {
 .room-ai-prompts-card > summary strong { color: #202b3a; font-size: 15px; }
 .room-ai-prompts-card > summary small { margin-top: 3px; color: #8a94a3; font-size: 11px; }
 .room-ai-prompts-icon { display: grid; width: 36px; height: 36px; place-items: center; color: #176fc1; border-radius: 10px; background: #eaf4ff; font-size: 15px; }
+.room-ai-prompts-icon.recording-settings { color: #8a5a16; background: #fff3d7; }
 .room-ai-prompts-chevron { color: #9ca3af; transition: transform .2s ease; }
 .room-ai-prompts-card[open] .room-ai-prompts-chevron { transform: rotate(180deg); }
 .room-ai-prompts-form { display: grid; gap: 18px; padding: 20px; border-top: 1px solid #edf0f4; background: #fbfcfe; }
@@ -198,6 +199,25 @@ body {
 .default-prompts-preview p { margin: 4px 0 0; color: #69727f; font-size: 9px; line-height: 1.65; white-space: pre-wrap; }
 .room-ai-prompts-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 1px; }
 .room-ai-prompts-actions > span { color: #79828e; font-size: 10px; }
+.room-recording-settings-form { display: grid; gap: 15px; padding: 20px; border-top: 1px solid #edf0f4; background: #fbfcfe; }
+.room-recording-setting-grid { display: grid; grid-template-columns: 1fr .85fr 1.2fr; gap: 12px; }
+.room-recording-setting-option, .room-recording-duration { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 15px; border: 1px solid #e1e6ec; border-radius: 10px; background: #fff; }
+.room-recording-setting-option > span:last-child, .room-recording-duration > span:first-child { min-width: 0; }
+.room-recording-setting-option strong, .room-recording-duration strong { display: block; color: #303b49; font-size: 12px; }
+.room-recording-setting-option small, .room-recording-duration small { display: block; margin-top: 4px; color: #8d97a5; font-size: 9px; line-height: 1.5; }
+.room-setting-switch { position: relative; display: inline-flex; flex: 0 0 auto; }
+.room-setting-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.room-setting-switch > span { display: block; width: 38px; height: 22px; padding: 3px; border-radius: 999px; background: #cbd3dd; transition: background .18s ease; }
+.room-setting-switch > span::after { display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(29,42,58,.22); content: ""; transition: transform .18s ease; }
+.room-setting-switch input:checked + span { background: #2484dd; }
+.room-setting-switch input:checked + span::after { transform: translateX(16px); }
+.room-setting-switch input:focus-visible + span { outline: 2px solid #0d6efd; outline-offset: 2px; }
+.room-setting-switch input:disabled + span { opacity: .48; }
+.room-recording-duration { justify-content: space-between; }
+.room-recording-duration-input { display: flex; width: 112px; flex: 0 0 auto; align-items: center; gap: 6px; color: #7b8592; font-size: 10px; }
+.room-recording-duration-input .form-control { min-width: 0; font-size: 12px; }
+.room-recording-settings-note { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; color: #647284; border: 1px solid #d9e7f5; border-radius: 9px; background: #f1f7fd; font-size: 10px; line-height: 1.65; }
+.room-recording-settings-note i { margin-top: 1px; color: #3284c8; }
 .pipeline-card, .events-card { margin-bottom: 16px; padding: 22px; background: #fff; border: 1px solid var(--studio-border); border-radius: 8px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .section-heading h3 { margin: 0; font-size: 13px; font-weight: 700; }
@@ -359,6 +379,7 @@ body {
     .runtime-metrics > div:nth-child(2) { border-right: 0; }
     .runtime-metrics > div:nth-child(-n+2) { border-bottom: 1px solid var(--studio-border); }
     .room-prompt-grid { grid-template-columns: 1fr; }
+    .room-recording-setting-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 767.98px) {

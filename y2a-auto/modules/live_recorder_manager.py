@@ -56,7 +56,7 @@ LEGACY_RECORDING_DESCRIPTION_TEMPLATES = {
     "{stem}",
     "直播录播：{stem}",
 }
-DEFAULT_RECORDING_SEGMENT_TIME = "01:00:00"
+DEFAULT_RECORDING_SEGMENT_MINUTES = 60
 
 
 class RecorderConfigError(ValueError):
@@ -180,7 +180,12 @@ class LiveRecorderManager:
             data = json.loads(ROOMS_PATH.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             return []
-        return data if isinstance(data, list) else []
+        rooms = data if isinstance(data, list) else []
+        for room in rooms:
+            room.setdefault("segment_enabled", True)
+            room.setdefault("segment_minutes", DEFAULT_RECORDING_SEGMENT_MINUTES)
+            room.setdefault("multipart_enabled", False)
+        return rooms
 
     @staticmethod
     def recording_prompt_defaults() -> dict[str, str]:
@@ -381,7 +386,13 @@ class LiveRecorderManager:
                 "live_title": live_title,
                 "current_file": "",
                 "current_file_size_bytes": 0,
-                "segment_time": DEFAULT_RECORDING_SEGMENT_TIME,
+                "segment_time": cls._room_segment_time(room),
+                "segment_enabled": bool(room.get("segment_enabled", True)),
+                "segment_minutes": cls._room_segment_minutes(room),
+                "multipart_enabled": bool(
+                    room.get("segment_enabled", True)
+                    and room.get("multipart_enabled", False)
+                ),
             }
             enriched.append(room)
         return enriched
@@ -564,7 +575,13 @@ class LiveRecorderManager:
                 None,
             )
             if existing is None:
-                existing = {"id": uuid.uuid4().hex, "enabled": True}
+                existing = {
+                    "id": uuid.uuid4().hex,
+                    "enabled": True,
+                    "segment_enabled": True,
+                    "segment_minutes": DEFAULT_RECORDING_SEGMENT_MINUTES,
+                    "multipart_enabled": False,
+                }
                 rooms.append(existing)
             existing.update({
                 "name": resolved["name"],
@@ -638,12 +655,20 @@ class LiveRecorderManager:
 
     def _reload_when_recordings_finish(self) -> None:
         while RELOAD_PATH.exists():
-            time.sleep(5)
+            time.sleep(1)
             with self._lock:
                 if self._pid() is None:
                     RELOAD_PATH.unlink(missing_ok=True)
                     return
-                if any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status()):
+                try:
+                    reload_request = json.loads(RELOAD_PATH.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    reload_request = {}
+                force_boundary = bool(reload_request.get("force_segment_boundary"))
+                if (
+                    not force_boundary
+                    and any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status())
+                ):
                     continue
                 try:
                     self.stop()
@@ -723,31 +748,71 @@ class LiveRecorderManager:
             return False
 
     @staticmethod
-    def recording_multipart_enabled() -> bool:
+    def _room_segment_minutes(room: dict[str, Any]) -> int:
         try:
-            from .config_manager import load_config
+            return max(1, min(1440, int(room.get("segment_minutes") or DEFAULT_RECORDING_SEGMENT_MINUTES)))
+        except (TypeError, ValueError):
+            return DEFAULT_RECORDING_SEGMENT_MINUTES
 
-            value = load_config().get("RECORDING_MULTIPART_ENABLED", False)
-            if isinstance(value, str):
-                return value.strip().lower() in {"true", "1", "on", "yes"}
-            return bool(value)
-        except Exception:
-            return False
+    @classmethod
+    def _room_segment_time(cls, room: dict[str, Any]) -> str | None:
+        if not bool(room.get("segment_enabled", True)):
+            return None
+        minutes = cls._room_segment_minutes(room)
+        hours, remainder = divmod(minutes, 60)
+        return f"{hours:02d}:{remainder:02d}:00"
 
-    def apply_recording_upload_mode(self) -> str:
-        """Regenerate hooks and safely reload a running worker after the current segment."""
+    def room_multipart_enabled(self, room: dict[str, Any] | str) -> bool:
+        if isinstance(room, str):
+            room = next((item for item in self.list_rooms() if item.get("id") == room), {})
+        return bool(room.get("segment_enabled", True) and room.get("multipart_enabled", False))
+
+    def save_room_recording_settings(
+        self,
+        room_id: str,
+        *,
+        segment_enabled: bool,
+        segment_minutes: Any,
+        multipart_enabled: bool,
+    ) -> tuple[dict[str, Any], str]:
+        """Save per-room segmentation/upload mode and safely rotate active files."""
+        try:
+            minutes = int(segment_minutes)
+        except (TypeError, ValueError) as exc:
+            raise RecorderConfigError("分段时长必须是整数分钟") from exc
+        if segment_enabled and not 1 <= minutes <= 1440:
+            raise RecorderConfigError("分段时长必须在 1 到 1440 分钟之间")
+        minutes = max(1, min(1440, minutes or DEFAULT_RECORDING_SEGMENT_MINUTES))
+
         with self._lock:
-            was_running = self._pid() is not None
-            self.sync_configs()
-            if not was_running:
-                return "saved"
-            if any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status()):
-                _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
-                self._ensure_reload_thread()
-                return "pending"
-            self.stop()
-            self.start()
-            return "reloaded"
+            rooms = self.list_rooms()
+            room = next((item for item in rooms if item.get("id") == room_id), None)
+            if room is None:
+                raise RecorderConfigError("没有找到该直播间")
+            runtime_rooms = self.rooms_with_status() if self._pid() is not None else []
+            target_runtime = next((item for item in runtime_rooms if item.get("id") == room_id), {})
+            target_recording = bool(target_runtime.get("runtime", {}).get("recording"))
+
+            room.update({
+                "segment_enabled": bool(segment_enabled),
+                "segment_minutes": minutes,
+                "multipart_enabled": bool(multipart_enabled and segment_enabled),
+            })
+            if not room["multipart_enabled"] and not target_recording:
+                self._clear_stale_multipart_session(room_id)
+            _atomic_json(ROOMS_PATH, rooms)
+            self.sync_configs(rooms)
+            self._write_control_state(rooms)
+
+            if self._pid() is None:
+                return dict(room), "saved"
+            _atomic_json(RELOAD_PATH, {
+                "requested_at": time.time(),
+                "room_id": room_id,
+                "force_segment_boundary": target_recording,
+            })
+            self._ensure_reload_thread()
+            return dict(room), "pending" if target_recording else "queued"
 
     def set_room_recording(self, room_id: str, enabled: bool) -> dict[str, Any]:
         """Enable or gracefully pause one room without stopping the whole engine."""
@@ -768,7 +833,6 @@ class LiveRecorderManager:
 
     def sync_configs(self, rooms: list[dict[str, Any]] | None = None) -> None:
         rooms = rooms if rooms is not None else self.list_rooms()
-        multipart_enabled = self.recording_multipart_enabled()
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
         (RECORDINGS_DIR / "data").mkdir(parents=True, exist_ok=True)
@@ -780,7 +844,7 @@ class LiveRecorderManager:
             "downloader: ffmpeg",
             # 固定按时长切分；是否合并到同一个 BVID 由投稿模式设置决定。
             "file_size: null",
-            f'segment_time: "{DEFAULT_RECORDING_SEGMENT_TIME}"',
+            "segment_time: null",
             # 手动录制允许随时停止；不能让 biliup 把短录播当作碎片删除，
             # 否则视频不会进入 segment_processor / ASS 流程。
             "filtering_threshold: 0",
@@ -801,6 +865,8 @@ class LiveRecorderManager:
         for room in rooms:
             key = f"{_slug(str(room['name']))}_{str(room['id'])[:6]}"
             session_key = str(room["id"])
+            segment_time = self._room_segment_time(room)
+            multipart_enabled = self.room_multipart_enabled(room)
             bridge_base = [
                 _yaml_string(str(APP_ROOT / ".venv" / "bin" / "python")),
                 _yaml_string(str(WORKSPACE_ROOT / "bridge.py")),
@@ -816,6 +882,9 @@ class LiveRecorderManager:
                 "    url:",
                 f"      - {_yaml_string(str(room['url']))}",
                 "    uploader: Noop",
+                "    override:",
+                f"      segment_time: {_yaml_string(segment_time) if segment_time else 'null'}",
+                "      file_size: null",
                 "    segment_processor:",
                 f"      - run: {_yaml_string(segment_command)}",
             ]
@@ -1117,7 +1186,7 @@ class LiveRecorderManager:
                     str(BRIDGE_CONFIG_PATH),
                     "ingest",
                 ]
-                if self.recording_multipart_enabled():
+                if self.room_multipart_enabled(room_id):
                     command.extend(["--session-key", room_id])
                 command.append(str(video))
                 result = subprocess.run(

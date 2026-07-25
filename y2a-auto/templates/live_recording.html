@@ -78,9 +78,65 @@
             <div class="runtime-metrics">
                 <div><span>直播状态</span><strong data-role="runtime-primary">{{ room.runtime.primary }}</strong><small data-role="runtime-secondary">{{ room.runtime.secondary }}</small></div>
                 <div><span>录制时长</span><strong data-role="duration">{{ format_duration(room.runtime.duration_seconds) if room.runtime.recording else '—' }}</strong><small data-role="started-at">{{ '开始于 ' ~ room.runtime.started_at if room.runtime.started_at else '开播后实时显示' }}</small></div>
-                <div><span>当前文件</span><strong data-role="current-file" title="{{ room.runtime.current_file }}">{{ room.runtime.current_file or '—' }}</strong><small data-role="segment-rule">每 60 分钟自动分段</small></div>
+                <div><span>当前文件</span><strong data-role="current-file" title="{{ room.runtime.current_file }}">{{ room.runtime.current_file or '—' }}</strong><small data-role="segment-rule">{{ ('每 ' ~ room.segment_minutes ~ ' 分钟自动分段') if room.segment_enabled else '整场直播不分段' }}</small></div>
                 <div><span>弹幕采集</span><strong data-role="danmaku-state">{{ '录制中' if room.runtime.recording else ('已启用' if recorder_status.running else '待命') }}</strong><small>XML 与视频同步保存</small></div>
             </div>
+
+            <details class="room-ai-prompts-card room-recording-settings-card">
+                <summary>
+                    <span class="room-ai-prompts-icon recording-settings"><i class="bi bi-scissors"></i></span>
+                    <span>
+                        <strong>录制分段与投稿方式</strong>
+                        <small>仅控制这个直播间，分段默认开启并设为 60 分钟</small>
+                    </span>
+                    <span class="badge rounded-pill text-bg-light">
+                        {{ (room.segment_minutes ~ ' 分钟') if room.segment_enabled else '不分段' }}
+                        · {{ '合并分P' if room.multipart_enabled and room.segment_enabled else '独立投稿' }}
+                    </span>
+                    <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
+                </summary>
+                <form method="post"
+                      action="{{ url_for('live_recording_room_recording_settings', room_id=room.id) }}"
+                      class="room-recording-settings-form" data-role="recording-settings-form">
+                    <div class="room-recording-setting-grid">
+                        <label class="room-recording-setting-option">
+                            <span class="room-setting-switch">
+                                <input type="checkbox" name="segment_enabled" value="on"
+                                       data-role="segment-enabled" {% if room.segment_enabled %}checked{% endif %}>
+                                <span></span>
+                            </span>
+                            <span><strong>开启录制分段</strong><small>关闭后整场直播只生成一个视频，下播或手动停止后再投稿。</small></span>
+                        </label>
+                        <label class="room-recording-duration">
+                            <span><strong>每段录制时长</strong><small>1–1440 分钟，默认 60 分钟</small></span>
+                            <span class="room-recording-duration-input">
+                                <input class="form-control" type="number" name="segment_minutes"
+                                       min="1" max="1440" step="1" value="{{ room.segment_minutes }}"
+                                       data-role="segment-minutes">
+                                <span>分钟</span>
+                            </span>
+                        </label>
+                        <label class="room-recording-setting-option">
+                            <span class="room-setting-switch">
+                                <input type="checkbox" name="multipart_enabled" value="on"
+                                       data-role="multipart-enabled"
+                                       {% if room.multipart_enabled and room.segment_enabled %}checked{% endif %}
+                                       {% if not room.segment_enabled %}disabled{% endif %}>
+                                <span></span>
+                            </span>
+                            <span><strong>同一场直播合并为分P</strong><small>默认关闭。P1 创建稿件，后续分段追加到同一个 BVID。</small></span>
+                        </label>
+                    </div>
+                    <div class="room-recording-settings-note">
+                        <i class="bi bi-stars"></i>
+                        <span>每一 P 根据本段弹幕生成独立页面标题和摘要，稿件简介自动汇总全部分段。录制中修改时，当前文件会先安全收尾，再自动应用新设置。</span>
+                    </div>
+                    <div class="room-ai-prompts-actions">
+                        <span><i class="bi bi-shield-check"></i> 设置只对“{{ room.name }}”生效</span>
+                        <button class="btn btn-primary" type="submit"><i class="bi bi-floppy"></i> 保存录制设置</button>
+                    </div>
+                </form>
+            </details>
 
             <details class="room-ai-prompts-card">
                 <summary>
@@ -510,9 +566,10 @@ document.addEventListener('DOMContentLoaded', function () {
         const currentFile = panel.querySelector('[data-role="current-file"]');
         currentFile.textContent = room.current_file || '—';
         currentFile.title = room.current_file || '';
+        const segmentRule = room.segment_enabled ? `每 ${room.segment_minutes || 60} 分钟分段` : '整场直播不分段';
         panel.querySelector('[data-role="segment-rule"]').textContent = room.recording && room.current_file_size_bytes
-            ? `已写入 ${formatBytes(room.current_file_size_bytes)} · 每 60 分钟分段`
-            : '每 60 分钟自动分段';
+            ? `已写入 ${formatBytes(room.current_file_size_bytes)} · ${segmentRule}`
+            : segmentRule;
         panel.querySelector('[data-role="danmaku-state"]').textContent = room.recording ? '录制中' : '已启用';
         const recordingToggle = panel.querySelector('[data-action="room-recording"]');
         const enabled = Boolean(engineRunning && room.manual_enabled);
@@ -521,6 +578,21 @@ document.addEventListener('DOMContentLoaded', function () {
         recordingToggle.title = enabled ? '安全停止当前录制并暂停自动检测' : '启动引擎并开始检测录制';
         recordingToggle.innerHTML = enabled ? '<i class="bi bi-stop-fill"></i> <span>停止录制</span>' : '<i class="bi bi-record-circle"></i> <span>开始录制</span>';
     }
+    document.querySelectorAll('[data-role="recording-settings-form"]').forEach(form => {
+        const enabled = form.querySelector('[data-role="segment-enabled"]');
+        const minutes = form.querySelector('[data-role="segment-minutes"]');
+        const multipart = form.querySelector('[data-role="multipart-enabled"]');
+        const syncState = () => {
+            const active = Boolean(enabled?.checked);
+            if (minutes) minutes.disabled = !active;
+            if (multipart) {
+                multipart.disabled = !active;
+                if (!active) multipart.checked = false;
+            }
+        };
+        enabled?.addEventListener('change', syncState);
+        syncState();
+    });
     async function refreshLiveStatus() {
         try {
             const response = await fetch('{{ url_for("live_recording_status") }}', {headers: {'Accept': 'application/json'}});
