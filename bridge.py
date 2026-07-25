@@ -827,9 +827,18 @@ def generate_recording_cover_with_ai(
     client_config = dict(ai_cfg)
     if image_base_url:
         client_config["OPENAI_BASE_URL"] = image_base_url
-    reference = recording_cover_reference(streamer)
+    custom_reference_value = str(cfg.get("cover_reference_path") or "").strip()
+    custom_reference_path = Path(custom_reference_value).expanduser()
+    if custom_reference_value and not custom_reference_path.is_absolute():
+        custom_reference_path = WORKSPACE_ROOT / custom_reference_path
+    custom_reference = (
+        (normalize_dota2_streamer_name(streamer) or streamer, custom_reference_path)
+        if custom_reference_value and custom_reference_path.is_file()
+        else None
+    )
+    reference = custom_reference or recording_cover_reference(streamer)
     reference_name = reference[0] if reference else ""
-    reference_kind = "dedicated" if reference else ""
+    reference_kind = "custom" if custom_reference else ("dedicated" if reference else "")
     reference_paths: list[Path] = [reference[1]] if reference else []
     avatar_url = str(cfg.get("streamer_avatar_url") or "").strip()
     if avatar_url and not reference:
@@ -845,6 +854,13 @@ def generate_recording_cover_with_ai(
             details["ai_cover_avatar_reference_error"] = str(exc)
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
+    elif reference_kind == "custom":
+        reference_instruction = (
+            f"上传的参考图是用户为主播 {streamer or '主播'} 指定的人物形象底稿，"
+            "必须把图中的人物或角色作为封面唯一主角，严格保持脸部、发型、服装、"
+            "标志性配饰、主色与画风的辨识度。可以根据本段内容调整表情、动作和背景，"
+            "但不得换脸、真人化或替换成其他角色。"
+        )
     elif reference_kind == "avatar":
         reference_instruction = recording_avatar_reference_instruction(streamer)
     else:

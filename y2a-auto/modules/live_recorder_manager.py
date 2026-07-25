@@ -37,6 +37,7 @@ PID_PATH = APP_ROOT / "temp" / "biliup-recorder.pid"
 STATUS_PATH = APP_ROOT / "temp" / "biliup-recorder-status.json"
 CONTROL_PATH = APP_ROOT / "temp" / "biliup-recorder-control.json"
 RELOAD_PATH = APP_ROOT / "temp" / "biliup-recorder-reload.json"
+ROOM_REFERENCE_DIR = WORKSPACE_ROOT / ".bridge" / "room-references"
 FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
 RECORDING_FILE_SUFFIXES = {
     ".mp4": "video", ".flv": "video", ".mkv": "video", ".webm": "video",
@@ -201,8 +202,11 @@ class LiveRecorderManager:
         title_prompt: str = "",
         description_prompt: str = "",
         cover_prompt: str = "",
+        cover_reference_file: Any = None,
+        cover_reference_suffix: str = "",
+        restore_cover_reference: bool = False,
     ) -> dict[str, Any]:
-        """Save optional per-room prompt overrides; blank values use defaults."""
+        """Save per-room AI settings and an optional custom character reference."""
         values = {
             "ai_title_prompt": str(title_prompt or "").strip(),
             "ai_description_prompt": str(description_prompt or "").strip(),
@@ -216,10 +220,59 @@ class LiveRecorderManager:
             room = next((item for item in rooms if item.get("id") == room_id), None)
             if room is None:
                 raise RecorderConfigError("没有找到该直播间")
+            previous_reference = str(room.get("cover_reference_file") or "").strip()
+            if restore_cover_reference:
+                if previous_reference:
+                    (ROOM_REFERENCE_DIR / Path(previous_reference).name).unlink(missing_ok=True)
+                room.pop("cover_reference_file", None)
+            elif cover_reference_file and str(
+                getattr(cover_reference_file, "filename", "") or ""
+            ).strip():
+                suffix = str(cover_reference_suffix or "").lower()
+                if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+                    raise RecorderConfigError("人物底稿只支持 JPG、PNG 或 WEBP")
+                ROOM_REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
+                safe_room_id = re.sub(r"[^0-9A-Za-z_-]+", "-", room_id).strip("-")
+                destination = ROOM_REFERENCE_DIR / f"{safe_room_id}{suffix}"
+                temporary = ROOM_REFERENCE_DIR / f".{safe_room_id}.upload{suffix}"
+                cover_reference_file.save(temporary)
+                if (
+                    not temporary.is_file()
+                    or temporary.stat().st_size <= 0
+                    or temporary.stat().st_size > 10 * 1024 * 1024
+                ):
+                    temporary.unlink(missing_ok=True)
+                    raise RecorderConfigError("人物底稿保存失败或文件超过 10 MB")
+                temporary.replace(destination)
+                if previous_reference and previous_reference != destination.name:
+                    (ROOM_REFERENCE_DIR / Path(previous_reference).name).unlink(missing_ok=True)
+                room["cover_reference_file"] = destination.name
             room.update(values)
             _atomic_json(ROOMS_PATH, rooms)
             self._sync_bridge_profiles(rooms)
             return dict(room)
+
+    def room_cover_reference(self, room_id: str) -> tuple[Path | None, str]:
+        """Resolve the effective local reference, falling back to bundled artwork."""
+        room = next(
+            (item for item in self.list_rooms() if item.get("id") == room_id),
+            None,
+        )
+        if room is None:
+            raise RecorderConfigError("没有找到该直播间")
+        custom_name = Path(str(room.get("cover_reference_file") or "")).name
+        if custom_name:
+            custom_path = ROOM_REFERENCE_DIR / custom_name
+            if custom_path.is_file():
+                return custom_path, "custom"
+        if str(WORKSPACE_ROOT) not in sys.path:
+            sys.path.insert(0, str(WORKSPACE_ROOT))
+        import bridge
+
+        dedicated = bridge.recording_cover_reference(str(room.get("name") or ""))
+        if dedicated:
+            return dedicated[1], "built_in"
+        return None, "avatar"
 
     def _worker_status_payload(self, pid: int) -> dict[str, Any]:
         try:
@@ -813,8 +866,9 @@ class LiveRecorderManager:
             config["ffmpeg"] = str(FFMPEG_DIR / "ffmpeg")
         if (FFMPEG_DIR / "ffprobe").is_file():
             config["ffprobe"] = str(FFMPEG_DIR / "ffprobe")
-        config["profiles"] = [
-            {
+        profiles = []
+        for room in rooms:
+            profile = {
                 "match": f"*{_slug(str(room['name']))}_{str(room['id'])[:6]}*",
                 "source_url": room["url"],
                 "streamer_name": str(room["name"]),
@@ -824,8 +878,14 @@ class LiveRecorderManager:
                 "ai_description_prompt": str(room.get("ai_description_prompt") or ""),
                 "ai_cover_prompt": str(room.get("ai_cover_prompt") or ""),
             }
-            for room in rooms
-        ]
+            custom_reference_name = Path(
+                str(room.get("cover_reference_file") or "")
+            ).name
+            custom_reference_path = ROOM_REFERENCE_DIR / custom_reference_name
+            if custom_reference_name and custom_reference_path.is_file():
+                profile["cover_reference_path"] = str(custom_reference_path)
+            profiles.append(profile)
+        config["profiles"] = profiles
         _atomic_json(BRIDGE_CONFIG_PATH, config)
 
     def _pid(self) -> int | None:

@@ -95,24 +95,78 @@
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
                 </summary>
-                <form method="post" action="{{ url_for('live_recording_room_prompts', room_id=room.id) }}" class="room-ai-prompts-form">
-                    <div class="room-prompt-field">
-                        <label for="room-title-prompt-{{ room.id }}">标题提示词</label>
-                        <textarea id="room-title-prompt-{{ room.id }}" name="ai_title_prompt" rows="4" maxlength="6000"
-                                  placeholder="{{ recording_prompt_defaults.title }}">{{ room.ai_title_prompt or '' }}</textarea>
-                        <small>留空使用默认标题提示词。</small>
-                    </div>
-                    <div class="room-prompt-field">
-                        <label for="room-description-prompt-{{ room.id }}">简介提示词</label>
-                        <textarea id="room-description-prompt-{{ room.id }}" name="ai_description_prompt" rows="5" maxlength="6000"
-                                  placeholder="{{ recording_prompt_defaults.description }}">{{ room.ai_description_prompt or '' }}</textarea>
-                        <small>留空使用默认简介提示词。</small>
-                    </div>
-                    <div class="room-prompt-field">
-                        <label for="room-cover-prompt-{{ room.id }}">封面提示词</label>
-                        <textarea id="room-cover-prompt-{{ room.id }}" name="ai_cover_prompt" rows="5" maxlength="6000"
-                                  placeholder="{{ recording_prompt_defaults.cover }}">{{ room.ai_cover_prompt or '' }}</textarea>
-                        <small>会追加到人物底稿、DOTA2 英雄映射和禁止日期时间等系统约束之后。</small>
+                <form method="post" enctype="multipart/form-data"
+                      action="{{ url_for('live_recording_room_prompts', room_id=room.id) }}"
+                      class="room-ai-prompts-form">
+                    <section class="room-reference-editor">
+                        <div class="room-reference-preview">
+                            {% if room.cover_reference_kind in ['custom', 'built_in'] %}
+                            <img src="{{ url_for('live_recording_room_cover_reference', room_id=room.id) }}"
+                                 alt="{{ room.name }} 的 AI 封面人物底稿" data-role="reference-preview"
+                                 onerror="this.hidden=true">
+                            {% elif room.avatar_url %}
+                            <img src="{{ room.avatar_url }}" alt="{{ room.name }} 的直播间头像"
+                                 referrerpolicy="no-referrer" data-role="reference-preview"
+                                 onerror="this.hidden=true">
+                            {% endif %}
+                            <span class="room-reference-placeholder"><i class="bi bi-person-bounding-box"></i></span>
+                        </div>
+                        <div class="room-reference-copy">
+                            <span class="room-setting-kicker">CHARACTER REFERENCE</span>
+                            <div class="room-reference-title">
+                                <h4>封面人物底稿</h4>
+                                <span class="reference-source-badge {{ room.cover_reference_kind }}">
+                                    {{ '自定义底稿' if room.cover_reference_kind == 'custom' else ('内置人物底稿' if room.cover_reference_kind == 'built_in' else '直播间头像') }}
+                                </span>
+                            </div>
+                            <p>AI 生成封面时优先保持这张图中的人物、发型、服装和标志性配饰。上传新图片即可替换。</p>
+                            <div class="room-reference-actions">
+                                <input id="room-reference-file-{{ room.id }}" class="room-reference-file-input"
+                                       type="file" name="cover_reference_file"
+                                       accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+                                <label for="room-reference-file-{{ room.id }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-image"></i>
+                                    {{ '修改人物底稿' if room.cover_reference_is_custom else '上传人物底稿' }}
+                                </label>
+                                <span class="room-reference-filename" data-role="reference-filename">支持 JPG、PNG、WEBP，最大 10 MB</span>
+                                {% if room.cover_reference_is_custom %}
+                                <button class="btn btn-sm btn-link text-secondary" type="submit"
+                                        name="reference_action" value="restore">
+                                    <i class="bi bi-arrow-counterclockwise"></i> 恢复默认底稿
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </section>
+
+                    <div class="room-prompt-grid">
+                        <div class="room-prompt-field">
+                            <div class="room-prompt-label">
+                                <span><i class="bi bi-type"></i></span>
+                                <div><label for="room-title-prompt-{{ room.id }}">标题提示词</label><small>控制标题主题与语言风格</small></div>
+                            </div>
+                            <textarea id="room-title-prompt-{{ room.id }}" name="ai_title_prompt" rows="6" maxlength="6000"
+                                      placeholder="{{ recording_prompt_defaults.title }}">{{ room.ai_title_prompt or '' }}</textarea>
+                            <span class="prompt-default-hint"><i class="bi bi-magic"></i> 留空使用系统默认</span>
+                        </div>
+                        <div class="room-prompt-field">
+                            <div class="room-prompt-label">
+                                <span><i class="bi bi-card-text"></i></span>
+                                <div><label for="room-description-prompt-{{ room.id }}">简介提示词</label><small>控制内容总结的重点与口吻</small></div>
+                            </div>
+                            <textarea id="room-description-prompt-{{ room.id }}" name="ai_description_prompt" rows="6" maxlength="6000"
+                                      placeholder="{{ recording_prompt_defaults.description }}">{{ room.ai_description_prompt or '' }}</textarea>
+                            <span class="prompt-default-hint"><i class="bi bi-magic"></i> 留空使用系统默认</span>
+                        </div>
+                        <div class="room-prompt-field">
+                            <div class="room-prompt-label">
+                                <span><i class="bi bi-palette"></i></span>
+                                <div><label for="room-cover-prompt-{{ room.id }}">封面提示词</label><small>控制画面构图、氛围与视觉主题</small></div>
+                            </div>
+                            <textarea id="room-cover-prompt-{{ room.id }}" name="ai_cover_prompt" rows="6" maxlength="6000"
+                                      placeholder="{{ recording_prompt_defaults.cover }}">{{ room.ai_cover_prompt or '' }}</textarea>
+                            <span class="prompt-default-hint"><i class="bi bi-shield-check"></i> 人物底稿与 DOTA2 系统约束始终生效</span>
+                        </div>
                     </div>
                     <details class="default-prompts-preview">
                         <summary><i class="bi bi-info-circle"></i> 查看三个系统默认提示词</summary>
@@ -121,8 +175,8 @@
                         <div><strong>封面默认</strong><p>{{ recording_prompt_defaults.cover }}</p></div>
                     </details>
                     <div class="room-ai-prompts-actions">
-                        <span><i class="bi bi-shield-check"></i> 自定义只对“{{ room.name }}”生效</span>
-                        <button class="btn btn-primary" type="submit"><i class="bi bi-floppy"></i> 保存提示词</button>
+                        <span><i class="bi bi-shield-check"></i> 以上设置只对“{{ room.name }}”生效</span>
+                        <button class="btn btn-primary" type="submit"><i class="bi bi-floppy"></i> 保存 AI 设置</button>
                     </div>
                 </form>
             </details>
@@ -237,6 +291,29 @@ document.addEventListener('DOMContentLoaded', function () {
         /[&<>"']/g,
         char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])
     );
+    document.querySelectorAll('.room-reference-file-input').forEach(input => {
+        input.addEventListener('change', function () {
+            const file = input.files?.[0];
+            const editor = input.closest('.room-reference-editor');
+            const filename = editor?.querySelector('[data-role="reference-filename"]');
+            let preview = editor?.querySelector('[data-role="reference-preview"]');
+            if (!file) return;
+            if (filename) filename.textContent = `${file.name} · 保存后用于后续 AI 封面`;
+            if (!preview && editor) {
+                preview = document.createElement('img');
+                preview.dataset.role = 'reference-preview';
+                preview.alt = '待保存的人物底稿预览';
+                editor.querySelector('.room-reference-preview')?.prepend(preview);
+            }
+            if (!preview) return;
+            const previousUrl = preview.dataset.previewObjectUrl;
+            if (previousUrl) URL.revokeObjectURL(previousUrl);
+            const objectUrl = URL.createObjectURL(file);
+            preview.dataset.previewObjectUrl = objectUrl;
+            preview.hidden = false;
+            preview.src = objectUrl;
+        });
+    });
     function confirmStopRecording(button) {
         if (!stopConfirmModalElement || !window.bootstrap?.Modal) return Promise.resolve(false);
         const roomName = button.closest('.room-detail-panel')?.querySelector('.selected-room-title h2')?.textContent?.trim();

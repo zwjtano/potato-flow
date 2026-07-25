@@ -83,6 +83,49 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("完整中文简介", defaults["description"])
         self.assertIn("DOTA2", defaults["cover"])
 
+    def test_room_can_upload_and_restore_custom_cover_reference(self):
+        manager = LiveRecorderManager()
+        rooms = [dict(item) for item in self.rooms]
+        upload = mock.Mock()
+        upload.filename = "character.png"
+        upload.save.side_effect = lambda path: Path(path).write_bytes(b"image-bytes")
+
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            recorder_module,
+            "ROOM_REFERENCE_DIR",
+            Path(temp),
+        ), mock.patch.object(
+            manager,
+            "list_rooms",
+            return_value=rooms,
+        ), mock.patch.object(
+            manager,
+            "_sync_bridge_profiles",
+        ), mock.patch.object(
+            recorder_module,
+            "_atomic_json",
+        ):
+            saved = manager.save_room_prompts(
+                "aaaaaa111111",
+                cover_reference_file=upload,
+                cover_reference_suffix=".png",
+            )
+            reference_path, reference_kind = manager.room_cover_reference(
+                "aaaaaa111111"
+            )
+
+            self.assertEqual(saved["cover_reference_file"], "aaaaaa111111.png")
+            self.assertEqual(reference_kind, "custom")
+            self.assertEqual(reference_path, Path(temp) / "aaaaaa111111.png")
+
+            restored = manager.save_room_prompts(
+                "aaaaaa111111",
+                restore_cover_reference=True,
+            )
+            self.assertNotIn("cover_reference_file", restored)
+            self.assertFalse((Path(temp) / "aaaaaa111111.png").exists())
+
+
     def test_resolves_bilibili_streamer_name_avatar_and_real_room_id(self):
         manager = LiveRecorderManager()
         room_response = {

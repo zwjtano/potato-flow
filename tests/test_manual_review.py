@@ -76,7 +76,22 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn("def regenerate_published_metadata(", manager_source)
         self.assertIn("def update_published_metadata(", manager_source)
         self.assertIn("pending_published_update", manager_source)
-        self.assertIn("视频内容与分P不会改变", editor_template)
+        self.assertIn("视频内容和原有分P不会改变", editor_template)
+        self.assertIn("publishedUpdateConfirmModal", editor_template)
+        self.assertIn("form.requestSubmit(applyPublishedUpdateButton)", editor_template)
+        self.assertNotIn("window.confirm(", editor_template)
+
+    def test_ai_regenerate_action_is_serialized_before_button_is_disabled(self):
+        editor_template = (
+            ROOT / "y2a-auto" / "templates" / "recording_review_edit.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("which would drop action=regenerate_*", editor_template)
+        self.assertIn("window.setTimeout(function ()", editor_template)
+        self.assertLess(
+            editor_template.index("window.setTimeout(function ()"),
+            editor_template.index("submitter.disabled = true"),
+        )
 
     def test_each_live_room_can_override_ai_prompts_with_visible_defaults(self):
         app_source = (ROOT / "y2a-auto" / "app.py").read_text(encoding="utf-8")
@@ -96,6 +111,9 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn('name="ai_title_prompt"', live_template)
         self.assertIn('name="ai_description_prompt"', live_template)
         self.assertIn('name="ai_cover_prompt"', live_template)
+        self.assertIn('name="cover_reference_file"', live_template)
+        self.assertIn("封面人物底稿", live_template)
+        self.assertIn("保存 AI 设置", live_template)
 
 
 if __name__ == "__main__":

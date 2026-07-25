@@ -1177,6 +1177,15 @@ def login_required(f):
 @login_required
 def live_recording():
     rooms = live_recorder_manager.rooms_with_status()
+    for room in rooms:
+        try:
+            _, reference_kind = live_recorder_manager.room_cover_reference(
+                str(room.get('id') or '')
+            )
+        except RecorderConfigError:
+            reference_kind = 'avatar'
+        room['cover_reference_kind'] = reference_kind
+        room['cover_reference_is_custom'] = reference_kind == 'custom'
     requested_room_id = request.args.get('room', '').strip()
     selected_room_id = (
         requested_room_id
@@ -1420,20 +1429,41 @@ def live_recording_delete_room(room_id):
 @login_required
 def live_recording_room_prompts(room_id):
     try:
+        reference_file = request.files.get('cover_reference_file')
+        reference_suffix = ''
+        if reference_file and str(getattr(reference_file, 'filename', '') or '').strip():
+            reference_suffix = _validate_cover_upload(reference_file)
         room = live_recorder_manager.save_room_prompts(
             room_id,
             title_prompt=request.form.get('ai_title_prompt', ''),
             description_prompt=request.form.get('ai_description_prompt', ''),
             cover_prompt=request.form.get('ai_cover_prompt', ''),
+            cover_reference_file=reference_file,
+            cover_reference_suffix=reference_suffix,
+            restore_cover_reference=(
+                request.form.get('reference_action', '') == 'restore'
+            ),
         )
         flash(
-            f"“{room.get('name') or '直播间'}”的 AI 投稿提示词已保存；"
-            "留空的项目继续使用系统默认提示词。",
+            f"“{room.get('name') or '直播间'}”的 AI 投稿设置已保存；"
+            "新生成的封面会使用当前人物底稿。",
             'success',
         )
-    except RecorderConfigError as exc:
+    except (RecorderConfigError, ValueError) as exc:
         flash(str(exc), 'danger')
     return redirect(url_for('live_recording', room=room_id))
+
+
+@app.route('/live-recording/rooms/<room_id>/cover-reference')
+@login_required
+def live_recording_room_cover_reference(room_id):
+    try:
+        path, kind = live_recorder_manager.room_cover_reference(room_id)
+        if path is None or kind == 'avatar':
+            raise RecorderConfigError("这个直播间当前使用直播间头像")
+        return send_file(path, conditional=True)
+    except RecorderConfigError as exc:
+        return jsonify({'error': str(exc)}), 404
 
 
 @app.route('/live-recording/rooms/<room_id>/recording', methods=['POST'])

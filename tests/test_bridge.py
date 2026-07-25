@@ -793,6 +793,58 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("直播间头像", image_edit.call_args.kwargs["prompt"])
         self.assertIn("作为封面主体底稿", image_edit.call_args.kwargs["prompt"])
 
+    def test_custom_room_reference_overrides_bundled_streamer_reference(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work_dir = root / "artifacts"
+            custom_reference = root / "custom-yyf.png"
+            custom_reference.write_bytes(b"custom-character")
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_edit = Mock(return_value=response)
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=image_edit,
+                generate=Mock(),
+            ))
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
+                _, details = bridge.generate_recording_cover_with_ai(
+                    title="YYF｜天梯翻盘局｜07-26 12:00｜【直播回放】",
+                    ai_topic="天梯翻盘局",
+                    description="YYF进行天梯对局。",
+                    streamer="YYF",
+                    cfg={
+                        "_config_dir": str(root),
+                        "y2a_root": str(y2a_root),
+                        "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(custom_reference),
+                    },
+                    work_dir=work_dir,
+                )
+
+        self.assertEqual(details["ai_cover_reference_kind"], "custom")
+        self.assertEqual(details["ai_cover_reference_path"], str(custom_reference))
+        self.assertEqual(Path(image_edit.call_args.kwargs["image"].name), custom_reference)
+        self.assertIn("用户为主播 YYF 指定的人物形象底稿", image_edit.call_args.kwargs["prompt"])
+
     def test_yyf_reference_aliases_are_recognized(self):
         for alias in (
             "YYF",

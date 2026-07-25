@@ -210,6 +210,39 @@
         </div>
     </div>
 </div>
+
+{% if job.status == 'completed' %}
+<div class="modal fade published-update-modal" id="publishedUpdateConfirmModal" tabindex="-1"
+     aria-labelledby="publishedUpdateConfirmTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="published-update-icon"><i class="bi bi-cloud-check"></i></div>
+                <div class="published-update-copy">
+                    <div class="page-eyebrow">CONFIRM UPDATE</div>
+                    <h5 id="publishedUpdateConfirmTitle">确认更新 B站稿件？</h5>
+                    <p>当前预览中的标题、简介和封面将同步到 <strong>{{ job.bvid }}</strong>。</p>
+                    <div class="published-update-items">
+                        <span><i class="bi bi-type"></i> 标题</span>
+                        <span><i class="bi bi-card-text"></i> 简介</span>
+                        <span><i class="bi bi-image"></i> 封面</span>
+                    </div>
+                    <div class="published-update-note">
+                        <i class="bi bi-shield-check"></i>
+                        <span>视频内容和原有分P不会改变；稿件可能重新进入审核。</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-light border" type="button" data-bs-dismiss="modal">继续检查</button>
+                <button class="btn btn-success" type="button" id="confirmPublishedUpdateBtn">
+                    <i class="bi bi-cloud-arrow-up"></i> 确认同步
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -220,6 +253,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const tags = Array.from(document.querySelectorAll('.review-tag'));
     const tagsJson = document.getElementById('review-tags-json');
     const form = document.getElementById('recording-review-form');
+    const publishedUpdateModalElement = document.getElementById('publishedUpdateConfirmModal');
+    const confirmPublishedUpdateButton = document.getElementById('confirmPublishedUpdateBtn');
+    const applyPublishedUpdateButton = form.querySelector('[data-confirm-published-update="true"]');
+    let publishedUpdateConfirmed = false;
 
     function refreshCounts() {
         document.getElementById('title-count').textContent = title.value.length;
@@ -239,19 +276,37 @@ document.addEventListener('DOMContentLoaded', function () {
     form.addEventListener('submit', function (event) {
         collectTags();
         const submitter = event.submitter;
-        if (submitter && submitter.dataset.confirmPublishedUpdate === 'true') {
-            const confirmed = window.confirm(
-                '确定把当前标题、简介和封面同步到 B站吗？\\n视频内容与分P不会改变，但稿件可能重新进入审核。'
-            );
-            if (!confirmed) {
-                event.preventDefault();
-                return;
-            }
+        if (
+            submitter
+            && submitter.dataset.confirmPublishedUpdate === 'true'
+            && !publishedUpdateConfirmed
+        ) {
+            event.preventDefault();
+            bootstrap.Modal.getOrCreateInstance(publishedUpdateModalElement).show();
+            return;
         }
         if (submitter && submitter.classList.contains('ai-generate-btn')) {
-            submitter.disabled = true;
-            submitter.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>AI 生成中…';
+            // Do not disable the submitter synchronously: disabled controls are
+            // omitted from form data, which would drop action=regenerate_*.
+            window.setTimeout(function () {
+                submitter.disabled = true;
+                submitter.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>AI 生成中…';
+            }, 0);
         }
+    });
+    confirmPublishedUpdateButton?.addEventListener('click', function () {
+        publishedUpdateConfirmed = true;
+        confirmPublishedUpdateButton.disabled = true;
+        confirmPublishedUpdateButton.innerHTML =
+            '<span class="spinner-border spinner-border-sm me-1"></span>正在同步…';
+        bootstrap.Modal.getOrCreateInstance(publishedUpdateModalElement).hide();
+        form.requestSubmit(applyPublishedUpdateButton);
+    });
+    publishedUpdateModalElement?.addEventListener('hidden.bs.modal', function () {
+        if (publishedUpdateConfirmed) return;
+        confirmPublishedUpdateButton.disabled = false;
+        confirmPublishedUpdateButton.innerHTML =
+            '<i class="bi bi-cloud-arrow-up"></i> 确认同步';
     });
     refreshCounts();
     collectTags();
@@ -271,8 +326,23 @@ document.addEventListener('DOMContentLoaded', function () {
 .cover-placeholder i { font-size: 2rem; }
 .review-cover.cover-missing .cover-placeholder { display: flex; }
 .ai-regenerate-panel { padding: 1rem; border: 1px solid #cfe2ff; border-radius: 12px; background: #f4f8ff; }
+.published-update-modal .modal-content { overflow: hidden; border: 0; border-radius: 20px; box-shadow: 0 24px 70px rgba(15, 23, 42, .28); }
+.published-update-modal .modal-body { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 18px; padding: 28px 28px 22px; }
+.published-update-icon { display: grid; width: 54px; height: 54px; place-items: center; color: #fff; border-radius: 16px; background: linear-gradient(145deg, #279566, #176b4b); box-shadow: 0 10px 24px rgba(30, 132, 89, .25); font-size: 1.45rem; }
+.published-update-copy h5 { margin: 3px 0 8px; font-size: 1.2rem; font-weight: 750; }
+.published-update-copy > p { margin: 0; color: #667085; line-height: 1.65; }
+.published-update-items { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.published-update-items span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; color: #344054; border: 1px solid #e4e7ec; border-radius: 999px; background: #f9fafb; font-size: .82rem; }
+.published-update-items i { color: #23845c; }
+.published-update-note { display: flex; align-items: flex-start; gap: 9px; margin-top: 16px; padding: 11px 12px; color: #4b5563; border-radius: 10px; background: #edf8f3; font-size: .84rem; line-height: 1.55; }
+.published-update-note i { margin-top: 2px; color: #23845c; }
+.published-update-modal .modal-footer { padding: 16px 28px 22px; border-top: 1px solid #eef0f3; background: #fbfcfd; }
 .review-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; }
 @media (max-width: 575.98px) {
+    .published-update-modal .modal-body { grid-template-columns: 1fr; padding: 22px 20px 18px; }
+    .published-update-icon { width: 46px; height: 46px; border-radius: 14px; }
+    .published-update-modal .modal-footer { padding: 14px 20px 20px; }
+    .published-update-modal .modal-footer .btn { flex: 1; }
     .review-actions { align-items: stretch; flex-direction: column-reverse; }
     .review-actions > div, .review-actions .btn { width: 100%; }
 }
