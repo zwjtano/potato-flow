@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import types
@@ -117,6 +118,32 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(store.claim(key, video, "bilibili"))
             store.finish(key, "completed", {"ok": True})
             self.assertFalse(store.claim(key, video, "bilibili"))
+
+    def test_record_only_command_permanently_excludes_video_from_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "record-only.flv"
+            state = root / "state.sqlite3"
+            config = root / "bridge.config.json"
+            video.write_bytes(b"video")
+            config.write_text(
+                json.dumps({"state_db": str(state)}),
+                encoding="utf-8",
+            )
+
+            result = bridge.main([
+                "--config", str(config),
+                "record-only", "--room-id", "room-1", str(video),
+            ])
+
+            self.assertEqual(result, 0)
+            with sqlite3.connect(state) as db:
+                row = db.execute(
+                    "SELECT video_path, room_id, reason FROM recording_exclusions"
+                ).fetchone()
+                upload_count = db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0]
+            self.assertEqual(row, (str(video.resolve()), "room-1", "record_only"))
+            self.assertEqual(upload_count, 0)
 
     def test_finalize_session_ingests_final_video_before_closing(self):
         with tempfile.TemporaryDirectory() as temp:

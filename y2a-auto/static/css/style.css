@@ -200,7 +200,7 @@ body {
 .room-ai-prompts-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 1px; }
 .room-ai-prompts-actions > span { color: #79828e; font-size: 10px; }
 .room-recording-settings-form { display: grid; gap: 15px; padding: 20px; border-top: 1px solid #edf0f4; background: #fbfcfe; }
-.room-recording-setting-grid { display: grid; grid-template-columns: 1fr .85fr 1.2fr; gap: 12px; }
+.room-recording-setting-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .room-recording-setting-option, .room-recording-duration { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 15px; border: 1px solid #e1e6ec; border-radius: 10px; background: #fff; }
 .room-recording-setting-option > span:last-child, .room-recording-duration > span:first-child { min-width: 0; }
 .room-recording-setting-option strong, .room-recording-duration strong { display: block; color: #303b49; font-size: 12px; }
@@ -213,6 +213,7 @@ body {
 .room-setting-switch input:checked + span::after { transform: translateX(16px); }
 .room-setting-switch input:focus-visible + span { outline: 2px solid #0d6efd; outline-offset: 2px; }
 .room-setting-switch input:disabled + span { opacity: .48; }
+.room-recording-setting-option.record-only { border-color: #dce8f5; background: #f8fbff; }
 .room-recording-duration { justify-content: space-between; }
 .room-recording-duration-input { display: flex; width: 112px; flex: 0 0 auto; align-items: center; gap: 6px; color: #7b8592; font-size: 10px; }
 .room-recording-duration-input .form-control { min-width: 0; font-size: 12px; }

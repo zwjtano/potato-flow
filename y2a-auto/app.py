@@ -1454,6 +1454,9 @@ def live_recording_room_recording_settings(room_id):
             multipart_enabled=_coerce_checkbox_value(
                 request.form.get('multipart_enabled', 'off')
             ),
+            record_only=_coerce_checkbox_value(
+                request.form.get('record_only', 'off')
+            ),
         )
         room_name = str(room.get('name') or '直播间')
         if reload_state == 'pending':

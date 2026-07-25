@@ -111,10 +111,18 @@ docker compose up -d --build
 ```bash
 git clone https://github.com/zwjtano/potato-flow.git
 cd potato-flow
+sudo mkdir -p "/vol1/1000/media/录播"
+sudo chown 1000:1000 "/vol1/1000/media/录播"
 docker compose up -d --build
 ```
 
 启动后打开 `http://服务器IP:5001/`。容器支持 AMD64 和 ARM64 原生构建。首次会编译 Rust 录制核心并安装 AI 依赖，之后会直接使用本地镜像。
+
+默认将全部录播视频和 XML 弹幕保存到宿主机 `/vol1/1000/media/录播`，容器内对应 `/data/recordings`。其他服务器需要修改目录时，可以在项目根目录创建 `.env`：
+
+```dotenv
+POTATO_RECORDINGS_DIR=/你的录播目录
+```
 
 常用命令：
 
@@ -126,7 +134,7 @@ docker compose down
 docker compose up -d --build   # 更新源码后重建
 ```
 
-所有需要保留的数据位于仓库根目录的 `docker-data/`，包括录制房间、Cookie、授权数据、任务数据库、日志、录播文件、ASS 弹幕和 AI 处理状态。重建或删除容器不会删除此目录，不要将它提交到 Git。
+除原始录播视频和 XML 弹幕外，其余持久化数据位于仓库根目录的 `docker-data/`，包括录制房间、Cookie、授权数据、任务数据库、日志、ASS 弹幕和 AI 处理状态。原始录播保存在 `POTATO_RECORDINGS_DIR` 指定的宿主机目录。重建或删除容器不会删除这些目录，也不要将 `docker-data/` 提交到 Git。
 
 ### 查看录播处理的每一步
 
@@ -354,6 +362,8 @@ https://www.douyu.com/123456
 - 每一 P 只分析本段弹幕，生成类似“14:00 凤凰翻盘”“15:00 关键团战”的独立页面标题与摘要，稿件总简介按 P1、P2、P3 自动汇总；
 - 关闭录制分段时，整场只有一个文件，因此分P开关自动停用；
 - 录制过程中修改设置会先让当前文件安全收尾，再重载录制引擎应用新设置。
+
+每个直播间还可以开启“仅录制，不自动投稿”，该开关默认关闭。开启后只保存原始视频和 XML 弹幕，不生成 ASS、AI 简介、AI 封面，也不创建 B站投稿任务。系统会登记这些文件并永久排除自动漏单恢复，之后关闭开关或重启容器也不会误投稿；文件仍可在文件管理中查看和删除。
 
 ## 手动验证桥接器
 

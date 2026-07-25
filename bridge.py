@@ -311,11 +311,31 @@ class StateStore:
                     FOREIGN KEY (fingerprint) REFERENCES uploads(fingerprint)
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS recording_exclusions (
+                    video_path TEXT PRIMARY KEY,
+                    room_id TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )"""
+            )
 
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
         return db
+
+    def exclude_recording(self, path: Path, room_id: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO recording_exclusions
+                   (video_path, room_id, reason, created_at)
+                   VALUES (?, ?, 'record_only', ?)
+                   ON CONFLICT(video_path) DO UPDATE SET
+                     room_id=excluded.room_id,
+                     reason=excluded.reason""",
+                (str(path.expanduser().resolve()), room_id, utc_now()),
+            )
 
     def claim(self, key: str, path: Path, platform: str, retry: bool = False) -> bool:
         now = utc_now()
@@ -1748,6 +1768,9 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--dry-run", action="store_true")
     ingest.add_argument("--retry", action="store_true", help="允许重试指定的失败任务")
     ingest.add_argument("--session-key", default="", help="将分段追加到同一场直播稿件")
+    record_only = sub.add_parser("record-only", help="登记仅录制文件，永久跳过自动投稿")
+    record_only.add_argument("paths", nargs="*")
+    record_only.add_argument("--room-id", required=True)
     sub.add_parser("retry", help="重试失败记录")
     finalize_session = sub.add_parser(
         "finalize-session",
@@ -1780,6 +1803,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{row['updated_at']} {row['status']:10} attempts={row['attempts']} "
                   f"{row['platform']:9} {row['video_path']}{error}")
         return 0
+
+    if args.command == "record-only":
+        received_paths = input_paths(args.paths)
+        paths = [path for path in received_paths if path.suffix.lower() in VIDEO_EXTENSIONS]
+        if not paths:
+            print("没有收到可登记的录播文件", file=sys.stderr)
+            return 2
+        ok = True
+        for path in paths:
+            if not path.is_file():
+                print(f"ERROR 文件不存在: {path}", file=sys.stderr)
+                ok = False
+                continue
+            store.exclude_recording(path, str(args.room_id))
+            print(f"OK 仅录制文件已保留并跳过自动投稿: {path}")
+        return 0 if ok else 1
 
     retry = args.command == "retry" or bool(getattr(args, "retry", False))
     received_paths = store.failed_paths() if args.command == "retry" else input_paths(args.paths)

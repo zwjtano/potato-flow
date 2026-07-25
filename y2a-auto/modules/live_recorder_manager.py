@@ -185,6 +185,7 @@ class LiveRecorderManager:
             room.setdefault("segment_enabled", True)
             room.setdefault("segment_minutes", DEFAULT_RECORDING_SEGMENT_MINUTES)
             room.setdefault("multipart_enabled", False)
+            room.setdefault("record_only", False)
         return rooms
 
     @staticmethod
@@ -389,8 +390,10 @@ class LiveRecorderManager:
                 "segment_time": cls._room_segment_time(room),
                 "segment_enabled": bool(room.get("segment_enabled", True)),
                 "segment_minutes": cls._room_segment_minutes(room),
+                "record_only": bool(room.get("record_only", False)),
                 "multipart_enabled": bool(
-                    room.get("segment_enabled", True)
+                    not room.get("record_only", False)
+                    and room.get("segment_enabled", True)
                     and room.get("multipart_enabled", False)
                 ),
             }
@@ -581,6 +584,7 @@ class LiveRecorderManager:
                     "segment_enabled": True,
                     "segment_minutes": DEFAULT_RECORDING_SEGMENT_MINUTES,
                     "multipart_enabled": False,
+                    "record_only": False,
                 }
                 rooms.append(existing)
             existing.update({
@@ -765,7 +769,11 @@ class LiveRecorderManager:
     def room_multipart_enabled(self, room: dict[str, Any] | str) -> bool:
         if isinstance(room, str):
             room = next((item for item in self.list_rooms() if item.get("id") == room), {})
-        return bool(room.get("segment_enabled", True) and room.get("multipart_enabled", False))
+        return bool(
+            not room.get("record_only", False)
+            and room.get("segment_enabled", True)
+            and room.get("multipart_enabled", False)
+        )
 
     def save_room_recording_settings(
         self,
@@ -774,6 +782,7 @@ class LiveRecorderManager:
         segment_enabled: bool,
         segment_minutes: Any,
         multipart_enabled: bool,
+        record_only: bool = False,
     ) -> tuple[dict[str, Any], str]:
         """Save per-room segmentation/upload mode and safely rotate active files."""
         try:
@@ -797,8 +806,9 @@ class LiveRecorderManager:
                 "segment_enabled": bool(segment_enabled),
                 "segment_minutes": minutes,
                 "multipart_enabled": bool(multipart_enabled and segment_enabled),
+                "record_only": bool(record_only),
             })
-            if not room["multipart_enabled"] and not target_recording:
+            if (room["record_only"] or not room["multipart_enabled"]) and not target_recording:
                 self._clear_stale_multipart_session(room_id)
             _atomic_json(ROOMS_PATH, rooms)
             self.sync_configs(rooms)
@@ -866,6 +876,7 @@ class LiveRecorderManager:
             key = f"{_slug(str(room['name']))}_{str(room['id'])[:6]}"
             session_key = str(room["id"])
             segment_time = self._room_segment_time(room)
+            record_only = bool(room.get("record_only", False))
             multipart_enabled = self.room_multipart_enabled(room)
             bridge_base = [
                 _yaml_string(str(APP_ROOT / ".venv" / "bin" / "python")),
@@ -873,9 +884,11 @@ class LiveRecorderManager:
                 "--config",
                 _yaml_string(str(BRIDGE_CONFIG_PATH)),
             ]
-            segment_args = [*bridge_base, "ingest"]
-            if multipart_enabled:
-                segment_args.extend(["--session-key", _yaml_string(session_key)])
+            segment_args = [*bridge_base, "record-only", "--room-id", _yaml_string(session_key)]
+            if not record_only:
+                segment_args = [*bridge_base, "ingest"]
+                if multipart_enabled:
+                    segment_args.extend(["--session-key", _yaml_string(session_key)])
             segment_command = " ".join(segment_args)
             room_lines = [
                 f"  {_yaml_string(key)}:",
@@ -1128,6 +1141,15 @@ class LiveRecorderManager:
                         Path(str(row[0])).expanduser().resolve()
                         for row in db.execute("SELECT video_path FROM uploads").fetchall()
                     }
+                    try:
+                        known_paths.update(
+                            Path(str(row[0])).expanduser().resolve()
+                            for row in db.execute(
+                                "SELECT video_path FROM recording_exclusions"
+                            ).fetchall()
+                        )
+                    except sqlite3.Error:
+                        pass
             except sqlite3.Error:
                 return []
 
@@ -1137,6 +1159,7 @@ class LiveRecorderManager:
                 f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}",
             )
             for room in self.list_rooms()
+            if not room.get("record_only", False)
         ]
         video_suffixes = {
             suffix for suffix, kind in RECORDING_FILE_SUFFIXES.items() if kind == "video"

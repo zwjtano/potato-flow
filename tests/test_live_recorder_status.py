@@ -297,6 +297,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(room["segment_enabled"])
         self.assertEqual(room["segment_minutes"], 60)
         self.assertFalse(room["multipart_enabled"])
+        self.assertFalse(room["record_only"])
 
     def test_room_recording_settings_are_saved_per_room(self):
         manager = LiveRecorderManager()
@@ -319,6 +320,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(room["segment_enabled"])
         self.assertEqual(room["segment_minutes"], 90)
         self.assertTrue(room["multipart_enabled"])
+        self.assertFalse(room["record_only"])
         persisted_rooms = atomic_json.call_args_list[0].args[1]
         self.assertNotIn("segment_minutes", persisted_rooms[1])
         sync_configs.assert_called_once_with(persisted_rooms)
@@ -357,6 +359,32 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(atomic_json.call_args_list[-1].args[1]["force_segment_boundary"])
         clear_session.assert_not_called()
         ensure_reload.assert_called_once()
+
+    def test_record_only_room_keeps_files_without_upload_hooks(self):
+        manager = LiveRecorderManager()
+        room = {
+            **self.rooms[0],
+            "segment_enabled": True,
+            "segment_minutes": 60,
+            "multipart_enabled": True,
+            "record_only": True,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "biliup.yaml"
+            with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
+                    mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
+                    mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
+                    mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
+                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(manager, "_sync_bridge_profiles"):
+                manager.sync_configs([room])
+
+            content = config_path.read_text(encoding="utf-8")
+            self.assertIn("record-only --room-id", content)
+            self.assertNotIn(" ingest", content)
+            self.assertNotIn("finalize-session", content)
+            self.assertFalse(manager.room_multipart_enabled(room))
 
     def test_readding_legacy_room_updates_profile_without_duplicate(self):
         manager = LiveRecorderManager()
@@ -1009,6 +1037,39 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         self.assertEqual(candidates, [(orphan.resolve(), "aaaaaa111111")])
 
+    def test_orphan_scan_skips_permanently_excluded_record_only_files(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            recordings = root / "recordings"
+            recordings.mkdir()
+            state_path = root / "state.sqlite3"
+            excluded = recordings / "开播主播_aaaaaa2026-07-23_09-00-00.flv"
+            excluded.write_bytes(b"video")
+            old = time.time() - 600
+            os.utime(excluded, (old, old))
+            with sqlite3.connect(state_path) as db:
+                db.execute("CREATE TABLE uploads (video_path TEXT NOT NULL)")
+                db.execute(
+                    """CREATE TABLE recording_exclusions (
+                        video_path TEXT NOT NULL,
+                        room_id TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )"""
+                )
+                db.execute(
+                    "INSERT INTO recording_exclusions VALUES (?, ?, ?, ?)",
+                    (str(excluded), "aaaaaa111111", "record_only", "now"),
+                )
+
+            with mock.patch.object(recorder_module, "RECORDINGS_DIR", recordings), mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[self.rooms[0]]):
+                candidates = manager._orphan_recording_candidates(120)
+
+        self.assertEqual(candidates, [])
+
     def test_orphan_recordings_are_reingested_sequentially_with_room_session(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:
@@ -1083,7 +1144,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('name="segment_enabled"', live_source)
         self.assertIn('name="segment_minutes"', live_source)
         self.assertIn('name="multipart_enabled"', live_source)
+        self.assertIn('name="record_only"', live_source)
         self.assertIn("同一场直播合并为分P", live_source)
+        self.assertIn("仅录制，不自动投稿", live_source)
         self.assertIn("live_recording_room_recording_settings", app_source)
 
     def test_delete_room_button_is_enabled_while_worker_runs(self):

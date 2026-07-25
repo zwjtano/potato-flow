@@ -91,7 +91,7 @@
                     </span>
                     <span class="badge rounded-pill text-bg-light">
                         {{ (room.segment_minutes ~ ' 分钟') if room.segment_enabled else '不分段' }}
-                        · {{ '合并分P' if room.multipart_enabled and room.segment_enabled else '独立投稿' }}
+                        · {{ '仅录制' if room.record_only else ('合并分P' if room.multipart_enabled and room.segment_enabled else '独立投稿') }}
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
                 </summary>
@@ -126,10 +126,18 @@
                             </span>
                             <span><strong>同一场直播合并为分P</strong><small>默认关闭。P1 创建稿件，后续分段追加到同一个 BVID。</small></span>
                         </label>
+                        <label class="room-recording-setting-option record-only">
+                            <span class="room-setting-switch">
+                                <input type="checkbox" name="record_only" value="on"
+                                       data-role="record-only" {% if room.record_only %}checked{% endif %}>
+                                <span></span>
+                            </span>
+                            <span><strong>仅录制，不自动投稿</strong><small>默认关闭。只保留视频和 XML 弹幕，不进入 ASS、AI 与 B站投稿流水线。</small></span>
+                        </label>
                     </div>
                     <div class="room-recording-settings-note">
                         <i class="bi bi-stars"></i>
-                        <span>每一 P 根据本段弹幕生成独立页面标题和摘要，稿件简介自动汇总全部分段。录制中修改时，当前文件会先安全收尾，再自动应用新设置。</span>
+                        <span>仅录制文件会永久跳过自动补投稿并保留在文件管理中。正常投稿时，每一 P 根据本段弹幕生成独立页面标题和摘要，稿件简介自动汇总全部分段。录制中修改会先安全收尾当前文件，再应用新设置。</span>
                     </div>
                     <div class="room-ai-prompts-actions">
                         <span><i class="bi bi-shield-check"></i> 设置只对“{{ room.name }}”生效</span>

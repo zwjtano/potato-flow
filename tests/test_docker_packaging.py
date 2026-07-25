@@ -14,6 +14,10 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertEqual(compose.count("container_name:"), 1)
         self.assertIn("container_name: potato-flow", compose)
         self.assertIn("image: potato-flow:local", compose)
+        self.assertIn(
+            '"${POTATO_RECORDINGS_DIR:-/vol1/1000/media/录播}:/data/recordings"',
+            compose,
+        )
 
     def test_image_contains_headless_recorder(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")

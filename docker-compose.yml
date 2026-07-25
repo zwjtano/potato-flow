@@ -16,3 +16,4 @@ services:
       AUTO_START_RECORDER: "1"
     volumes:
       - ./docker-data:/data
+      - "${POTATO_RECORDINGS_DIR:-/vol1/1000/media/录播}:/data/recordings"
