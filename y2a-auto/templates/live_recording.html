@@ -258,7 +258,7 @@
                     {% set file_state = namespace(count=0) %}
                     {% for file in recording_files %}
                     {% if file.room_id == room.id and file_state.count < 10 %}
-                    <div class="generated-file-row">
+                    <div class="generated-file-row{% if file.has_cover %} has-cover{% endif %}">
                         {% if file.type == 'video' and file.has_cover %}
                         <img class="generated-file-cover" src="{{ url_for('live_recording_file_cover', file_id=file.id) }}" alt="{{ file.name }} 封面" loading="lazy">
                         {% else %}
@@ -266,7 +266,10 @@
                         {% endif %}
                         <div class="generated-file-copy">
                             <strong title="{{ file.name }}">{{ file.name }}</strong>
-                            <small>{{ '录播视频' if file.type == 'video' else ('XML 弹幕' if file.type == 'xml' else 'ASS 字幕') }} · {{ file.modified_at }}</small>
+                            <small>
+                                <span>{{ file.extension|upper if file.extension else ('视频' if file.type == 'video' else file.type|upper) }}</span>
+                                <time>{{ file.modified_at }}</time>
+                            </small>
                         </div>
                         <span class="generated-file-size">{{ file.size_bytes|filesizeformat }}</span>
                         {% if file.locked %}<span class="generated-file-lock"><i class="bi bi-record-circle"></i> {{ file.lock_reason }}</span>{% endif %}
