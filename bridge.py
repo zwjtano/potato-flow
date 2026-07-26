@@ -19,7 +19,7 @@ import urllib.request
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from danmaku_pipeline import (
     build_ass,
@@ -421,6 +421,77 @@ class StateStore:
                    WHERE fingerprint=? AND stage='record'""",
                 (json.dumps({"video_path": str(path), "size_bytes": path.stat().st_size}, ensure_ascii=False), key),
             )
+        return True
+
+    def claim_record_only(
+        self,
+        key: str,
+        path: Path,
+        room_id: str,
+        danmaku_xml: Path | None,
+    ) -> bool:
+        """Create an inspectable task for local record-only post-processing."""
+        now = utc_now()
+        result = {"room_id": room_id, "record_only": True}
+        stages = ("record", "ass", "cover", "remux", "verify", "cleanup")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status FROM uploads WHERE fingerprint = ?",
+                (key,),
+            ).fetchone()
+            if row and row["status"] in {"completed", "processing"}:
+                return False
+            db.execute(
+                """INSERT INTO uploads
+                   (fingerprint, video_path, platform, status, attempts, result_json,
+                    created_at, updated_at)
+                   VALUES (?, ?, 'record_only', 'processing', 1, ?, ?, ?)
+                   ON CONFLICT(fingerprint) DO UPDATE SET
+                     video_path=excluded.video_path,
+                     platform='record_only',
+                     status='processing',
+                     attempts=uploads.attempts + 1,
+                     result_json=excluded.result_json,
+                     error=NULL,
+                     updated_at=excluded.updated_at""",
+                (
+                    key,
+                    str(path),
+                    json.dumps(result, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            db.execute("DELETE FROM upload_stages WHERE fingerprint = ?", (key,))
+            for stage in stages:
+                completed = stage == "record" and danmaku_xml is not None
+                details = None
+                if completed:
+                    details = json.dumps(
+                        {
+                            "video_path": str(path),
+                            "size_bytes": path.stat().st_size,
+                            "danmaku_xml": str(danmaku_xml),
+                            "safe_finalized": True,
+                        },
+                        ensure_ascii=False,
+                    )
+                db.execute(
+                    """INSERT INTO upload_stages
+                       (fingerprint, stage, status, details_json, error,
+                        started_at, finished_at, updated_at)
+                       VALUES (?, ?, ?, ?, NULL, ?, ?, ?)""",
+                    (
+                        key,
+                        stage,
+                        "completed" if completed else "pending",
+                        details,
+                        now if completed else None,
+                        now if completed else None,
+                        now,
+                    ),
+                )
         return True
 
     def stage(self, key: str, stage: str, status: str, details: Any = None,
@@ -1889,6 +1960,7 @@ def remux_record_only_flv_with_cover(
     video: Path,
     cover: Path,
     base_cfg: dict[str, Any],
+    progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> Path:
     """Remux an FLV to MP4 and attach its sidecar cover without re-encoding."""
     if video.suffix.lower() != ".flv":
@@ -1936,6 +2008,17 @@ def remux_record_only_flv_with_cover(
         if completed.returncode != 0 or not temporary.is_file() or temporary.stat().st_size <= 0:
             detail = (completed.stderr or completed.stdout or "FFmpeg 未生成 MP4").strip()
             raise RuntimeError(f"FLV 转 MP4 失败: {detail}")
+        if progress_callback:
+            progress_callback(
+                "remux_completed",
+                {
+                    "output_path": str(output),
+                    "temporary_path": str(temporary),
+                    "copy_mode": "-c copy",
+                    "size_bytes": temporary.stat().st_size,
+                },
+            )
+            progress_callback("verify_running", {"output_path": str(output)})
 
         probe = subprocess.run(
             [
@@ -1964,9 +2047,27 @@ def remux_record_only_flv_with_cover(
             if isinstance(stream, dict)
         ):
             raise RuntimeError("MP4 已生成，但未检测到内嵌封面")
+        if progress_callback:
+            progress_callback(
+                "verify_completed",
+                {"output_path": str(output), "attached_pic": 1},
+            )
+            progress_callback(
+                "cleanup_running",
+                {"original_flv": str(video), "output_path": str(output)},
+            )
 
         temporary.replace(output)
         video.unlink()
+        if progress_callback:
+            progress_callback(
+                "cleanup_completed",
+                {
+                    "original_flv": str(video),
+                    "final_video_path": str(output),
+                    "original_flv_deleted": True,
+                },
+            )
         return output
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -2031,32 +2132,112 @@ def main(argv: list[str] | None = None) -> int:
                 ok = False
                 continue
             store.exclude_recording(path, str(args.room_id))
-            ass_path: Path | None = None
-            cover_path: Path | None = None
-            final_video = path
+            record_cfg = effective_config(cfg, path)
+            danmaku_xml = wait_for_danmaku_xml(
+                path,
+                received_paths,
+                timeout=float(record_cfg.get("record_only_xml_wait_seconds", 8)),
+            )
+            key = fingerprint(path)
+            if not store.claim_record_only(
+                key,
+                path,
+                str(args.room_id),
+                danmaku_xml,
+            ):
+                print(f"SKIP 仅录制任务已存在或正在处理: {path}")
+                continue
+            if danmaku_xml is None:
+                error = "录制已结束，但未找到稳定的 XML 弹幕文件"
+                store.stage(key, "record", "failed", {
+                    "video_path": str(path),
+                    "size_bytes": path.stat().st_size,
+                    "safe_finalized": False,
+                }, error=error)
+                store.finish(key, "failed", error=error)
+                print(f"ERROR 仅录制文件未找到 XML，已保留原 FLV: {path}", file=sys.stderr)
+                ok = False
+                continue
+            current_stage = "ass"
             try:
+                store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml)})
                 ass_path = generate_record_only_ass(path, cfg, received_paths)
-            except Exception as exc:
-                print(f"ERROR 仅录制 ASS 生成失败: {path}: {exc}", file=sys.stderr)
-                ok = False
-            try:
+                if ass_path is None:
+                    raise RuntimeError("未生成 ASS 字幕")
+                store.stage(
+                    key,
+                    "ass",
+                    "completed",
+                    {"danmaku_xml": str(danmaku_xml), "ass_path": str(ass_path)},
+                )
+
+                current_stage = "cover"
+                store.stage(key, "cover", "running")
                 cover_path = generate_record_only_cover(path, cfg)
+                store.stage(
+                    key,
+                    "cover",
+                    "completed",
+                    {"ai_cover_path": str(cover_path)},
+                )
+
+                def update_remux_progress(
+                    event: str,
+                    details: dict[str, Any],
+                ) -> None:
+                    nonlocal current_stage
+                    if event == "remux_completed":
+                        store.stage(key, "remux", "completed", details)
+                    elif event == "verify_running":
+                        current_stage = "verify"
+                        store.stage(key, "verify", "running", details)
+                    elif event == "verify_completed":
+                        store.stage(key, "verify", "completed", details)
+                    elif event == "cleanup_running":
+                        current_stage = "cleanup"
+                        store.stage(key, "cleanup", "running", details)
+                    elif event == "cleanup_completed":
+                        store.stage(key, "cleanup", "completed", details)
+
+                current_stage = "remux"
+                store.stage(
+                    key,
+                    "remux",
+                    "running",
+                    {"source_flv": str(path), "cover_path": str(cover_path)},
+                )
+                final_video = remux_record_only_flv_with_cover(
+                    path,
+                    cover_path,
+                    cfg,
+                    progress_callback=update_remux_progress,
+                )
+                if final_video != path:
+                    store.exclude_recording(final_video, str(args.room_id))
+                result = {
+                    "room_id": str(args.room_id),
+                    "record_only": True,
+                    "video_path": str(path),
+                    "final_video_path": str(final_video),
+                    "danmaku_xml": str(danmaku_xml),
+                    "ass_path": str(ass_path),
+                    "cover_path": str(cover_path),
+                    "attached_pic": 1,
+                    "original_flv_deleted": final_video != path,
+                }
+                store.finish(key, "completed", result)
             except Exception as exc:
-                print(f"ERROR 仅录制封面生成失败: {path}: {exc}", file=sys.stderr)
+                store.stage(key, current_stage, "failed", error=str(exc))
+                store.finish(key, "failed", error=str(exc))
+                print(
+                    f"ERROR 仅录制本地处理失败，已保留原 FLV: {path}: {exc}",
+                    file=sys.stderr,
+                )
                 ok = False
-            if cover_path is not None:
-                try:
-                    final_video = remux_record_only_flv_with_cover(path, cover_path, cfg)
-                    if final_video != path:
-                        store.exclude_recording(final_video, str(args.room_id))
-                except Exception as exc:
-                    print(f"ERROR 仅录制 MP4 封装失败，已保留原 FLV: {path}: {exc}", file=sys.stderr)
-                    ok = False
-            ass_detail = f"，ASS: {ass_path}" if ass_path else "，未找到 XML"
-            cover_detail = f"，封面: {cover_path}" if cover_path else "，封面生成失败"
+                continue
             print(
                 f"OK 仅录制文件已保留并跳过自动投稿: "
-                f"{final_video}{ass_detail}{cover_detail}"
+                f"{final_video}，ASS: {ass_path}，封面: {cover_path}"
             )
         return 0 if ok else 1
 

@@ -83,8 +83,11 @@
                                     {% else %}
                                     <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
                                     {% endif %}
-                                    <div class="recording-video-copy">
-                                        <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
+                                <div class="recording-video-copy">
+                                        <div class="recording-task-title title-clamp">
+                                            {{ job.title or job.video_name }}
+                                            {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
+                                        </div>
                                         <code class="recording-task-file">{{ job.video_name }}</code>
                                     </div>
                                 </div>
@@ -103,7 +106,7 @@
                                 {% if job.status == 'completed' %}
                                 <span class="badge rounded-pill text-bg-success">已完成</span>
                                 {% elif job.status == 'failed' %}
-                                <span class="badge rounded-pill text-bg-warning">待人工审核</span>
+                                <span class="badge rounded-pill text-bg-warning">{{ '本地处理失败' if job.record_only else '待人工审核' }}</span>
                                 {% elif job.status == 'dry_run' %}
                                 <span class="badge rounded-pill text-bg-warning">待投稿</span>
                                 {% elif job.status == 'video_uploaded' %}
@@ -116,8 +119,8 @@
                                 <button type="button" class="recording-progress-trigger" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
                                 <div class="d-flex justify-content-between gap-2 small mb-1">
                                     <span>
-                                        {% if job.failed_stage %}{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage) }}失败
-                                        {% elif job.active_stage %}正在{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'生成 AI 简介','upload':'投稿 B站'}.get(job.active_stage, job.active_stage) }}
+                                        {% if job.failed_stage %}{{ {'detect':'直播检测','record':'录制安全收尾','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','remux':'FLV 转 MP4','verify':'验证内嵌封面','cleanup':'清理原 FLV','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage) }}失败
+                                        {% elif job.active_stage %}正在{{ {'detect':'直播检测','record':'录制安全收尾','ass':'生成 ASS','ai':'生成 AI 简介','cover':'AI 封面','remux':'FLV 转 MP4','verify':'验证内嵌封面','cleanup':'清理原 FLV','upload':'投稿 B站'}.get(job.active_stage, job.active_stage) }}
                                         {% elif job.status == 'completed' %}全部完成
                                         {% else %}{{ job.completed_stages }}/{{ job.total_stages }} 步{% endif %}
                                     </span>
@@ -142,7 +145,7 @@
                                             data-task-id="{{ job.short_id }}" data-task-title="{{ job.title or job.video_name }}"
                                             data-error-message="{{ job.error }}"><i class="bi bi-exclamation-circle"></i> 错误</button>
                                     {% endif %}
-                                    {% if job.status == 'failed' %}
+                                    {% if job.status == 'failed' and not job.record_only %}
                                     <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>
                                     {% endif %}
                                     {% if job.status == 'completed' and job.bvid %}
@@ -185,12 +188,15 @@
                             <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
                             {% endif %}
                             <div class="recording-video-copy min-w-0">
-                                <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
+                                <div class="recording-task-title title-clamp">
+                                    {{ job.title or job.video_name }}
+                                    {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
+                                </div>
                                 <div class="small text-muted mt-1">{{ job.room_name }}</div>
                             </div>
                         </div>
                         {% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
-                        {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-warning">待人工审核</span>
+                        {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-warning">{{ '本地处理失败' if job.record_only else '待人工审核' }}</span>
                         {% elif job.status == 'dry_run' %}<span class="badge rounded-pill text-bg-warning">待投稿</span>
                         {% elif job.status == 'video_uploaded' %}<span class="badge rounded-pill text-bg-info">导入弹幕中</span>
                         {% else %}<span class="badge rounded-pill text-bg-primary">处理中</span>{% endif %}
@@ -203,7 +209,7 @@
                         <small class="recording-progress-hint">点击查看每一步详情</small>
                     </button>
                     <div class="d-flex flex-wrap gap-2 mt-3">
-                        {% if job.status == 'failed' %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
+                        {% if job.status == 'failed' and not job.record_only %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
                         {% if job.status == 'completed' and job.bvid %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-stars"></i> AI 编辑稿件</a>{% endif %}
                         {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
@@ -705,6 +711,20 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-tasks-table th { font-size: .78rem; color: #778195; font-weight: 600; }
 .recording-tasks-table td { padding: .8rem .65rem; }
 .recording-task-title { font-weight: 650; color: #202736; max-width: 420px; }
+.record-only-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: .16rem .48rem;
+    border: 1px solid #8bb7ff;
+    border-radius: 999px;
+    background: #e8f1ff;
+    color: #1756b3;
+    font-size: .72rem;
+    font-weight: 750;
+    line-height: 1.15;
+    white-space: nowrap;
+    vertical-align: .08em;
+}
 .recording-task-file { display: block; max-width: 420px; margin-top: .25rem; color: #8a94a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .72rem; }
 .recording-video-cell { display: flex; align-items: center; gap: .8rem; min-width: 260px; }
 .recording-video-copy { min-width: 0; }
@@ -850,10 +870,13 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 
     const recordingStageMeta = {
         detect: {name: '直播检测', icon: 'bi-radar'},
-        record: {name: '视频录制', icon: 'bi-record-circle'},
+        record: {name: '录制安全收尾', icon: 'bi-record-circle'},
         ass: {name: '生成 ASS', icon: 'bi-badge-cc'},
         ai: {name: 'AI 简介与投稿信息', icon: 'bi-stars'},
         cover: {name: 'AI 封面', icon: 'bi-image'},
+        remux: {name: 'FLV 转 MP4（-c copy）', icon: 'bi-file-earmark-play'},
+        verify: {name: '验证内嵌封面', icon: 'bi-patch-check'},
+        cleanup: {name: '清理原 FLV', icon: 'bi-trash3'},
         upload: {name: '投稿 B站', icon: 'bi-cloud-arrow-up'},
     };
     const recordingStageStatusNames = {
@@ -867,7 +890,7 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         processing: '处理中',
         video_uploaded: '导入弹幕中',
         completed: '已完成',
-        failed: '待人工审核',
+        failed: '处理失败',
         dry_run: '待投稿',
     };
     const recordingDetailLabels = {
@@ -894,6 +917,15 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         ai_cover_reference_name: '人物底稿',
         ai_cover_reference_kind: '底稿类型',
         ai_cover_error: '封面生成错误',
+        safe_finalized: 'FLV 与 XML 已安全收尾',
+        source_flv: '原始 FLV',
+        output_path: '输出 MP4',
+        temporary_path: '临时 MP4',
+        copy_mode: '封装方式',
+        attached_pic: '内嵌封面标记',
+        original_flv: '原始 FLV',
+        final_video_path: '最终 MP4',
+        original_flv_deleted: '原 FLV 已删除',
         cover_fallback: '封面回退方式',
         cover_used_for_upload: '最终投稿封面',
         original_cover_path: '原始视频截图',
@@ -953,7 +985,11 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
             `${job.room_name || '未匹配直播间'} · ${job.video_name || ''} · ${job.short_id || job.id?.slice(0, 12) || ''}`;
 
         const stagesByKey = new Map((job.stages || []).map(stage => [stage.key, stage]));
-        const stageHtml = Object.entries(recordingStageMeta).map(([key, meta]) => {
+        const visibleStageKeys = Array.isArray(job.stages) && job.stages.length
+            ? job.stages.map(stage => stage.key)
+            : Object.keys(recordingStageMeta);
+        const stageHtml = visibleStageKeys.map(key => {
+            const meta = recordingStageMeta[key] || {name: key, icon: 'bi-circle'};
             const stage = stagesByKey.get(key) || {key, status: 'pending', details: {}};
             const status = stage.status || 'pending';
             const details = stage.details && typeof stage.details === 'object' ? stage.details : {};
@@ -990,7 +1026,7 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         const completed = Number(job.completed_stages || 0);
         const total = Number(job.total_stages || 6);
         const statusLabel = job.status === 'completed' ? '全部完成'
-            : job.status === 'failed' ? '等待人工审核'
+            : job.status === 'failed' ? (job.record_only ? '本地处理失败' : '等待人工审核')
             : job.active_stage ? `正在${recordingStageMeta[job.active_stage]?.name || job.active_stage}`
             : `${completed}/${total} 步已完成`;
         body.innerHTML = `
@@ -1006,7 +1042,7 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 
         const review = modal.querySelector('[data-role="recording-detail-review"]');
         review.href = `/live-recording/jobs/${encodeURIComponent(job.id)}/review`;
-        review.classList.toggle('d-none', job.status !== 'failed');
+        review.classList.toggle('d-none', job.status !== 'failed' || job.record_only);
         const bilibili = modal.querySelector('[data-role="recording-detail-bilibili"]');
         bilibili.href = job.bilibili_url || (job.bvid ? `https://www.bilibili.com/video/${encodeURIComponent(job.bvid)}` : '#');
         bilibili.classList.toggle('d-none', !job.bvid);
