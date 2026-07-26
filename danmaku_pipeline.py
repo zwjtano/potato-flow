@@ -90,6 +90,8 @@ def build_ass(
     bottom_index = 0
 
     header = f"""[Script Info]
+Title: 简体中文弹幕
+Original Script: PotatoFlow
 ScriptType: v4.00+
 PlayResX: {width}
 PlayResY: {height}
