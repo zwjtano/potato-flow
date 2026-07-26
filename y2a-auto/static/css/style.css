@@ -77,7 +77,14 @@ body {
 
 /* 直播录制分栏控制台 */
 .live-console-main { max-width: none; padding: 0; }
-.live-console-page .flash-messages { position: fixed; top: 18px; right: 24px; z-index: 1080; width: min(430px, calc(100vw - 48px)); }
+.flash-messages { position: fixed; z-index: 1090; top: 68px; right: 24px; display: grid; width: min(440px, calc(100vw - 48px)); gap: 10px; }
+.flash-messages .alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; margin: 0; padding: 14px 14px 14px 16px; border-width: 1px 1px 1px 4px; border-radius: 13px; background: #fff; box-shadow: 0 16px 44px rgba(15, 23, 42, .18); font-size: 11px; font-weight: 650; line-height: 1.5; opacity: 1; }
+.flash-messages .alert > i { font-size: 15px; }
+.flash-messages .alert-success { color: #176b43; border-color: #20a866; background: #f4fcf7; }
+.flash-messages .alert-warning { color: #7a5110; border-color: #e8a21a; background: #fffbef; }
+.flash-messages .alert-danger { color: #a52c3e; border-color: #df4056; background: #fff6f7; }
+.flash-messages .alert-info { color: #245e80; border-color: #3d9ac9; background: #f4fbff; }
+.live-console-page .flash-messages { top: 18px; }
 .recorder-header { height: 96px; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 0 32px; background: #fff; border-bottom: 1px solid var(--studio-border); }
 .recorder-eyebrow { margin-bottom: 4px; color: var(--studio-primary); font-size: 9px; font-weight: 800; letter-spacing: .17em; }
 .recorder-header h1 { margin: 0; font-size: 24px; font-weight: 700; line-height: 1.25; }
@@ -1684,6 +1691,7 @@ body.login-fullscreen .app-main { max-width: none; padding: 0; }
 }
 @media (max-width: 767.98px) {
     .app-topbar { display: none; }
+    .flash-messages { top: 16px; right: 16px; left: 16px; width: auto; }
     .studio-page-header { min-height: 0; align-items: flex-start; flex-direction: column; padding: 17px; }
     .studio-page-header h1 { font-size: 19px; }
     .page-actions { width: 100%; }

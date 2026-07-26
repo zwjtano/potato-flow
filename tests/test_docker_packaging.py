@@ -15,7 +15,7 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("container_name: potato-flow", compose)
         self.assertIn("image: potato-flow:local", compose)
         self.assertIn(
-            '"${POTATO_RECORDINGS_DIR:-./recordings}:/data/recordings"',
+            '"${POTATO_RECORDINGS_DIR:-./docker-data/recordings}:/data/recordings"',
             compose,
         )
 

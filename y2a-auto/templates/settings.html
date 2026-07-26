@@ -1792,13 +1792,13 @@
                                                             <label for="recordings-path" class="form-label">程序内录播目录</label>
                                                             <div class="input-group">
                                                                 <input type="text" id="recordings-path" name="RECORDINGS_PATH"
-                                                                       value="{{ config.get('RECORDINGS_PATH', 'recordings') }}"
-                                                                       class="form-control" placeholder="recordings">
+                                                                       value="{{ config.get('RECORDINGS_PATH', 'docker-data/recordings') }}"
+                                                                       class="form-control" placeholder="docker-data/recordings">
                                                                 <button class="btn btn-outline-primary" type="button" id="browse-recordings-path">
                                                                     <i class="bi bi-folder2-open"></i> 选择文件夹
                                                                 </button>
                                                             </div>
-                                                            <p class="help-text mb-0">相对路径以 PotatoFlow 项目根目录为准。默认 <code>recordings</code>，即 <code>potato-flow/recordings/</code>。</p>
+                                                            <p class="help-text mb-0">相对路径以 PotatoFlow 项目根目录为准。默认 <code>docker-data/recordings</code>，即 <code>potato-flow/docker-data/recordings/</code>。</p>
                                                         </div>
                                                     </div>
                                                     <div class="col-lg-4">
@@ -2414,7 +2414,18 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const showSettingsToast = function (type, message) {
         const text = String(message || '').trim();
-        if (!text || !settingsToastContainer || typeof bootstrap === 'undefined') {
+        if (!text) {
+            return;
+        }
+        if (window.PotatoUI && typeof window.PotatoUI.notify === 'function') {
+            window.PotatoUI.notify(
+                text,
+                type === 'error' ? 'danger' : type,
+                type === 'error' ? 8000 : 5000
+            );
+            return;
+        }
+        if (!settingsToastContainer || typeof bootstrap === 'undefined') {
             return;
         }
         const tone = type === 'success'
@@ -2936,7 +2947,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (level === 'success') {
             window.setTimeout(function () {
                 forceHideSettingsSaveModal();
-            }, 150);
+            }, 650);
         }
     };
 

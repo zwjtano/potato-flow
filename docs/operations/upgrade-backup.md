@@ -35,7 +35,7 @@ docker compose logs --tail=200 potato-flow
 回到之前验证过的 Git 标签或提交，再用原来的 Compose 和数据卷重建。不要删除：
 
 - `docker-data/`
-- `recordings/` 或 `.env` 中指定的录播目录
+- `docker-data/recordings/` 或 `.env` 中指定的录播目录
 - 自定义 `.env`
 
 !!! warning

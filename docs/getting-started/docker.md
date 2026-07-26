@@ -27,7 +27,7 @@ http://服务器IP:5001/
 
 ## 修改录播目录
 
-默认宿主机目录是仓库根目录的 `recordings/`。要换目录，复制 `.env.example` 为 `.env`：
+默认宿主机目录是仓库根目录的 `docker-data/recordings/`。要换目录，复制 `.env.example` 为 `.env`：
 
 ```dotenv
 POTATO_RECORDINGS_DIR=/你的录播目录
@@ -40,7 +40,7 @@ docker compose up -d --build
 ```
 
 !!! warning "旧版目录迁移"
-    从使用 `/vol1/1000/media/录播` 的旧版升级时，原文件不会被删除。要继续原地使用它们，请在 `.env` 设置 `POTATO_RECORDINGS_DIR=/vol1/1000/media/录播`；也可以在停止录制后，把旧目录内容移动到项目的 `recordings/`。
+    从使用 `/vol1/1000/media/录播` 或项目根目录 `recordings/` 的旧版升级时，原文件不会被删除。要继续原地使用它们，请在 `.env` 设置原目录；也可以在停止录制后，把旧目录内容移动到项目的 `docker-data/recordings/`。
 
 ## 检查状态
 

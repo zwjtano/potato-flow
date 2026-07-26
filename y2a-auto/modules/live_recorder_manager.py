@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 APP_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = APP_ROOT.parent
 CONFIG_DIR = APP_ROOT / "config"
-RECORDINGS_DIR = WORKSPACE_ROOT / "recordings"
+RECORDINGS_DIR = WORKSPACE_ROOT / "docker-data" / "recordings"
 ROOMS_PATH = CONFIG_DIR / "live_recorders.json"
 BILIUP_CONFIG_PATH = CONFIG_DIR / "biliup.generated.yaml"
 BRIDGE_CONFIG_PATH = WORKSPACE_ROOT / "bridge.config.json"
@@ -71,13 +71,19 @@ def recordings_dir(value: Any = None) -> Path:
         try:
             from .config_manager import load_config
 
-            raw = load_config().get("RECORDINGS_PATH", "recordings")
+            raw = load_config().get("RECORDINGS_PATH", "docker-data/recordings")
         except Exception:
-            raw = "recordings"
-    text = str(raw or "recordings").strip()
+            raw = "docker-data/recordings"
+    text = str(raw or "docker-data/recordings").strip()
     if "\x00" in text:
         raise RecorderConfigError("录播目录包含非法字符")
-    if text in {".", "recordings", "./recordings"}:
+    if text in {
+        ".",
+        "recordings",
+        "./recordings",
+        "docker-data/recordings",
+        "./docker-data/recordings",
+    }:
         docker_recordings = Path("/data/recordings")
         if docker_recordings.is_dir():
             return docker_recordings

@@ -45,6 +45,7 @@ y2a-auto/temp/
 y2a-auto/downloads/
 y2a-auto/recordings/
 recordings/
+docker-data/
 y2a-auto/static/covers/
 y2a-auto/ffmpeg/
 upstream-biliup/data/

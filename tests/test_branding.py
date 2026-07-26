@@ -23,6 +23,10 @@ class BrandingTests(unittest.TestCase):
         )
         self.assertIn('data-auto-dismiss=', base_template)
         self.assertIn("bootstrap.Alert.getOrCreateInstance", base_template)
+        self.assertIn("bi-check-circle-fill", base_template)
+        self.assertIn(".flash-messages .alert", (
+            ROOT / "y2a-auto" / "static" / "css" / "style.css"
+        ).read_text(encoding="utf-8"))
 
     def test_native_browser_dialogs_are_replaced_by_shared_ui(self):
         base_template = (
@@ -50,11 +54,11 @@ class BrandingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('name="RECORDINGS_PATH"', settings_template)
-        self.assertIn("potato-flow/recordings/", settings_template)
+        self.assertIn("potato-flow/docker-data/recordings/", settings_template)
         self.assertIn('id="browse-recordings-path"', settings_template)
         self.assertIn('id="recordings-directory-picker"', settings_template)
         self.assertIn("settings_recording_directories", settings_template)
-        self.assertIn('"RECORDINGS_PATH": "recordings"', config_source)
+        self.assertIn('"RECORDINGS_PATH": "docker-data/recordings"', config_source)
 
     def test_settings_only_uses_bundled_bootstrap_icons(self):
         settings_template = (

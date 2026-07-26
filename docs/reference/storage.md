@@ -5,12 +5,12 @@
 ```text
 potato-flow/
 ├── docker-data/                  # Cookie、数据库、配置、日志、AI 产物
-├── recordings/                   # 默认录播视频、XML 与 ASS
+│   └── recordings/               # 默认录播视频、XML 与 ASS
 ├── docker-compose.yml
 ├── .env.example
 └── .env                          # 可选：自定义宿主机录播目录
 
-recordings/
+docker-data/recordings/
 └── 主播名_直播间标题_YYYY-MM-DD_HH-MM/
     ├── 主播名_直播间标题_YYYY-MM-DD_HH-MM.flv
     ├── 主播名_直播间标题_YYYY-MM-DD_HH-MM.xml

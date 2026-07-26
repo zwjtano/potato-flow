@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
     "YOUTUBE_COOKIES_PATH": "cookies/yt_cookies.txt", # 相对于项目根目录
     "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径
     "DOUYIN_COOKIES_PATH": "cookies/douyin_cookies.json", # 可选的 biliup 抖音 Cookie
-    "RECORDINGS_PATH": "recordings", # 录播保存目录；相对路径以 PotatoFlow 项目根目录为准
+    "RECORDINGS_PATH": "docker-data/recordings", # 录播保存目录；相对路径以 PotatoFlow 项目根目录为准
     # CookieCloud（首版仅用于手动拉取 YouTube Cookies）
     "COOKIECLOUD_ENABLED": False,
     "COOKIECLOUD_SERVER_URL": "",

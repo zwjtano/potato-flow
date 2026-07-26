@@ -126,7 +126,7 @@ docker compose up -d --build
 
 启动后打开 `http://服务器IP:5001/`。容器支持 AMD64 和 ARM64 原生构建。首次会编译 Rust 录制核心并安装 AI 依赖，之后会直接使用本地镜像。
 
-默认将全部录播视频和 XML 弹幕保存到仓库根目录的 `recordings/`，容器内对应 `/data/recordings`。每场直播会创建独立目录，名称格式为 `主播名_直播间标题_YYYY-MM-DD_HH-MM`；同一场直播的所有分段视频、XML 和 ASS 都保存在该目录中，文件名不包含内部房间哈希。其他服务器需要修改宿主机目录时，可以复制 `.env.example` 为 `.env`：
+默认将全部录播视频和 XML 弹幕保存到仓库根目录的 `docker-data/recordings/`，容器内对应 `/data/recordings`。每场直播会创建独立目录，名称格式为 `主播名_直播间标题_YYYY-MM-DD_HH-MM`；同一场直播的所有分段视频、XML 和 ASS 都保存在该目录中，文件名不包含内部房间哈希。其他服务器需要修改宿主机目录时，可以复制 `.env.example` 为 `.env`：
 
 ```dotenv
 POTATO_RECORDINGS_DIR=/你的录播目录
@@ -139,6 +139,8 @@ POTATO_RECORDINGS_DIR=/你的录播目录
 ```dotenv
 POTATO_RECORDINGS_DIR=/vol1/1000/media/录播
 ```
+
+如果旧版文件位于项目根目录 `recordings/`，可以将其中内容移动到 `docker-data/recordings/`，或在 `.env` 继续设置 `POTATO_RECORDINGS_DIR=./recordings`。
 
 常用命令：
 
@@ -532,7 +534,7 @@ PORT=8080 ./y2a-auto/.venv/bin/python run.py
 - B站、YouTube Cookie；
 - OpenAI 或其他服务 API Key；
 - `bridge.config.json`；
-- `y2a-auto/config/`、`db/`、`logs/`、`recordings/`；
+- `y2a-auto/config/`、`db/`、`logs/`、`docker-data/recordings/`；
 - `.bridge/` 状态库；
 - 下载或录制的视频、XML、ASS 文件。
 

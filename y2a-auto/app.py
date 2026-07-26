@@ -715,7 +715,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
     form_data = dict(form_data or {})
     uploads = uploads or {}
     messages = []
-    previous_recordings_path = str(load_config().get('RECORDINGS_PATH') or 'recordings').strip()
+    previous_recordings_path = str(load_config().get('RECORDINGS_PATH') or 'docker-data/recordings').strip()
     progress_reporter = _build_settings_progress_reporter(operation_id)
 
     def report(stage: str, message: str, detail: str = '', percent=None, level: str = 'info', downloaded_bytes=None, total_bytes=None):
@@ -879,14 +879,14 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             form_data['SUBTITLE_FONT_NAME'] = str(form_data['SUBTITLE_FONT_NAME']).strip()
 
         if 'RECORDINGS_PATH' in form_data:
-            requested_recordings_path = str(form_data.get('RECORDINGS_PATH') or 'recordings').strip()
+            requested_recordings_path = str(form_data.get('RECORDINGS_PATH') or 'docker-data/recordings').strip()
             validate_recordings_dir(requested_recordings_path)
-            form_data['RECORDINGS_PATH'] = requested_recordings_path or 'recordings'
+            form_data['RECORDINGS_PATH'] = requested_recordings_path or 'docker-data/recordings'
 
         _persist_settings_uploads(form_data, uploads)
         updated_config = update_config(form_data)
         recordings_path_changed = (
-            str(updated_config.get('RECORDINGS_PATH') or 'recordings').strip()
+            str(updated_config.get('RECORDINGS_PATH') or 'docker-data/recordings').strip()
             != previous_recordings_path
         )
         if recordings_path_changed:
