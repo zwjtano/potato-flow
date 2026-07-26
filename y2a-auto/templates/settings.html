@@ -3344,7 +3344,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 selectButton.disabled = !result.writable;
                 renderQuickPaths(result.quick_paths);
                 renderDirectories(result.directories || []);
-                setStatus(result.writable ? '当前文件夹可写，可以保存录播文件。' : '当前文件夹不可写，请选择其他目录。', !result.writable);
+                if (result.notice) {
+                    setStatus(result.notice, true);
+                } else {
+                    setStatus(result.writable ? '当前文件夹可写，可以保存录播文件。' : '当前文件夹不可写，请选择其他目录。', !result.writable);
+                }
             } catch (error) {
                 list.innerHTML = '<div class="directory-picker-empty text-danger"><i class="bi bi-exclamation-triangle"></i><span></span></div>';
                 list.querySelector('span').textContent = error.message || '读取目录失败';

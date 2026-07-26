@@ -41,10 +41,29 @@ class LiveRecorderStatusTests(unittest.TestCase):
         ), mock.patch(
             "modules.config_manager.load_config",
             return_value={"RECORDINGS_PATH": "recordings"},
+        ), mock.patch.object(
+            Path,
+            "is_dir",
+            return_value=False,
         ):
             self.assertEqual(
                 recorder_module.recordings_dir(),
                 Path(temp) / "recordings",
+            )
+
+    def test_default_recordings_directory_uses_docker_mount_when_available(self):
+        with mock.patch(
+            "modules.config_manager.load_config",
+            return_value={"RECORDINGS_PATH": "recordings"},
+        ), mock.patch.object(
+            Path,
+            "is_dir",
+            autospec=True,
+            side_effect=lambda path: str(path) == "/data/recordings",
+        ):
+            self.assertEqual(
+                recorder_module.recordings_dir(),
+                Path("/data/recordings"),
             )
 
     def test_custom_relative_recordings_directory_resolves_from_workspace(self):

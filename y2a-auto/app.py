@@ -3101,8 +3101,13 @@ def settings_recording_directories():
     except RecorderConfigError as exc:
         return jsonify({'success': False, 'message': str(exc)}), 400
 
+    missing_path = None
     if not current.exists():
-        return jsonify({'success': False, 'message': f'目录不存在：{current}'}), 404
+        missing_path = str(current)
+        candidate = current.parent
+        while not candidate.exists() and candidate.parent != candidate:
+            candidate = candidate.parent
+        current = candidate
     if not current.is_dir():
         return jsonify({'success': False, 'message': f'这不是文件夹：{current}'}), 400
 
@@ -3153,6 +3158,7 @@ def settings_recording_directories():
         'directories': directories,
         'quick_paths': quick_paths,
         'writable': os.access(current, os.W_OK),
+        'notice': f'原目录不存在：{missing_path}，已打开最近的可用上级目录。' if missing_path else '',
     })
 
 

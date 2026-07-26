@@ -78,6 +78,9 @@ def recordings_dir(value: Any = None) -> Path:
     if "\x00" in text:
         raise RecorderConfigError("录播目录包含非法字符")
     if text in {".", "recordings", "./recordings"}:
+        docker_recordings = Path("/data/recordings")
+        if docker_recordings.is_dir():
+            return docker_recordings
         return Path(RECORDINGS_DIR)
     path = Path(text).expanduser()
     if not path.is_absolute():
