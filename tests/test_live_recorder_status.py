@@ -335,6 +335,44 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIn("douyin_danmaku: true", content)
             self.assertIn('douyin_cookie: "sessionid=secret"', content)
 
+    def test_config_normalizes_bilibili_cookie_for_high_quality_recording(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_dir = root / "config"
+            cookie_path = root / "bili_cookies.json"
+            config_path = root / "biliup.yaml"
+            cookie_path.write_text(
+                json.dumps(
+                    [
+                        {"name": "SESSDATA", "value": "session"},
+                        {"name": "bili_jct", "value": "csrf"},
+                        {"name": "DedeUserID", "value": "123"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(recorder_module, "CONFIG_DIR", config_dir), \
+                    mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
+                    mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
+                    mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
+                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "_bilibili_cookie_path", return_value=cookie_path), \
+                    mock.patch.object(recorder_module, "_douyin_cookie_header", return_value=""), \
+                    mock.patch.object(manager, "_sync_bridge_profiles"):
+                manager.sync_configs([self.rooms[1]])
+
+            normalized_path = config_dir / "biliup.bilibili.cookies.json"
+            normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
+            content = config_path.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            normalized["cookie_info"]["cookies"][0],
+            {"name": "SESSDATA", "value": "session"},
+        )
+        self.assertIn("bili_qn: 25000", content)
+        self.assertIn(f'bili_cookie_file: "{normalized_path}"', content)
+
     def test_config_uploads_segments_as_independent_videos_by_default(self):
         manager = LiveRecorderManager()
         room = {
