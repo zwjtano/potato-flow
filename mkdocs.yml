@@ -1,0 +1,90 @@
+site_name: PotatoFlow 文档
+site_description: 直播录制、弹幕 ASS、AI 稿件生成与 B站投稿的一体化 Linux 工作流
+site_url: https://zwjtano.github.io/potato-flow/
+repo_url: https://github.com/zwjtano/potato-flow
+repo_name: zwjtano/potato-flow
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 zwjtano
+
+theme:
+  name: material
+  language: zh
+  logo: assets/logo.svg
+  favicon: assets/favicon.ico
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.tabs.link
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+
+nav:
+  - 首页: index.md
+  - 快速开始:
+      - Docker 安装: getting-started/docker.md
+      - 首次配置: getting-started/first-run.md
+  - 使用指南:
+      - 直播录制: guides/live-recording.md
+      - 分段与分P: guides/segmentation.md
+      - 弹幕与 ASS: guides/danmaku-ass.md
+      - AI 投稿: guides/ai-publishing.md
+      - 任务与人工审核: guides/tasks-review.md
+      - 文件管理: guides/file-management.md
+      - 抖音录制: guides/douyin.md
+  - 运维:
+      - 更新、备份与恢复: operations/upgrade-backup.md
+      - 故障排查: operations/troubleshooting.md
+  - 参考:
+      - 配置说明: reference/configuration.md
+      - 存储结构: reference/storage.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+  - minify:
+      minify_html: true
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/zwjtano/potato-flow
+      name: PotatoFlow on GitHub
+
