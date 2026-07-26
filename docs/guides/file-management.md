@@ -1,6 +1,6 @@
 # 文件管理
 
-“直播录制 → 文件管理”集中展示录播视频、XML 弹幕和 ASS 字幕。
+“直播录制 → 文件管理”集中展示录播视频、XML 弹幕和 ASS 字幕。视频旁存在同名 JPG 时，列表会直接使用它作为缩略图；“仅录制不投稿”的 FLV 会在收尾后无转码封装成带内嵌封面的 MP4。
 
 <div class="screenshot">
   <img src="../../assets/screenshots/file-manager.png" alt="录播文件管理">

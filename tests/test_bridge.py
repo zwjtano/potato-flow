@@ -1,13 +1,14 @@
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import types
 import unittest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import bridge
 
@@ -178,7 +179,11 @@ class BridgeTests(unittest.TestCase):
                 bridge,
                 "generate_record_only_cover",
                 return_value=cover,
-            ) as generate_cover:
+            ) as generate_cover, patch.object(
+                bridge,
+                "remux_record_only_flv_with_cover",
+                return_value=video.with_suffix(".mp4"),
+            ) as remux:
                 result = bridge.main([
                     "--config", str(config),
                     "record-only", "--room-id", "room-1", str(video), str(xml),
@@ -187,12 +192,19 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(generate_cover.call_count, 1)
             self.assertEqual(generate_cover.call_args.args[0], video.resolve())
+            remux.assert_called_once_with(video.resolve(), cover, ANY)
             with sqlite3.connect(state) as db:
-                row = db.execute(
+                rows = db.execute(
                     "SELECT video_path, room_id, reason FROM recording_exclusions"
-                ).fetchone()
+                ).fetchall()
                 upload_count = db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0]
-            self.assertEqual(row, (str(video.resolve()), "room-1", "record_only"))
+            self.assertEqual(
+                rows,
+                [
+                    (str(video.resolve()), "room-1", "record_only"),
+                    (str(video.with_suffix(".mp4").resolve()), "room-1", "record_only"),
+                ],
+            )
             self.assertEqual(upload_count, 0)
             ass = video.with_suffix(".ass")
             self.assertTrue(ass.is_file())
@@ -227,6 +239,59 @@ class BridgeTests(unittest.TestCase):
                 generate_ai.call_args.kwargs["output_path"],
                 expected_cover,
             )
+
+    def test_record_only_flv_is_remuxed_to_mp4_with_attached_cover(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "record-only.flv"
+            cover = root / "record-only.jpg"
+            video.write_bytes(b"flv")
+            cover.write_bytes(b"jpg")
+
+            def fake_run(command, **_kwargs):
+                if command[0] == "ffmpeg":
+                    Path(command[-1]).write_bytes(b"mp4-with-cover")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    json.dumps({"streams": [
+                        {"disposition": {"attached_pic": 0}},
+                        {"disposition": {"attached_pic": 1}},
+                    ]}),
+                    "",
+                )
+
+            with patch.object(bridge.subprocess, "run", side_effect=fake_run) as run:
+                output = bridge.remux_record_only_flv_with_cover(video, cover, {})
+
+            self.assertEqual(output, root / "record-only.mp4")
+            self.assertEqual(output.read_bytes(), b"mp4-with-cover")
+            self.assertFalse(video.exists())
+            ffmpeg_command = run.call_args_list[0].args[0]
+            self.assertIn("copy", ffmpeg_command)
+            self.assertIn("attached_pic", ffmpeg_command)
+
+    def test_failed_record_only_remux_keeps_original_flv(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "record-only.flv"
+            cover = root / "record-only.jpg"
+            video.write_bytes(b"flv")
+            cover.write_bytes(b"jpg")
+            failed = subprocess.CompletedProcess(
+                ["ffmpeg"],
+                1,
+                "",
+                "unsupported codec",
+            )
+
+            with patch.object(bridge.subprocess, "run", return_value=failed):
+                with self.assertRaisesRegex(RuntimeError, "FLV 转 MP4 失败"):
+                    bridge.remux_record_only_flv_with_cover(video, cover, {})
+
+            self.assertTrue(video.is_file())
+            self.assertFalse(video.with_suffix(".mp4").exists())
 
     def test_finalize_session_ingests_final_video_before_closing(self):
         with tempfile.TemporaryDirectory() as temp:
