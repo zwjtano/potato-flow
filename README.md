@@ -126,7 +126,7 @@ docker compose up -d --build
 
 启动后打开 `http://服务器IP:5001/`。容器支持 AMD64 和 ARM64 原生构建。首次会编译 Rust 录制核心并安装 AI 依赖，之后会直接使用本地镜像。
 
-默认将全部录播视频和 XML 弹幕保存到仓库根目录的 `docker-data/recordings/`，容器内对应 `/data/recordings`。每场直播会创建独立目录，名称格式为 `主播名_直播间标题_YYYY-MM-DD_HH-MM`；同一场直播的所有分段视频、XML 和 ASS 都保存在该目录中，文件名不包含内部房间哈希。其他服务器需要修改宿主机目录时，可以复制 `.env.example` 为 `.env`：
+默认将全部录播视频和 XML 弹幕保存到仓库根目录的 `docker-data/recordings/`，容器内对应 `/data/recordings`。系统会先按主播创建独立目录，再为每场直播创建 `主播名_直播间标题_YYYY-MM-DD_HH-MM` 子目录；同一场直播的所有分段视频、XML 和 ASS 都保存在该子目录中，文件名不包含内部房间哈希。其他服务器需要修改宿主机目录时，可以复制 `.env.example` 为 `.env`：
 
 ```dotenv
 POTATO_RECORDINGS_DIR=/你的录播目录

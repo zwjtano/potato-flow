@@ -1048,6 +1048,7 @@ class LiveRecorderManager:
             key = f"{_slug(str(room['name']))}_{str(room['id'])[:6]}"
             file_marker = _room_file_marker(room)
             filename_prefix = (
+                f"{file_marker}/"
                 f"{file_marker}_{{title}}_{{live_start}}/"
                 f"{file_marker}_{{title}}_%Y-%m-%d_%H-%M"
             )
