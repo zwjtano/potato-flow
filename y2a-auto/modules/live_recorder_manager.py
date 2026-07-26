@@ -1377,7 +1377,7 @@ class LiveRecorderManager:
                 fingerprints = [
                     row[0]
                     for row in db.execute(
-                        "SELECT DISTINCT fingerprint FROM upload_stages WHERE status='running'"
+                        "SELECT DISTINCT fingerprint FROM upload_stages WHERE status IN ('running', 'queued')"
                     ).fetchall()
                 ]
                 if not fingerprints:
@@ -1386,7 +1386,7 @@ class LiveRecorderManager:
                 db.execute(
                     f"""UPDATE upload_stages
                         SET status='failed', error=?, finished_at=?, updated_at=?
-                        WHERE status='running' AND fingerprint IN ({placeholders})""",
+                        WHERE status IN ('running', 'queued') AND fingerprint IN ({placeholders})""",
                     (reason, now, now, *fingerprints),
                 )
                 db.execute(
@@ -1796,6 +1796,20 @@ class LiveRecorderManager:
                 "started_at": row["started_at"], "finished_at": row["finished_at"],
                 "updated_at": row["updated_at"],
             })
+        queued_upload_ids = [
+            row["fingerprint"]
+            for row in sorted(
+                (
+                    row for row in stage_rows
+                    if row["stage"] == "upload" and row["status"] == "queued"
+                ),
+                key=lambda row: str(row["updated_at"] or ""),
+            )
+        ]
+        queued_upload_positions = {
+            fingerprint: index
+            for index, fingerprint in enumerate(queued_upload_ids, 1)
+        }
         room_marker = None
         if room_id:
             room = next((item for item in self.list_rooms() if item.get("id") == room_id), None)
@@ -1894,7 +1908,15 @@ class LiveRecorderManager:
                 1 for stage in stages if stage.get("status") in {"completed", "skipped"}
             )
             failed_stage = next((stage.get("key") for stage in stages if stage.get("status") == "failed"), None)
-            active_stage = next((stage.get("key") for stage in stages if stage.get("status") == "running"), None)
+            active_stage = next(
+                (
+                    stage.get("key")
+                    for stage in stages
+                    if stage.get("status") in {"running", "queued"}
+                ),
+                None,
+            )
+            upload_queued = upload_stage.get("status") == "queued"
             attempts = int(row["attempts"] or 0)
             automatic_retries_used = max(0, attempts - 1)
             auto_retry_scheduled = bool(
@@ -1974,6 +1996,8 @@ class LiveRecorderManager:
                 "total_stages": len(stages) or len(order),
                 "failed_stage": failed_stage,
                 "active_stage": active_stage,
+                "upload_queued": upload_queued,
+                "upload_queue_position": queued_upload_positions.get(row["fingerprint"]),
                 "upload_progress": upload_progress,
                 "upload_progress_text": upload_progress_text,
                 "auto_retry_scheduled": auto_retry_scheduled,
@@ -1987,7 +2011,12 @@ class LiveRecorderManager:
                     and failed_stage == "upload"
                     and automatic_retries_used >= AUTO_UPLOAD_RETRY_MAX_RETRIES
                 ),
-                "retryable": row["status"] in {"failed", "dry_run"},
+                "retryable": row["status"] in {"failed", "dry_run", "paused"},
+                "pausable": (
+                    row["status"] == "processing"
+                    and upload_stage.get("status") in {"queued", "running"}
+                ),
+                "paused": row["status"] == "paused",
                 "stages": stages,
             })
         return jobs
@@ -2299,6 +2328,72 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
         return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)
 
+    def pause_pipeline_job(self, fingerprint: str) -> bool:
+        """Stop a queued/running bridge uploader and preserve every source artifact."""
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise RecorderConfigError("任务编号无效")
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        upload_stage = next(
+            (stage for stage in job.get("stages", []) if stage.get("key") == "upload"),
+            {},
+        )
+        if (
+            job.get("status") != "processing"
+            or upload_stage.get("status") not in {"queued", "running"}
+        ):
+            raise RecorderConfigError("只有等待投稿或正在投稿的任务可以暂停")
+
+        details = upload_stage.get("details")
+        details = details if isinstance(details, dict) else {}
+        try:
+            worker_pid = int(details.get("worker_pid") or 0)
+        except (TypeError, ValueError):
+            worker_pid = 0
+        if worker_pid > 1:
+            cmdline_path = Path(f"/proc/{worker_pid}/cmdline")
+            try:
+                cmdline = cmdline_path.read_bytes().replace(b"\0", b" ").decode(
+                    "utf-8", errors="replace"
+                )
+            except OSError:
+                cmdline = ""
+            expected_name = Path(str(job.get("video_path") or "")).name
+            if "bridge.py" in cmdline and (not expected_name or expected_name in cmdline):
+                try:
+                    os.kill(worker_pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except PermissionError as exc:
+                    raise RecorderConfigError(f"没有权限暂停投稿进程：{exc}") from exc
+
+        state_path = self._pipeline_state_path()
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._lock, sqlite3.connect(state_path, timeout=30) as db:
+            current = db.execute(
+                "SELECT status FROM uploads WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            if not current:
+                raise RecorderConfigError("没有找到该录播任务")
+            if current[0] == "completed":
+                raise RecorderConfigError("投稿已经完成，无法暂停")
+            db.execute(
+                """UPDATE upload_stages
+                   SET status='paused', error=NULL, finished_at=?, updated_at=?
+                   WHERE fingerprint=? AND stage='upload'
+                     AND status IN ('queued', 'running')""",
+                (now, now, fingerprint),
+            )
+            db.execute(
+                """UPDATE uploads
+                   SET status='paused', error=NULL, updated_at=?
+                   WHERE fingerprint=? AND status='processing'""",
+                (now, fingerprint),
+            )
+        return True
+
     def delete_pipeline_job(self, fingerprint: str, delete_files: bool = False) -> dict[str, Any]:
         """Delete one finished recording pipeline job and, optionally, its files."""
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
@@ -2424,8 +2519,8 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        if job["status"] not in {"failed", "dry_run"}:
-            raise RecorderConfigError("只有失败或试运行任务可以重试")
+        if job["status"] not in {"failed", "dry_run", "paused"}:
+            raise RecorderConfigError("只有失败、试运行或已暂停任务可以重试")
         video = Path(job["video_path"])
         if not video.is_file():
             raise RecorderConfigError("原始录播文件已不存在，无法重试")

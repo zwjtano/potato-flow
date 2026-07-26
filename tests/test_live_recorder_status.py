@@ -1111,6 +1111,58 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(jobs[0]["completed_stages"], 5)
         self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
 
+    def test_upload_queue_positions_and_paused_job_can_be_deleted(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            first_id, second_id = "a" * 64, "b" * 64
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                for index, fingerprint in enumerate((first_id, second_id), 1):
+                    updated_at = f"2026-07-26T01:00:0{index}+00:00"
+                    db.execute(
+                        "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', 1, '{}', NULL, ?, ?)",
+                        (fingerprint, f"/data/recordings/{fingerprint}.flv", updated_at, updated_at),
+                    )
+                    db.execute(
+                        "INSERT INTO upload_stages VALUES (?, 'upload', 'queued', ?, NULL, NULL, NULL, ?)",
+                        (
+                            fingerprint,
+                            json.dumps({"worker_pid": 999999}),
+                            updated_at,
+                        ),
+                    )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[]):
+                jobs = manager.pipeline_jobs()
+                positions = {
+                    job["id"]: job["upload_queue_position"]
+                    for job in jobs
+                }
+                self.assertEqual(positions[first_id], 1)
+                self.assertEqual(positions[second_id], 2)
+                self.assertTrue(manager.pause_pipeline_job(first_id))
+                paused = manager.pipeline_job(first_id)
+                self.assertTrue(paused["paused"])
+                self.assertTrue(paused["retryable"])
+                self.assertFalse(paused["pausable"])
+                manager.delete_pipeline_job(first_id)
+                self.assertIsNone(manager.pipeline_job(first_id))
+
     def test_failed_upload_is_scheduled_for_five_minute_auto_retry(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1772,7 +1772,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 else None
             ),
         }
-        store.stage(key, "upload", "running", upload_stage_details)
+        upload_stage_details["worker_pid"] = os.getpid()
+        store.stage(key, "upload", "queued", upload_stage_details)
         BilibiliUploader, _ = import_y2a(cfg)
         cookie = resolve_path(str(cfg.get("bilibili_cookies", "")), cfg)
         if not cookie.is_file() or not partition:
@@ -1799,6 +1800,14 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     {**upload_stage_details, "upload_progress": progress},
                 )
 
+            def _on_upload_queue_status(status: str) -> None:
+                store.stage(
+                    key,
+                    "upload",
+                    "running" if status == "uploading" else "queued",
+                    upload_stage_details,
+                )
+
             ok, result = uploader.upload_video(
                 video_file_path=str(upload_video), cover_file_path=str(cover), title=title,
                 description=description, tags=tags, partition_id=partition,
@@ -1807,6 +1816,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 existing_submission=existing_submission,
                 is_original=True,
                 progress_detail_callback=_on_upload_progress,
+                queue_status_callback=_on_upload_queue_status,
             )
             if not ok:
                 raise RuntimeError(f"bilibili 上传失败: {result}")
