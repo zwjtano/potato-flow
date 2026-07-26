@@ -3,7 +3,7 @@
 “直播录制 → 文件管理”集中展示录播视频、XML 弹幕和 ASS 字幕。
 
 <div class="screenshot">
-  <img src="../assets/screenshots/file-manager.png" alt="录播文件管理">
+  <img src="../../assets/screenshots/file-manager.png" alt="录播文件管理">
   <div class="shot-caption">可按直播间和文件类型筛选，查看空间占用，下载文件或多选删除。</div>
 </div>
 
@@ -21,4 +21,3 @@
 ## 上传后自动删除
 
 开启 `delete_recording_after_upload` 后，B站投稿确认成功才删除对应源录播。失败、审核中或尚未投稿的文件会保留。
-

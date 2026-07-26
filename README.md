@@ -2,6 +2,8 @@
 
 土豆的直播录制与 AI 投稿流水线。PotatoFlow 把 [biliup](https://github.com/biliup/biliup) 的直播录制能力与 [Y2A-Auto](https://github.com/fqscfqj/Y2A-Auto) 的下载、AI 处理和投稿能力整合进同一个 WebUI。
 
+[在线图文文档](https://zwjtano.github.io/potato-flow/) · [最新版本](https://github.com/zwjtano/potato-flow/releases/latest) · [问题反馈](https://github.com/zwjtano/potato-flow/issues)
+
 本项目的边界很明确：
 
 - 录制平台支持 **哔哩哔哩直播**、**斗鱼**和**抖音直播**；
@@ -45,7 +47,7 @@ ASS 会保存在 `.bridge/artifacts/` 中供归档、查看和下载，不会烧
 - 一键启动或停止内置 biliup 录制引擎；
 - 搜索直播间并按“监控中 / 已停止”筛选；
 - 录制 B站、斗鱼与抖音 XML 弹幕；
-- 抖音支持在“系统设置 → 账号与网络”中扫码登录；扫码确认后自动保存 Cookie，并在不截断当前文件的前提下让录制 worker 安全加载；
+- 抖音沿用 biliup 原生解析方式，不依赖 Chromium；公开房间通常不需要登录，需要时可在“系统设置 → 账号与网络 → 平台账号”手动上传 JSON 或纯文本 Cookie；
 - 每满 1 小时自动结束当前录制分段并立即触发上传流水线，后续录制不受影响；手动停止时，不足 1 小时的最后一段也会正常处理；
 - 多个直播间的分段流水线并发运行，互不阻塞；后台每 5 分钟扫描一次已封口但没有任务记录的录播文件，并按所属直播间自动补回分P流水线；
 - 默认每个录制分段创建独立 B站稿件；开启“同一场直播合并为分P”后，首段创建稿件、后续文件依次追加为分P，各 P 使用本段弹幕生成自己的页面标题和摘要；
