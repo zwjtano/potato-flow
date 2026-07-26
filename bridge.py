@@ -1912,9 +1912,13 @@ def generate_record_only_ass(
         return None
     comments = parse_biliup_xml(danmaku_xml)
     width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
-    return build_ass(
+    # Media servers infer an external subtitle's language from its filename.
+    # A plain ``video.ass`` is commonly shown as English/unknown, while
+    # ``video.zh-CN.ass`` is recognised as Simplified Chinese.
+    ass_path = video.with_name(f"{video.stem}.zh-CN.ass")
+    generated = build_ass(
         comments,
-        video.with_suffix(".ass"),
+        ass_path,
         width=width,
         height=height,
         font_name=str(cfg.get("danmaku_font_name", "Noto Sans CJK SC")),
@@ -1922,6 +1926,10 @@ def generate_record_only_ass(
         duration=float(cfg.get("danmaku_duration_seconds", 9)),
         opacity=float(cfg.get("danmaku_opacity", 0.92)),
     )
+    legacy_path = video.with_suffix(".ass")
+    if legacy_path != generated:
+        legacy_path.unlink(missing_ok=True)
+    return generated
 
 
 def generate_record_only_cover(video: Path, base_cfg: dict[str, Any]) -> Path:

@@ -247,7 +247,7 @@ class BridgeTests(unittest.TestCase):
                     ("cleanup", "completed"),
                 ],
             )
-            ass = video.with_suffix(".ass")
+            ass = video.with_name(f"{video.stem}.zh-CN.ass")
             self.assertTrue(ass.is_file())
             self.assertIn("测试弹幕", ass.read_text(encoding="utf-8-sig"))
 
@@ -1149,6 +1149,37 @@ class BridgeTests(unittest.TestCase):
             path.write_text(json.dumps([]), encoding="utf-8")
             with self.assertRaises(ValueError):
                 bridge.load_config(path)
+
+    def test_record_only_ass_is_language_tagged_simplified_chinese(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.flv"
+            xml = video.with_suffix(".xml")
+            legacy_ass = video.with_suffix(".ass")
+            video.write_bytes(b"video")
+            xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">中文弹幕</d></i>',
+                encoding="utf-8",
+            )
+            legacy_ass.write_text("legacy", encoding="utf-8")
+
+            with patch.object(bridge, "probe_video_size", return_value=(1920, 1080)):
+                result = bridge.generate_record_only_ass(
+                    video,
+                    {"record_only_xml_wait_seconds": 0},
+                    [video, xml],
+                )
+
+            self.assertEqual(
+                result,
+                root / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.zh-CN.ass",
+            )
+            self.assertTrue(result.is_file())
+            self.assertFalse(legacy_ass.exists())
+            self.assertIn(
+                "中文弹幕",
+                result.read_text(encoding="utf-8-sig"),
+            )
 
     def test_dry_run_validates_without_importing_y2a(self):
         with tempfile.TemporaryDirectory() as temp:
