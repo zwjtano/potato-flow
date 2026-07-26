@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -1072,6 +1073,71 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(jobs[0]["completed_stages"], 5)
         self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
 
+    def test_failed_upload_is_scheduled_for_five_minute_auto_retry(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            failed_at = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat(
+                timespec="seconds"
+            )
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "a" * 64,
+                        "/data/recordings/test.flv",
+                        "bilibili",
+                        "failed",
+                        1,
+                        "{}",
+                        "网络失败",
+                        failed_at,
+                        failed_at,
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("a" * 64, "upload", "failed", "{}", "网络失败", failed_at, failed_at, failed_at),
+                )
+            with mock.patch.object(manager, "_pipeline_state_path", return_value=state_path), mock.patch.object(
+                manager, "list_rooms", return_value=[]
+            ):
+                job = manager.pipeline_jobs()[0]
+
+        self.assertTrue(job["auto_retry_scheduled"])
+        self.assertEqual(job["auto_retry_number"], 1)
+        self.assertEqual(job["auto_retry_max_retries"], 3)
+        self.assertGreater(job["auto_retry_remaining_seconds"], 150)
+        self.assertLessEqual(job["auto_retry_remaining_seconds"], 180)
+
+    def test_only_due_bilibili_upload_failure_is_automatically_retried(self):
+        manager = LiveRecorderManager()
+        due = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(timespec="seconds")
+        jobs = [
+            {"id": "a" * 64, "auto_retry_scheduled": True, "auto_retry_at": due},
+            {"id": "b" * 64, "auto_retry_scheduled": False, "auto_retry_at": due},
+        ]
+        with mock.patch.object(manager, "pipeline_jobs", return_value=jobs), mock.patch.object(
+            manager, "retry_pipeline_job", return_value=True
+        ) as retry:
+            count = manager.retry_due_upload_jobs()
+
+        self.assertEqual(count, 1)
+        retry.assert_called_once_with("a" * 64, automatic=True)
+
     def test_unified_task_views_include_recording_jobs(self):
         tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
         overview_source = (Y2A_ROOT / "templates" / "index.html").read_text(encoding="utf-8")
@@ -1093,6 +1159,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("当前速度：", tasks_source)
         self.assertIn("剩余时间：", tasks_source)
         self.assertIn("data-recording-upload-live", tasks_source)
+        self.assertIn("5 分钟后自动重试投稿", tasks_source)
+        self.assertIn("auto_retry_scheduled", tasks_source)
         self.assertIn("refreshRecordingUploadMetrics", tasks_source)
         self.assertIn("recording-task-cover", tasks_source)
         self.assertIn("recording-cover-trigger", tasks_source)

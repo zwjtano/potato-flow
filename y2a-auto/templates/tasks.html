@@ -131,6 +131,14 @@
                                 </div>
                                 <span class="recording-upload-live{% if not job.upload_progress_text %} d-none{% endif %}"
                                       data-recording-upload-live data-job-id="{{ job.id }}">{{ job.upload_progress_text }}</span>
+                                {% if job.auto_retry_scheduled %}
+                                <span class="recording-auto-retry">
+                                    <i class="bi bi-clock-history"></i>
+                                    5 分钟后自动重试投稿（第 {{ job.auto_retry_number }}/{{ job.auto_retry_max_retries }} 次）
+                                </span>
+                                {% elif job.auto_retry_exhausted %}
+                                <span class="recording-auto-retry exhausted"><i class="bi bi-exclamation-triangle"></i> 自动重试已达上限，请人工处理</span>
+                                {% endif %}
                                 <small class="recording-progress-hint">点击查看每一步详情</small>
                                 </button>
                             </td>
@@ -206,6 +214,11 @@
                         <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
                         <span class="recording-upload-live{% if not job.upload_progress_text %} d-none{% endif %}"
                               data-recording-upload-live data-job-id="{{ job.id }}">{{ job.upload_progress_text }}</span>
+                        {% if job.auto_retry_scheduled %}
+                        <span class="recording-auto-retry"><i class="bi bi-clock-history"></i> 5 分钟后自动重试投稿（第 {{ job.auto_retry_number }}/{{ job.auto_retry_max_retries }} 次）</span>
+                        {% elif job.auto_retry_exhausted %}
+                        <span class="recording-auto-retry exhausted"><i class="bi bi-exclamation-triangle"></i> 自动重试已达上限，请人工处理</span>
+                        {% endif %}
                         <small class="recording-progress-hint">点击查看每一步详情</small>
                     </button>
                     <div class="d-flex flex-wrap gap-2 mt-3">
@@ -744,6 +757,10 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-progress-hint { display: block; margin-top: .35rem; color: #8a94a6; font-size: .68rem; }
 .recording-progress-trigger:hover .recording-progress-hint, .recording-progress-trigger:focus-visible .recording-progress-hint { color: #0d6efd; }
 .recording-upload-live { display: block; margin-top: .45rem; color: #7b8493; font-size: .78rem; line-height: 1.45; font-variant-numeric: tabular-nums; white-space: normal; }
+.recording-auto-retry { display: block; margin-top: .45rem; color: #a56100; font-size: .75rem; font-weight: 650; line-height: 1.4; }
+.recording-auto-retry.exhausted { color: #b42318; }
+.recording-detail-retry { display: flex; align-items: flex-start; gap: .65rem; margin: -0.25rem 0 1rem; padding: .8rem 1rem; color: #875100; border: 1px solid #f4d58d; border-radius: 12px; background: #fff9e9; }
+.recording-detail-retry.exhausted { color: #a61e2d; border-color: #f3bcc3; background: #fff0f2; }
 .task-section-empty { display: flex; align-items: center; justify-content: center; gap: .65rem; min-height: 84px; padding: 1rem; color: #7c8799; background: #f8fafc; border: 1px dashed #dbe2ec; border-radius: 14px; }
 .recording-task-cards { display: grid; gap: .75rem; }
 .recording-task-card { padding: 1rem; background: #fff; border: 1px solid #e8edf4; border-radius: 14px; }
@@ -1029,11 +1046,17 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
             : job.status === 'failed' ? (job.record_only ? '本地处理失败' : '等待人工审核')
             : job.active_stage ? `正在${recordingStageMeta[job.active_stage]?.name || job.active_stage}`
             : `${completed}/${total} 步已完成`;
+        const retryNotice = job.auto_retry_scheduled
+            ? `<div class="recording-detail-retry"><i class="bi bi-clock-history"></i><div><strong>投稿将在 5 分钟后自动重试</strong><div class="small">计划时间：${escapeRecordingDetail(formatRecordingDetailDate(job.auto_retry_at))} · 第 ${escapeRecordingDetail(job.auto_retry_number)}/${escapeRecordingDetail(job.auto_retry_max_retries)} 次自动重试</div></div></div>`
+            : job.auto_retry_exhausted
+                ? `<div class="recording-detail-retry exhausted"><i class="bi bi-exclamation-triangle"></i><div><strong>自动重试已达上限</strong><div class="small">已经自动重试 ${escapeRecordingDetail(job.auto_retry_max_retries)} 次，请检查登录状态、网络或进入人工审核。</div></div></div>`
+                : '';
         body.innerHTML = `
             <div class="recording-detail-summary">
                 <div><strong>${escapeRecordingDetail(statusLabel)}</strong><span class="text-muted small">创建于 ${escapeRecordingDetail(formatRecordingDetailDate(job.created_at))}，更新于 ${escapeRecordingDetail(formatRecordingDetailDate(job.updated_at))}</span></div>
                 <span class="badge ${job.status === 'failed' ? 'text-bg-warning' : job.status === 'completed' ? 'text-bg-success' : 'text-bg-primary'}">${escapeRecordingDetail(recordingJobStatusNames[job.status] || job.status || '处理中')}</span>
             </div>
+            ${retryNotice}
             <div class="recording-detail-stages">${stageHtml}</div>
             <details class="recording-detail-log" ${job.status === 'failed' ? 'open' : ''}>
                 <summary><i class="bi bi-terminal me-2"></i>完整任务日志</summary>
