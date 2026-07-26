@@ -562,9 +562,11 @@ document.addEventListener('DOMContentLoaded', function () {
         renderFiles();
     }
     async function deleteSelectedFiles(event) {
+        // DOM Event.currentTarget is cleared once an async handler yields.
+        // Keep the button reference before awaiting the confirmation modal.
+        const button = event.currentTarget;
         const ids = [...selectedRecordingFileIds];
         if (!ids.length || !(await window.PotatoUI.confirm(`将永久删除所选的 ${ids.length} 个文件。\n正在录制或处理中的文件会受到保护。`, {title: '批量删除录播文件？', confirmText: '确认删除', danger: true}))) return;
-        const button = event.currentTarget;
         button.disabled = true;
         button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 删除中';
         try {
@@ -577,6 +579,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!response.ok) throw new Error(result.error || '批量删除失败');
             (result.deleted || []).forEach(file => selectedRecordingFileIds.delete(file.id));
             if (result.failed_count) window.PotatoUI.notify(`已删除 ${result.deleted_count} 个文件，${result.failed_count} 个文件未删除（可能正在录制或处理）。`, 'warning');
+            else window.PotatoUI.notify(`已删除 ${result.deleted_count} 个文件。`, 'success');
             await loadFiles();
         } catch (error) {
             window.PotatoUI.notify(error.message, 'danger');
