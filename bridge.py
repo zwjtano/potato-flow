@@ -1885,6 +1885,94 @@ def generate_record_only_cover(video: Path, base_cfg: dict[str, Any]) -> Path:
     return generated
 
 
+def remux_record_only_flv_with_cover(
+    video: Path,
+    cover: Path,
+    base_cfg: dict[str, Any],
+) -> Path:
+    """Remux an FLV to MP4 and attach its sidecar cover without re-encoding."""
+    if video.suffix.lower() != ".flv":
+        return video
+    if not cover.is_file():
+        raise RuntimeError(f"内嵌封面不存在: {cover}")
+
+    cfg = effective_config(base_cfg, video)
+    output = video.with_suffix(".mp4")
+    temporary = video.with_name(f".{video.stem}.potato-remux.mp4")
+    temporary.unlink(missing_ok=True)
+    command = [
+        str(cfg.get("ffmpeg", "ffmpeg")),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(video),
+        "-i",
+        str(cover),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-map",
+        "1:v:0",
+        "-c",
+        "copy",
+        "-disposition:v:1",
+        "attached_pic",
+        "-metadata:s:v:1",
+        "title=PotatoFlow cover",
+        "-movflags",
+        "+faststart",
+        str(temporary),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=float(cfg.get("record_only_remux_timeout_seconds", 3600)),
+        )
+        if completed.returncode != 0 or not temporary.is_file() or temporary.stat().st_size <= 0:
+            detail = (completed.stderr or completed.stdout or "FFmpeg 未生成 MP4").strip()
+            raise RuntimeError(f"FLV 转 MP4 失败: {detail}")
+
+        probe = subprocess.run(
+            [
+                str(cfg.get("ffprobe", "ffprobe")),
+                "-v",
+                "error",
+                "-select_streams",
+                "v",
+                "-show_entries",
+                "stream_disposition=attached_pic",
+                "-of",
+                "json",
+                str(temporary),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        try:
+            streams = json.loads(probe.stdout or "{}").get("streams", [])
+        except json.JSONDecodeError:
+            streams = []
+        if probe.returncode != 0 or not any(
+            int(stream.get("disposition", {}).get("attached_pic", 0)) == 1
+            for stream in streams
+            if isinstance(stream, dict)
+        ):
+            raise RuntimeError("MP4 已生成，但未检测到内嵌封面")
+
+        temporary.replace(output)
+        video.unlink()
+        return output
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="将 biliup 录制产物交给 Y2A-Auto 上传")
     parser.add_argument("--config", default="bridge.config.json", help="JSON 配置文件")
@@ -1945,6 +2033,7 @@ def main(argv: list[str] | None = None) -> int:
             store.exclude_recording(path, str(args.room_id))
             ass_path: Path | None = None
             cover_path: Path | None = None
+            final_video = path
             try:
                 ass_path = generate_record_only_ass(path, cfg, received_paths)
             except Exception as exc:
@@ -1955,11 +2044,19 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:
                 print(f"ERROR 仅录制封面生成失败: {path}: {exc}", file=sys.stderr)
                 ok = False
+            if cover_path is not None:
+                try:
+                    final_video = remux_record_only_flv_with_cover(path, cover_path, cfg)
+                    if final_video != path:
+                        store.exclude_recording(final_video, str(args.room_id))
+                except Exception as exc:
+                    print(f"ERROR 仅录制 MP4 封装失败，已保留原 FLV: {path}: {exc}", file=sys.stderr)
+                    ok = False
             ass_detail = f"，ASS: {ass_path}" if ass_path else "，未找到 XML"
             cover_detail = f"，封面: {cover_path}" if cover_path else "，封面生成失败"
             print(
                 f"OK 仅录制文件已保留并跳过自动投稿: "
-                f"{path}{ass_detail}{cover_detail}"
+                f"{final_video}{ass_detail}{cover_detail}"
             )
         return 0 if ok else 1
 
