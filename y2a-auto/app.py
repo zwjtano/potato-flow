@@ -26,7 +26,6 @@ from modules.config_manager import load_config, update_config, reset_specific_co
 from modules.whisper_languages import WHISPER_LANGUAGE_LIST
 from modules.task_manager import add_task, start_task, get_task, get_tasks_paginated, get_tasks_by_status, update_task, delete_task, force_upload_task, TASK_STATES, clear_all_tasks, retry_failed_tasks, register_task_updates_listener, unregister_task_updates_listener, resolve_cookie_file_path
 from modules.bilibili_auth import BilibiliQrLoginSession
-from modules.douyin_auth import DouyinQrLoginSession
 from queue import Empty
 from modules.youtube_monitor import youtube_monitor
 from modules.live_recorder_manager import RecorderConfigError, live_recorder_manager
@@ -107,9 +106,6 @@ ALLOWED_COVER_EXTENSIONS = {
 _BILIBILI_QR_SESSIONS = {}
 _BILIBILI_QR_SESSION_LOCK = threading.Lock()
 _BILIBILI_QR_SESSION_TTL_SECONDS = 300
-_DOUYIN_QR_SESSIONS = {}
-_DOUYIN_QR_SESSION_LOCK = threading.Lock()
-_DOUYIN_QR_SESSION_TTL_SECONDS = 240
 # 登录安全状态存储
 def _get_security_state_path():
     try:
@@ -308,42 +304,6 @@ def _get_bilibili_qr_session(session_id: str):
     if not item:
         return None
     return item.get('session')
-
-
-def _cleanup_douyin_qr_sessions():
-    now_ts = time.time()
-    with _DOUYIN_QR_SESSION_LOCK:
-        stale_ids = [
-            sid for sid, item in _DOUYIN_QR_SESSIONS.items()
-            if now_ts - float(item.get('created_at', 0) or 0)
-            > _DOUYIN_QR_SESSION_TTL_SECONDS
-        ]
-        for sid in stale_ids:
-            _DOUYIN_QR_SESSIONS.pop(sid, None)
-
-
-def _create_douyin_qr_session(cookie_path: str):
-    _cleanup_douyin_qr_sessions()
-    session_id = str(uuid.uuid4())
-    session_obj = DouyinQrLoginSession(cookie_path)
-    with _DOUYIN_QR_SESSION_LOCK:
-        _DOUYIN_QR_SESSIONS[session_id] = {
-            'created_at': time.time(),
-            'session': session_obj,
-            'success_notified': False,
-            'failure_notified': False,
-            'config_synced': False,
-        }
-    return session_id, session_obj
-
-
-def _get_douyin_qr_session(session_id: str):
-    if not session_id:
-        return None
-    _cleanup_douyin_qr_sessions()
-    with _DOUYIN_QR_SESSION_LOCK:
-        item = _DOUYIN_QR_SESSIONS.get(session_id)
-    return item.get('session') if item else None
 
 
 def _mark_qr_notification_sent(session_store: dict, lock: threading.Lock, session_id: str, success: bool) -> bool:
@@ -3353,67 +3313,6 @@ def bilibili_qrcode_status(session_id):
         logger.error(f"查询 bilibili 二维码登录状态失败: {e}")
         return jsonify({'success': False, 'message': '查询登录状态失败，请稍后重试'}), 500
 
-
-@app.route('/settings/douyin/qrcode/start', methods=['POST'])
-@login_required
-def douyin_qrcode_start():
-    """打开抖音官方登录页并返回浏览器中的登录二维码。"""
-    config = load_config()
-    cookie_path = resolve_cookie_file_path(
-        path_value=config.get('DOUYIN_COOKIES_PATH', 'cookies/douyin_cookies.json'),
-        default_relative_path='cookies/douyin_cookies.json',
-        service_name='抖音',
-        logger_obj=logger,
-        allow_json_txt_fallback=False,
-    )
-    try:
-        session_id, qr_session = _create_douyin_qr_session(cookie_path)
-        qr_data = qr_session.generate()
-        return jsonify({
-            'success': True,
-            'session_id': session_id,
-            'image_base64': qr_data.get('image_base64', ''),
-            'mime_type': qr_data.get('mime_type', 'image/png'),
-            'expires_in': 180,
-            'cookie_path': cookie_path,
-        })
-    except Exception as exc:
-        logger.error(f"发起抖音二维码登录失败: {exc}")
-        return jsonify({'success': False, 'message': str(exc)}), 500
-
-
-@app.route('/settings/douyin/qrcode/status/<session_id>', methods=['GET'])
-@login_required
-def douyin_qrcode_status(session_id):
-    """查询抖音扫码状态；成功后让录制 worker 安全加载新 Cookie。"""
-    qr_session = _get_douyin_qr_session(session_id)
-    if not qr_session:
-        return jsonify({'success': False, 'message': '二维码会话不存在或已过期'}), 404
-    try:
-        status_data = qr_session.check_status()
-        status = status_data.get('status')
-        if status == 'done' and status_data.get('cookies_saved'):
-            with _DOUYIN_QR_SESSION_LOCK:
-                item = _DOUYIN_QR_SESSIONS.get(session_id)
-                needs_sync = bool(item and not item.get('config_synced'))
-                if item:
-                    item['config_synced'] = True
-            if needs_sync:
-                status_data['recorder_reload_state'] = (
-                    live_recorder_manager.refresh_credentials()
-                )
-        if status in ('done', 'timeout', 'failed'):
-            _emit_qr_login_event_once(
-                _DOUYIN_QR_SESSIONS,
-                _DOUYIN_QR_SESSION_LOCK,
-                session_id,
-                'douyin',
-                status_data,
-            )
-        return jsonify({'success': True, **status_data})
-    except Exception as exc:
-        logger.error(f"查询抖音二维码登录状态失败: {exc}")
-        return jsonify({'success': False, 'message': '查询登录状态失败，请稍后重试'}), 500
 
 @app.route('/settings/reset', methods=['POST'])
 @login_required

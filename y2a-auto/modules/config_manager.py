@@ -66,7 +66,7 @@ DEFAULT_CONFIG = {
     "LOGIN_SESSION_TIMEOUT_MINUTES": 30,  # 登录空闲超时时长（分钟）
     "YOUTUBE_COOKIES_PATH": "cookies/yt_cookies.txt", # 相对于项目根目录
     "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径
-    "DOUYIN_COOKIES_PATH": "cookies/douyin_cookies.json", # 抖音扫码登录 Cookie
+    "DOUYIN_COOKIES_PATH": "cookies/douyin_cookies.json", # 可选的 biliup 抖音 Cookie
     # CookieCloud（首版仅用于手动拉取 YouTube Cookies）
     "COOKIECLOUD_ENABLED": False,
     "COOKIECLOUD_SERVER_URL": "",

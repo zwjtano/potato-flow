@@ -173,7 +173,7 @@ def _resolve_douyu_real_room_id(room_ref: str) -> str:
 
 
 def _douyin_cookie_path() -> Path:
-    """Resolve the persisted QR-login cookie path without importing Flask."""
+    """Resolve the optional biliup Cookie file without importing Flask."""
     try:
         config = json.loads((CONFIG_DIR / "config.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):

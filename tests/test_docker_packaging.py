@@ -21,9 +21,14 @@ class DockerPackagingTests(unittest.TestCase):
 
     def test_image_contains_headless_recorder(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        requirements = (ROOT / "y2a-auto" / "requirements.txt").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("cargo build --release -p biliup-cli", dockerfile)
         self.assertIn("BILIUP_BIN=/app/upstream-biliup/target/release/biliup", dockerfile)
         self.assertIn("EXPOSE 5001", dockerfile)
+        self.assertNotIn("chromium", dockerfile.lower())
+        self.assertNotIn("playwright", requirements.lower())
 
     def test_image_contains_yyf_cover_reference(self):
         reference_root = ROOT / "assets" / "streamer-references"
