@@ -86,7 +86,7 @@
                                 <div class="recording-video-copy">
                                         <div class="recording-task-title title-clamp">
                                             {{ job.title or job.video_name }}
-                                            {% if job.record_only %}<span class="badge rounded-pill text-bg-light ms-1">仅录制</span>{% endif %}
+                                            {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
                                         </div>
                                         <code class="recording-task-file">{{ job.video_name }}</code>
                                     </div>
@@ -188,7 +188,10 @@
                             <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
                             {% endif %}
                             <div class="recording-video-copy min-w-0">
-                                <div class="recording-task-title title-clamp">{{ job.title or job.video_name }}</div>
+                                <div class="recording-task-title title-clamp">
+                                    {{ job.title or job.video_name }}
+                                    {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
+                                </div>
                                 <div class="small text-muted mt-1">{{ job.room_name }}</div>
                             </div>
                         </div>
@@ -708,6 +711,20 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-tasks-table th { font-size: .78rem; color: #778195; font-weight: 600; }
 .recording-tasks-table td { padding: .8rem .65rem; }
 .recording-task-title { font-weight: 650; color: #202736; max-width: 420px; }
+.record-only-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: .16rem .48rem;
+    border: 1px solid #8bb7ff;
+    border-radius: 999px;
+    background: #e8f1ff;
+    color: #1756b3;
+    font-size: .72rem;
+    font-weight: 750;
+    line-height: 1.15;
+    white-space: nowrap;
+    vertical-align: .08em;
+}
 .recording-task-file { display: block; max-width: 420px; margin-top: .25rem; color: #8a94a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .72rem; }
 .recording-video-cell { display: flex; align-items: center; gap: .8rem; min-width: 260px; }
 .recording-video-copy { min-width: 0; }
