@@ -142,6 +142,23 @@ impl Bilibili {
         headers
     }
 
+    /// Read the authenticated Bilibili user ID from a Cookie header.
+    ///
+    /// `getDanmuInfo` may return a token bound to the logged-in account when
+    /// cookies are present. Sending that token with `uid: 0` makes the live
+    /// WebSocket close immediately, so keep the registration UID consistent
+    /// with the Cookie used to request the token.
+    fn uid_from_cookie(cookie: Option<&str>) -> Option<u64> {
+        cookie?
+            .split(';')
+            .filter_map(|item| item.trim().split_once('='))
+            .find_map(|(name, value)| {
+                (name.trim() == "DedeUserID")
+                    .then(|| value.trim().parse::<u64>().ok())
+                    .flatten()
+            })
+    }
+
     /// Extract room ID from URL.
     fn extract_room_id(url: &str) -> Option<String> {
         let re = Regex::new(r"live\.bilibili\.com/(\d+)").ok()?;
@@ -487,8 +504,11 @@ impl Platform for Bilibili {
         url: &str,
         context: &PlatformContext,
     ) -> Result<ConnectionInfo> {
-        let uid = context.uid.unwrap_or(0);
         let cookie = context.cookie.as_deref();
+        let uid = context
+            .uid
+            .or_else(|| Self::uid_from_cookie(cookie))
+            .unwrap_or(0);
         let headers = Self::default_headers(cookie);
 
         // Get room ID
@@ -675,5 +695,24 @@ mod tests {
         let buvid = generate_fake_buvid3();
         assert!(buvid.ends_with("infoc"));
         assert!(buvid.contains("-"));
+    }
+
+    #[test]
+    fn test_uid_from_cookie() {
+        assert_eq!(
+            Bilibili::uid_from_cookie(Some(
+                "buvid3=device; DedeUserID=123456789; SESSDATA=session"
+            )),
+            Some(123456789)
+        );
+        assert_eq!(
+            Bilibili::uid_from_cookie(Some("DedeUserID__ckMd5=digest; SESSDATA=session")),
+            None
+        );
+        assert_eq!(
+            Bilibili::uid_from_cookie(Some("DedeUserID=not-a-number")),
+            None
+        );
+        assert_eq!(Bilibili::uid_from_cookie(None), None);
     }
 }

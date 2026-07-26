@@ -1181,6 +1181,69 @@ class BridgeTests(unittest.TestCase):
                 result.read_text(encoding="utf-8-sig"),
             )
 
+    def test_record_only_empty_xml_does_not_generate_empty_ass(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.flv"
+            xml = video.with_suffix(".xml")
+            video.write_bytes(b"video")
+            xml.write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n<i>\n</i>\n',
+                encoding="utf-8",
+            )
+
+            with patch.object(bridge, "probe_video_size") as probe:
+                result = bridge.generate_record_only_ass(
+                    video,
+                    {"record_only_xml_wait_seconds": 0},
+                    [video, xml],
+                )
+
+            self.assertIsNone(result)
+            probe.assert_not_called()
+            self.assertFalse(video.with_suffix(".ass").exists())
+            self.assertFalse(
+                video.with_name(f"{video.stem}.zh-CN.ass").exists()
+            )
+
+    def test_record_only_empty_xml_marks_ass_failed_and_preserves_video(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "empty-danmaku.flv"
+            xml = root / "empty-danmaku.xml"
+            state = root / "state.sqlite3"
+            config = root / "bridge.config.json"
+            video.write_bytes(b"video")
+            xml.write_text("<i></i>", encoding="utf-8")
+            config.write_text(
+                json.dumps({"state_db": str(state)}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                bridge,
+                "generate_record_only_cover",
+            ) as generate_cover:
+                result = bridge.main([
+                    "--config", str(config),
+                    "record-only", "--room-id", "room-1", str(video), str(xml),
+                ])
+
+            self.assertEqual(result, 1)
+            self.assertTrue(video.is_file())
+            generate_cover.assert_not_called()
+            with sqlite3.connect(state) as db:
+                task = db.execute(
+                    "SELECT platform, status, error FROM uploads"
+                ).fetchone()
+                ass_stage = db.execute(
+                    "SELECT status, error FROM upload_stages WHERE stage='ass'"
+                ).fetchone()
+            self.assertEqual(task[0:2], ("record_only", "failed"))
+            self.assertIn("弹幕 XML 为空", task[2])
+            self.assertEqual(ass_stage[0], "failed")
+            self.assertIn("弹幕 XML 为空", ass_stage[1])
+
     def test_dry_run_validates_without_importing_y2a(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

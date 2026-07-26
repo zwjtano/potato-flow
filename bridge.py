@@ -1911,6 +1911,12 @@ def generate_record_only_ass(
         print(f"WARN 仅录制文件未找到同名 XML，无法生成 ASS: {video}", file=sys.stderr)
         return None
     comments = parse_biliup_xml(danmaku_xml)
+    if not comments:
+        print(
+            f"ERROR 弹幕 XML 中没有可用弹幕，未生成空 ASS: {danmaku_xml}",
+            file=sys.stderr,
+        )
+        return None
     width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
     # Media servers infer an external subtitle's language from its filename.
     # A plain ``video.ass`` is commonly shown as English/unknown, while
@@ -2171,7 +2177,7 @@ def main(argv: list[str] | None = None) -> int:
                 store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml)})
                 ass_path = generate_record_only_ass(path, cfg, received_paths)
                 if ass_path is None:
-                    raise RuntimeError("未生成 ASS 字幕")
+                    raise RuntimeError("弹幕 XML 为空或无有效弹幕，未生成 ASS 字幕")
                 store.stage(
                     key,
                     "ass",
