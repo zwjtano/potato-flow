@@ -914,15 +914,17 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
         if (
             'DOUYIN_COOKIES_PATH' in form_data
             or 'douyin_cookies_file' in uploads
+            or 'BILIBILI_COOKIES_PATH' in form_data
+            or 'bilibili_cookies_file' in uploads
         ):
             try:
                 live_recorder_manager.refresh_credentials()
             except RecorderConfigError as exc:
-                logger.warning("抖音 Cookie 已保存，但录制配置重载失败: %s", exc)
+                logger.warning("平台 Cookie 已保存，但录制配置重载失败: %s", exc)
                 _append_settings_message(
                     messages,
                     'warning',
-                    f'抖音 Cookie 已保存，但录制 worker 未能自动重载：{exc}',
+                    f'平台 Cookie 已保存，但录制 worker 未能自动重载：{exc}',
                 )
 
         try:
@@ -3425,6 +3427,12 @@ def bilibili_qrcode_status(session_id):
             status_data,
         )
         status = status_data.get('status')
+        if status == 'done' and status_data.get('cookies_saved'):
+            try:
+                live_recorder_manager.refresh_credentials()
+            except RecorderConfigError as exc:
+                logger.warning("Bilibili Cookie 已保存，但录制配置重载失败: %s", exc)
+                status_data['recorder_warning'] = f'录制配置未能自动重载：{exc}'
         if status in ('done', 'timeout', 'failed'):
             with _BILIBILI_QR_SESSION_LOCK:
                 _BILIBILI_QR_SESSIONS.pop(session_id, None)

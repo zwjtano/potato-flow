@@ -232,6 +232,69 @@ def _douyin_cookie_header() -> str:
     return load_douyin_cookie(_douyin_cookie_path())
 
 
+def _bilibili_cookie_path() -> Path:
+    """Resolve the Bilibili account Cookie shared by upload and recording."""
+    try:
+        config = json.loads((CONFIG_DIR / "config.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        config = {}
+    raw = str(config.get("BILIBILI_COOKIES_PATH") or "cookies/bili_cookies.json")
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else APP_ROOT / path
+
+
+def _sync_bilibili_recorder_cookie() -> Path | None:
+    """Normalize the app Cookie into biliup's cookie_info file format."""
+    destination = CONFIG_DIR / "biliup.bilibili.cookies.json"
+    source = _bilibili_cookie_path()
+    try:
+        content = source.read_text(encoding="utf-8").strip()
+        cookies: dict[str, str] = {}
+        if content.startswith("# Netscape HTTP Cookie File") or "\t" in content:
+            for line in content.splitlines():
+                parts = line.strip().split("\t")
+                if len(parts) >= 7 and not line.lstrip().startswith("#"):
+                    cookies[str(parts[5])] = str(parts[6])
+        else:
+            payload = json.loads(content)
+            cookie_list: Any = payload
+            if isinstance(payload, dict):
+                cookie_list = payload.get("cookies")
+                cookie_info = payload.get("cookie_info")
+                if isinstance(cookie_info, dict):
+                    cookie_list = cookie_info.get("cookies")
+                if not isinstance(cookie_list, list):
+                    cookies.update({
+                        str(name): str(value)
+                        for name, value in payload.items()
+                        if isinstance(value, (str, int, float))
+                    })
+            if isinstance(cookie_list, list):
+                for item in cookie_list:
+                    if not isinstance(item, dict):
+                        continue
+                    name, value = item.get("name"), item.get("value")
+                    if name is not None and value is not None:
+                        cookies[str(name)] = str(value)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        destination.unlink(missing_ok=True)
+        return None
+    cookie_items = [
+        {"name": str(name), "value": str(value)}
+        for name, value in cookies.items()
+        if str(name).strip() and str(value)
+    ]
+    if not cookie_items:
+        destination.unlink(missing_ok=True)
+        return None
+    _atomic_json(destination, {"cookie_info": {"cookies": cookie_items}})
+    try:
+        destination.chmod(0o600)
+    except OSError:
+        pass
+    return destination
+
+
 def _decode_json_string(value: str) -> str:
     try:
         return str(json.loads(f'"{value}"'))
@@ -1035,15 +1098,23 @@ class LiveRecorderManager:
             f"pool1_size: {max(3, len(rooms) + 1)}",
             "pool2_size: 1",
             "bilibili_danmaku: true",
+            # 25000 是 biliup 的最高 B站画质请求值；原画仍取决于账号权限和直播源。
+            "bili_qn: 25000",
             "douyu_danmaku: true",
             "douyin_danmaku: true",
         ]
+        user_lines = []
+        bilibili_cookie_file = _sync_bilibili_recorder_cookie()
+        if bilibili_cookie_file:
+            user_lines.append(
+                f"  bili_cookie_file: {_yaml_string(str(bilibili_cookie_file))}"
+            )
         douyin_cookie = _douyin_cookie_header()
         if douyin_cookie:
-            lines.extend([
-                "user:",
-                f"  douyin_cookie: {_yaml_string(douyin_cookie)}",
-            ])
+            user_lines.append(f"  douyin_cookie: {_yaml_string(douyin_cookie)}")
+        if user_lines:
+            lines.append("user:")
+            lines.extend(user_lines)
         if not rooms:
             lines.append("streamers: {}")
         else:
