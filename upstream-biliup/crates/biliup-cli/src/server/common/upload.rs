@@ -552,13 +552,17 @@ impl UActor {
                     }
                     Some(config) => process_with_upload(inspect, &ctx, config).await,
                     None => {
-                        let mut paths = Vec::new();
-                        pin!(inspect);
-                        while let Some(event) = inspect.next().await {
-                            paths.extend(segment_paths(&event));
-                        }
-                        // 无上传配置时，直接执行后处理
-                        execute_postprocessor(paths, &ctx).await
+                        // `uploader: Noop` may be normalized to a missing upload
+                        // relation when YAML is imported into the database.  This
+                        // branch must still run the per-segment hook used by
+                        // PotatoFlow's record-only ASS/cover pipeline.
+                        info!("No upload config; running segment processors without upload");
+                        let segment_processors = ctx
+                            .live_streamer()
+                            .segment_processor
+                            .clone()
+                            .unwrap_or_default();
+                        process_without_upload(inspect, &ctx, &segment_processors).await
                     }
                 };
 

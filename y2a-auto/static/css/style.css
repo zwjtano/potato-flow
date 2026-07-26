@@ -338,6 +338,8 @@ body {
 .file-type-icon { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; color: #247dd2; border-radius: 7px; background: #eaf4ff; font-size: 14px; }
 .file-type-icon.xml { color: #e07a16; background: #fff3e5; }
 .file-type-icon.ass { color: #7654c4; background: #f1edfc; }
+.file-cover-thumb, .generated-file-cover { width: 56px; height: 36px; flex: 0 0 auto; border-radius: 7px; object-fit: cover; background: #eef2f7; }
+.generated-file-cover { width: 64px; height: 40px; }
 .file-kind { padding: 4px 7px; color: #247dd2; border-radius: 10px; background: #eaf4ff; font-size: 8px; }
 .file-kind.xml { color: #c6680e; background: #fff3e5; }
 .file-kind.ass { color: #6942bd; background: #f1edfc; }

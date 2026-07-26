@@ -80,6 +80,27 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("Self::handle_message(msg).await", source)
         self.assertNotIn("self.handle_message(msg).await", source)
 
+    def test_recorder_without_upload_config_still_runs_segment_processors(self):
+        source = (
+            ROOT
+            / "upstream-biliup"
+            / "crates"
+            / "biliup-cli"
+            / "src"
+            / "server"
+            / "common"
+            / "upload.rs"
+        ).read_text(encoding="utf-8")
+
+        invocation = (
+            "process_without_upload(inspect, &ctx, &segment_processors).await"
+        )
+        self.assertGreaterEqual(source.count(invocation), 2)
+        self.assertIn(
+            "No upload config; running segment processors without upload",
+            source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
