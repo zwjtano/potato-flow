@@ -111,6 +111,8 @@
                                 <span class="badge rounded-pill text-bg-warning">待投稿</span>
                                 {% elif job.status == 'video_uploaded' %}
                                 <span class="badge rounded-pill text-bg-info">导入弹幕中</span>
+                                {% elif job.status == 'paused' %}
+                                <span class="badge rounded-pill text-bg-secondary">已暂停</span>
                                 {% else %}
                                 <span class="badge rounded-pill text-bg-primary">处理中</span>
                                 {% endif %}
@@ -120,7 +122,9 @@
                                 <div class="d-flex justify-content-between gap-2 small mb-1">
                                     <span>
                                         {% if job.failed_stage %}{{ {'detect':'直播检测','record':'录制安全收尾','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','remux':'FLV 转 MP4','verify':'验证内嵌封面','cleanup':'清理原 FLV','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage) }}失败
+                                        {% elif job.upload_queued %}等待投稿队列（第 {{ job.upload_queue_position }} 位）
                                         {% elif job.active_stage %}正在{{ {'detect':'直播检测','record':'录制安全收尾','ass':'生成 ASS','ai':'生成 AI 简介','cover':'AI 封面','remux':'FLV 转 MP4','verify':'验证内嵌封面','cleanup':'清理原 FLV','upload':'投稿 B站'}.get(job.active_stage, job.active_stage) }}
+                                        {% elif job.paused %}投稿已暂停
                                         {% elif job.status == 'completed' %}全部完成
                                         {% else %}{{ job.completed_stages }}/{{ job.total_stages }} 步{% endif %}
                                     </span>
@@ -162,7 +166,10 @@
                                     </a>
                                     {% endif %}
                                     {% if job.retryable %}
-                                    <button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>
+                                    <button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> {{ '恢复' if job.paused else '重试' }}</button>
+                                    {% endif %}
+                                    {% if job.pausable %}
+                                    <button type="button" class="btn btn-sm btn-outline-secondary recording-pause-btn" data-job-id="{{ job.id }}"><i class="bi bi-pause-fill"></i> 暂停</button>
                                     {% endif %}
                                     <button type="button" class="btn btn-sm btn-outline-danger"
                                             data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}"
@@ -207,6 +214,7 @@
                         {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-warning">{{ '本地处理失败' if job.record_only else '待人工审核' }}</span>
                         {% elif job.status == 'dry_run' %}<span class="badge rounded-pill text-bg-warning">待投稿</span>
                         {% elif job.status == 'video_uploaded' %}<span class="badge rounded-pill text-bg-info">导入弹幕中</span>
+                        {% elif job.status == 'paused' %}<span class="badge rounded-pill text-bg-secondary">已暂停</span>
                         {% else %}<span class="badge rounded-pill text-bg-primary">处理中</span>{% endif %}
                     </div>
                     <button type="button" class="recording-progress-trigger mt-3" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
@@ -224,7 +232,8 @@
                     <div class="d-flex flex-wrap gap-2 mt-3">
                         {% if job.status == 'failed' and not job.record_only %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
                         {% if job.status == 'completed' and job.bvid %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-stars"></i> AI 编辑稿件</a>{% endif %}
-                        {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> 重试</button>{% endif %}
+                        {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> {{ '恢复' if job.paused else '重试' }}</button>{% endif %}
+                        {% if job.pausable %}<button type="button" class="btn btn-sm btn-outline-secondary recording-pause-btn" data-job-id="{{ job.id }}"><i class="bi bi-pause-fill"></i> 暂停</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
                         <button type="button" class="btn btn-sm btn-outline-danger"
                                 data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}"
@@ -776,6 +785,8 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-detail-stage-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; color: #7b8798; background: #eef2f6; }
 .recording-detail-stage.completed .recording-detail-stage-icon { color: #fff; background: #35b875; }
 .recording-detail-stage.running .recording-detail-stage-icon { color: #fff; background: #0d6efd; }
+.recording-detail-stage.queued .recording-detail-stage-icon { color: #7a4b00; background: #fff0c2; }
+.recording-detail-stage.paused .recording-detail-stage-icon { color: #fff; background: #6c757d; }
 .recording-detail-stage.failed .recording-detail-stage-icon { color: #fff; background: #dc3545; }
 .recording-detail-stage-title strong, .recording-detail-stage-title small { display: block; }
 .recording-detail-stage-title small { margin-top: .15rem; color: #8a94a6; }
@@ -885,6 +896,28 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         }
     }
 
+    async function pauseRecordingTask(button) {
+        const jobId = button?.dataset?.jobId;
+        if (!jobId || button.disabled) return;
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 暂停中';
+        try {
+            const response = await fetch(`/live-recording/jobs/${encodeURIComponent(jobId)}/pause`, {
+                method: 'POST',
+                headers: {'Accept': 'application/json'}
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '暂停投稿任务失败');
+            button.innerHTML = '<i class="bi bi-check2"></i> 已暂停';
+            window.setTimeout(() => refreshTasksData(true), 500);
+        } catch (error) {
+            button.innerHTML = original;
+            button.disabled = false;
+            showTaskErrorMessage(jobId.slice(0, 12), '暂停投稿任务失败', error.message);
+        }
+    }
+
     const recordingStageMeta = {
         detect: {name: '直播检测', icon: 'bi-radar'},
         record: {name: '录制安全收尾', icon: 'bi-record-circle'},
@@ -898,7 +931,9 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
     };
     const recordingStageStatusNames = {
         pending: '等待中',
+        queued: '等待投稿队列',
         running: '正在处理',
+        paused: '已暂停',
         completed: '已完成',
         failed: '失败',
         skipped: '已跳过',
@@ -909,6 +944,7 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         completed: '已完成',
         failed: '处理失败',
         dry_run: '待投稿',
+        paused: '已暂停',
     };
     const recordingDetailLabels = {
         video_path: '录播文件',
@@ -1025,7 +1061,7 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
                 stage.started_at ? `开始 ${formatRecordingDetailDate(stage.started_at)}` : '',
                 stage.finished_at ? `完成 ${formatRecordingDetailDate(stage.finished_at)}` : '',
             ].filter(Boolean).join(' · ') || `更新 ${formatRecordingDetailDate(stage.updated_at)}`;
-            const open = status === 'running' || status === 'failed';
+            const open = status === 'running' || status === 'queued' || status === 'failed';
             return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" ${open ? 'open' : ''}>
                 <summary>
                     <span class="recording-detail-stage-icon"><i class="bi ${escapeRecordingDetail(meta.icon)}"></i></span>
@@ -1044,6 +1080,8 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         const total = Number(job.total_stages || 6);
         const statusLabel = job.status === 'completed' ? '全部完成'
             : job.status === 'failed' ? (job.record_only ? '本地处理失败' : '等待人工审核')
+            : job.status === 'paused' ? '投稿已暂停，可恢复或删除'
+            : job.upload_queued ? `等待投稿队列（第 ${job.upload_queue_position || 1} 位）`
             : job.active_stage ? `正在${recordingStageMeta[job.active_stage]?.name || job.active_stage}`
             : `${completed}/${total} 步已完成`;
         const retryNotice = job.auto_retry_scheduled
@@ -1607,6 +1645,12 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
             if (btn.dataset.bindRecordingRetry === '1') return;
             btn.dataset.bindRecordingRetry = '1';
             btn.addEventListener('click', () => retryRecordingTask(btn));
+        });
+
+        queryAllWithin(root, '.recording-pause-btn').forEach(btn => {
+            if (btn.dataset.bindRecordingPause === '1') return;
+            btn.dataset.bindRecordingPause = '1';
+            btn.addEventListener('click', () => pauseRecordingTask(btn));
         });
 
         queryAllWithin(root, '.recording-progress-trigger').forEach(btn => {

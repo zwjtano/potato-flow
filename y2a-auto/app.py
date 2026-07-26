@@ -1291,6 +1291,19 @@ def live_recording_job_retry(fingerprint):
         return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
+@app.route('/live-recording/jobs/<fingerprint>/pause', methods=['POST'])
+@login_required
+def live_recording_job_pause(fingerprint):
+    try:
+        live_recorder_manager.pause_pipeline_job(fingerprint)
+        return jsonify({
+            'ok': True,
+            'message': '投稿任务已暂停，源文件和处理产物均已保留。',
+        })
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+
+
 @app.route('/live-recording/jobs/<fingerprint>/delete', methods=['POST'])
 @login_required
 def live_recording_job_delete(fingerprint):

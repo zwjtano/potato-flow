@@ -1,6 +1,9 @@
 import asyncio
+import concurrent.futures
 import importlib
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -90,6 +93,52 @@ class BilibiliUploadProgressTests(unittest.TestCase):
         self.assertEqual(detail["total_bytes"], 10 * 1024 * 1024)
         self.assertAlmostEqual(detail["speed_bytes_per_second"], 2 * 1024 * 1024)
         self.assertAlmostEqual(detail["eta_seconds"], 3.0)
+
+    def test_global_upload_queue_serializes_parallel_callers(self):
+        active = 0
+        maximum_active = 0
+        guard = threading.Lock()
+        statuses = {"one": [], "two": []}
+
+        def fake_upload(**_kwargs):
+            nonlocal active, maximum_active
+            with guard:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.08)
+            with guard:
+                active -= 1
+            return True, {"bvid": "BV1queue"}
+
+        with TemporaryDirectory() as temp_dir, patch.object(
+            bilibili_uploader,
+            "get_app_subdir",
+            return_value=temp_dir,
+        ), patch.object(
+            bilibili_uploader.BilibiliUploader,
+            "_upload_video_unlocked",
+            side_effect=fake_upload,
+        ):
+            uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+
+            def run(name):
+                return uploader.upload_video(
+                    video_file_path="video.flv",
+                    cover_file_path="cover.jpg",
+                    title="title",
+                    description="description",
+                    tags=[],
+                    partition_id=171,
+                    queue_status_callback=statuses[name].append,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(run, ("one", "two")))
+
+        self.assertEqual(maximum_active, 1)
+        self.assertEqual(statuses["one"], ["queued", "uploading"])
+        self.assertEqual(statuses["two"], ["queued", "uploading"])
+        self.assertTrue(all(result[0] for result in results))
 
 
 @unittest.skipIf(

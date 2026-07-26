@@ -7308,6 +7308,12 @@ class TaskProcessor:
                 return
 
         task_logger.info("等待获取上传锁...")
+        update_task(
+            task_id,
+            status=TASK_STATES['UPLOADING'],
+            upload_progress='等待投稿队列',
+            silent=True,
+        )
         try:
             assert upload_semaphore is not None, "upload_semaphore 应该已经初始化"
             with upload_semaphore:
@@ -7539,6 +7545,18 @@ class TaskProcessor:
                 last_progress_text = normalized_text
                 update_task(task_id, upload_progress=normalized_text, silent=True)
 
+            def _on_upload_queue_status(status):
+                update_task(
+                    task_id,
+                    status=TASK_STATES['UPLOADING'],
+                    upload_progress=(
+                        '等待投稿队列'
+                        if status == 'queued'
+                        else '正在连接 B站上传'
+                    ),
+                    silent=True,
+                )
+
             success, result = uploader.upload_video(
                 video_file_path=video_path,
                 cover_file_path=cover_path,
@@ -7549,6 +7567,7 @@ class TaskProcessor:
                 youtube_url=original_url,
                 task_id=task_id,
                 progress_callback=_on_progress,
+                queue_status_callback=_on_upload_queue_status,
                 title_limit=effective_limits['title_limit'],
                 description_limit=effective_limits['description_limit'],
             )

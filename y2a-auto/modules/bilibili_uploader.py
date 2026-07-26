@@ -19,6 +19,7 @@ from .bili_sdk.utils.network import Api
 from .bilibili_runtime import configure_bilibili_runtime
 from .bilibili_auth import load_credential_from_file, validate_credential_remote
 from .utils import get_app_subdir
+from .upload_queue import bilibili_upload_slot, default_bilibili_upload_lock
 
 BILIBILI_TITLE_LIMIT = 80
 BILIBILI_DESCRIPTION_LIMIT = 2000
@@ -547,6 +548,55 @@ class BilibiliUploader:
             return False, f"Bilibili稿件信息更新失败: {pretty_error}"
 
     def upload_video(
+        self,
+        video_file_path: Union[str, List[str]],
+        cover_file_path: str,
+        title: str,
+        description: str,
+        tags: List[str],
+        partition_id: Union[str, int],
+        youtube_url: str = "",
+        task_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
+        progress_detail_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+        title_limit: int = BILIBILI_TITLE_LIMIT,
+        description_limit: int = BILIBILI_DESCRIPTION_LIMIT,
+        page_titles: Optional[List[str]] = None,
+        existing_submission: Optional[dict] = None,
+        is_original: bool = False,
+        queue_status_callback: Optional[Callable[[str], None]] = None,
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Serialize every Bilibili submission across threads and bridge processes."""
+
+        def report(status: str) -> None:
+            if not queue_status_callback:
+                return
+            try:
+                queue_status_callback(status)
+            except Exception:
+                pass
+
+        lock_path = default_bilibili_upload_lock(get_app_subdir("temp"))
+        with bilibili_upload_slot(lock_path, report):
+            return self._upload_video_unlocked(
+                video_file_path=video_file_path,
+                cover_file_path=cover_file_path,
+                title=title,
+                description=description,
+                tags=tags,
+                partition_id=partition_id,
+                youtube_url=youtube_url,
+                task_id=task_id,
+                progress_callback=progress_callback,
+                progress_detail_callback=progress_detail_callback,
+                title_limit=title_limit,
+                description_limit=description_limit,
+                page_titles=page_titles,
+                existing_submission=existing_submission,
+                is_original=is_original,
+            )
+
+    def _upload_video_unlocked(
         self,
         video_file_path: Union[str, List[str]],
         cover_file_path: str,
