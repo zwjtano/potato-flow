@@ -15,7 +15,7 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("container_name: potato-flow", compose)
         self.assertIn("image: potato-flow:local", compose)
         self.assertIn(
-            '"${POTATO_RECORDINGS_DIR:-/vol1/1000/media/录播}:/data/recordings"',
+            '"${POTATO_RECORDINGS_DIR:-./recordings}:/data/recordings"',
             compose,
         )
 
@@ -44,6 +44,14 @@ class DockerPackagingTests(unittest.TestCase):
         )
         for directory in ("config", "cookies", "db", "recordings", "temp"):
             self.assertIn(f'"${{DATA_DIR}}/{directory}"', entrypoint)
+        self.assertIn(
+            'link_persistent_path "${DATA_DIR}/recordings" "${APP_DIR}/recordings"',
+            entrypoint,
+        )
+        self.assertIn(
+            'link_persistent_path "${APP_DIR}/recordings" "${Y2A_DIR}/recordings"',
+            entrypoint,
+        )
         self.assertIn("chown -R biliup-y2a:biliup-y2a", entrypoint)
         self.assertIn("exec gosu biliup-y2a", entrypoint)
 

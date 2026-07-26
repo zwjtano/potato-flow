@@ -270,7 +270,7 @@
 <script>
 document.querySelectorAll('.recording-review-retry').forEach((button) => {
     button.addEventListener('click', async () => {
-        if (!window.confirm('确认已检查错误信息，并重新执行这个录播任务吗？')) return;
+        if (!(await window.PotatoUI.confirm('请确认已经检查错误信息。任务将从失败步骤重新执行。', {title: '重试录播任务？', confirmText: '重新执行'}))) return;
         button.disabled = true;
         const original = button.innerHTML;
         button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>正在启动';
@@ -283,7 +283,7 @@ document.querySelectorAll('.recording-review-retry').forEach((button) => {
             if (!response.ok || !result.ok) throw new Error(result.error || '重试失败');
             window.location.reload();
         } catch (error) {
-            window.alert(error.message || '重试失败');
+            window.PotatoUI.notify(error.message || '重试失败', 'danger');
             button.disabled = false;
             button.innerHTML = original;
         }

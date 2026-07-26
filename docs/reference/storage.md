@@ -5,10 +5,12 @@
 ```text
 potato-flow/
 ├── docker-data/                  # Cookie、数据库、配置、日志、AI 产物
+├── recordings/                   # 默认录播视频、XML 与 ASS
 ├── docker-compose.yml
-└── .env                         # 可选：自定义录播目录
+├── .env.example
+└── .env                          # 可选：自定义宿主机录播目录
 
-/vol1/1000/media/录播/
+recordings/
 └── 主播名_直播间标题_YYYY-MM-DD_HH-MM/
     ├── 主播名_直播间标题_YYYY-MM-DD_HH-MM.flv
     ├── 主播名_直播间标题_YYYY-MM-DD_HH-MM.xml
@@ -31,4 +33,3 @@ potato-flow/
 ```
 
 同一场直播的分段放在同一个文件夹内。文件名不应暴露内部房间哈希；历史任务中的短哈希仅用于兼容旧数据。
-

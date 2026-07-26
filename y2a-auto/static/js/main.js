@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const logCleanupHoursField = document.getElementById('log-cleanup-hours');
     const cleanupHoursHidden = document.getElementById('cleanup-hours-input');
     if(manualCleanupBtn) {
-        manualCleanupBtn.addEventListener('click', function() {
+        manualCleanupBtn.addEventListener('click', async function() {
             // 使用当前输入的小时数（若存在）
             if (logCleanupHoursField && cleanupHoursHidden) {
                 const hours = parseInt(logCleanupHoursField.value, 10);
@@ -57,7 +57,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             const confirmMsg = `确定要手动清理旧日志吗？将删除 ${cleanupHoursHidden ? cleanupHoursHidden.value : ''} 小时前的日志文件。`;
-            if (confirm(confirmMsg)) {
+            if (await window.PotatoUI.confirm(confirmMsg, {title: '清理旧日志', confirmText: '开始清理', danger: true})) {
                 const form = document.getElementById('cleanup-form');
                 if (form) form.submit();
             }
@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const downloadCleanupHoursField = document.getElementById('download-cleanup-hours');
     const downloadCleanupHoursHidden = document.getElementById('download-cleanup-hours-input');
     if(manualDownloadCleanupBtn) {
-        manualDownloadCleanupBtn.addEventListener('click', function() {
+        manualDownloadCleanupBtn.addEventListener('click', async function() {
             // 使用当前输入的小时数（若存在）
             if (downloadCleanupHoursField && downloadCleanupHoursHidden) {
                 const hours = parseInt(downloadCleanupHoursField.value, 10);
@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             const confirmMsg = `确定要手动清理旧的下载内容吗？将删除 ${downloadCleanupHoursHidden ? downloadCleanupHoursHidden.value : ''} 小时前的下载文件和目录。`;
-            if (confirm(confirmMsg)) {
+            if (await window.PotatoUI.confirm(confirmMsg, {title: '清理下载内容', confirmText: '开始清理', danger: true})) {
                 const form = document.getElementById('download-cleanup-form');
                 if (form) form.submit();
             }

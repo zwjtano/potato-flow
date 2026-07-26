@@ -7,6 +7,52 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BrandingTests(unittest.TestCase):
+    def test_live_room_delete_uses_centered_modal_and_flash_auto_dismisses(self):
+        live_template = (
+            ROOT / "y2a-auto" / "templates" / "live_recording.html"
+        ).read_text(encoding="utf-8")
+        base_template = (
+            ROOT / "y2a-auto" / "templates" / "base.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('id="deleteRoomConfirmModal"', live_template)
+        self.assertIn('data-action="confirm-delete-room"', live_template)
+        self.assertNotIn(
+            "onsubmit=\"return confirm('确定删除这个直播间",
+            live_template,
+        )
+        self.assertIn('data-auto-dismiss=', base_template)
+        self.assertIn("bootstrap.Alert.getOrCreateInstance", base_template)
+
+    def test_native_browser_dialogs_are_replaced_by_shared_ui(self):
+        base_template = (
+            ROOT / "y2a-auto" / "templates" / "base.html"
+        ).read_text(encoding="utf-8")
+        sources = list((ROOT / "y2a-auto" / "templates").glob("*.html"))
+        sources.extend((ROOT / "y2a-auto" / "static" / "js").glob("*.js"))
+
+        self.assertIn('id="appConfirmModal"', base_template)
+        self.assertIn("window.PotatoUI", base_template)
+        self.assertIn('id="appToastStack"', base_template)
+        for path in sources:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertNotRegex(text, r"(?<!PotatoUI\.)\b(?:window\.)?confirm\s*\(")
+                self.assertNotRegex(text, r"(?<!PotatoUI\.)\b(?:window\.)?alert\s*\(")
+                self.assertNotRegex(text, r"\b(?:window\.)?prompt\s*\(")
+
+    def test_settings_exposes_recordings_directory(self):
+        settings_template = (
+            ROOT / "y2a-auto" / "templates" / "settings.html"
+        ).read_text(encoding="utf-8")
+        config_source = (
+            ROOT / "y2a-auto" / "modules" / "config_manager.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('name="RECORDINGS_PATH"', settings_template)
+        self.assertIn("potato-flow/recordings/", settings_template)
+        self.assertIn('"RECORDINGS_PATH": "recordings"', config_source)
+
     def test_tasks_page_uses_manual_refresh_without_detail_polling(self):
         template = (ROOT / "y2a-auto" / "templates" / "tasks.html").read_text(
             encoding="utf-8"

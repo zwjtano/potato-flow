@@ -16,9 +16,6 @@ Docker 是 PotatoFlow 在 Linux 上的推荐安装方式。仓库只启动一个
 git clone https://github.com/zwjtano/potato-flow.git
 cd potato-flow
 
-sudo mkdir -p "/vol1/1000/media/录播"
-sudo chown 1000:1000 "/vol1/1000/media/录播"
-
 docker compose up -d --build
 ```
 
@@ -30,7 +27,7 @@ http://服务器IP:5001/
 
 ## 修改录播目录
 
-默认宿主机目录是 `/vol1/1000/media/录播`。要换目录，在项目根目录创建 `.env`：
+默认宿主机目录是仓库根目录的 `recordings/`。要换目录，复制 `.env.example` 为 `.env`：
 
 ```dotenv
 POTATO_RECORDINGS_DIR=/你的录播目录
@@ -41,6 +38,9 @@ POTATO_RECORDINGS_DIR=/你的录播目录
 ```bash
 docker compose up -d --build
 ```
+
+!!! warning "旧版目录迁移"
+    从使用 `/vol1/1000/media/录播` 的旧版升级时，原文件不会被删除。要继续原地使用它们，请在 `.env` 设置 `POTATO_RECORDINGS_DIR=/vol1/1000/media/录播`；也可以在停止录制后，把旧目录内容移动到项目的 `recordings/`。
 
 ## 检查状态
 
@@ -54,4 +54,3 @@ curl http://127.0.0.1:5001/api/version
 
 !!! warning "不要删除持久化目录"
     `docker-data/` 保存 Cookie、AI 设置、直播间、任务数据库和日志；录播文件保存在 `POTATO_RECORDINGS_DIR`。删除容器不会删除它们，但手动删除目录会丢失数据。
-

@@ -29,6 +29,7 @@
 **/target/
 
 # Runtime credentials and private configuration
+.env
 bridge.config.json
 .bridge/
 y2a-auto/config/*
@@ -43,6 +44,7 @@ y2a-auto/logs/
 y2a-auto/temp/
 y2a-auto/downloads/
 y2a-auto/recordings/
+recordings/
 y2a-auto/static/covers/
 y2a-auto/ffmpeg/
 upstream-biliup/data/

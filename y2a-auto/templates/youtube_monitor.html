@@ -6,7 +6,7 @@
 <div class="studio-page-header">
     <div><div class="page-eyebrow">YOUTUBE WATCHER</div><h1>YouTube 监控</h1><p>按频道或关键词持续发现内容并自动创建投稿任务。</p></div>
     <div class="page-actions">
-        <form method="POST" action="{{ url_for('youtube_monitor_restore_configs') }}" class="d-inline me-2" onsubmit="return confirm('确定要从配置文件恢复监控配置吗？这将从 config/youtube_monitor/ 目录中读取配置文件并恢复到数据库中。')">
+        <form method="POST" action="{{ url_for('youtube_monitor_restore_configs') }}" class="d-inline me-2" data-confirm="将从 config/youtube_monitor/ 目录读取配置并恢复到数据库。" data-confirm-title="恢复监控配置？" data-confirm-button="确认恢复">
             <button type="submit" class="btn btn-outline-info">
                 <i class="bi bi-arrow-clockwise"></i> 恢复配置
             </button>
@@ -129,7 +129,7 @@
                                 <a href="{{ url_for('youtube_monitor_config_edit', config_id=config.id) }}" class="btn btn-outline-warning btn-icon" title="编辑">
                                     <i class="bi bi-pencil"></i>
                                 </a>
-                                <form method="POST" action="{{ url_for('youtube_monitor_config_delete', config_id=config.id) }}" class="d-inline" onsubmit="return confirm('确定要删除监控配置 ' + {{ config.name|tojson }} + ' 吗？')">
+                                <form method="POST" action="{{ url_for('youtube_monitor_config_delete', config_id=config.id) }}" class="d-inline" data-confirm="删除后将停止这项监控配置。" data-confirm-title="删除“{{ config.name }}”？" data-confirm-button="确认删除" data-confirm-danger="true">
                                     <button type="submit" class="btn btn-outline-danger btn-icon" title="删除">
                                         <i class="bi bi-trash"></i>
                                     </button>
@@ -155,7 +155,7 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
         <div class="studio-section-title"><span class="section-icon"><i class="bi bi-clock-history"></i></span><div><h2>最近运行记录</h2><p>检查监控执行结果与发现的视频。</p></div></div>
             {% if history %}
-            <form method="POST" action="{{ url_for('youtube_monitor_clear_all_history') }}" class="d-inline" onsubmit="return confirm('确定要清除所有监控历史记录吗？此操作不可恢复！')">
+            <form method="POST" action="{{ url_for('youtube_monitor_clear_all_history') }}" class="d-inline" data-confirm="所有监控历史记录将被永久清除，此操作不可恢复。" data-confirm-title="清除全部历史？" data-confirm-button="确认清除" data-confirm-danger="true">
                 <button type="submit" class="btn btn-outline-danger btn-sm">
                     <i class="bi bi-trash"></i> 清除所有历史记录
                 </button>
@@ -413,8 +413,8 @@ function bindMonitorRunForms() {
     });
 }
 
-function addToTasks(videoId, configId) {
-    if (!confirm('确定要将此视频添加到任务队列吗？')) {
+async function addToTasks(videoId, configId) {
+    if (!(await window.PotatoUI.confirm('视频将进入上传任务队列，可继续在任务详情中检查。', {title: '添加到任务队列？', confirmText: '确认添加'}))) {
         return;
     }
     

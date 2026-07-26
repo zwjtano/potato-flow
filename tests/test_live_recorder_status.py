@@ -33,6 +33,37 @@ class LiveRecorderStatusTests(unittest.TestCase):
             },
         ]
 
+    def test_default_recordings_directory_is_project_root_recordings(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            recorder_module,
+            "RECORDINGS_DIR",
+            Path(temp) / "recordings",
+        ), mock.patch(
+            "modules.config_manager.load_config",
+            return_value={"RECORDINGS_PATH": "recordings"},
+        ):
+            self.assertEqual(
+                recorder_module.recordings_dir(),
+                Path(temp) / "recordings",
+            )
+
+    def test_custom_relative_recordings_directory_resolves_from_workspace(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            recorder_module,
+            "WORKSPACE_ROOT",
+            Path(temp),
+        ), mock.patch(
+            "modules.config_manager.load_config",
+            return_value={"RECORDINGS_PATH": "media/live"},
+        ):
+            expected = (Path(temp) / "media" / "live").resolve()
+            self.assertEqual(recorder_module.recordings_dir(), expected)
+            self.assertEqual(
+                recorder_module.validate_recordings_dir("media/live"),
+                expected,
+            )
+            self.assertTrue(expected.is_dir())
+
     def test_atomic_json_writes_through_persistent_symlink(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -102,7 +102,7 @@
             <i class="bi bi-pencil"></i> 编辑配置
         </a>
         {% if history %}
-        <form method="POST" action="{{ url_for('youtube_monitor_clear_history', config_id=config.id) }}" class="d-inline" onsubmit="return confirm('确定要清除该配置的所有历史记录吗？此操作不可恢复！')">
+        <form method="POST" action="{{ url_for('youtube_monitor_clear_history', config_id=config.id) }}" class="d-inline" data-confirm="该配置的所有历史记录将被永久清除，此操作不可恢复。" data-confirm-title="清除历史记录？" data-confirm-button="确认清除" data-confirm-danger="true">
             <button type="submit" class="btn btn-danger">
                 <i class="bi bi-trash"></i> 清除历史记录
             </button>
@@ -338,8 +338,8 @@ function bindMonitorRunForms() {
     });
 }
 
-function addToTasks(videoId, configId) {
-    if (!confirm('确定要将此视频添加到任务队列吗？')) {
+async function addToTasks(videoId, configId) {
+    if (!(await window.PotatoUI.confirm('视频将进入上传任务队列，可继续在任务详情中检查。', {title: '添加到任务队列？', confirmText: '确认添加'}))) {
         return;
     }
     

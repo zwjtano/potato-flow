@@ -28,7 +28,12 @@ from modules.task_manager import add_task, start_task, get_task, get_tasks_pagin
 from modules.bilibili_auth import BilibiliQrLoginSession
 from queue import Empty
 from modules.youtube_monitor import youtube_monitor
-from modules.live_recorder_manager import RecorderConfigError, live_recorder_manager
+from modules.live_recorder_manager import (
+    RecorderConfigError,
+    live_recorder_manager,
+    recordings_dir,
+    validate_recordings_dir,
+)
 from modules.speech_pipeline_settings import (
     SPEECH_PIPELINE_CHECKBOXES,
     SPEECH_PIPELINE_FLOAT_FIELDS,
@@ -709,6 +714,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
     form_data = dict(form_data or {})
     uploads = uploads or {}
     messages = []
+    previous_recordings_path = str(load_config().get('RECORDINGS_PATH') or 'recordings').strip()
     progress_reporter = _build_settings_progress_reporter(operation_id)
 
     def report(stage: str, message: str, detail: str = '', percent=None, level: str = 'info', downloaded_bytes=None, total_bytes=None):
@@ -871,8 +877,39 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
         if 'SUBTITLE_FONT_NAME' in form_data:
             form_data['SUBTITLE_FONT_NAME'] = str(form_data['SUBTITLE_FONT_NAME']).strip()
 
+        if 'RECORDINGS_PATH' in form_data:
+            requested_recordings_path = str(form_data.get('RECORDINGS_PATH') or 'recordings').strip()
+            validate_recordings_dir(requested_recordings_path)
+            form_data['RECORDINGS_PATH'] = requested_recordings_path or 'recordings'
+
         _persist_settings_uploads(form_data, uploads)
         updated_config = update_config(form_data)
+        recordings_path_changed = (
+            str(updated_config.get('RECORDINGS_PATH') or 'recordings').strip()
+            != previous_recordings_path
+        )
+        if recordings_path_changed:
+            try:
+                reload_state = live_recorder_manager.refresh_credentials()
+                effective_path = recordings_dir()
+                if reload_state == 'pending':
+                    _append_settings_message(
+                        messages,
+                        'success',
+                        f'录播目录已改为 {effective_path}；当前录制结束后自动切换。',
+                    )
+                else:
+                    _append_settings_message(
+                        messages,
+                        'success',
+                        f'录播目录已改为 {effective_path}。',
+                    )
+            except RecorderConfigError as exc:
+                _append_settings_message(
+                    messages,
+                    'warning',
+                    f'录播目录已保存，但录制 worker 未能自动重载：{exc}',
+                )
         if (
             'DOUYIN_COOKIES_PATH' in form_data
             or 'douyin_cookies_file' in uploads
@@ -3049,6 +3086,7 @@ def settings():
         whisper_languages=WHISPER_LANGUAGE_LIST,
         bilibili_partition_mapping=bilibili_partition_mapping,
         builtin_prompts=builtin_prompts,
+        recordings_path=str(recordings_dir()),
     )
 
 

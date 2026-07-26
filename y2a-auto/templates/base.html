@@ -61,7 +61,12 @@
             {% if messages %}
                 <div class="flash-messages">
                     {% for category, message in messages %}
-                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                        <div class="alert alert-{{ category }} alert-dismissible fade show"
+                             role="status"
+                             data-auto-dismiss="{{ 12000 if category == 'danger' else (8000 if category == 'warning' else 4500) }}">
+                            <span>{{ message }}</span>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭提示"></button>
+                        </div>
                     {% endfor %}
                 </div>
             {% endif %}
@@ -75,6 +80,26 @@
         <div class="offcanvas-header"><h5 class="offcanvas-title">土豆录播姬</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="关闭"></button></div>
         <div class="offcanvas-body app-mobile-nav"></div>
     </div>
+
+    <div class="modal fade app-confirm-modal" id="appConfirmModal" tabindex="-1" aria-labelledby="appConfirmTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body">
+                    <div class="app-confirm-icon" data-role="confirm-icon"><i class="bi bi-question-lg"></i></div>
+                    <div class="app-confirm-copy">
+                        <span class="app-confirm-eyebrow">POTATOFLOW</span>
+                        <h5 id="appConfirmTitle" data-role="confirm-title">请确认操作</h5>
+                        <p data-role="confirm-message"></p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-light border" type="button" data-bs-dismiss="modal">取消</button>
+                    <button class="btn btn-primary" type="button" data-role="confirm-submit">确认</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="app-toast-stack" id="appToastStack" aria-live="polite" aria-atomic="true"></div>
     
     <!-- 实时通知模态框 -->
     <div class="modal fade" id="notificationModal" tabindex="-1" aria-hidden="true">
@@ -97,6 +122,75 @@
     
     <!-- 使用本地Bootstrap JS Bundle -->
     <script src="{{ url_for('static', filename='lib/bootstrap/bootstrap.bundle.min.js') }}"></script>
+    <script>
+    (function () {
+        const modalElement = document.getElementById('appConfirmModal');
+        const titleElement = modalElement.querySelector('[data-role="confirm-title"]');
+        const messageElement = modalElement.querySelector('[data-role="confirm-message"]');
+        const iconElement = modalElement.querySelector('[data-role="confirm-icon"]');
+        const submitButton = modalElement.querySelector('[data-role="confirm-submit"]');
+        let resolver = null;
+
+        function finish(result) {
+            if (!resolver) return;
+            const resolve = resolver;
+            resolver = null;
+            resolve(result);
+        }
+
+        window.PotatoUI = {
+            confirm: function (message, options) {
+                const config = options || {};
+                titleElement.textContent = config.title || '请确认操作';
+                messageElement.textContent = message || '';
+                submitButton.textContent = config.confirmText || '确认';
+                submitButton.className = 'btn ' + (config.danger ? 'btn-danger' : 'btn-primary');
+                iconElement.classList.toggle('danger', Boolean(config.danger));
+                return new Promise(function (resolve) {
+                    if (resolver) resolver(false);
+                    resolver = resolve;
+                    bootstrap.Modal.getOrCreateInstance(modalElement).show();
+                });
+            },
+            notify: function (message, type, duration) {
+                const stack = document.getElementById('appToastStack');
+                const tone = ['success', 'warning', 'danger', 'info'].includes(type) ? type : 'info';
+                const icon = {success:'bi-check-circle-fill', warning:'bi-exclamation-triangle-fill', danger:'bi-x-circle-fill', info:'bi-info-circle-fill'}[tone];
+                const item = document.createElement('div');
+                item.className = 'app-toast app-toast-' + tone;
+                item.innerHTML = '<i class="bi ' + icon + '"></i><span></span><button type="button" aria-label="关闭"><i class="bi bi-x-lg"></i></button>';
+                item.querySelector('span').textContent = message || '';
+                const close = function () {
+                    item.classList.add('leaving');
+                    window.setTimeout(function () { item.remove(); }, 180);
+                };
+                item.querySelector('button').addEventListener('click', close);
+                stack.appendChild(item);
+                window.setTimeout(close, Number(duration) || (tone === 'danger' ? 8000 : 4500));
+            }
+        };
+
+        submitButton.addEventListener('click', function () {
+            finish(true);
+            bootstrap.Modal.getOrCreateInstance(modalElement).hide();
+        });
+        modalElement.addEventListener('hidden.bs.modal', function () { finish(false); });
+
+        document.addEventListener('submit', async function (event) {
+            const form = event.target.closest('form[data-confirm]');
+            if (!form || form.dataset.confirmed === 'true') return;
+            event.preventDefault();
+            const accepted = await window.PotatoUI.confirm(form.dataset.confirm, {
+                title: form.dataset.confirmTitle || '请确认操作',
+                confirmText: form.dataset.confirmButton || '确认',
+                danger: form.dataset.confirmDanger === 'true'
+            });
+            if (!accepted) return;
+            form.dataset.confirmed = 'true';
+            form.requestSubmit();
+        });
+    }());
+    </script>
     <!-- 自定义JS -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script>
@@ -108,6 +202,13 @@
         const renderClock = () => { if (clock) clock.textContent = new Date().toLocaleString('zh-CN', {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false}); };
         renderClock();
         window.setInterval(renderClock, 60000);
+        document.querySelectorAll('.flash-messages .alert[data-auto-dismiss]').forEach(function (alertElement) {
+            const delay = Number(alertElement.dataset.autoDismiss || 4500);
+            window.setTimeout(function () {
+                if (!alertElement.isConnected) return;
+                bootstrap.Alert.getOrCreateInstance(alertElement).close();
+            }, delay);
+        });
     });
     </script>
 

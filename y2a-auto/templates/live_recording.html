@@ -73,7 +73,9 @@
                 <div class="detail-actions">
                     <span class="detail-status {{ room.runtime.state }}" data-role="detail-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
                     <button class="btn btn-sm {{ 'btn-outline-danger' if recorder_status.running and room.runtime.manual_enabled else 'btn-primary' }} manual-record-toggle" type="button" data-action="room-recording" data-room="{{ room.id }}" data-enabled="{{ 'true' if recorder_status.running and room.runtime.manual_enabled else 'false' }}" title="{{ '安全停止当前录制并暂停自动检测' if recorder_status.running and room.runtime.manual_enabled else '启动引擎并开始检测录制' }}"><i class="bi {{ 'bi-stop-fill' if recorder_status.running and room.runtime.manual_enabled else 'bi-record-circle' }}"></i> <span>{{ '停止录制' if recorder_status.running and room.runtime.manual_enabled else '开始录制' }}</span></button>
-                    <form method="post" action="{{ url_for('live_recording_delete_room', room_id=room.id) }}" onsubmit="return confirm('确定删除这个直播间？\n如果其他直播间正在录制，worker 会在录制结束后自动重载。')"><button class="btn btn-light border" type="submit" title="删除直播间"><i class="bi bi-trash3"></i></button></form>
+                    <form class="delete-room-form" method="post" action="{{ url_for('live_recording_delete_room', room_id=room.id) }}" data-room-name="{{ room.name }}">
+                        <button class="btn btn-light border" type="button" data-action="delete-room" title="删除直播间" aria-label="删除直播间 {{ room.name }}"><i class="bi bi-trash3"></i></button>
+                    </form>
                 </div>
             </header>
 
@@ -293,6 +295,25 @@
         <i class="bi bi-check-circle-fill room-resolve-ok"></i>
     </div>
 </div><div class="modal-footer"><button type="button" class="btn btn-light border" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit" data-role="room-submit" disabled><i class="bi bi-plus-lg"></i> 识别并添加</button></div></form></div></div></div>
+<div class="modal fade delete-room-modal" id="deleteRoomConfirmModal" tabindex="-1" aria-labelledby="deleteRoomConfirmTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="delete-room-icon" aria-hidden="true"><i class="bi bi-trash3"></i></div>
+                <div class="delete-room-copy">
+                    <span class="delete-room-eyebrow">REMOVE LIVE ROOM</span>
+                    <h5 id="deleteRoomConfirmTitle">删除直播间？</h5>
+                    <p>即将删除 <strong data-role="delete-room-name">当前直播间</strong> 的监控配置。</p>
+                    <div class="delete-room-note"><i class="bi bi-shield-check"></i><span>已有录播文件和上传任务不会被删除。其他直播间正在录制时，worker 会在安全结束后自动重载。</span></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-light border" type="button" data-bs-dismiss="modal">取消</button>
+                <button class="btn btn-danger" type="button" data-action="confirm-delete-room"><i class="bi bi-trash3"></i> 确认删除</button>
+            </div>
+        </div>
+    </div>
+</div>
 <div class="modal fade stop-recording-modal" id="stopRecordingConfirmModal" tabindex="-1" aria-labelledby="stopRecordingConfirmTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -345,9 +366,13 @@ document.addEventListener('DOMContentLoaded', function () {
     const roomResolveSpinner = addRoomForm?.querySelector('[data-role="room-resolve-spinner"]');
     const roomResolveError = addRoomForm?.querySelector('[data-role="room-resolve-error"]');
     const roomResolvePreview = addRoomForm?.querySelector('[data-role="room-resolve-preview"]');
+    const deleteRoomModalElement = document.getElementById('deleteRoomConfirmModal');
+    const deleteRoomName = deleteRoomModalElement?.querySelector('[data-role="delete-room-name"]');
+    const confirmDeleteRoomButton = deleteRoomModalElement?.querySelector('[data-action="confirm-delete-room"]');
     const stopConfirmModalElement = document.getElementById('stopRecordingConfirmModal');
     const stopConfirmButton = stopConfirmModalElement?.querySelector('[data-action="confirm-stop-recording"]');
     let stopConfirmResolve = null;
+    let pendingDeleteRoomForm = null;
     let roomResolveTimer = null;
     let resolvedRoomUrl = '';
     let recordingFiles = [];
@@ -357,6 +382,27 @@ document.addEventListener('DOMContentLoaded', function () {
         /[&<>"']/g,
         char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])
     );
+    document.querySelectorAll('[data-action="delete-room"]').forEach(button => {
+        button.addEventListener('click', function () {
+            pendingDeleteRoomForm = button.closest('.delete-room-form');
+            if (!pendingDeleteRoomForm || !deleteRoomModalElement) return;
+            if (deleteRoomName) deleteRoomName.textContent = pendingDeleteRoomForm.dataset.roomName || '当前直播间';
+            bootstrap.Modal.getOrCreateInstance(deleteRoomModalElement).show();
+        });
+    });
+    confirmDeleteRoomButton?.addEventListener('click', function () {
+        if (!pendingDeleteRoomForm) return;
+        confirmDeleteRoomButton.disabled = true;
+        confirmDeleteRoomButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 删除中';
+        pendingDeleteRoomForm.submit();
+    });
+    deleteRoomModalElement?.addEventListener('hidden.bs.modal', function () {
+        pendingDeleteRoomForm = null;
+        if (confirmDeleteRoomButton) {
+            confirmDeleteRoomButton.disabled = false;
+            confirmDeleteRoomButton.innerHTML = '<i class="bi bi-trash3"></i> 确认删除';
+        }
+    });
     document.querySelectorAll('.room-reference-file-input').forEach(input => {
         input.addEventListener('change', function () {
             const file = input.files?.[0];
@@ -508,7 +554,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     async function deleteSelectedFiles(event) {
         const ids = [...selectedRecordingFileIds];
-        if (!ids.length || !confirm(`确定永久删除所选的 ${ids.length} 个文件？\n正在录制或处理中的文件会受到保护。`)) return;
+        if (!ids.length || !(await window.PotatoUI.confirm(`将永久删除所选的 ${ids.length} 个文件。\n正在录制或处理中的文件会受到保护。`, {title: '批量删除录播文件？', confirmText: '确认删除', danger: true}))) return;
         const button = event.currentTarget;
         button.disabled = true;
         button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 删除中';
@@ -521,10 +567,10 @@ document.addEventListener('DOMContentLoaded', function () {
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '批量删除失败');
             (result.deleted || []).forEach(file => selectedRecordingFileIds.delete(file.id));
-            if (result.failed_count) alert(`已删除 ${result.deleted_count} 个文件，${result.failed_count} 个文件未删除（可能正在录制或处理）。`);
+            if (result.failed_count) window.PotatoUI.notify(`已删除 ${result.deleted_count} 个文件，${result.failed_count} 个文件未删除（可能正在录制或处理）。`, 'warning');
             await loadFiles();
         } catch (error) {
-            alert(error.message);
+            window.PotatoUI.notify(error.message, 'danger');
         } finally {
             button.innerHTML = '<i class="bi bi-trash3"></i> 删除所选';
             updateFileSelectionControls();
@@ -550,11 +596,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     async function deleteFile(event) {
         const button = event.currentTarget;
-        if (!confirm(`确定永久删除“${button.dataset.name}”？\n此操作不可恢复。`)) return;
+        if (!(await window.PotatoUI.confirm(`“${button.dataset.name}”将被永久删除，此操作不可恢复。`, {title: '删除录播文件？', confirmText: '确认删除', danger: true}))) return;
         button.disabled = true;
         const response = await fetch(`/live-recording/files/${encodeURIComponent(button.dataset.id)}/delete`, {method: 'POST', headers: {'Accept': 'application/json'}});
         const result = await response.json();
-        if (!response.ok) { alert(result.error || '删除失败'); button.disabled = false; return; }
+        if (!response.ok) { window.PotatoUI.notify(result.error || '删除失败', 'danger'); button.disabled = false; return; }
         selectedRecordingFileIds.delete(button.dataset.id);
         await loadFiles();
     }
@@ -632,7 +678,7 @@ document.addEventListener('DOMContentLoaded', function () {
             await new Promise(resolve => window.setTimeout(resolve, 650));
             await refreshLiveStatus();
         } catch (error) {
-            alert(error.message);
+            window.PotatoUI.notify(error.message, 'danger');
             button.innerHTML = original;
         } finally {
             button.disabled = false;

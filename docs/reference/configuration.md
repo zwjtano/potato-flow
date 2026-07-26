@@ -7,7 +7,7 @@
 | `PORT` | `5001` | WebUI 与 API 端口 |
 | `TZ` | `Asia/Shanghai` | 容器时区 |
 | `AUTO_START_RECORDER` | `1` | 自动启动内部录制 worker |
-| `POTATO_RECORDINGS_DIR` | `/vol1/1000/media/录播` | 宿主机录播目录 |
+| `POTATO_RECORDINGS_DIR` | `./recordings` | Docker 宿主机录播目录 |
 
 ## 录播桥接配置
 
@@ -26,3 +26,6 @@
 
 直播间自己的分段、分P、仅录制和 AI 提示词保存在持久化配置中，优先级高于系统默认值。
 
+## 录播文件夹
+
+“系统设置 → 运维与安全 → 录播文件夹”中的 `RECORDINGS_PATH` 控制程序内部使用的目录，默认值为 `recordings`，即项目根目录的 `potato-flow/recordings/`。Docker 用户更换宿主机磁盘时，还需要修改 `.env` 中的 `POTATO_RECORDINGS_DIR` 并重启容器。

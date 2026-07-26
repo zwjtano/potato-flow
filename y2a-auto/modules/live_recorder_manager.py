@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 APP_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = APP_ROOT.parent
 CONFIG_DIR = APP_ROOT / "config"
-RECORDINGS_DIR = APP_ROOT / "recordings"
+RECORDINGS_DIR = WORKSPACE_ROOT / "recordings"
 ROOMS_PATH = CONFIG_DIR / "live_recorders.json"
 BILIUP_CONFIG_PATH = CONFIG_DIR / "biliup.generated.yaml"
 BRIDGE_CONFIG_PATH = WORKSPACE_ROOT / "bridge.config.json"
@@ -62,6 +62,38 @@ DEFAULT_RECORDING_SEGMENT_MINUTES = 60
 
 class RecorderConfigError(ValueError):
     pass
+
+
+def recordings_dir(value: Any = None) -> Path:
+    """Resolve the configured recording directory."""
+    raw = value
+    if raw is None:
+        try:
+            from .config_manager import load_config
+
+            raw = load_config().get("RECORDINGS_PATH", "recordings")
+        except Exception:
+            raw = "recordings"
+    text = str(raw or "recordings").strip()
+    if "\x00" in text:
+        raise RecorderConfigError("录播目录包含非法字符")
+    if text in {".", "recordings", "./recordings"}:
+        return Path(RECORDINGS_DIR)
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = WORKSPACE_ROOT / path
+    return path.resolve(strict=False)
+
+
+def validate_recordings_dir(value: Any) -> Path:
+    path = recordings_dir(value)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        if not path.is_dir():
+            raise OSError("目标不是文件夹")
+    except OSError as exc:
+        raise RecorderConfigError(f"无法使用录播目录“{path}”：{exc}") from exc
+    return path
 
 
 def _atomic_json(path: Path, value: Any) -> None:
@@ -523,11 +555,12 @@ class LiveRecorderManager:
             for room in rooms
             if room.get("runtime", {}).get("recording")
         }
-        if not active_markers or not RECORDINGS_DIR.is_dir():
+        root = recordings_dir()
+        if not active_markers or not root.is_dir():
             return rooms
 
         latest_by_marker: dict[str, tuple[float, Path, int]] = {}
-        for path in RECORDINGS_DIR.rglob("*"):
+        for path in root.rglob("*"):
             if not path.is_file() or _recording_file_type(path) != "video":
                 continue
             marker = next((value for value in active_markers if value in path.name), "")
@@ -966,9 +999,9 @@ class LiveRecorderManager:
 
     def sync_configs(self, rooms: list[dict[str, Any]] | None = None) -> None:
         rooms = rooms if rooms is not None else self.list_rooms()
+        root = validate_recordings_dir(None)
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-        (RECORDINGS_DIR / "data").mkdir(parents=True, exist_ok=True)
+        (root / "data").mkdir(parents=True, exist_ok=True)
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         PID_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1150,7 +1183,7 @@ class LiveRecorderManager:
             "binary_ready": self.binary_path.is_file() and os.access(self.binary_path, os.X_OK),
             "binary_path": str(self.binary_path),
             "config_path": str(BILIUP_CONFIG_PATH),
-            "recordings_path": str(RECORDINGS_DIR),
+            "recordings_path": str(recordings_dir()),
         }
 
     def start(self) -> dict[str, Any]:
@@ -1179,7 +1212,7 @@ class LiveRecorderManager:
                     "--status-file",
                     str(STATUS_PATH),
                 ],
-                cwd=RECORDINGS_DIR,
+                cwd=recordings_dir(),
                 stdout=self._log_handle,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -1319,9 +1352,10 @@ class LiveRecorderManager:
         }
         cutoff = time.time() - max(0, minimum_age_seconds)
         candidates: list[tuple[Path, str]] = []
-        if not RECORDINGS_DIR.is_dir():
+        root = recordings_dir()
+        if not root.is_dir():
             return candidates
-        for path in RECORDINGS_DIR.rglob("*"):
+        for path in root.rglob("*"):
             if not path.is_file() or path.suffix.lower() not in video_suffixes:
                 continue
             resolved = path.resolve()
@@ -1399,7 +1433,7 @@ class LiveRecorderManager:
 
     def _recording_file_roots(self) -> dict[str, Path]:
         return {
-            "recordings": RECORDINGS_DIR.resolve(),
+            "recordings": recordings_dir().resolve(),
             "artifacts": (self._pipeline_state_path().parent / "artifacts").resolve(),
         }
 

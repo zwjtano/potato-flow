@@ -1776,6 +1776,42 @@
                                     </div>
                                 </div>
                                 <div class="row g-4 settings-pane-grid">
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">录播存储</span>
+                                                    <h4>录播文件夹</h4>
+                                                </div>
+                                                <span class="settings-status-badge is-info">可修改</span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3 align-items-end">
+                                                    <div class="col-lg-8">
+                                                        <div class="form-group mb-0">
+                                                            <label for="recordings-path" class="form-label">程序内录播目录</label>
+                                                            <input type="text" id="recordings-path" name="RECORDINGS_PATH"
+                                                                   value="{{ config.get('RECORDINGS_PATH', 'recordings') }}"
+                                                                   class="form-control" placeholder="recordings">
+                                                            <p class="help-text mb-0">相对路径以 PotatoFlow 项目根目录为准。默认 <code>recordings</code>，即 <code>potato-flow/recordings/</code>。</p>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-lg-4">
+                                                        <div class="storage-path-preview">
+                                                            <span>当前实际路径</span>
+                                                            <code title="{{ recordings_path }}">{{ recordings_path }}</code>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="alert alert-info mt-3 mb-0">
+                                                    <i class="bi bi-info-circle"></i>
+                                                    Docker 用户如需更换宿主机磁盘，请在项目根目录的 <code>.env</code> 设置
+                                                    <code>POTATO_RECORDINGS_DIR=/你的目录</code> 后重新执行
+                                                    <code>docker compose up -d</code>。页面中的目录必须位于容器已挂载的路径内。
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
                                     <div class="col-md-6">
                                         <article class="settings-card">
                                             <div class="settings-card-header">
@@ -2205,10 +2241,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const resetBtn = document.getElementById('reset-settings-btn');
     if (resetBtn) {
-        resetBtn.addEventListener('click', function () {
+        resetBtn.addEventListener('click', async function () {
             const activeTab = document.querySelector('.tab-pane.active');
             if (!activeTab) {
-                alert('无法确定当前设置分组');
+                window.PotatoUI.notify('无法确定当前设置分组', 'warning');
                 return;
             }
 
@@ -2220,11 +2256,11 @@ document.addEventListener('DOMContentLoaded', function () {
             });
 
             if (keys.length === 0) {
-                alert('当前分组没有可重置的设置项');
+                window.PotatoUI.notify('当前分组没有可重置的设置项', 'info');
                 return;
             }
 
-            if (!confirm('确定要将当前分组的设置重置为默认值吗？此操作不可撤销。')) {
+            if (!(await window.PotatoUI.confirm('当前分组的设置将恢复为系统默认值，此操作不可撤销。', {title: '重置当前设置？', confirmText: '确认重置', danger: true}))) {
                 return;
             }
 
@@ -2240,12 +2276,12 @@ document.addEventListener('DOMContentLoaded', function () {
                     if (data.status === 'success') {
                         window.location.reload();
                     } else {
-                        alert('重置失败: ' + data.message);
+                        window.PotatoUI.notify('重置失败: ' + data.message, 'danger');
                     }
                 })
                 .catch(function (error) {
                     console.error('Error:', error);
-                    alert('重置请求发生错误');
+                    window.PotatoUI.notify('重置请求发生错误', 'danger');
                 });
         });
     }
@@ -2412,7 +2448,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     };
 
-    const submitTgbotTokenAction = function (action) {
+    const submitTgbotTokenAction = async function (action) {
         if (!tgbotTokenCard) {
             return;
         }
@@ -2428,10 +2464,10 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
         if (isGenerate) {
-            if (!confirm('确定要生成新的 Telegram Bot API Token 吗？旧 Token 会立即失效。')) {
+            if (!(await window.PotatoUI.confirm('生成新 Token 后，旧 Token 会立即失效。', {title: '重置 Telegram Token？', confirmText: '生成新 Token', danger: true}))) {
                 return;
             }
-        } else if (!confirm('确定要撤销 Telegram Bot API Token 吗？撤销后 Bot 将无法提交新任务。')) {
+        } else if (!(await window.PotatoUI.confirm('撤销后，Telegram Bot 将无法继续提交新任务。', {title: '撤销 Telegram Token？', confirmText: '确认撤销', danger: true}))) {
             return;
         }
 

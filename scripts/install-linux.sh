@@ -49,9 +49,9 @@ fi
 
 mkdir -p \
   "${ROOT}/.bridge" \
+  "${ROOT}/recordings" \
   "${ROOT}/y2a-auto/config" \
   "${ROOT}/y2a-auto/logs" \
-  "${ROOT}/y2a-auto/recordings" \
   "${ROOT}/y2a-auto/temp"
 
 echo
