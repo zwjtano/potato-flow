@@ -1683,16 +1683,28 @@ class LiveRecorderManager:
             for item in self.list_rooms()
         ]
         allowed_cover_root = self._recording_file_roots()["artifacts"].resolve()
+        allowed_recordings_root = self._recording_file_roots()["recordings"].resolve()
+        stage_orders = {
+            "record_only": ("record", "ass", "cover", "remux", "verify", "cleanup"),
+            "bilibili": ("detect", "record", "ass", "ai", "cover", "upload"),
+        }
         for row in uploads:
-            video_path = str(row["video_path"])
+            result = self._decode_json(row["result_json"])
+            video_path = str(
+                result.get("final_video_path")
+                or result.get("video_path")
+                or row["video_path"]
+            )
             if room_marker and room_marker not in Path(video_path).name:
                 continue
-            result = self._decode_json(row["result_json"])
             matched_room = next(
                 (item for item in room_markers if item["marker"] and item["marker"] in Path(video_path).name),
                 None,
             )
             stages = stages_by_job.get(row["fingerprint"], [])
+            order = stage_orders.get(str(row["platform"]), stage_orders["bilibili"])
+            order_index = {key: index for index, key in enumerate(order)}
+            stages.sort(key=lambda item: order_index.get(str(item.get("key")), len(order)))
             upload_stage = next((item for item in stages if item["key"] == "upload"), {})
             ai_stage = next((item for item in stages if item["key"] == "ai"), {})
             cover_stage = next((item for item in stages if item["key"] == "cover"), {})
@@ -1707,6 +1719,7 @@ class LiveRecorderManager:
                 review.get("cover_path")
                 or cover_details.get("ai_cover_path")
                 or cover_details.get("cover_used_for_upload")
+                or result.get("cover_path")
                 or ""
             ).strip()
             cover_path = Path(cover_candidate).resolve() if cover_candidate else None
@@ -1714,7 +1727,12 @@ class LiveRecorderManager:
                 cover_path
                 and cover_path.is_file()
                 and cover_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
-                and (cover_path == allowed_cover_root or allowed_cover_root in cover_path.parents)
+                and (
+                    cover_path == allowed_cover_root
+                    or allowed_cover_root in cover_path.parents
+                    or cover_path == allowed_recordings_root
+                    or allowed_recordings_root in cover_path.parents
+                )
             )
             bilibili_result = result.get("bilibili")
             if not isinstance(bilibili_result, dict):
@@ -1775,6 +1793,7 @@ class LiveRecorderManager:
                 "partition_id": partition_id,
                 "review_override": review,
                 "platform": row["platform"], "status": row["status"],
+                "record_only": row["platform"] == "record_only",
                 "attempts": row["attempts"], "result": result, "error": row["error"],
                 "created_at": row["created_at"], "updated_at": row["updated_at"],
                 "room_id": matched_room["id"] if matched_room else None,
@@ -1793,7 +1812,7 @@ class LiveRecorderManager:
                     or ""
                 ),
                 "completed_stages": completed_stages,
-                "total_stages": 6,
+                "total_stages": len(stages) or len(order),
                 "failed_stage": failed_stage,
                 "active_stage": active_stage,
                 "upload_progress": upload_progress,
@@ -2222,11 +2241,9 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         if not candidate:
             raise RecorderConfigError("该任务暂无可预览的 AI 封面")
         path = Path(candidate).resolve()
-        allowed_root = self._recording_file_roots()["artifacts"]
-        try:
-            path.relative_to(allowed_root)
-        except ValueError as exc:
-            raise RecorderConfigError("封面路径不在允许的录播产物目录中") from exc
+        allowed_roots = tuple(self._recording_file_roots().values())
+        if not any(path == root or root in path.parents for root in allowed_roots):
+            raise RecorderConfigError("封面路径不在允许的录播产物目录中")
         if not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
             raise RecorderConfigError("录播封面文件不存在")
         return path
@@ -2245,9 +2262,21 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         log_path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as log_handle:
+            command = [
+                sys.executable,
+                str(WORKSPACE_ROOT / "bridge.py"),
+                "--config",
+                str(BRIDGE_CONFIG_PATH),
+            ]
+            if job.get("record_only"):
+                room_id = str(job.get("result", {}).get("room_id") or job.get("room_id") or "")
+                if not room_id:
+                    raise RecorderConfigError("仅录制任务缺少直播间编号，无法重试")
+                command.extend(["record-only", "--room-id", room_id, str(video)])
+            else:
+                command.extend(["ingest", "--retry", str(video)])
             subprocess.Popen(
-                [sys.executable, str(WORKSPACE_ROOT / "bridge.py"), "--config", str(BRIDGE_CONFIG_PATH),
-                 "ingest", "--retry", str(video)],
+                command,
                 cwd=WORKSPACE_ROOT, stdout=log_handle, stderr=subprocess.STDOUT,
                 start_new_session=True, close_fds=True,
             )

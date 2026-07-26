@@ -171,6 +171,22 @@ class BridgeTests(unittest.TestCase):
 
             cover = video.with_suffix(".jpg")
             cover.write_bytes(b"cover")
+
+            def finish_local_pipeline(_video, _cover, _cfg, progress_callback=None):
+                output = video.with_suffix(".mp4")
+                for event, details in (
+                    ("remux_completed", {"output_path": str(output), "copy_mode": "-c copy"}),
+                    ("verify_running", {"output_path": str(output)}),
+                    ("verify_completed", {"output_path": str(output), "attached_pic": 1}),
+                    ("cleanup_running", {"original_flv": str(video)}),
+                    ("cleanup_completed", {
+                        "final_video_path": str(output),
+                        "original_flv_deleted": True,
+                    }),
+                ):
+                    progress_callback(event, details)
+                return output
+
             with patch.object(
                 bridge,
                 "probe_video_size",
@@ -182,7 +198,7 @@ class BridgeTests(unittest.TestCase):
             ) as generate_cover, patch.object(
                 bridge,
                 "remux_record_only_flv_with_cover",
-                return_value=video.with_suffix(".mp4"),
+                side_effect=finish_local_pipeline,
             ) as remux:
                 result = bridge.main([
                     "--config", str(config),
@@ -192,12 +208,22 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(generate_cover.call_count, 1)
             self.assertEqual(generate_cover.call_args.args[0], video.resolve())
-            remux.assert_called_once_with(video.resolve(), cover, ANY)
+            remux.assert_called_once_with(
+                video.resolve(),
+                cover,
+                ANY,
+                progress_callback=ANY,
+            )
             with sqlite3.connect(state) as db:
                 rows = db.execute(
                     "SELECT video_path, room_id, reason FROM recording_exclusions"
                 ).fetchall()
-                upload_count = db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0]
+                task = db.execute(
+                    "SELECT platform, status, result_json FROM uploads"
+                ).fetchone()
+                stages = db.execute(
+                    "SELECT stage, status FROM upload_stages ORDER BY rowid"
+                ).fetchall()
             self.assertEqual(
                 rows,
                 [
@@ -205,7 +231,22 @@ class BridgeTests(unittest.TestCase):
                     (str(video.with_suffix(".mp4").resolve()), "room-1", "record_only"),
                 ],
             )
-            self.assertEqual(upload_count, 0)
+            self.assertEqual(task[0:2], ("record_only", "completed"))
+            self.assertEqual(
+                json.loads(task[2])["final_video_path"],
+                str(video.with_suffix(".mp4")),
+            )
+            self.assertEqual(
+                stages,
+                [
+                    ("record", "completed"),
+                    ("ass", "completed"),
+                    ("cover", "completed"),
+                    ("remux", "completed"),
+                    ("verify", "completed"),
+                    ("cleanup", "completed"),
+                ],
+            )
             ass = video.with_suffix(".ass")
             self.assertTrue(ass.is_file())
             self.assertIn("测试弹幕", ass.read_text(encoding="utf-8-sig"))
@@ -239,6 +280,46 @@ class BridgeTests(unittest.TestCase):
                 generate_ai.call_args.kwargs["output_path"],
                 expected_cover,
             )
+
+    def test_record_only_failed_cover_is_visible_and_preserves_flv(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "failed-cover.flv"
+            xml = root / "failed-cover.xml"
+            state = root / "state.sqlite3"
+            config = root / "bridge.config.json"
+            video.write_bytes(b"video")
+            xml.write_text(
+                '<i><d p="1.2,1,25,16777215,0,0,0,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
+            config.write_text(json.dumps({"state_db": str(state)}), encoding="utf-8")
+
+            with patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1280, 720),
+            ), patch.object(
+                bridge,
+                "generate_record_only_cover",
+                side_effect=RuntimeError("图片模型不可用"),
+            ):
+                result = bridge.main([
+                    "--config", str(config),
+                    "record-only", "--room-id", "room-1", str(video), str(xml),
+                ])
+
+            self.assertEqual(result, 1)
+            self.assertTrue(video.is_file())
+            with sqlite3.connect(state) as db:
+                task = db.execute("SELECT platform, status, error FROM uploads").fetchone()
+                cover_stage = db.execute(
+                    "SELECT status, error FROM upload_stages WHERE stage='cover'"
+                ).fetchone()
+            self.assertEqual(task[0:2], ("record_only", "failed"))
+            self.assertIn("图片模型不可用", task[2])
+            self.assertEqual(cover_stage[0], "failed")
+            self.assertIn("图片模型不可用", cover_stage[1])
 
     def test_record_only_flv_is_remuxed_to_mp4_with_attached_cover(self):
         with tempfile.TemporaryDirectory() as temp:
