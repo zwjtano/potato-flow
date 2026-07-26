@@ -175,7 +175,18 @@
             finish(true);
             bootstrap.Modal.getOrCreateInstance(modalElement).hide();
         });
-        modalElement.addEventListener('hidden.bs.modal', function () { finish(false); });
+        modalElement.addEventListener('shown.bs.modal', function () {
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            const topBackdrop = backdrops[backdrops.length - 1];
+            topBackdrop?.classList.add('app-confirm-backdrop');
+        });
+        modalElement.addEventListener('hidden.bs.modal', function () {
+            document.querySelectorAll('.app-confirm-backdrop').forEach(function (backdrop) {
+                backdrop.remove();
+            });
+            if (document.querySelector('.modal.show')) document.body.classList.add('modal-open');
+            finish(false);
+        });
 
         document.addEventListener('submit', async function (event) {
             const form = event.target.closest('form[data-confirm]');

@@ -394,6 +394,8 @@ body {
 .delete-room-modal .modal-footer .btn { min-width: 98px; min-height: 38px; margin: 0; border-radius: 8px; font-size: 11px; font-weight: 700; }
 .delete-room-modal .btn-danger { border-color: #df4056; background: #df4056; }
 .delete-room-modal .btn-danger:hover { border-color: #c93449; background: #c93449; }
+.app-confirm-modal { z-index: 1080; }
+.modal-backdrop.app-confirm-backdrop { z-index: 1070; }
 .app-confirm-modal .modal-dialog { max-width: 520px; }
 .app-confirm-modal .modal-content { overflow: hidden; border: 0; border-radius: 24px; box-shadow: 0 26px 80px rgba(15, 23, 42, .24); }
 .app-confirm-modal .modal-body { display: flex; gap: 18px; padding: 30px 30px 18px; }
