@@ -304,7 +304,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIn('segment_time: "01:00:00"', content)
             self.assertIn('filename_prefix: "{streamer}_{title}_%Y-%m-%d_%H-%M"', content)
             self.assertIn(
-                'filename_prefix: "开播主播_{title}_{live_start}/'
+                'filename_prefix: "开播主播/开播主播_{title}_{live_start}/'
                 '开播主播_{title}_%Y-%m-%d_%H-%M"',
                 content,
             )
