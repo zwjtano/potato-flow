@@ -1790,9 +1790,14 @@
                                                     <div class="col-lg-8">
                                                         <div class="form-group mb-0">
                                                             <label for="recordings-path" class="form-label">程序内录播目录</label>
-                                                            <input type="text" id="recordings-path" name="RECORDINGS_PATH"
-                                                                   value="{{ config.get('RECORDINGS_PATH', 'recordings') }}"
-                                                                   class="form-control" placeholder="recordings">
+                                                            <div class="input-group">
+                                                                <input type="text" id="recordings-path" name="RECORDINGS_PATH"
+                                                                       value="{{ config.get('RECORDINGS_PATH', 'recordings') }}"
+                                                                       class="form-control" placeholder="recordings">
+                                                                <button class="btn btn-outline-primary" type="button" id="browse-recordings-path">
+                                                                    <i class="bi bi-folder2-open"></i> 选择文件夹
+                                                                </button>
+                                                            </div>
                                                             <p class="help-text mb-0">相对路径以 PotatoFlow 项目根目录为准。默认 <code>recordings</code>，即 <code>potato-flow/recordings/</code>。</p>
                                                         </div>
                                                     </div>
@@ -2149,6 +2154,36 @@
     </form>
 
     <div class="toast-container position-fixed top-0 end-0 p-3" id="settings-toast-container"></div>
+
+    <div class="modal fade directory-picker-modal" id="recordings-directory-picker" tabindex="-1" aria-labelledby="recordings-directory-picker-title" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <span class="section-eyebrow">SERVER STORAGE</span>
+                        <h5 class="modal-title" id="recordings-directory-picker-title">选择服务器文件夹</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="directory-picker-toolbar">
+                        <button class="btn btn-light border" type="button" data-action="directory-parent" title="返回上级目录"><i class="bi bi-arrow-up"></i></button>
+                        <div class="directory-current-path"><i class="bi bi-folder2"></i><code data-role="directory-current">读取中…</code></div>
+                        <button class="btn btn-light border" type="button" data-action="directory-refresh" title="刷新"><i class="bi bi-arrow-clockwise"></i></button>
+                    </div>
+                    <div class="directory-quick-paths" data-role="directory-quick-paths"></div>
+                    <div class="directory-list" data-role="directory-list">
+                        <div class="directory-picker-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取服务器目录</div>
+                    </div>
+                    <div class="directory-picker-status" data-role="directory-status"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-light border" type="button" data-bs-dismiss="modal">取消</button>
+                    <button class="btn btn-primary" type="button" data-action="directory-select"><i class="bi bi-check2"></i> 选择当前文件夹</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="modal fade" id="settings-save-progress-modal" tabindex="-1" aria-labelledby="settings-save-progress-title" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
@@ -3227,6 +3262,119 @@ document.addEventListener('DOMContentLoaded', function () {
                 searchInput.focus();
             });
         }
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const pickerElement = document.getElementById('recordings-directory-picker');
+        const openButton = document.getElementById('browse-recordings-path');
+        const pathInput = document.getElementById('recordings-path');
+        if (!pickerElement || !openButton || !pathInput) return;
+
+        const picker = bootstrap.Modal.getOrCreateInstance(pickerElement);
+        const currentLabel = pickerElement.querySelector('[data-role="directory-current"]');
+        const list = pickerElement.querySelector('[data-role="directory-list"]');
+        const quickPaths = pickerElement.querySelector('[data-role="directory-quick-paths"]');
+        const status = pickerElement.querySelector('[data-role="directory-status"]');
+        const parentButton = pickerElement.querySelector('[data-action="directory-parent"]');
+        const refreshButton = pickerElement.querySelector('[data-action="directory-refresh"]');
+        const selectButton = pickerElement.querySelector('[data-action="directory-select"]');
+        let currentPath = '';
+        let parentPath = '';
+
+        function setStatus(message, error) {
+            status.textContent = message || '';
+            status.classList.toggle('is-error', Boolean(error));
+        }
+
+        function renderQuickPaths(paths) {
+            quickPaths.replaceChildren();
+            (paths || []).forEach(function (item) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = item.label;
+                button.title = item.path;
+                button.addEventListener('click', function () { loadDirectory(item.path); });
+                quickPaths.appendChild(button);
+            });
+        }
+
+        function renderDirectories(items) {
+            list.replaceChildren();
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'directory-picker-empty';
+                empty.innerHTML = '<i class="bi bi-folder2-open"></i><span>这个文件夹中没有子目录</span>';
+                list.appendChild(empty);
+                return;
+            }
+            items.forEach(function (item) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'directory-item';
+                button.title = item.path;
+                const icon = document.createElement('i');
+                icon.className = 'bi bi-folder-fill';
+                const name = document.createElement('strong');
+                name.textContent = item.name;
+                const access = document.createElement('span');
+                access.className = 'directory-access' + (item.writable ? ' writable' : '');
+                access.textContent = item.writable ? '可写' : '只读';
+                button.append(icon, name, access);
+                button.addEventListener('click', function () { loadDirectory(item.path); });
+                list.appendChild(button);
+            });
+        }
+
+        async function loadDirectory(path) {
+            list.innerHTML = '<div class="directory-picker-empty"><span class="spinner-border spinner-border-sm"></span><span>正在读取服务器目录</span></div>';
+            setStatus('');
+            parentButton.disabled = true;
+            refreshButton.disabled = true;
+            selectButton.disabled = true;
+            try {
+                const query = path ? '?path=' + encodeURIComponent(path) : '';
+                const response = await fetch('{{ url_for("settings_recording_directories") }}' + query, {headers: {'Accept': 'application/json'}});
+                const result = await response.json();
+                if (!response.ok || !result.success) throw new Error(result.message || '读取目录失败');
+                currentPath = result.current;
+                parentPath = result.parent || '';
+                currentLabel.textContent = currentPath;
+                currentLabel.title = currentPath;
+                parentButton.disabled = !parentPath;
+                selectButton.disabled = !result.writable;
+                renderQuickPaths(result.quick_paths);
+                renderDirectories(result.directories || []);
+                setStatus(result.writable ? '当前文件夹可写，可以保存录播文件。' : '当前文件夹不可写，请选择其他目录。', !result.writable);
+            } catch (error) {
+                list.innerHTML = '<div class="directory-picker-empty text-danger"><i class="bi bi-exclamation-triangle"></i><span></span></div>';
+                list.querySelector('span').textContent = error.message || '读取目录失败';
+                setStatus('请返回上级目录或选择快捷位置。', true);
+            } finally {
+                refreshButton.disabled = false;
+            }
+        }
+
+        openButton.addEventListener('click', function () {
+            picker.show();
+            loadDirectory(pathInput.value.trim() || '{{ recordings_path }}');
+        });
+        parentButton.addEventListener('click', function () {
+            if (parentPath) loadDirectory(parentPath);
+        });
+        refreshButton.addEventListener('click', function () {
+            loadDirectory(currentPath || pathInput.value.trim());
+        });
+        selectButton.addEventListener('click', function () {
+            if (!currentPath) return;
+            pathInput.value = currentPath;
+            const preview = document.querySelector('.storage-path-preview code');
+            if (preview) {
+                preview.textContent = currentPath;
+                preview.title = currentPath;
+            }
+            picker.hide();
+            window.PotatoUI.notify('已选择录播文件夹，保存设置后生效。', 'success');
+        });
     });
 </script>
 {% endblock %}

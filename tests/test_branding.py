@@ -51,6 +51,9 @@ class BrandingTests(unittest.TestCase):
 
         self.assertIn('name="RECORDINGS_PATH"', settings_template)
         self.assertIn("potato-flow/recordings/", settings_template)
+        self.assertIn('id="browse-recordings-path"', settings_template)
+        self.assertIn('id="recordings-directory-picker"', settings_template)
+        self.assertIn("settings_recording_directories", settings_template)
         self.assertIn('"RECORDINGS_PATH": "recordings"', config_source)
 
     def test_tasks_page_uses_manual_refresh_without_detail_polling(self):

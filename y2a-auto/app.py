@@ -14,6 +14,7 @@ import uuid
 import threading
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, session, Response, stream_with_context
 from functools import wraps
@@ -3088,6 +3089,71 @@ def settings():
         builtin_prompts=builtin_prompts,
         recordings_path=str(recordings_dir()),
     )
+
+
+@app.route('/settings/recordings/directories', methods=['GET'])
+@login_required
+def settings_recording_directories():
+    """Browse server-side directories for the recording path picker."""
+    requested = str(request.args.get('path') or '').strip()
+    try:
+        current = recordings_dir(requested or None)
+    except RecorderConfigError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+
+    if not current.exists():
+        return jsonify({'success': False, 'message': f'目录不存在：{current}'}), 404
+    if not current.is_dir():
+        return jsonify({'success': False, 'message': f'这不是文件夹：{current}'}), 400
+
+    directories = []
+    try:
+        for child in current.iterdir():
+            try:
+                if child.is_dir():
+                    directories.append({
+                        'name': child.name,
+                        'path': str(child.resolve(strict=False)),
+                        'readable': os.access(child, os.R_OK | os.X_OK),
+                        'writable': os.access(child, os.W_OK),
+                    })
+            except OSError:
+                continue
+    except OSError as exc:
+        return jsonify({'success': False, 'message': f'无法读取目录：{exc}'}), 403
+    directories.sort(key=lambda item: item['name'].casefold())
+
+    quick_paths = []
+    seen = set()
+    candidates = [
+        ('当前录播目录', recordings_dir()),
+        ('项目目录', recordings_dir().parent),
+        ('容器录播挂载', Path('/data/recordings')),
+        ('数据盘 /vol1', Path('/vol1')),
+        ('挂载盘 /mnt', Path('/mnt')),
+        ('媒体目录 /media', Path('/media')),
+        ('用户目录', Path.home()),
+    ]
+    for label, candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=False)
+            key = str(resolved)
+            if key in seen or not resolved.is_dir():
+                continue
+            seen.add(key)
+            quick_paths.append({'label': label, 'path': key})
+        except OSError:
+            continue
+
+    parent = current.parent if current.parent != current else None
+    return jsonify({
+        'success': True,
+        'current': str(current.resolve(strict=False)),
+        'parent': str(parent.resolve(strict=False)) if parent else None,
+        'directories': directories,
+        'quick_paths': quick_paths,
+        'writable': os.access(current, os.W_OK),
+    })
 
 
 @app.route('/settings/tgbot-token', methods=['POST'])

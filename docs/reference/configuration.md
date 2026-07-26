@@ -28,4 +28,4 @@
 
 ## 录播文件夹
 
-“系统设置 → 运维与安全 → 录播文件夹”中的 `RECORDINGS_PATH` 控制程序内部使用的目录，默认值为 `recordings`，即项目根目录的 `potato-flow/recordings/`。Docker 用户更换宿主机磁盘时，还需要修改 `.env` 中的 `POTATO_RECORDINGS_DIR` 并重启容器。
+“系统设置 → 运维与安全 → 录播文件夹”中的 `RECORDINGS_PATH` 控制程序内部使用的目录，默认值为 `recordings`，即项目根目录的 `potato-flow/recordings/`。点击“选择文件夹”可以直接浏览服务器目录，无需手动输入。Docker 用户更换宿主机磁盘时，还需要修改 `.env` 中的 `POTATO_RECORDINGS_DIR` 并重启容器。
