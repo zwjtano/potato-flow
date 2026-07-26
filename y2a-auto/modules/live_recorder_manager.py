@@ -58,6 +58,8 @@ LEGACY_RECORDING_DESCRIPTION_TEMPLATES = {
     "直播录播：{stem}",
 }
 DEFAULT_RECORDING_SEGMENT_MINUTES = 60
+AUTO_UPLOAD_RETRY_DELAY_SECONDS = 5 * 60
+AUTO_UPLOAD_RETRY_MAX_RETRIES = 3
 
 
 class RecorderConfigError(ValueError):
@@ -319,8 +321,10 @@ class LiveRecorderManager:
         self._log_handle = None
         self._reload_thread: threading.Thread | None = None
         self._orphan_recovery_thread: threading.Thread | None = None
+        self._upload_retry_thread: threading.Thread | None = None
         if os.environ.pop("POTATO_FLOW_CONTAINER_START", "") == "1":
             self.recover_interrupted_pipeline_jobs()
+            self._ensure_upload_retry_thread()
 
     @property
     def binary_path(self) -> Path:
@@ -1200,6 +1204,7 @@ class LiveRecorderManager:
         with self._lock:
             if self._pid() is not None:
                 self._ensure_orphan_recovery_thread()
+                self._ensure_upload_retry_thread()
                 return self.status()
             if not self.list_rooms():
                 raise RecorderConfigError("请先添加至少一个直播间")
@@ -1239,6 +1244,7 @@ class LiveRecorderManager:
                     f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 biliup"
                 )
             self._ensure_orphan_recovery_thread()
+            self._ensure_upload_retry_thread()
             return self.status()
 
     def stop(self) -> dict[str, Any]:
@@ -1440,6 +1446,58 @@ class LiveRecorderManager:
             daemon=True,
         )
         self._orphan_recovery_thread.start()
+
+    @staticmethod
+    def _state_datetime(value: Any) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def retry_due_upload_jobs(self) -> int:
+        """Restart Bilibili upload failures once their five-minute delay expires."""
+        retried = 0
+        now = datetime.now(timezone.utc)
+        for job in self.pipeline_jobs(100):
+            if not job.get("auto_retry_scheduled"):
+                continue
+            retry_at = self._state_datetime(job.get("auto_retry_at"))
+            if retry_at is None or retry_at > now:
+                continue
+            try:
+                if self.retry_pipeline_job(str(job["id"]), automatic=True):
+                    retried += 1
+            except (OSError, RecorderConfigError):
+                # retry_pipeline_job records launch failures back into the task.
+                continue
+        return retried
+
+    def _ensure_upload_retry_thread(self) -> None:
+        if self._upload_retry_thread is not None and self._upload_retry_thread.is_alive():
+            return
+
+        def worker() -> None:
+            # Allow the application and recorder state database to finish starting first.
+            time.sleep(15)
+            while True:
+                try:
+                    self.retry_due_upload_jobs()
+                except Exception:
+                    pass
+                time.sleep(15)
+
+        self._upload_retry_thread = threading.Thread(
+            target=worker,
+            name="potato-bilibili-upload-retry",
+            daemon=True,
+        )
+        self._upload_retry_thread.start()
 
     def _recording_file_roots(self) -> dict[str, Path]:
         return {
@@ -1766,6 +1824,36 @@ class LiveRecorderManager:
             )
             failed_stage = next((stage.get("key") for stage in stages if stage.get("status") == "failed"), None)
             active_stage = next((stage.get("key") for stage in stages if stage.get("status") == "running"), None)
+            attempts = int(row["attempts"] or 0)
+            automatic_retries_used = max(0, attempts - 1)
+            auto_retry_scheduled = bool(
+                row["status"] == "failed"
+                and row["platform"] == "bilibili"
+                and failed_stage == "upload"
+                and automatic_retries_used < AUTO_UPLOAD_RETRY_MAX_RETRIES
+            )
+            retry_base = self._state_datetime(row["updated_at"])
+            auto_retry_at = (
+                datetime.fromtimestamp(
+                    retry_base.timestamp() + AUTO_UPLOAD_RETRY_DELAY_SECONDS,
+                    tz=timezone.utc,
+                ).isoformat(timespec="seconds")
+                if auto_retry_scheduled and retry_base
+                else None
+            )
+            auto_retry_remaining_seconds = (
+                max(
+                    0,
+                    int(
+                        (
+                            self._state_datetime(auto_retry_at)
+                            - datetime.now(timezone.utc)
+                        ).total_seconds()
+                    ),
+                )
+                if auto_retry_at
+                else None
+            )
             upload_progress = (
                 upload_details.get("upload_progress")
                 if upload_stage.get("status") == "running"
@@ -1794,7 +1882,7 @@ class LiveRecorderManager:
                 "review_override": review,
                 "platform": row["platform"], "status": row["status"],
                 "record_only": row["platform"] == "record_only",
-                "attempts": row["attempts"], "result": result, "error": row["error"],
+                "attempts": attempts, "result": result, "error": row["error"],
                 "created_at": row["created_at"], "updated_at": row["updated_at"],
                 "room_id": matched_room["id"] if matched_room else None,
                 "room_name": matched_room["name"] if matched_room else "未匹配直播间",
@@ -1817,6 +1905,17 @@ class LiveRecorderManager:
                 "active_stage": active_stage,
                 "upload_progress": upload_progress,
                 "upload_progress_text": upload_progress_text,
+                "auto_retry_scheduled": auto_retry_scheduled,
+                "auto_retry_at": auto_retry_at,
+                "auto_retry_remaining_seconds": auto_retry_remaining_seconds,
+                "auto_retry_number": attempts if auto_retry_scheduled else None,
+                "auto_retry_max_retries": AUTO_UPLOAD_RETRY_MAX_RETRIES,
+                "auto_retry_exhausted": bool(
+                    row["status"] == "failed"
+                    and row["platform"] == "bilibili"
+                    and failed_stage == "upload"
+                    and automatic_retries_used >= AUTO_UPLOAD_RETRY_MAX_RETRIES
+                ),
                 "retryable": row["status"] in {"failed", "dry_run"},
                 "stages": stages,
             })
@@ -2248,7 +2347,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             raise RecorderConfigError("录播封面文件不存在")
         return path
 
-    def retry_pipeline_job(self, fingerprint: str) -> None:
+    def retry_pipeline_job(self, fingerprint: str, *, automatic: bool = False) -> bool:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise RecorderConfigError("任务编号无效")
         job = self.pipeline_job(fingerprint)
@@ -2261,25 +2360,61 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             raise RecorderConfigError("原始录播文件已不存在，无法重试")
         log_path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as log_handle:
-            command = [
-                sys.executable,
-                str(WORKSPACE_ROOT / "bridge.py"),
-                "--config",
-                str(BRIDGE_CONFIG_PATH),
-            ]
-            if job.get("record_only"):
-                room_id = str(job.get("result", {}).get("room_id") or job.get("room_id") or "")
-                if not room_id:
-                    raise RecorderConfigError("仅录制任务缺少直播间编号，无法重试")
-                command.extend(["record-only", "--room-id", room_id, str(video)])
-            else:
-                command.extend(["ingest", "--retry", str(video)])
-            subprocess.Popen(
-                command,
-                cwd=WORKSPACE_ROOT, stdout=log_handle, stderr=subprocess.STDOUT,
-                start_new_session=True, close_fds=True,
-            )
+        command = [
+            sys.executable,
+            str(WORKSPACE_ROOT / "bridge.py"),
+            "--config",
+            str(BRIDGE_CONFIG_PATH),
+        ]
+        if job.get("record_only"):
+            room_id = str(job.get("result", {}).get("room_id") or job.get("room_id") or "")
+            if not room_id:
+                raise RecorderConfigError("仅录制任务缺少直播间编号，无法重试")
+            command.extend(["record-only", "--room-id", room_id, str(video)])
+        else:
+            command.extend(["ingest", "--retry", str(video)])
+
+        claimed = False
+        state_path = self._pipeline_state_path()
+        if automatic:
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            try:
+                with sqlite3.connect(state_path, timeout=5) as db:
+                    cursor = db.execute(
+                        """UPDATE uploads SET status='processing', updated_at=?
+                           WHERE fingerprint=? AND status='failed'""",
+                        (now, fingerprint),
+                    )
+                    claimed = cursor.rowcount == 1
+            except sqlite3.Error as exc:
+                raise RecorderConfigError(f"无法锁定自动重试任务：{exc}") from exc
+            if not claimed:
+                return False
+
+        try:
+            with log_path.open("a", encoding="utf-8") as log_handle:
+                if automatic:
+                    log_handle.write(
+                        f"\n[{datetime.now().astimezone().isoformat(timespec='seconds')}] "
+                        f"投稿失败已等待 5 分钟，开始第 {job['attempts']}/{AUTO_UPLOAD_RETRY_MAX_RETRIES} 次自动重试。\n"
+                    )
+                    log_handle.flush()
+                subprocess.Popen(
+                    command,
+                    cwd=WORKSPACE_ROOT, stdout=log_handle, stderr=subprocess.STDOUT,
+                    start_new_session=True, close_fds=True,
+                )
+        except OSError as exc:
+            if claimed:
+                now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                with sqlite3.connect(state_path, timeout=5) as db:
+                    db.execute(
+                        """UPDATE uploads SET status='failed', error=?, updated_at=?
+                           WHERE fingerprint=? AND status='processing'""",
+                        (f"自动重试启动失败：{exc}", now, fingerprint),
+                    )
+            raise
+        return True
 
     def pipeline_log(self, fingerprint: str, lines: int = 200) -> str:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
