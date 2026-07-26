@@ -32,12 +32,18 @@ class BrandingTests(unittest.TestCase):
         base_template = (
             ROOT / "y2a-auto" / "templates" / "base.html"
         ).read_text(encoding="utf-8")
+        styles = (
+            ROOT / "y2a-auto" / "static" / "css" / "style.css"
+        ).read_text(encoding="utf-8")
         sources = list((ROOT / "y2a-auto" / "templates").glob("*.html"))
         sources.extend((ROOT / "y2a-auto" / "static" / "js").glob("*.js"))
 
         self.assertIn('id="appConfirmModal"', base_template)
         self.assertIn("window.PotatoUI", base_template)
         self.assertIn('id="appToastStack"', base_template)
+        self.assertIn("app-confirm-backdrop", base_template)
+        self.assertIn(".app-confirm-modal { z-index: 1080; }", styles)
+        self.assertIn(".modal-backdrop.app-confirm-backdrop { z-index: 1070; }", styles)
         for path in sources:
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path):
