@@ -109,6 +109,38 @@ class BridgeTests(unittest.TestCase):
             paths = bridge.input_paths([str(video), str(xml)], include_stdin=False)
             self.assertEqual(bridge.find_danmaku_xml(video, paths), xml.resolve())
 
+    def test_danmaku_xml_falls_back_to_same_session_stop_timestamp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_标题_2026-07-26_10-13.flv"
+            xml = root / "主播_标题_2026-07-26_10-41.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i/>", encoding="utf-8")
+            stamp = 1_700_000_000
+            os.utime(video, (stamp, stamp))
+            os.utime(xml, (stamp + 1, stamp + 1))
+
+            self.assertEqual(bridge.find_danmaku_xml(video), xml.resolve())
+
+    def test_wait_for_danmaku_xml_returns_stable_sidecar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.flv"
+            xml = root / "clip.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i/>", encoding="utf-8")
+
+            with patch.object(bridge, "wait_until_stable") as wait:
+                result = bridge.wait_for_danmaku_xml(
+                    video,
+                    [xml],
+                    timeout=0,
+                    interval=0.01,
+                )
+
+            self.assertEqual(result, xml.resolve())
+            wait.assert_called_once_with(xml.resolve(), checks=2, interval=0.01)
+
     def test_state_deduplicates_completed_fingerprint(self):
         with tempfile.TemporaryDirectory() as temp:
             store = bridge.StateStore(Path(temp) / "state.sqlite3")
@@ -136,13 +168,25 @@ class BridgeTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(bridge, "probe_video_size", return_value=(1280, 720)):
+            cover = video.with_suffix(".jpg")
+            cover.write_bytes(b"cover")
+            with patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1280, 720),
+            ), patch.object(
+                bridge,
+                "generate_record_only_cover",
+                return_value=cover,
+            ) as generate_cover:
                 result = bridge.main([
                     "--config", str(config),
                     "record-only", "--room-id", "room-1", str(video), str(xml),
                 ])
 
             self.assertEqual(result, 0)
+            self.assertEqual(generate_cover.call_count, 1)
+            self.assertEqual(generate_cover.call_args.args[0], video.resolve())
             with sqlite3.connect(state) as db:
                 row = db.execute(
                     "SELECT video_path, room_id, reason FROM recording_exclusions"
@@ -153,6 +197,36 @@ class BridgeTests(unittest.TestCase):
             ass = video.with_suffix(".ass")
             self.assertTrue(ass.is_file())
             self.assertIn("测试弹幕", ass.read_text(encoding="utf-8-sig"))
+
+    def test_record_only_cover_matches_video_resolution(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "record-only.flv"
+            video.write_bytes(b"video")
+            expected_cover = video.with_suffix(".jpg")
+            expected_cover.write_bytes(b"ai-native-resolution-cover")
+
+            with patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1920, 1080),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                return_value=(
+                    expected_cover,
+                    {"ai_cover_generated": True},
+                ),
+            ) as generate_ai:
+                cover = bridge.generate_record_only_cover(video, {})
+
+            self.assertEqual(cover, expected_cover)
+            self.assertEqual(cover.read_bytes(), b"ai-native-resolution-cover")
+            self.assertEqual(generate_ai.call_args.kwargs["target_size"], (1920, 1080))
+            self.assertEqual(
+                generate_ai.call_args.kwargs["output_path"],
+                expected_cover,
+            )
 
     def test_finalize_session_ingests_final_video_before_closing(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -656,8 +730,10 @@ class BridgeTests(unittest.TestCase):
                 "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
                 "OPENAI_IMAGE_SIZE": "1536x1024",
             })
+            ffmpeg_commands = []
 
             def fake_ffmpeg(command, **_kwargs):
+                ffmpeg_commands.append(command)
                 Path(command[-1]).write_bytes(b"jpeg")
                 return types.SimpleNamespace(returncode=0, stderr="")
 
@@ -677,12 +753,21 @@ class BridgeTests(unittest.TestCase):
                         "ai_cover_prompt": "采用低饱和蓝紫色，并突出 Roshan 团战。",
                     },
                     work_dir=work_dir,
+                    target_size=(1920, 1080),
+                    output_path=work_dir / "record-only.jpg",
                 )
 
-        self.assertEqual(cover.name, "ai_cover.jpg")
+        self.assertEqual(cover.name, "record-only.jpg")
         self.assertTrue(details["ai_cover_generated"])
         self.assertEqual(details["ai_cover_headline"], "新地图极限挑战")
+        self.assertEqual(details["ai_cover_width"], 1920)
+        self.assertEqual(details["ai_cover_height"], 1080)
+        self.assertIn(
+            "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080",
+            ffmpeg_commands[0],
+        )
         prompt = image_generate.call_args.kwargs["prompt"]
+        self.assertIn("横向 1920:1080 视频封面", prompt)
         self.assertIn("AI 生成的核心标题：新地图极限挑战", prompt)
         self.assertIn("Dota 2 游戏角色消歧规则", prompt)
         self.assertIn("斗鱼 Dota 2 主播昵称规则", prompt)

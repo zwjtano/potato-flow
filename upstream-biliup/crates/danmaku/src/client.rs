@@ -729,7 +729,12 @@ fn roll_writer(
     }
 
     if let Some(new_path) = new_file_name {
-        if current_path != new_path {
+        // The recorder may pass the same file through two different path
+        // spellings (for example an absolute /data/recordings path and a
+        // cwd-relative ./path).  Comparing PathBuf values alone treats those
+        // as different.  Removing `new_path` in that case deletes the source
+        // XML itself, then rename() fails with ENOENT and all danmaku is lost.
+        if !paths_refer_to_same_file(&current_path, &new_path) {
             if let Some(parent) = new_path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -741,6 +746,16 @@ fn roll_writer(
     }
 
     Ok(true)
+}
+
+fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn next_output_path(template: &Path) -> PathBuf {
@@ -824,6 +839,40 @@ mod tests {
         assert!(roll_writer(&mut writer, &template, &config, Some(new_path.clone())).is_ok());
 
         assert!(!new_path.exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rolling_same_xml_through_symlink_does_not_delete_source() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!(
+            "danmaku-roll-same-file-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let actual = dir.join("actual");
+        let alias = dir.join("alias");
+        std::fs::create_dir_all(&actual).unwrap();
+        symlink(&actual, &alias).unwrap();
+
+        let current_path = actual.join("segment.xml");
+        let equivalent_path = alias.join("segment.xml");
+        let template = actual.join("next");
+        let config = XmlWriterConfig::default();
+        let mut writer = XmlWriter::new(&current_path, config.clone()).unwrap();
+
+        assert!(roll_writer(
+            &mut writer,
+            &template,
+            &config,
+            Some(equivalent_path.clone())
+        )
+        .unwrap());
+        assert!(current_path.exists());
+        assert!(equivalent_path.exists());
+
         let _ = std::fs::remove_dir_all(dir);
     }
 

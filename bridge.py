@@ -179,7 +179,50 @@ def find_danmaku_xml(video: Path, paths: list[Path] | None = None) -> Path | Non
     for candidate in candidates:
         if candidate.stem == video.stem and candidate.is_file():
             return candidate.resolve()
+    # Older recorder builds could finalize a manually stopped XML with the
+    # stop timestamp instead of the video's start timestamp.  A session has
+    # its own directory, so the closest recently-written XML is a safe
+    # fallback when the exact sidecar name is missing.
+    try:
+        video_mtime = video.stat().st_mtime
+        session_xml = [
+            candidate
+            for candidate in video.parent.glob("*.xml")
+            if candidate.is_file()
+        ]
+        if session_xml:
+            closest = min(
+                session_xml,
+                key=lambda candidate: abs(candidate.stat().st_mtime - video_mtime),
+            )
+            if abs(closest.stat().st_mtime - video_mtime) <= 120:
+                return closest.resolve()
+    except OSError:
+        pass
     return None
+
+
+def wait_for_danmaku_xml(
+    video: Path,
+    paths: list[Path] | None = None,
+    *,
+    timeout: float = 8.0,
+    interval: float = 0.25,
+) -> Path | None:
+    """Wait for biliup to finish rolling the XML before ASS generation."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        danmaku_xml = find_danmaku_xml(video, paths)
+        if danmaku_xml is not None:
+            try:
+                wait_until_stable(danmaku_xml, checks=2, interval=interval)
+            except (FileNotFoundError, OSError):
+                pass
+            else:
+                return danmaku_xml
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(max(0.05, interval))
 
 
 def wait_until_stable(path: Path, checks: int, interval: float) -> None:
@@ -821,8 +864,10 @@ def generate_recording_cover_with_ai(
     streamer: str,
     cfg: dict[str, Any],
     work_dir: Path,
+    target_size: tuple[int, int] | None = None,
+    output_path: Path | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
-    """Generate a 16:10 Bilibili cover from the final AI-assisted title."""
+    """Generate an AI cover and crop it to Bilibili or recording dimensions."""
     root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -902,8 +947,15 @@ def generate_recording_cover_with_ai(
         ai_topic,
         description,
     )
+    target_width, target_height = target_size or (1146, 717)
+    orientation = "横向" if target_width >= target_height else "竖向"
+    aspect_label = (
+        "16:10"
+        if target_size is None
+        else f"{target_width}:{target_height}"
+    )
     prompt = f"""
-为哔哩哔哩直播回放生成一张横向 16:10 视频封面，画面精致、主体明确、对比强烈，在手机缩略图尺寸下仍清晰。
+为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
 AI 生成的核心标题：{headline}
 内容摘要：{str(description or "")[:500]}
@@ -967,15 +1019,27 @@ AI 生成的核心标题：{headline}
 
     work_dir.mkdir(parents=True, exist_ok=True)
     source = work_dir / "ai_cover_source.png"
-    cover = work_dir / "ai_cover.jpg"
+    cover = output_path or (work_dir / "ai_cover.jpg")
+    cover.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes(raw)
     ffmpeg = str(cfg.get("ffmpeg", "ffmpeg"))
     command = [
         ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
-        "-vf", "scale=1146:717:force_original_aspect_ratio=increase,crop=1146:717",
+        "-vf",
+        (
+            f"scale={target_width}:{target_height}:"
+            "force_original_aspect_ratio=increase,"
+            f"crop={target_width}:{target_height}"
+        ),
         "-frames:v", "1", "-q:v", "2", str(cover),
     ]
     completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    if output_path is not None:
+        source.unlink(missing_ok=True)
+        try:
+            work_dir.rmdir()
+        except OSError:
+            pass
     if completed.returncode != 0 or not cover.is_file():
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
@@ -984,6 +1048,8 @@ AI 生成的核心标题：{headline}
         "ai_cover_model": image_model,
         "ai_cover_path": str(cover),
         "ai_cover_prompt": prompt,
+        "ai_cover_width": target_width,
+        "ai_cover_height": target_height,
     })
     return cover, details
 
@@ -1765,7 +1831,11 @@ def generate_record_only_ass(
 ) -> Path | None:
     """Generate a side-by-side ASS file without creating an upload task."""
     cfg = effective_config(base_cfg, video)
-    danmaku_xml = find_danmaku_xml(video, received_paths)
+    danmaku_xml = wait_for_danmaku_xml(
+        video,
+        received_paths,
+        timeout=float(cfg.get("record_only_xml_wait_seconds", 8)),
+    )
     if danmaku_xml is None:
         print(f"WARN 仅录制文件未找到同名 XML，无法生成 ASS: {video}", file=sys.stderr)
         return None
@@ -1781,6 +1851,38 @@ def generate_record_only_ass(
         duration=float(cfg.get("danmaku_duration_seconds", 9)),
         opacity=float(cfg.get("danmaku_opacity", 0.92)),
     )
+
+
+def generate_record_only_cover(video: Path, base_cfg: dict[str, Any]) -> Path:
+    """Generate an AI cover beside the video using its native resolution."""
+    cfg = effective_config(base_cfg, video)
+    title, description, _ = render_metadata(video, cfg)
+    ai_topic = recording_metadata_values(video, cfg)["ai_topic"]
+    danmaku_xml = find_danmaku_xml(video)
+    if danmaku_xml and bool(cfg.get("ai_danmaku_summary_enabled", True)):
+        comments = parse_biliup_xml(danmaku_xml)
+        if comments:
+            description, ai_topic = generate_danmaku_metadata_with_ai(
+                comments,
+                description,
+                cfg,
+            )
+            title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
+    width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
+    cover = video.with_suffix(".jpg")
+    generated, details = generate_recording_cover_with_ai(
+        title=title,
+        ai_topic=ai_topic,
+        description=description,
+        streamer=recording_metadata_values(video, cfg)["streamer"],
+        cfg=cfg,
+        work_dir=video.parent / ".potato-cover-artifacts",
+        target_size=(width, height),
+        output_path=cover,
+    )
+    if not generated or not details.get("ai_cover_generated"):
+        raise RuntimeError("录播 AI 封面未启用或图片模型没有生成封面")
+    return generated
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1841,14 +1943,24 @@ def main(argv: list[str] | None = None) -> int:
                 ok = False
                 continue
             store.exclude_recording(path, str(args.room_id))
+            ass_path: Path | None = None
+            cover_path: Path | None = None
             try:
                 ass_path = generate_record_only_ass(path, cfg, received_paths)
             except Exception as exc:
                 print(f"ERROR 仅录制 ASS 生成失败: {path}: {exc}", file=sys.stderr)
                 ok = False
-                continue
+            try:
+                cover_path = generate_record_only_cover(path, cfg)
+            except Exception as exc:
+                print(f"ERROR 仅录制封面生成失败: {path}: {exc}", file=sys.stderr)
+                ok = False
             ass_detail = f"，ASS: {ass_path}" if ass_path else "，未找到 XML"
-            print(f"OK 仅录制文件已保留并跳过自动投稿: {path}{ass_detail}")
+            cover_detail = f"，封面: {cover_path}" if cover_path else "，封面生成失败"
+            print(
+                f"OK 仅录制文件已保留并跳过自动投稿: "
+                f"{path}{ass_detail}{cover_detail}"
+            )
         return 0 if ok else 1
 
     retry = args.command == "retry" or bool(getattr(args, "retry", False))
