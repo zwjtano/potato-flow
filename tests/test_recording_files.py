@@ -51,6 +51,17 @@ class RecordingFilesTests(unittest.TestCase):
         self.assertEqual({item["type"] for item in payload["files"]}, {"video", "xml", "ass"})
         self.assertEqual(payload["total_size_bytes"], 5 + 4 + 13)
 
+    def test_video_uses_same_name_image_as_local_cover(self):
+        video = self.recordings / "主播_abcdef-video.flv"
+        cover = self.recordings / "主播_abcdef-video.jpg"
+        video.write_bytes(b"video")
+        cover.write_bytes(b"cover")
+
+        info = self.manager.recording_files()["files"][0]
+
+        self.assertTrue(info["has_cover"])
+        self.assertEqual(self.manager.recording_cover(info["id"]), cover.resolve())
+
     def test_file_manager_defines_html_escaping_before_rendering_rows(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 

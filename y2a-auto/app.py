@@ -1392,6 +1392,16 @@ def live_recording_file_download(file_id):
         return jsonify({'ok': False, 'error': str(exc)}), 404
 
 
+@app.route('/live-recording/files/<file_id>/cover')
+@login_required
+def live_recording_file_cover(file_id):
+    try:
+        path = live_recorder_manager.recording_cover(file_id)
+        return send_file(path, conditional=True, max_age=300)
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 404
+
+
 @app.route('/live-recording/files/<file_id>/delete', methods=['POST'])
 @login_required
 def live_recording_file_delete(file_id):

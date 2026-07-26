@@ -1515,12 +1515,18 @@ class LiveRecorderManager:
             and any(marker in path.name for marker in active_markers)
         )
         pipeline_active = path.resolve() in processing_files
+        file_type = _recording_file_type(path)
+        has_cover = (
+            file_type == "video"
+            and any(path.with_suffix(suffix).is_file() for suffix in (".jpg", ".jpeg", ".png", ".webp"))
+        )
         return {
             "id": self._encode_file_id(source, relative_path),
             "name": path.name,
             "relative_path": relative_path,
             "source": source,
-            "type": _recording_file_type(path),
+            "type": file_type,
+            "has_cover": has_cover,
             "extension": (
                 f"{path.with_suffix('').suffix.lower().lstrip('.')}.part"
                 if path.suffix.lower() == ".part"
@@ -1567,6 +1573,16 @@ class LiveRecorderManager:
         return path, self._recording_file_info(
             path, source, relative_path, processing_files, active_markers
         )
+
+    def recording_cover(self, file_id: str) -> Path:
+        video, info = self.recording_file(file_id)
+        if info["type"] != "video":
+            raise RecorderConfigError("该文件不是录播视频")
+        for suffix in (".jpg", ".jpeg", ".png", ".webp"):
+            candidate = video.with_suffix(suffix)
+            if candidate.is_file():
+                return candidate
+        raise RecorderConfigError("该录播视频还没有同名封面")
 
     def delete_recording_file(self, file_id: str) -> dict[str, Any]:
         with self._lock:

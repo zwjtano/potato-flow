@@ -259,7 +259,11 @@
                     {% for file in recording_files %}
                     {% if file.room_id == room.id and file_state.count < 10 %}
                     <div class="generated-file-row">
+                        {% if file.type == 'video' and file.has_cover %}
+                        <img class="generated-file-cover" src="{{ url_for('live_recording_file_cover', file_id=file.id) }}" alt="{{ file.name }} 封面" loading="lazy">
+                        {% else %}
                         <span class="generated-file-icon {{ file.type }}"><i class="bi {{ 'bi-camera-video' if file.type == 'video' else ('bi-chat-square-text' if file.type == 'xml' else 'bi-badge-cc') }}"></i></span>
+                        {% endif %}
                         <div class="generated-file-copy">
                             <strong title="{{ file.name }}">{{ file.name }}</strong>
                             <small>{{ '录播视频' if file.type == 'video' else ('XML 弹幕' if file.type == 'xml' else 'ASS 字幕') }} · {{ file.modified_at }}</small>
@@ -514,7 +518,12 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         const typeNames = {video: '录播视频', xml: 'XML 弹幕', ass: 'ASS 字幕'};
         const typeIcons = {video: 'bi-camera-video', xml: 'bi-chat-square-text', ass: 'bi-badge-cc'};
-        rows.innerHTML = visible.map(file => `<tr class="${selectedRecordingFileIds.has(file.id) ? 'selected' : ''}"><td class="file-check-column"><input class="form-check-input" type="checkbox" data-action="select-file" data-id="${escapeHtml(file.id)}" aria-label="选择 ${escapeHtml(file.name)}" ${selectedRecordingFileIds.has(file.id) ? 'checked' : ''} ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : ''}></td><td><div class="file-name"><span class="file-type-icon ${escapeHtml(file.type)}"><i class="bi ${typeIcons[file.type] || 'bi-file-earmark'}"></i></span><div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small title="${escapeHtml(file.relative_path)}">${escapeHtml(file.source === 'artifacts' ? '流水线产物 / ' : '录制目录 / ')}${escapeHtml(file.relative_path)}</small></div></div></td><td><span class="file-kind ${escapeHtml(file.type)}">${escapeHtml(typeNames[file.type] || file.extension)}</span></td><td>${formatBytes(file.size_bytes)}</td><td><time>${escapeHtml(new Date(file.modified_at).toLocaleString('zh-CN', {hour12: false}))}</time></td><td><div class="file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-outline-danger" type="button" data-action="delete-file" data-id="${escapeHtml(file.id)}" data-name="${escapeHtml(file.name)}" ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : 'title="删除"'}><i class="bi ${file.locked ? 'bi-lock-fill' : 'bi-trash3'}"></i></button></div></td></tr>`).join('');
+        rows.innerHTML = visible.map(file => {
+            const fileVisual = file.type === 'video' && file.has_cover
+                ? `<img class="file-cover-thumb" src="/live-recording/files/${encodeURIComponent(file.id)}/cover" alt="" loading="lazy">`
+                : `<span class="file-type-icon ${escapeHtml(file.type)}"><i class="bi ${typeIcons[file.type] || 'bi-file-earmark'}"></i></span>`;
+            return `<tr class="${selectedRecordingFileIds.has(file.id) ? 'selected' : ''}"><td class="file-check-column"><input class="form-check-input" type="checkbox" data-action="select-file" data-id="${escapeHtml(file.id)}" aria-label="选择 ${escapeHtml(file.name)}" ${selectedRecordingFileIds.has(file.id) ? 'checked' : ''} ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : ''}></td><td><div class="file-name">${fileVisual}<div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small title="${escapeHtml(file.relative_path)}">${escapeHtml(file.source === 'artifacts' ? '流水线产物 / ' : '录制目录 / ')}${escapeHtml(file.relative_path)}</small></div></div></td><td><span class="file-kind ${escapeHtml(file.type)}">${escapeHtml(typeNames[file.type] || file.extension)}</span></td><td>${formatBytes(file.size_bytes)}</td><td><time>${escapeHtml(new Date(file.modified_at).toLocaleString('zh-CN', {hour12: false}))}</time></td><td><div class="file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-outline-danger" type="button" data-action="delete-file" data-id="${escapeHtml(file.id)}" data-name="${escapeHtml(file.name)}" ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : 'title="删除"'}><i class="bi ${file.locked ? 'bi-lock-fill' : 'bi-trash3'}"></i></button></div></td></tr>`;
+        }).join('');
         rows.querySelectorAll('[data-action="delete-file"]').forEach(button => button.addEventListener('click', deleteFile));
         rows.querySelectorAll('[data-action="select-file"]').forEach(input => input.addEventListener('change', toggleFileSelection));
         updateFileSelectionControls(visible);
