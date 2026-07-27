@@ -75,6 +75,32 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
     event_type = event.event_type
 
     if event_type == EVENT_TASK_ADDED:
+        task_kind = _as_text(payload.get("task_kind"))
+        if task_kind in {"recording_upload", "record_only"}:
+            is_record_only = task_kind == "record_only"
+            streamer = _as_text(payload.get("streamer")) or "未知主播"
+            video_file = _truncate(
+                _as_text(payload.get("video_file"))
+                or _as_text(payload.get("video_path")),
+                220,
+            )
+            target = "仅本地处理，不投稿" if is_record_only else "哔哩哔哩"
+            icon = "💾" if is_record_only else "📹"
+            kind_label = "仅录制任务" if is_record_only else "录播投稿任务"
+            title = f"PotatoFlow {icon} {kind_label}已添加"
+            summary = f"{streamer} | {video_file}"
+            body = _section_block(
+                _kv("任务类型", kind_label),
+                _kv("主播", streamer),
+                _kv("录播文件", video_file),
+                _kv("处理目标", target),
+                _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+                _kv("直播间", _truncate(_as_text(payload.get("source_url")), 500)),
+                _kv("时间", _as_text(payload.get("occurred_at"))),
+            )
+            markdown = _markdown_lines(f"**{icon} {kind_label}已添加**", "", body)
+            return NotificationMessage(title=title, summary=summary, markdown=markdown)
+
         title = "PotatoFlow 📋 任务已添加"
         summary = f"{payload.get('task_id', '')[:8]} | {_upload_target_label(payload.get('upload_target'))}"
         body = _section_block(

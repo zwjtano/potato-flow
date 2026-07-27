@@ -149,6 +149,52 @@ def effective_config(base: dict[str, Any], video: Path) -> dict[str, Any]:
     return cfg
 
 
+def emit_recording_task_added_notification(
+    cfg: dict[str, Any],
+    *,
+    fingerprint_value: str,
+    video: Path,
+    task_kind: str,
+) -> None:
+    """Queue a TASK_ADDED notification for a newly claimed recording job."""
+    try:
+        y2a_root = resolve_path(
+            str(cfg.get("y2a_root") or "y2a-auto"),
+            cfg,
+        )
+        if str(y2a_root) not in sys.path:
+            sys.path.insert(0, str(y2a_root))
+        from modules.notifications import (
+            EVENT_TASK_ADDED,
+            NotificationEvent,
+            emit_notification_event,
+        )
+
+        emit_notification_event(
+            NotificationEvent(
+                event_type=EVENT_TASK_ADDED,
+                payload={
+                    "task_id": fingerprint_value,
+                    "task_kind": task_kind,
+                    "video_path": str(video),
+                    "video_file": video.name,
+                    "streamer": normalize_dota2_streamer_name(
+                        str(cfg.get("streamer_name") or "")
+                    ),
+                    "source_url": str(cfg.get("source_url") or ""),
+                    "upload_target": (
+                        "local"
+                        if task_kind == "record_only"
+                        else "bilibili"
+                    ),
+                },
+            )
+        )
+    except Exception as exc:
+        # 通知失败不能阻塞 ASS、AI 或投稿流水线。
+        print(f"WARN 录播任务新增通知写入失败: {exc}", file=sys.stderr)
+
+
 def stdin_paths() -> list[Path]:
     if sys.stdin.isatty():
         return []
@@ -367,6 +413,16 @@ class StateStore:
         db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
         return db
+
+    def upload_exists(self, key: str) -> bool:
+        with self.connect() as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM uploads WHERE fingerprint = ? LIMIT 1",
+                    (key,),
+                ).fetchone()
+                is not None
+            )
 
     def exclude_recording(self, path: Path, room_id: str) -> None:
         with self.connect() as db:
@@ -1453,9 +1509,17 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             session_key = previous_session_key
     prior_result = store.results(key)
     review_override = store.review_override(key)
+    is_new_task = not store.upload_exists(key)
     if not store.claim(key, video, platform, retry=retry):
         print(f"SKIP 已处理或正在处理: {video}")
         return True
+    if is_new_task:
+        emit_recording_task_added_notification(
+            cfg,
+            fingerprint_value=key,
+            video=video,
+            task_kind="recording_upload",
+        )
 
     multipart = (
         store.multipart_session(session_key, include_closed=retry)
@@ -2163,6 +2227,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=float(record_cfg.get("record_only_xml_wait_seconds", 8)),
             )
             key = fingerprint(path)
+            is_new_task = not store.upload_exists(key)
             if not store.claim_record_only(
                 key,
                 path,
@@ -2171,6 +2236,13 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 print(f"SKIP 仅录制任务已存在或正在处理: {path}")
                 continue
+            if is_new_task:
+                emit_recording_task_added_notification(
+                    record_cfg,
+                    fingerprint_value=key,
+                    video=path,
+                    task_kind="record_only",
+                )
             if danmaku_xml is None:
                 error = "录制已结束，但未找到稳定的 XML 弹幕文件"
                 store.stage(key, "record", "failed", {

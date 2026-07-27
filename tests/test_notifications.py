@@ -32,6 +32,7 @@ from modules.notifications.service import (  # noqa: E402
     emit_notification_event_deduplicated,
 )
 from modules.live_recorder_manager import LiveRecorderManager  # noqa: E402
+import bridge  # noqa: E402
 
 
 class _Response:
@@ -145,6 +146,57 @@ class TelegramNotificationTests(unittest.TestCase):
 
 
 class NotificationEventExtensionTests(unittest.TestCase):
+    def test_task_added_message_distinguishes_recording_job_types(self):
+        recording_upload = build_notification_message(
+            NotificationEvent(
+                "TASK_ADDED",
+                {
+                    "task_id": "recording-1",
+                    "task_kind": "recording_upload",
+                    "streamer": "YYF",
+                    "video_file": "YYF_陪伴每一天.flv",
+                    "upload_target": "bilibili",
+                },
+            )
+        )
+        record_only = build_notification_message(
+            NotificationEvent(
+                "TASK_ADDED",
+                {
+                    "task_id": "recording-2",
+                    "task_kind": "record_only",
+                    "streamer": "果小果",
+                    "video_file": "果小果_天梯冲分.flv",
+                    "upload_target": "local",
+                },
+            )
+        )
+
+        self.assertIn("录播投稿任务已添加", recording_upload.title)
+        self.assertIn("哔哩哔哩", recording_upload.markdown)
+        self.assertIn("仅录制任务已添加", record_only.title)
+        self.assertIn("仅本地处理，不投稿", record_only.markdown)
+
+    @mock.patch("modules.notifications.emit_notification_event")
+    def test_bridge_emits_task_added_for_new_recording_job(self, emit):
+        bridge.emit_recording_task_added_notification(
+            {
+                "_config_dir": str(ROOT),
+                "y2a_root": str(Y2A_ROOT),
+                "streamer_name": "yyfyyf",
+                "source_url": "https://www.douyu.com/9999",
+            },
+            fingerprint_value="fingerprint-1",
+            video=pathlib.Path("/tmp/YYF_陪伴每一天.flv"),
+            task_kind="recording_upload",
+        )
+
+        event = emit.call_args.args[0]
+        self.assertEqual(event.event_type, "TASK_ADDED")
+        self.assertEqual(event.payload["task_kind"], "recording_upload")
+        self.assertEqual(event.payload["streamer"], "YYF")
+        self.assertEqual(event.payload["upload_target"], "bilibili")
+
     def test_recording_messages_include_streamer_and_title(self):
         started = build_notification_message(
             NotificationEvent(
