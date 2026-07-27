@@ -1815,6 +1815,37 @@
                                                             </button>
                                                             <span class="help-text">先保存设置，再发送测试消息；Bot 必须有目标会话的发言权限。</span>
                                                         </div>
+                                                        <hr class="my-4">
+                                                        <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
+                                                            <div>
+                                                                <h5 class="mb-1">远程控制</h5>
+                                                                <p class="help-text mb-0">通过 Telegram 查看、添加、删除直播间，并控制单个直播间录制。默认关闭。</p>
+                                                            </div>
+                                                            <label class="checkbox-label">
+                                                                <input type="checkbox" name="TELEGRAM_CONTROL_ENABLED" {% if config.get('TELEGRAM_CONTROL_ENABLED', False) %}checked{% endif %}>
+                                                                允许机器人控制
+                                                            </label>
+                                                        </div>
+                                                        <div class="row g-3 mt-1">
+                                                            <div class="col-12">
+                                                                <div class="form-group">
+                                                                    <label for="telegram-control-admin-user-ids" class="form-label">管理员 User ID 白名单</label>
+                                                                    <input type="text" id="telegram-control-admin-user-ids" name="TELEGRAM_CONTROL_ADMIN_USER_IDS" value="{{ config.get('TELEGRAM_CONTROL_ADMIN_USER_IDS', '') }}" class="form-control" autocomplete="off" placeholder="123456789；多人可用逗号分隔">
+                                                                    <div class="form-text">必须填写 Telegram 数字 User ID。命令还必须来自上方配置的 Chat ID；群组内也只允许白名单用户操作。</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="settings-note mt-3">
+                                                            <strong>支持命令：</strong>
+                                                            <code>/rooms</code>、
+                                                            <code>/add &lt;链接&gt;</code>、
+                                                            <code>/start &lt;编号&gt;</code>、
+                                                            <code>/stop &lt;编号&gt;</code>、
+                                                            <code>/delete &lt;编号&gt;</code>、
+                                                            <code>/tasks</code>、
+                                                            <code>/status</code>。
+                                                            删除直播间必须在 2 分钟内点击二次确认，不会删除已有录播文件。
+                                                        </div>
                                                     </div>
                                                 </article>
                                             </div>

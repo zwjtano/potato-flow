@@ -61,6 +61,10 @@ from modules.notifications import (
     iter_enabled_channel_ids,
     validate_channel_config_fields,
 )
+from modules.telegram_control import (
+    configure_global_telegram_control,
+    shutdown_global_telegram_control,
+)
 from apscheduler.schedulers.background import BackgroundScheduler
 from version import __author__, __version__
 
@@ -189,21 +193,41 @@ def _sync_notification_service(config: dict | None = None):
         logger.info("通知服务配置已同步")
     except Exception as e:
         logger.warning(f"同步通知服务配置失败: {e}")
+    try:
+        configure_global_telegram_control(live_recorder_manager, effective_config)
+        logger.info("Telegram 机器人控制配置已同步")
+    except Exception as e:
+        logger.warning(f"同步 Telegram 机器人控制失败: {e}")
 
 
 def _append_notification_config_warnings(messages: list, config: dict | None):
     effective_config = dict(config or {})
-    if not effective_config.get('NOTIFY_ENABLED'):
-        return
-    for channel_id in iter_enabled_channel_ids(effective_config):
-        missing_fields = validate_channel_config_fields(channel_id, effective_config)
-        if missing_fields:
-            readable_fields = '、'.join(missing_fields)
-            channel_label = CHANNEL_LABELS.get(channel_id, channel_id)
+    if effective_config.get('NOTIFY_ENABLED'):
+        for channel_id in iter_enabled_channel_ids(effective_config):
+            missing_fields = validate_channel_config_fields(channel_id, effective_config)
+            if missing_fields:
+                readable_fields = '、'.join(missing_fields)
+                channel_label = CHANNEL_LABELS.get(channel_id, channel_id)
+                _append_settings_message(
+                    messages,
+                    'warning',
+                    f'已启用 {channel_label} 通知，但缺少配置：{readable_fields}。该渠道会暂时跳过发送。'
+                )
+    if _coerce_checkbox_value(effective_config.get('TELEGRAM_CONTROL_ENABLED')):
+        missing_control_fields = []
+        if not str(effective_config.get('NOTIFY_TELEGRAM_BOT_TOKEN') or '').strip():
+            missing_control_fields.append('Bot Token')
+        if not str(effective_config.get('NOTIFY_TELEGRAM_CHAT_ID') or '').strip():
+            missing_control_fields.append('Chat ID')
+        if not str(effective_config.get('TELEGRAM_CONTROL_ADMIN_USER_IDS') or '').strip():
+            missing_control_fields.append('管理员 User ID')
+        if missing_control_fields:
             _append_settings_message(
                 messages,
                 'warning',
-                f'已启用 {channel_label} 通知，但缺少配置：{readable_fields}。该渠道会暂时跳过发送。'
+                '已启用 Telegram 远程控制，但缺少配置：'
+                + '、'.join(missing_control_fields)
+                + '。控制服务不会启动。',
             )
 
 
@@ -782,6 +806,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'NOTIFY_SERVERCHAN_ENABLED',
             'NOTIFY_MESSAGE_PUSHER_ENABLED',
             'NOTIFY_TELEGRAM_ENABLED',
+            'TELEGRAM_CONTROL_ENABLED',
             'COOKIECLOUD_ENABLED',
             'COOKIECLOUD_ALLOW_PLAINTEXT_EXPORT',
         ]
@@ -4261,6 +4286,7 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"服务启动失败: {str(e)}")
     finally:
+        shutdown_global_telegram_control()
         live_recorder_manager.stop()
 
         # 关闭全局任务处理器

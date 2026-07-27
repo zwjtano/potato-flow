@@ -1108,6 +1108,26 @@ body {
     align-items: flex-start;
 }
 
+.settings-note {
+    padding: 12px 14px;
+    color: #526173;
+    border: 1px solid #d9e7f5;
+    border-radius: 10px;
+    background: #f3f8fe;
+    font-size: 0.88rem;
+    line-height: 1.7;
+}
+
+.settings-note code {
+    display: inline-block;
+    margin: 2px 1px;
+    padding: 1px 6px;
+    color: #1769aa;
+    border: 1px solid #cfe2f5;
+    border-radius: 6px;
+    background: #fff;
+}
+
 .settings-qrcode-panel {
     margin-top: 1rem;
     padding: 1rem;

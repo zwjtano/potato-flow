@@ -62,6 +62,8 @@ DEFAULT_CONFIG = {
     "NOTIFY_TELEGRAM_BOT_TOKEN": "",
     "NOTIFY_TELEGRAM_CHAT_ID": "",
     "NOTIFY_TELEGRAM_PROXY_URL": "",
+    "TELEGRAM_CONTROL_ENABLED": False,
+    "TELEGRAM_CONTROL_ADMIN_USER_IDS": "",
     "password_protection_enabled": False,
     "password": "",
     "TG_BOT_API_TOKEN_HASH": "",
