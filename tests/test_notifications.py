@@ -72,7 +72,7 @@ class TelegramNotificationTests(unittest.TestCase):
             {
                 "NOTIFY_TELEGRAM_BOT_TOKEN": "123:secret",
                 "NOTIFY_TELEGRAM_CHAT_ID": "-100123",
-                "NOTIFY_TELEGRAM_PROXY_URL": "http://127.0.0.1:7890",
+                "NETWORK_PROXY_URL": "http://127.0.0.1:7890",
             },
         )
 
@@ -137,7 +137,9 @@ class TelegramNotificationTests(unittest.TestCase):
             "NOTIFY_TELEGRAM_ENABLED",
             "NOTIFY_TELEGRAM_BOT_TOKEN",
             "NOTIFY_TELEGRAM_CHAT_ID",
-            "NOTIFY_TELEGRAM_PROXY_URL",
+            "NETWORK_PROXY_URL",
+            "NETWORK_PROXY_USERNAME",
+            "NETWORK_PROXY_PASSWORD",
         ):
             self.assertIn(field, template)
             self.assertIn(field, config_source)

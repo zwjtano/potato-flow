@@ -429,26 +429,9 @@ def build_proxy_url(config):
     if not config.get('YOUTUBE_PROXY_ENABLED', False):
         return None
         
-    proxy_url = config.get('YOUTUBE_PROXY_URL', '').strip()
-    if not proxy_url:
-        return None
-        
-    proxy_username = config.get('YOUTUBE_PROXY_USERNAME', '').strip()
-    proxy_password = config.get('YOUTUBE_PROXY_PASSWORD', '').strip()
-    
-    # 如果有用户名和密码，构建认证代理URL
-    if proxy_username and proxy_password:
-        # 解析原始代理URL
-        if '://' in proxy_url:
-            protocol, rest = proxy_url.split('://', 1)
-            # 构建包含认证的代理URL
-            auth_proxy_url = f"{protocol}://{proxy_username}:{proxy_password}@{rest}"
-            return auth_proxy_url
-        else:
-            # 如果没有协议前缀，默认添加http://
-            return f"http://{proxy_username}:{proxy_password}@{proxy_url}"
-    
-    return proxy_url
+    from .network_proxy import build_common_proxy_url
+
+    return build_common_proxy_url(config) or None
 
 def setup_task_logger(task_id):
     """

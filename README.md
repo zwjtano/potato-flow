@@ -154,6 +154,14 @@ Biliup 排队投稿哔哩哔哩
 - YouTube 支持手动 Cookie 文件和 CookieCloud 拉取。
 - 系统设置中可以检查 Cookie 状态。
 
+### 通用网络代理
+
+- YouTube 下载、YouTube 监控 API 和 Telegram 共用一个代理地址。
+- 代理地址、用户名和密码只在“系统设置 → 账号与网络 → 通用网络代理”填写一次。
+- 支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。
+- YouTube 下载和监控 API 可以分别决定是否使用通用代理；Telegram 配置通用代理后自动使用。
+- 升级时会自动迁移原 YouTube 或 Telegram 代理配置。
+
 ### 消息通知与 Telegram 控制
 
 支持以下通知渠道：
@@ -175,7 +183,7 @@ Biliup 排队投稿哔哩哔哩
 
 任务通知覆盖普通上传、录播投稿和仅录制本地处理。通知失败会进入重试队列，不阻塞录制和投稿。
 
-Telegram 支持单独填写 HTTP/HTTPS 代理，并可开启机器人远程控制。设置管理员 User ID 白名单后，可以通过机器人：
+Telegram 自动使用“账号与网络”中的通用代理，并可开启机器人远程控制。设置管理员 User ID 白名单后，可以通过机器人：
 
 - 查看直播间和状态
 - 添加直播间

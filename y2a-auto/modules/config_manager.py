@@ -62,6 +62,10 @@ DEFAULT_CONFIG = {
     "NOTIFY_TELEGRAM_BOT_TOKEN": "",
     "NOTIFY_TELEGRAM_CHAT_ID": "",
     "NOTIFY_TELEGRAM_PROXY_URL": "",
+    # YouTube 下载、YouTube Data API 与 Telegram 共用的代理
+    "NETWORK_PROXY_URL": "",
+    "NETWORK_PROXY_USERNAME": "",
+    "NETWORK_PROXY_PASSWORD": "",
     "TELEGRAM_CONTROL_ENABLED": False,
     "TELEGRAM_CONTROL_ADMIN_USER_IDS": "",
     "password_protection_enabled": False,
@@ -289,6 +293,7 @@ def load_config():
 
                 config, migrated_legacy_speech = migrate_legacy_speech_pipeline_config(config)
                 config, removed_keys = _prune_unknown_config_keys(config)
+                network_proxy_key_missing = 'NETWORK_PROXY_URL' not in config
                 
                 # 确保所有默认配置项都存在
                 missing_keys = False
@@ -296,6 +301,17 @@ def load_config():
                     if key not in config:
                         config[key] = value
                         missing_keys = True
+
+                # 将旧版分散在 YouTube / Telegram 的代理迁移为一个通用代理。
+                network_proxy_changed = False
+                if network_proxy_key_missing:
+                    from .network_proxy import legacy_proxy_values
+                    legacy_url, legacy_username, legacy_password = legacy_proxy_values(config)
+                    if legacy_url:
+                        config['NETWORK_PROXY_URL'] = legacy_url
+                        config['NETWORK_PROXY_USERNAME'] = legacy_username
+                        config['NETWORK_PROXY_PASSWORD'] = legacy_password
+                        network_proxy_changed = True
 
                 # 验证视频编码器配置是否合法
                 encoder_value = str(config.get('VIDEO_ENCODER', 'auto')).lower().strip()
@@ -356,12 +372,15 @@ def load_config():
                     or quality_mode_changed
                     or quality_height_changed
                     or session_timeout_changed
+                    or network_proxy_changed
                     or migrated_legacy_speech
                     or removed_unknown_keys
                     or prompt_mode_changed
                 ):
                     if migrated_legacy_speech:
                         logger.info("检测到旧版 ASR/VAD 默认值，已自动迁移到质量优先默认配置")
+                    if network_proxy_changed:
+                        logger.info("已将旧版 YouTube / Telegram 代理迁移为通用网络代理")
                     if removed_keys:
                         logger.info("已清理过期配置项: %s", ', '.join(sorted(removed_keys)))
                     save_config(config, config_path)

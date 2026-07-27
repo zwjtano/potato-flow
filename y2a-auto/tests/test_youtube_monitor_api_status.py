@@ -123,19 +123,19 @@ class YouTubeMonitorApiStatusTests(unittest.TestCase):
         mock_build.assert_called_once()
 
     @patch("modules.youtube_monitor.build", return_value=object())
-    def test_init_returns_proxy_ready_when_independent_proxy_enabled(self, mock_build):
+    def test_init_returns_proxy_ready_when_common_proxy_enabled(self, mock_build):
         monitor = self._new_monitor_without_init()
         success, status = monitor._init_youtube_api({
             "YOUTUBE_API_KEY": "key",
             "YOUTUBE_API_PROXY_ENABLED": True,
-            "YOUTUBE_API_PROXY_URL": "http://proxy.example.com:7890",
-            "YOUTUBE_API_PROXY_USERNAME": "alice",
-            "YOUTUBE_API_PROXY_PASSWORD": "topsecret",
+            "NETWORK_PROXY_URL": "http://proxy.example.com:7890",
+            "NETWORK_PROXY_USERNAME": "alice",
+            "NETWORK_PROXY_PASSWORD": "topsecret",
         })
 
         self.assertTrue(success)
         self.assertEqual(status, API_INIT_STATUS_PROXY_READY)
-        self.assertEqual(get_api_init_status_message(status), "YouTube API 初始化成功，独立代理已启用")
+        self.assertEqual(get_api_init_status_message(status), "YouTube API 初始化成功，通用代理已启用")
         mock_build.assert_called_once()
 
     @patch("modules.youtube_monitor.build")
@@ -147,9 +147,9 @@ class YouTubeMonitorApiStatusTests(unittest.TestCase):
         success, status = monitor._init_youtube_api({
             "YOUTUBE_API_KEY": "key",
             "YOUTUBE_API_PROXY_ENABLED": True,
-            "YOUTUBE_API_PROXY_URL": "http://proxy.example.com:7890",
-            "YOUTUBE_API_PROXY_USERNAME": "alice",
-            "YOUTUBE_API_PROXY_PASSWORD": "topsecret",
+            "NETWORK_PROXY_URL": "http://proxy.example.com:7890",
+            "NETWORK_PROXY_USERNAME": "alice",
+            "NETWORK_PROXY_PASSWORD": "topsecret",
         })
 
         self.assertFalse(success)

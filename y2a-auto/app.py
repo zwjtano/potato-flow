@@ -165,7 +165,7 @@ def _save_security_state(state):
 def _describe_youtube_api_status(status_code: str) -> str:
     messages = {
         'direct_ready': 'YouTube API 初始化成功，当前为直连模式',
-        'proxy_ready': 'YouTube API 初始化成功，独立代理已启用',
+        'proxy_ready': 'YouTube API 初始化成功，通用代理已启用',
         'missing_api_key': 'YouTube API 密钥未配置，请先在设置页完成接入。',
         'init_failed': 'YouTube监控 API 初始化失败，请检查 API 密钥、代理配置与网络连通性。',
     }

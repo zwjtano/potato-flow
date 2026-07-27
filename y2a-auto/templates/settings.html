@@ -472,6 +472,40 @@
                                         <article class="settings-card">
                                             <div class="settings-card-header">
                                                 <div>
+                                                    <span class="section-eyebrow">统一网络出口</span>
+                                                    <h4>通用网络代理</h4>
+                                                </div>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3">
+                                                    <div class="col-12">
+                                                        <div class="form-group">
+                                                            <label for="network-proxy-url" class="form-label">代理地址（可选）</label>
+                                                            <input type="text" id="network-proxy-url" name="NETWORK_PROXY_URL" value="{{ config.get('NETWORK_PROXY_URL', '') }}" class="form-control" autocomplete="off" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
+                                                            <div class="form-text">YouTube 下载、YouTube 监控 API 和 Telegram 共用这一处代理。留空时全部直连；YouTube 是否使用代理仍由各自开关控制。</div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="network-proxy-username" class="form-label">代理用户名</label>
+                                                            <input type="text" id="network-proxy-username" name="NETWORK_PROXY_USERNAME" value="{{ config.get('NETWORK_PROXY_USERNAME', '') }}" class="form-control" autocomplete="off" placeholder="可选">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="network-proxy-password" class="form-label">代理密码</label>
+                                                            <input type="password" id="network-proxy-password" name="NETWORK_PROXY_PASSWORD" value="{{ config.get('NETWORK_PROXY_PASSWORD', '') }}" class="form-control" autocomplete="off" placeholder="可选">
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
                                                     <span class="section-eyebrow">下载与代理</span>
                                                     <h4>YouTube 下载与代理</h4>
                                                 </div>
@@ -493,14 +527,8 @@
                                                     <div class="col-12">
                                                         <label class="checkbox-label">
                                                             <input type="checkbox" name="YOUTUBE_PROXY_ENABLED" {% if config.get('YOUTUBE_PROXY_ENABLED', False) %}checked{% endif %}>
-                                                            启用代理下载
+                                                            YouTube 下载使用通用代理
                                                         </label>
-                                                    </div>
-                                                    <div class="col-md-8">
-                                                        <div class="form-group">
-                                                            <label for="youtube-proxy-url" class="form-label">代理地址</label>
-                                                            <input type="text" id="youtube-proxy-url" name="YOUTUBE_PROXY_URL" value="{{ config.get('YOUTUBE_PROXY_URL', '') }}" class="form-control" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
-                                                        </div>
                                                     </div>
                                                     <div class="col-md-4">
                                                         <div class="form-group">
@@ -528,18 +556,6 @@
                                                                 <option value="480" {% if config.get('YOUTUBE_DOWNLOAD_MAX_HEIGHT', '1080') == '480' %}selected{% endif %}>480p</option>
                                                                 <option value="360" {% if config.get('YOUTUBE_DOWNLOAD_MAX_HEIGHT', '1080') == '360' %}selected{% endif %}>360p</option>
                                                             </select>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="youtube-proxy-username" class="form-label">代理用户名</label>
-                                                            <input type="text" id="youtube-proxy-username" name="YOUTUBE_PROXY_USERNAME" value="{{ config.get('YOUTUBE_PROXY_USERNAME', '') }}" class="form-control" placeholder="可选">
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="youtube-proxy-password" class="form-label">代理密码</label>
-                                                            <input type="password" id="youtube-proxy-password" name="YOUTUBE_PROXY_PASSWORD" value="{{ config.get('YOUTUBE_PROXY_PASSWORD', '') }}" class="form-control" placeholder="可选">
                                                         </div>
                                                     </div>
                                                     <div class="col-md-6">
@@ -1854,14 +1870,8 @@
                                                                     <div class="form-text">支持个人、群组和频道的数字 ID。</div>
                                                                 </div>
                                                             </div>
-                                                            <div class="col-12">
-                                                                <div class="form-group">
-                                                                    <label for="notify-telegram-proxy-url" class="form-label">Telegram 代理地址（可选）</label>
-                                                                    <input type="url" id="notify-telegram-proxy-url" name="NOTIFY_TELEGRAM_PROXY_URL" value="{{ config.get('NOTIFY_TELEGRAM_PROXY_URL', '') }}" class="form-control" autocomplete="off" placeholder="http://127.0.0.1:7890">
-                                                                    <div class="form-text">支持 HTTP/HTTPS 代理；留空时直接连接 Telegram Bot API。</div>
-                                                                </div>
-                                                            </div>
                                                         </div>
+                                                        <div class="form-text mt-3">Telegram 使用“账号与网络 → 通用网络代理”；未填写通用代理时直接连接 Telegram Bot API。</div>
                                                         <div class="settings-inline-actions mt-3">
                                                             <button type="button" class="btn btn-outline-primary notify-test-btn" data-channel="telegram">
                                                                 <i class="bi bi-send"></i> 发送测试消息
@@ -2101,10 +2111,6 @@
                                                 </span>
                                             </div>
                                             <div class="settings-card-body">
-                                                <div class="alert alert-info mb-3">
-                                                    <i class="bi bi-info-circle"></i>
-                                                    下载页中的“启用代理下载”只影响 `yt-dlp` 下载链路；这里的代理只影响 YouTube Data API 监控请求，且不会继承下载代理或环境变量代理。
-                                                </div>
                                                 <div class="row g-3">
                                                     <div class="col-12">
                                                         <div class="form-group">
@@ -2116,38 +2122,13 @@
                                                     <div class="col-12">
                                                         <label class="checkbox-label">
                                                             <input type="checkbox" name="YOUTUBE_API_PROXY_ENABLED" {% if config.get('YOUTUBE_API_PROXY_ENABLED', False) %}checked{% endif %}>
-                                                            为 YouTube 监控 API 启用独立代理
+                                                            YouTube 监控 API 使用通用代理
                                                         </label>
-                                                    </div>
-                                                    <div class="col-md-8">
-                                                        <div class="form-group">
-                                                            <label for="youtube-api-proxy-url" class="form-label">监控 API 代理地址</label>
-                                                            <input type="text" id="youtube-api-proxy-url" name="YOUTUBE_API_PROXY_URL" value="{{ config.get('YOUTUBE_API_PROXY_URL', '') }}" class="form-control" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
-                                                            <p class="help-text">关闭时强制直连，不会回退到下载代理或 `HTTP_PROXY/HTTPS_PROXY`。</p>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-4">
-                                                        <div class="form-group">
-                                                            <label class="form-label d-block">&nbsp;</label>
-                                                            <div class="text-muted small pt-2">如果服务器本身无法直连 YouTube Data API，请在这里单独填写代理。</div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="youtube-api-proxy-username" class="form-label">监控 API 代理用户名</label>
-                                                            <input type="text" id="youtube-api-proxy-username" name="YOUTUBE_API_PROXY_USERNAME" value="{{ config.get('YOUTUBE_API_PROXY_USERNAME', '') }}" class="form-control" placeholder="可选">
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="youtube-api-proxy-password" class="form-label">监控 API 代理密码</label>
-                                                            <input type="password" id="youtube-api-proxy-password" name="YOUTUBE_API_PROXY_PASSWORD" value="{{ config.get('YOUTUBE_API_PROXY_PASSWORD', '') }}" class="form-control" placeholder="可选">
-                                                        </div>
                                                     </div>
                                                 </div>
                                                 {% if config.YOUTUBE_API_KEY %}
                                                 <div class="alert alert-success mt-3 mb-0">
-                                                    <i class="bi bi-check-circle"></i> YouTube API 密钥已配置；如服务器无法直连，请同时配置上方监控 API 代理。
+                                                    <i class="bi bi-check-circle"></i> YouTube API 密钥已配置；如服务器无法直连，可启用通用代理。
                                                 </div>
                                                 {% else %}
                                                 <div class="alert alert-warning mt-3 mb-0">

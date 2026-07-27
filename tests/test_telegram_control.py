@@ -104,7 +104,9 @@ def _config(**overrides):
         "TELEGRAM_CONTROL_ADMIN_USER_IDS": "1001, 1002",
         "NOTIFY_TELEGRAM_BOT_TOKEN": "123:secret",
         "NOTIFY_TELEGRAM_CHAT_ID": "-100200",
-        "NOTIFY_TELEGRAM_PROXY_URL": "",
+        "NETWORK_PROXY_URL": "",
+        "NETWORK_PROXY_USERNAME": "",
+        "NETWORK_PROXY_PASSWORD": "",
     }
     config.update(overrides)
     return config

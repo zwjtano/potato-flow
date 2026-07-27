@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from .live_recorder_manager import RecorderConfigError, recordings_dir
+from .network_proxy import build_common_proxy_url
 
 
 logger = logging.getLogger("telegram_control")
@@ -22,7 +23,9 @@ CONTROL_CONFIG_KEYS = (
     "TELEGRAM_CONTROL_ADMIN_USER_IDS",
     "NOTIFY_TELEGRAM_BOT_TOKEN",
     "NOTIFY_TELEGRAM_CHAT_ID",
-    "NOTIFY_TELEGRAM_PROXY_URL",
+    "NETWORK_PROXY_URL",
+    "NETWORK_PROXY_USERNAME",
+    "NETWORK_PROXY_PASSWORD",
 )
 CONFIRM_TTL_SECONDS = 120
 
@@ -102,7 +105,10 @@ class TelegramControlService:
 
     @property
     def proxy_url(self) -> str:
-        return str(self.config.get("NOTIFY_TELEGRAM_PROXY_URL") or "").strip()
+        try:
+            return build_common_proxy_url(self.config)
+        except ValueError:
+            return ""
 
     def validation_errors(self) -> list[str]:
         if not self.enabled:
@@ -114,8 +120,10 @@ class TelegramControlService:
             errors.append("Chat ID")
         if not self.admin_user_ids:
             errors.append("管理员 User ID")
-        if self.proxy_url and not re.match(r"^https?://", self.proxy_url, re.IGNORECASE):
-            errors.append("有效的 HTTP/HTTPS 代理地址")
+        try:
+            build_common_proxy_url(self.config)
+        except ValueError:
+            errors.append("有效的通用代理地址")
         return errors
 
     def start(self) -> bool:

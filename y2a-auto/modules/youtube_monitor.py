@@ -15,7 +15,6 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import DEFAULT_HTTP_TIMEOUT_SEC
 import httplib2
 import time
-from urllib.parse import quote, urlsplit
 from apscheduler.schedulers.background import BackgroundScheduler
 from logging.handlers import RotatingFileHandler
 from modules.task_manager import add_task
@@ -70,7 +69,7 @@ API_INIT_STATUS_INIT_FAILED = 'init_failed'
 def get_api_init_status_message(status_code: Optional[str]) -> str:
     messages = {
         API_INIT_STATUS_DIRECT_READY: 'YouTube API 初始化成功，当前为直连模式',
-        API_INIT_STATUS_PROXY_READY: 'YouTube API 初始化成功，独立代理已启用',
+        API_INIT_STATUS_PROXY_READY: 'YouTube API 初始化成功，通用代理已启用',
         API_INIT_STATUS_MISSING_API_KEY: 'YouTube API 密钥未配置，请先在设置页完成接入。',
         API_INIT_STATUS_INIT_FAILED: 'YouTube API 初始化失败，请检查 API 密钥、代理配置与网络连通性。',
     }
@@ -390,44 +389,16 @@ class YouTubeMonitor:
         except Exception as e:
             logger.error(f"重新启动调度任务失败: {str(e)}")
     
-    def _normalize_proxy_url(self, proxy_url: str) -> str:
-        """标准化代理地址，缺失协议时默认使用 HTTP。"""
-        normalized = str(proxy_url or '').strip()
-        if not normalized:
-            return ''
-        if '://' not in normalized:
-            normalized = f'http://{normalized}'
-        return normalized
-
-    def _build_proxy_url_with_auth(self, proxy_url: str, username: str, password: str) -> str:
-        """根据用户名密码构造带认证信息的代理 URL。"""
-        normalized = self._normalize_proxy_url(proxy_url)
-        if not normalized:
-            return ''
-
-        if username and password:
-            protocol, rest = normalized.split('://', 1)
-            auth = f"{quote(username, safe='')}:{quote(password, safe='')}"
-            return f"{protocol}://{auth}@{rest}"
-        return normalized
-
     def _resolve_api_proxy_url(self, runtime_config: Dict[str, Any]) -> Optional[str]:
-        """从配置中解析监控 API 独立代理。"""
+        """从通用配置中解析 YouTube 监控 API 代理。"""
         if not runtime_config.get('YOUTUBE_API_PROXY_ENABLED', False):
             return None
 
-        proxy_url = self._build_proxy_url_with_auth(
-            str(runtime_config.get('YOUTUBE_API_PROXY_URL', '') or ''),
-            str(runtime_config.get('YOUTUBE_API_PROXY_USERNAME', '') or '').strip(),
-            str(runtime_config.get('YOUTUBE_API_PROXY_PASSWORD', '') or '').strip(),
-        )
+        from .network_proxy import build_common_proxy_url
+
+        proxy_url = build_common_proxy_url(runtime_config)
         if not proxy_url:
             return None
-
-        parsed = urlsplit(proxy_url)
-        if not parsed.scheme or not parsed.hostname:
-            raise ValueError("YouTube 监控 API 代理地址无效，请填写包含主机名的 http:// 或 socks5:// 地址")
-
         return proxy_url
 
     def _get_api_init_success_status(self) -> str:

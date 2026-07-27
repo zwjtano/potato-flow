@@ -7,6 +7,7 @@ from typing import Any
 import requests
 
 from .models import NotificationMessage
+from ..network_proxy import build_common_proxy_url
 
 
 CHANNEL_WECOM = "wecom"
@@ -211,9 +212,10 @@ class TelegramNotifier(Notifier):
     def send(self, message: NotificationMessage, config: dict[str, Any]) -> None:
         token = str(config.get("NOTIFY_TELEGRAM_BOT_TOKEN") or "").strip()
         chat_id = str(config.get("NOTIFY_TELEGRAM_CHAT_ID") or "").strip()
-        proxy_url = str(config.get("NOTIFY_TELEGRAM_PROXY_URL") or "").strip()
-        if proxy_url and not re.match(r"^https?://", proxy_url, flags=re.IGNORECASE):
-            raise NotificationSendError("Telegram 代理地址仅支持 http:// 或 https://")
+        try:
+            proxy_url = build_common_proxy_url(config)
+        except ValueError as exc:
+            raise NotificationSendError(str(exc)) from exc
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         request_options: dict[str, Any] = {}
         if proxy_url:
