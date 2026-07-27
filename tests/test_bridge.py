@@ -785,6 +785,27 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertNotIn("绝对不能画成蓝色猫", instruction)
 
+    def test_dota2_item_context_does_not_treat_generic_words_as_items(self):
+        self.assertFalse(
+            bridge.recording_cover_has_dota2_context(
+                "唱歌主播",
+                "蝴蝶与天堂",
+                "刷新页面继续听歌",
+            )
+        )
+        self.assertTrue(
+            bridge.recording_cover_has_dota2_context(
+                "新主播",
+                "蓝猫补出大电锤",
+            )
+        )
+        self.assertTrue(
+            bridge.recording_cover_has_dota2_context(
+                "yyfyyf",
+                "对局复盘",
+            )
+        )
+
     def test_dota2_streamer_aliases_use_stable_public_names(self):
         cases = {
             "B神": "BurNIng",
@@ -916,6 +937,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("横向 1920:1080 视频封面", prompt)
         self.assertIn("AI 生成的核心标题：新地图极限挑战", prompt)
         self.assertIn("Dota 2 游戏角色消歧规则", prompt)
+        self.assertIn("Dota 2 装备规则", prompt)
         self.assertIn("斗鱼 Dota 2 主播昵称规则", prompt)
         self.assertIn("绝对禁止出现日期", prompt)
         self.assertIn("采用低饱和蓝紫色，并突出 Roshan 团战", prompt)
@@ -1000,6 +1022,67 @@ class BridgeTests(unittest.TestCase):
             [str(bridge.YYF_COVER_REFERENCE)],
         )
         avatar_download.assert_not_called()
+
+    def test_dota2_item_icon_sheet_is_sent_to_image_model(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work_dir = root / "artifacts"
+            item_sheet = root / "dota2-items.png"
+            item_sheet.write_bytes(b"official-item-reference")
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_edit = Mock(return_value=response)
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=image_edit,
+                generate=Mock(),
+            ))
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(
+                bridge,
+                "build_dota2_item_reference_sheet",
+                return_value=(item_sheet, []),
+            ), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
+                _, details = bridge.generate_recording_cover_with_ai(
+                    title="DOTA2 蓝猫裸BKB后补羊刀",
+                    ai_topic="BKB羊刀翻盘",
+                    description="蓝猫更新黑皇杖和邪恶镰刀后赢下团战。",
+                    streamer="新主播",
+                    cfg={
+                        "_config_dir": str(root),
+                        "y2a_root": str(y2a_root),
+                        "ffmpeg": "ffmpeg",
+                    },
+                    work_dir=work_dir,
+                )
+
+        self.assertTrue(details["ai_cover_dota2_item_reference_used"])
+        self.assertEqual(
+            [item["english_name"] for item in details["ai_cover_dota2_items"]],
+            ["Black King Bar", "Scythe of Vyse"],
+        )
+        self.assertEqual(Path(image_edit.call_args.kwargs["image"].name), item_sheet)
+        prompt = image_edit.call_args.kwargs["prompt"]
+        self.assertIn("BKB＝黑皇杖（Black King Bar）", prompt)
+        self.assertIn("羊刀＝邪恶镰刀（Scythe of Vyse）", prompt)
+        self.assertIn("OFFICIAL ITEM ICON REFERENCES", prompt)
 
     def test_unknown_streamer_cover_uses_room_avatar_as_reference(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"

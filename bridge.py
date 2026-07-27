@@ -29,6 +29,11 @@ from danmaku_pipeline import (
     probe_video_size,
     select_summary_comments,
 )
+from dota2_items import (
+    build_dota2_item_reference_sheet,
+    dota2_item_prompt_instruction,
+    match_dota2_items,
+)
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
@@ -46,7 +51,7 @@ DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
 )
 DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "围绕本段最核心的对局、英雄或节目效果构图，主体醒目、对比清楚、适合手机缩略图；"
-    "人物形象与指定参考图保持一致，DOTA2 英雄必须符合游戏原设。"
+    "人物形象与指定参考图保持一致，DOTA2 英雄和装备必须符合游戏原设及官方图标。"
     "画面不要出现日期、时间、房间号、平台界面、二维码或水印。"
 )
 WORKSPACE_ROOT = Path(__file__).resolve().parent
@@ -948,6 +953,52 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+_DOTA2_ITEM_CONTEXT_ALIASES = (
+    "bkb",
+    "mkb",
+    "a杖",
+    "a魔晶",
+    "跳刀",
+    "力量跳",
+    "敏捷跳",
+    "智力跳",
+    "羊刀",
+    "大根",
+    "大灵匣",
+    "小灵匣",
+    "大吹风",
+    "推推",
+    "大推推",
+    "大炮",
+    "小炮",
+    "大电锤",
+    "小电锤",
+    "大隐刀",
+    "大晕锤",
+    "小晕锤",
+    "大散失",
+    "大骨灰",
+    "大支配",
+    "大勋章",
+)
+
+
+def recording_cover_has_dota2_context(streamer: str, *content: str) -> bool:
+    """Avoid treating ordinary words as Dota items on unrelated streams."""
+    normalized_streamer = normalize_dota2_streamer_name(streamer)
+    known_streamers = {
+        canonical_name
+        for canonical_name, _aliases in DOTA2_STREAMER_ALIAS_GROUPS
+    }
+    known_streamers.add("果小果")
+    if normalized_streamer in known_streamers:
+        return True
+    combined = "\n".join(str(value or "") for value in content).casefold()
+    if re.search(r"(?<![a-z0-9])dota\s*2?(?![a-z0-9])|刀塔", combined):
+        return True
+    return any(alias.casefold() in combined for alias in _DOTA2_ITEM_CONTEXT_ALIASES)
+
+
 def recording_cover_dota2_instruction(*content: str) -> str:
     """Resolve common Chinese Dota 2 hero nicknames for the image prompt."""
     combined = "\n".join(str(value or "") for value in content)
@@ -1129,6 +1180,39 @@ def generate_recording_cover_with_ai(
         ai_topic,
         description,
     )
+    dota2_item_matches = (
+        match_dota2_items(title, ai_topic, description)
+        if recording_cover_has_dota2_context(
+            streamer,
+            title,
+            ai_topic,
+            description,
+        )
+        else []
+    )
+    dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
+    if dota2_item_matches:
+        item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
+            dota2_item_matches,
+            resolve_path(".dota2-item-cache", cfg),
+            work_dir / "dota2_item_references.png",
+        )
+        details["ai_cover_dota2_items"] = [
+            {
+                "alias": match.alias,
+                "chinese_name": match.item.chinese_name,
+                "english_name": match.item.english_name,
+                "icon_slug": match.item.icon_slug,
+            }
+            for match in dota2_item_matches
+        ]
+        details["ai_cover_dota2_item_reference_errors"] = item_reference_errors
+        if item_reference_path is not None:
+            reference_paths.append(item_reference_path)
+            details["ai_cover_dota2_item_reference_used"] = True
+            details["ai_cover_dota2_item_reference_path"] = str(item_reference_path)
+        else:
+            details["ai_cover_dota2_item_reference_used"] = False
     dota2_streamer_instruction = recording_cover_dota2_streamer_instruction(
         streamer,
         title,
@@ -1156,6 +1240,7 @@ AI 生成的核心标题：{headline}
 
 只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 {dota2_instruction}
+{dota2_item_instruction}
 {dota2_streamer_instruction}
 {streamer_expression_instruction}
 {reference_instruction}
