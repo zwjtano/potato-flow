@@ -11,109 +11,76 @@
 
 <div class="settings-container">
     <div class="settings-page-header">
-        <div>
-            <div class="page-eyebrow">SYSTEM SETTINGS</div>
+        <div class="settings-title-block">
+            <div class="page-eyebrow">配置中心</div>
             <h1 class="mb-1">系统设置</h1>
-            <p class="section-lead mb-0">按使用频率重组流程、账号、AI、维护与安全设置，常用项优先，高级项按需展开。</p>
+            <p class="section-lead mb-0">集中管理投稿流程、平台账号、AI 服务与运行环境。</p>
         </div>
-        <div class="settings-page-tags">
-            <span class="badge rounded-pill text-bg-light">运营优先</span>
-            <span class="badge rounded-pill text-bg-light">单页保存</span>
-            <span class="badge rounded-pill text-bg-light">高级项折叠</span>
+        <div class="settings-header-tools">
+            <div class="settings-health-list" aria-label="配置状态">
+                <span class="settings-health-item {{ 'is-ready' if account_ready_count else '' }}">
+                    <i class="bi bi-circle-fill"></i> 平台账号 {{ account_ready_count }}/2
+                </span>
+                <span class="settings-health-item {{ 'is-ready' if ai_ready else 'is-attention' }}">
+                    <i class="bi bi-circle-fill"></i> AI 服务 {{ '已接入' if ai_ready else '待配置' }}
+                </span>
+                <span class="settings-health-item {{ 'is-ready' if config.get('NOTIFY_ENABLED', False) else '' }}">
+                    <i class="bi bi-circle-fill"></i> 消息推送 {{ '已启用' if config.get('NOTIFY_ENABLED', False) else '未启用' }}
+                </span>
+            </div>
+            <div class="settings-search-bar">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" id="settings-search-input" class="form-control" placeholder="搜索代理、模型、密码、Whisper…">
+                    <button type="button" id="settings-search-clear" class="btn btn-outline-secondary d-none" title="清除搜索" aria-label="清除搜索"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div id="settings-search-hint" class="form-text d-none"></div>
+            </div>
         </div>
     </div>
 
-    <div class="settings-search-bar mb-3">
-        <div class="input-group">
-            <span class="input-group-text"><i class="bi bi-search"></i></span>
-            <input type="text" id="settings-search-input" class="form-control" placeholder="搜索设置项名称，如：代理、模型、密码、Whisper…">
-            <button type="button" id="settings-search-clear" class="btn btn-outline-secondary d-none" title="清除搜索" aria-label="清除搜索"><i class="bi bi-x-lg"></i></button>
-        </div>
-        <div id="settings-search-hint" class="form-text d-none"></div>
-    </div>
-
-    <div class="settings-summary-grid">
-        <button type="button" class="settings-summary-card" data-settings-target="#vtab-general">
-            <span class="settings-summary-icon"><i class="bi bi-play-circle"></i></span>
-            <div>
-                <div class="settings-summary-label">自动化状态</div>
-                <div class="settings-summary-value">{{ '无人值守已启用' if config.AUTO_MODE_ENABLED else '手动模式' }}</div>
-                <span class="settings-status-badge {{ 'is-success' if config.AUTO_MODE_ENABLED else 'is-neutral' }}">{{ '运行中' if config.AUTO_MODE_ENABLED else '未启用' }}</span>
+    <div class="settings-layout">
+        <aside class="settings-navigation-panel">
+            <div class="settings-nav-heading">
+                <div>
+                    <span>设置目录</span>
+                    <small>按功能分组，修改后统一保存</small>
+                </div>
+                <span class="settings-nav-count">6</span>
             </div>
-        </button>
-        <button type="button" class="settings-summary-card" data-settings-target="#vtab-accounts">
-            <span class="settings-summary-icon"><i class="bi bi-person-circle"></i></span>
-            <div>
-                <div class="settings-summary-label">账号与网络</div>
-                <div class="settings-summary-value">登录、Cookies、代理</div>
-                <span class="settings-status-badge is-info">集中管理</span>
-            </div>
-        </button>
-        <button type="button" class="settings-summary-card" data-settings-target="#vtab-ai-models">
-            <span class="settings-summary-icon"><i class="bi bi-cpu"></i></span>
-            <div>
-                <div class="settings-summary-label">AI 服务状态</div>
-                <div class="settings-summary-value">{{ '已接入模型服务' if ai_ready else '待配置模型服务' }}</div>
-                <span class="settings-status-badge {{ 'is-success' if ai_ready else 'is-warning' }}">{{ '可用' if ai_ready else '未配置' }}</span>
-            </div>
-        </button>
-        <button type="button" class="settings-summary-card" data-settings-target="#vtab-subtitle-voice">
-            <span class="settings-summary-icon"><i class="bi bi-badge-cc"></i></span>
-            <div>
-                <div class="settings-summary-label">字幕与语音</div>
-                <div class="settings-summary-value">ASR·翻译·提示词</div>
-                <span class="settings-status-badge is-info">一站式</span>
-            </div>
-        </button>
-        <button type="button" class="settings-summary-card" data-settings-target="#vtab-notifications">
-            <span class="settings-summary-icon"><i class="bi bi-bell"></i></span>
-            <div>
-                <div class="settings-summary-label">消息推送</div>
-                <div class="settings-summary-value">{{ '已启用推送' if config.get('NOTIFY_ENABLED', False) else '未启用推送' }}</div>
-                <span class="settings-status-badge {{ 'is-success' if config.get('NOTIFY_ENABLED', False) else 'is-neutral' }}">{{ '运行中' if config.get('NOTIFY_ENABLED', False) else '未启用' }}</span>
-            </div>
-        </button>
-        <button type="button" class="settings-summary-card" data-settings-target="#vtab-ops">
-            <span class="settings-summary-icon"><i class="bi bi-shield-lock"></i></span>
-            <div>
-                <div class="settings-summary-label">运维与安全</div>
-                <div class="settings-summary-value">并发·清理·监控</div>
-                <span class="settings-status-badge is-info">集中管理</span>
-            </div>
-        </button>
-    </div>
-
-    <div class="row settings-layout">
-        <div class="col-lg-3 mb-3">
             <div class="settings-nav nav nav-pills" id="settings-nav" role="tablist" aria-orientation="vertical">
                 <a class="nav-link active" id="vtab-general-tab" data-bs-toggle="pill" href="#vtab-general" role="tab" aria-controls="vtab-general" aria-selected="true">
-                    <i class="bi bi-sliders"></i>
-                    <span>常规与投稿</span>
+                    <span class="settings-nav-icon"><i class="bi bi-sliders"></i></span>
+                    <span class="settings-nav-copy"><strong>常规与投稿</strong><small>自动化、投稿、转码</small></span>
+                    <span class="settings-nav-state {{ 'is-ready' if config.AUTO_MODE_ENABLED else '' }}">{{ '已启用' if config.AUTO_MODE_ENABLED else '手动' }}</span>
                 </a>
                 <a class="nav-link" id="vtab-accounts-tab" data-bs-toggle="pill" href="#vtab-accounts" role="tab" aria-controls="vtab-accounts" aria-selected="false">
-                    <i class="bi bi-person-circle"></i>
-                    <span>账号与网络</span>
+                    <span class="settings-nav-icon"><i class="bi bi-person-circle"></i></span>
+                    <span class="settings-nav-copy"><strong>账号与网络</strong><small>登录、Cookies、代理</small></span>
+                    <span class="settings-nav-state {{ 'is-ready' if account_ready_count else 'is-attention' }}">{{ account_ready_count }}/2</span>
                 </a>
                 <a class="nav-link" id="vtab-ai-models-tab" data-bs-toggle="pill" href="#vtab-ai-models" role="tab" aria-controls="vtab-ai-models" aria-selected="false">
-                    <i class="bi bi-robot"></i>
-                    <span>AI 模型</span>
+                    <span class="settings-nav-icon"><i class="bi bi-robot"></i></span>
+                    <span class="settings-nav-copy"><strong>AI 模型</strong><small>模型服务与专项能力</small></span>
+                    <span class="settings-nav-state {{ 'is-ready' if ai_ready else 'is-attention' }}">{{ '可用' if ai_ready else '待配置' }}</span>
                 </a>
                 <a class="nav-link" id="vtab-subtitle-voice-tab" data-bs-toggle="pill" href="#vtab-subtitle-voice" role="tab" aria-controls="vtab-subtitle-voice" aria-selected="false">
-                    <i class="bi bi-badge-cc"></i>
-                    <span>字幕与语音</span>
+                    <span class="settings-nav-icon"><i class="bi bi-badge-cc"></i></span>
+                    <span class="settings-nav-copy"><strong>字幕与语音</strong><small>识别、翻译、提示词</small></span>
                 </a>
                 <a class="nav-link" id="vtab-notifications-tab" data-bs-toggle="pill" href="#vtab-notifications" role="tab" aria-controls="vtab-notifications" aria-selected="false">
-                    <i class="bi bi-bell"></i>
-                    <span>消息推送</span>
+                    <span class="settings-nav-icon"><i class="bi bi-bell"></i></span>
+                    <span class="settings-nav-copy"><strong>消息推送</strong><small>企业微信、Telegram</small></span>
+                    <span class="settings-nav-state {{ 'is-ready' if config.get('NOTIFY_ENABLED', False) else '' }}">{{ '已启用' if config.get('NOTIFY_ENABLED', False) else '关闭' }}</span>
                 </a>
                 <a class="nav-link" id="vtab-ops-tab" data-bs-toggle="pill" href="#vtab-ops" role="tab" aria-controls="vtab-ops" aria-selected="false">
-                    <i class="bi bi-shield-lock"></i>
-                    <span>运维与安全</span>
+                    <span class="settings-nav-icon"><i class="bi bi-shield-lock"></i></span>
+                    <span class="settings-nav-copy"><strong>运维与安全</strong><small>并发、清理、访问控制</small></span>
                 </a>
             </div>
-        </div>
+        </aside>
 
-        <div class="col-lg-9">
+        <div class="settings-content-column">
             <form method="post" enctype="multipart/form-data" id="settings-form">
                 <div class="tab-content" id="settings-tabContent">
 
@@ -2237,9 +2204,13 @@
                 </div>
 
                 <div class="settings-actions-bar">
+                    <div class="settings-save-context">
+                        <i class="bi bi-check2"></i>
+                        <span>修改会在点击保存后统一生效</span>
+                    </div>
                     <div class="d-flex justify-content-end gap-2">
-                        <button type="button" id="reset-settings-btn" class="btn btn-outline-secondary">重置当前分组</button>
-                        <button type="submit" id="save-settings-btn" class="btn btn-primary">保存设置</button>
+                        <button type="button" id="reset-settings-btn" class="btn btn-outline-secondary"><i class="bi bi-arrow-counterclockwise"></i> 重置当前分组</button>
+                        <button type="submit" id="save-settings-btn" class="btn btn-primary"><i class="bi bi-save"></i> 保存设置</button>
                     </div>
                 </div>
             </form>

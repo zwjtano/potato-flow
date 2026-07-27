@@ -1901,23 +1901,28 @@ def index():
 
         # 最近任务（按更新时间倒序）
         cur.execute(
-            "SELECT id, video_title_translated, video_title_original, status, updated_at, bilibili_upload_response FROM tasks ORDER BY updated_at DESC LIMIT 10"
+            """SELECT id, display_id, video_title_translated, video_title_original,
+                      status, updated_at, bilibili_upload_response
+               FROM tasks
+               ORDER BY updated_at DESC
+               LIMIT 10"""
         )
         rows = cur.fetchall()
         recent_tasks = []
         for r in rows:
             upload_id = None
             try:
-                resp = json.loads(r[5]) if r[5] else None
+                resp = json.loads(r[6]) if r[6] else None
                 if isinstance(resp, dict):
                     upload_id = resp.get('bvid') or resp.get('aid')
             except Exception:
                 upload_id = None
             recent_tasks.append({
                 'id': r[0],
-                'title': r[1] or r[2] or '未获取标题',
-                'status': r[3],
-                'updated_at': r[4],
+                'display_id': r[1] or r[0],
+                'title': r[2] or r[3] or '未获取标题',
+                'status': r[4],
+                'updated_at': r[5],
                 'upload_target': upload_target,
                 'upload_id': upload_id,
                 'source': 'youtube',
@@ -1925,7 +1930,20 @@ def index():
 
         conn.close()
 
+        monitor_configs = youtube_monitor.get_monitor_configs()
+        youtube_summary = {
+            'monitor_total': len(monitor_configs),
+            'monitor_enabled': sum(bool(config.get('enabled')) for config in monitor_configs),
+            'queued': pending_total + ready_total,
+            'processing': in_progress,
+            'review': awaiting_review,
+            'failed': failed_total,
+            'completed_today': completed_today,
+        }
+
         recording_jobs = live_recorder_manager.pipeline_jobs(100)
+        recording_rooms = live_recorder_manager.rooms_with_status()
+        recorder_status = live_recorder_manager.status()
         recording_status_map = {
             'completed': TASK_STATES['COMPLETED'],
             'failed': TASK_STATES['FAILED'],
@@ -1951,18 +1969,37 @@ def index():
             job for job in recording_jobs
             if today_start <= recording_local_time(job.get('updated_at')) < tomorrow_start
         ]
-        total_tasks += len(recording_jobs)
-        awaiting_review += sum(job.get('status') == 'failed' for job in recording_jobs)
-        failed_total += sum(job.get('status') == 'failed' for job in recording_jobs)
-        ready_total += sum(job.get('status') == 'dry_run' for job in recording_jobs)
-        in_progress += sum(
+        recording_failed = sum(job.get('status') == 'failed' for job in recording_jobs)
+        recording_processing = sum(
             job.get('status') in {'processing', 'video_uploaded'} for job in recording_jobs
         )
-        completed_today += sum(job.get('status') == 'completed' for job in recording_updated_today)
+        recording_completed_today = sum(
+            job.get('status') == 'completed' for job in recording_updated_today
+        )
+        recording_summary = {
+            'room_total': len(recording_rooms),
+            'room_enabled': sum(bool(room.get('enabled', True)) for room in recording_rooms),
+            'recording_now': sum(
+                bool((room.get('runtime') or {}).get('recording'))
+                for room in recording_rooms
+            ),
+            'engine_running': bool(recorder_status.get('running')),
+            'processing': recording_processing,
+            'review': recording_failed,
+            'failed': recording_failed,
+            'completed_today': recording_completed_today,
+        }
+        total_tasks += len(recording_jobs)
+        awaiting_review += sum(job.get('status') == 'failed' for job in recording_jobs)
+        failed_total += recording_failed
+        ready_total += sum(job.get('status') == 'dry_run' for job in recording_jobs)
+        in_progress += recording_processing
+        completed_today += recording_completed_today
         failed_today += sum(job.get('status') == 'failed' for job in recording_updated_today)
         created_today += len(recording_today)
         recent_tasks.extend({
             'id': job['id'],
+            'display_id': job.get('display_id') or job['id'],
             'title': job.get('title') or job.get('video_name') or '直播录播',
             'status': recording_status_map.get(job.get('status'), TASK_STATES['PENDING']),
             'updated_at': job.get('updated_at'),
@@ -2004,8 +2041,33 @@ def index():
             'created_today': 0
         }
         recent_tasks = []
+        youtube_summary = {
+            'monitor_total': 0,
+            'monitor_enabled': 0,
+            'queued': 0,
+            'processing': 0,
+            'review': 0,
+            'failed': 0,
+            'completed_today': 0,
+        }
+        recording_summary = {
+            'room_total': 0,
+            'room_enabled': 0,
+            'recording_now': 0,
+            'engine_running': False,
+            'processing': 0,
+            'review': 0,
+            'failed': 0,
+            'completed_today': 0,
+        }
 
-    return render_template('index.html', stats=stats, recent_tasks=recent_tasks)
+    return render_template(
+        'index.html',
+        stats=stats,
+        recent_tasks=recent_tasks,
+        youtube_summary=youtube_summary,
+        recording_summary=recording_summary,
+    )
 
 @app.route('/tasks')
 @login_required

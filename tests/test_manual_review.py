@@ -19,7 +19,7 @@ class ManualReviewTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("录播失败任务", template)
-        self.assertIn("查看流水线与日志", template)
+        self.assertNotIn("查看流水线与日志", template)
         self.assertIn("进入编辑审核", template)
         self.assertIn("live_recording_job_review", template)
         self.assertIn("live_recording_job_delete", template)

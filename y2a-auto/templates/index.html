@@ -3,257 +3,114 @@
 {% block title %}PotatoFlow - 首页{% endblock %}
 
 {% block content %}
-<div class="studio-page-header home-hero">
-    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3 w-100">
-        <div>
-            <div class="page-eyebrow">OVERVIEW</div>
-            <h1>工作台概览</h1>
-            <p>统一掌握直播录播与 YouTube 任务的处理、审核和投稿状态。</p>
-        </div>
-        <div class="page-actions">
-            <a href="{{ url_for('tasks') }}" class="btn btn-primary"><i class="bi bi-collection-play me-1"></i> 任务列表</a>
-            <a href="{{ url_for('manual_review') }}" class="btn btn-light border"><i class="bi bi-patch-check me-1"></i> 待审核</a>
-            <a href="{{ url_for('youtube_monitor_index') }}" class="btn btn-light border"><i class="bi bi-broadcast-pin me-1"></i> 监控</a>
-            <a href="#" data-bs-toggle="modal" data-bs-target="#quickStartModal" class="btn btn-outline-secondary"><i class="bi bi-ui-checks-grid me-1"></i> 快速入门</a>
-        </div>
+<section class="home-welcome" aria-labelledby="home-title">
+    <div>
+        <div class="page-eyebrow">POTATOFLOW</div>
+        <h1 id="home-title">今天想做什么？</h1>
+        <p>选择一个核心功能开始，PotatoFlow 会接管后续处理与哔哩哔哩投稿。</p>
     </div>
-</div>
+    <span class="home-overall-state {{ 'has-issues' if stats.failed_total else ('is-working' if stats.in_progress else '') }}">
+        <span class="status-dot"></span>
+        {{ (stats.failed_total ~ ' 个任务需要处理') if stats.failed_total else ((stats.in_progress ~ ' 个任务处理中') if stats.in_progress else '所有流程正常') }}
+    </span>
+</section>
 
-<!-- KPI cards -->
-<div class="row g-3 mt-2">
-    <div class="col-6 col-md-3">
-        <div class="card h-100">
-            <div class="card-body">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <div class="text-muted small">今日完成</div>
-                        <div class="fs-3 fw-bold text-success">{{ stats.completed_today }}</div>
-                    </div>
-                    <span class="home-kpi-icon success"><i class="bi bi-patch-check-fill"></i></span>
-                </div>
+<section class="home-choice-grid" aria-label="核心功能">
+    <article class="home-product-card youtube">
+        <header>
+            <span class="home-product-icon"><i class="bi bi-youtube"></i></span>
+            <div class="home-product-heading">
+                <span>自动发现与搬运</span>
+                <h2>YouTube 监控转载</h2>
             </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card h-100">
-            <div class="card-body">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <div class="text-muted small">今日失败</div>
-                        <div class="fs-3 fw-bold text-danger">{{ stats.failed_today }}</div>
-                    </div>
-                    <span class="home-kpi-icon danger"><i class="bi bi-shield-x"></i></span>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card h-100">
-            <div class="card-body">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <div class="text-muted small">今日新增</div>
-                        <div class="fs-3 fw-bold">{{ stats.created_today }}</div>
-                    </div>
-                    <span class="home-kpi-icon primary"><i class="bi bi-node-plus"></i></span>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card h-100">
-            <div class="card-body">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <div class="text-muted small">进行中</div>
-                        <div class="fs-3 fw-bold">{{ stats.in_progress }}</div>
-                    </div>
-                    <span class="home-kpi-icon info"><i class="bi bi-lightning-charge"></i></span>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+            <span class="home-product-state {{ 'is-active' if youtube_summary.monitor_enabled else '' }}">
+                <span class="status-dot"></span>
+                {% if youtube_summary.monitor_enabled %}
+                    {{ youtube_summary.monitor_enabled }} 项监控运行中
+                {% elif youtube_summary.monitor_total %}
+                    监控已暂停
+                {% else %}
+                    尚未配置
+                {% endif %}
+            </span>
+        </header>
 
-<!-- Queues -->
-<div class="row g-3 mt-1">
-    <div class="col-6 col-md-3">
-        <div class="card h-100 queue-stat-card">
-            <div class="card-body">
-                <div>
-                    <div class="text-muted small">待人工审核</div>
-                    <div class="fs-4 fw-bold text-warning">{{ stats.awaiting_review }}</div>
-                </div>
-                <span class="queue-stat-icon"><i class="bi bi-hourglass-split"></i></span>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card h-100 queue-stat-card">
-            <div class="card-body">
-                <div>
-                    <div class="text-muted small">等待处理</div>
-                    <div class="fs-4 fw-bold">{{ stats.pending_total }}</div>
-                </div>
-                <span class="queue-stat-icon"><i class="bi bi-list-ul"></i></span>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card h-100 queue-stat-card">
-            <div class="card-body">
-                <div>
-                    <div class="text-muted small">准备上传</div>
-                    <div class="fs-4 fw-bold">{{ stats.ready_total }}</div>
-                </div>
-                <span class="queue-stat-icon"><i class="bi bi-cloud-arrow-up"></i></span>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card h-100 queue-stat-card">
-            <div class="card-body">
-                <div>
-                    <div class="text-muted small">失败总数</div>
-                    <div class="fs-4 fw-bold text-danger">{{ stats.failed_total }}</div>
-                </div>
-                <span class="queue-stat-icon"><i class="bi bi-bug"></i></span>
-            </div>
-        </div>
-    </div>
-</div>
+        <p class="home-product-description">监控频道或关键词，发现新视频后自动下载、处理并转载到哔哩哔哩。</p>
 
-<!-- Recent activity -->
-<div class="card mt-3">
-    <div class="card-header bg-light">
-        <div class="d-flex align-items-center justify-content-between">
-            <h5 class="mb-0"><i class="bi bi-broadcast-pin me-1"></i> 最近动态</h5>
-            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('tasks') }}"><i class="bi bi-arrow-right"></i> 前往任务</a>
+        <div class="home-workflow-path" aria-label="YouTube 转载流程">
+            <span><i class="bi bi-radar"></i> 发现视频</span>
+            <i class="bi bi-chevron-right"></i>
+            <span><i class="bi bi-stars"></i> 自动处理</span>
+            <i class="bi bi-chevron-right"></i>
+            <span><i class="bi bi-cloud-arrow-up"></i> 投稿 B 站</span>
         </div>
-    </div>
-    <div class="card-body p-0">
-        {% if recent_tasks %}
-        <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th class="col-narrow">#</th>
-                        <th>来源</th>
-                        <th>标题</th>
-                        <th class="text-center">状态</th>
-                        <th class="text-center">更新时间</th>
-                        <th class="text-end">结果与操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for t in recent_tasks %}
-                    <tr>
-                        <td class="text-monospace">{{ t.id[:6] }}…</td>
-                        <td>
-                            {% if t.source == 'recording' %}
-                            <span class="badge source-badge recording"><i class="bi bi-record-circle"></i> 直播录播</span>
-                            {% else %}
-                            <span class="badge source-badge youtube"><i class="bi bi-youtube"></i> YouTube</span>
-                            {% endif %}
-                        </td>
-                        <td class="title-clamp title-clamp-2">{{ t.title }}</td>
-                        <td class="text-center"><span class="badge bg-{{ task_status_color(t.status) }}">{{ task_status_display(t.status) }}</span></td>
-                        <td class="text-center"><span class="task-datetime" data-datetime="{{ t.updated_at }}">{{ t.updated_at }}</span></td>
-                        <td class="text-end">
-                            {% if t.upload_id %}
-                                <a href="https://www.bilibili.com/video/{{ t.upload_id }}" target="_blank" rel="noopener" class="badge bg-success text-decoration-none">{{ t.upload_id }}</a>
-                            {% else %}
-                                <span class="badge bg-secondary">—</span>
-                            {% endif %}
-                            {% if t.source == 'recording' %}
-                            <form method="post" action="{{ url_for('live_recording_job_delete', fingerprint=t.id) }}" class="d-inline ms-1">
-                                <input type="hidden" name="delete_files" value="false">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="删除录播任务">
-                                    <i class="bi bi-trash3"></i>
-                                </button>
-                            </form>
-                            {% else %}
-                            <form method="post" action="{{ url_for('delete_task_route', task_id=t.id) }}" class="d-inline ms-1">
-                                <input type="hidden" name="delete_files" value="false">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="删除任务">
-                                    <i class="bi bi-trash3"></i>
-                                </button>
-                            </form>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+
+        <div class="home-product-metrics">
+            <div><span>监控配置</span><strong>{{ youtube_summary.monitor_total }}</strong><small>{{ youtube_summary.monitor_enabled }} 项已启用</small></div>
+            <div><span>待处理</span><strong>{{ youtube_summary.queued + youtube_summary.processing }}</strong><small>队列与处理中</small></div>
+            <div><span>今日完成</span><strong>{{ youtube_summary.completed_today }}</strong><small>已完成投稿流程</small></div>
         </div>
+
+        {% if youtube_summary.review %}
+        <a class="home-product-alert" href="{{ url_for('manual_review') }}"><i class="bi bi-exclamation-circle"></i>{{ youtube_summary.review }} 个 YouTube 任务等待处理<i class="bi bi-arrow-right"></i></a>
         {% else %}
-            <div class="p-3 text-muted">暂无最近动态</div>
+        <div class="home-product-clear"><i class="bi bi-check-circle"></i>当前没有待处理异常</div>
         {% endif %}
-    </div>
-    <div class="card-footer text-muted small">
-        总任务数：{{ stats.total_tasks }}
-    </div>
-    </div>
 
-<!-- 快速入门模态框（复用原内容） -->
-<div class="modal fade" id="quickStartModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">PotatoFlow 快速入门</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+        <footer>
+            <a href="{{ url_for('youtube_monitor_index') }}" class="btn btn-primary"><i class="bi bi-broadcast-pin"></i> 进入监控中心</a>
+            <a href="{{ url_for('youtube_monitor_config') }}" class="btn btn-light border"><i class="bi bi-plus-lg"></i> 新建监控</a>
+        </footer>
+    </article>
+
+    <article class="home-product-card recording">
+        <header>
+            <span class="home-product-icon"><i class="bi bi-record-circle"></i></span>
+            <div class="home-product-heading">
+                <span>自动录制与投稿</span>
+                <h2>直播录播</h2>
             </div>
-            <div class="modal-body">
-                <h5>第一步：准备工作</h5>
-                <ul>
-                    <li>确保已在“设置”页面配置哔哩哔哩投稿账号</li>
-                    <li>如需 AI 功能，请配置兼容接口的 API 密钥</li>
-                    <li>如需内容审核，请配置阿里云内容安全API</li>
-                </ul>
-                <h5>第二步：添加任务</h5>
-                <ul>
-                    <li>访问"任务列表"页面</li>
-                    <li>点击"新建任务"按钮</li>
-                    <li>输入YouTube视频URL</li>
-                </ul>
-                <h5>第三步：处理任务</h5>
-                <ul>
-                    <li>系统将自动下载视频内容</li>
-                    <li>AI会自动翻译标题和描述</li>
-                    <li>生成标签并推荐分区</li>
-                    <li>对内容进行安全审核</li>
-                </ul>
-                <h5>第四步：审核与上传</h5>
-                <ul>
-                    <li>如果内容审核通过，系统将自动上传</li>
-                    <li>如需人工审核，可在"人工审核"页面修改内容</li>
-                    <li>修改后点击"保存并上传"或"强制上传"</li>
-                </ul>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">了解了</button>
-            </div>
+            <span class="home-product-state {{ 'is-active' if recording_summary.engine_running else '' }}">
+                <span class="status-dot"></span>
+                {% if recording_summary.recording_now %}
+                    {{ recording_summary.recording_now }} 个直播间录制中
+                {% elif recording_summary.engine_running %}
+                    录制引擎待命
+                {% elif recording_summary.room_total %}
+                    录制引擎未启动
+                {% else %}
+                    尚未添加直播间
+                {% endif %}
+            </span>
+        </header>
+
+        <p class="home-product-description">持续监控 B站、斗鱼和抖音直播间，开播自动录制，分段处理后投稿到哔哩哔哩。</p>
+
+        <div class="home-workflow-path" aria-label="直播录播流程">
+            <span><i class="bi bi-broadcast"></i> 监控开播</span>
+            <i class="bi bi-chevron-right"></i>
+            <span><i class="bi bi-record2"></i> 自动录制</span>
+            <i class="bi bi-chevron-right"></i>
+            <span><i class="bi bi-cloud-arrow-up"></i> 投稿 B 站</span>
         </div>
-    </div>
-</div>
-{% endblock %}
 
-{% block extra_css %}
-<style>
-    .title-clamp-2 { -webkit-line-clamp: 2; line-clamp: 2; max-height: 2.8em; }
-    .col-narrow { width: 32px; }
-    .source-badge { white-space: nowrap; font-weight: 600; }
-    .source-badge.recording { color: #b42335; background: #fff0f2; }
-    .source-badge.youtube { color: #9f1c26; background: #fff1f1; }
-</style>
-{% endblock %}
+        <div class="home-product-metrics">
+            <div><span>直播间</span><strong>{{ recording_summary.room_total }}</strong><small>{{ recording_summary.room_enabled }} 个正在监控</small></div>
+            <div><span>正在录制</span><strong>{{ recording_summary.recording_now }}</strong><small>{{ '引擎运行中' if recording_summary.engine_running else '引擎未运行' }}</small></div>
+            <div><span>今日完成</span><strong>{{ recording_summary.completed_today }}</strong><small>已完成录播流程</small></div>
+        </div>
 
-{% block extra_js %}
-<script>
-    // 复用任务页的相对时间渲染逻辑（简化拷贝）
-    function formatLocal(dt){
-        try{const d=new Date(dt);if(isNaN(d.getTime()))return dt;const n=new Date();const ms=n-d;const m=Math.floor(ms/60000);const h=Math.floor(ms/3600000);const days=Math.floor(ms/86400000);if(m<5)return '刚刚';if(m<60)return m+'分钟前';if(h<24&&d.toDateString()===n.toDateString())return h+'小时前';if(days===1) return '昨天 '+d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});if(days<7) return days+'天前';if(d.getFullYear()===n.getFullYear()) return d.toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit'})+' '+d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});return d.toLocaleDateString('zh-CN');}catch(e){return dt}}
-    function updateTimes(){document.querySelectorAll('.task-datetime').forEach(el=>{const v=el.getAttribute('data-datetime');if(v){el.textContent=formatLocal(v);el.title=new Date(v).toLocaleString('zh-CN')}})}
-    document.addEventListener('DOMContentLoaded',()=>{updateTimes();setInterval(updateTimes,60000)});
-</script>
+        {% if recording_summary.review %}
+        <a class="home-product-alert" href="{{ url_for('manual_review') }}"><i class="bi bi-exclamation-circle"></i>{{ recording_summary.review }} 个录播任务等待处理<i class="bi bi-arrow-right"></i></a>
+        {% else %}
+        <div class="home-product-clear"><i class="bi bi-check-circle"></i>当前没有待处理异常</div>
+        {% endif %}
+
+        <footer>
+            <a href="{{ url_for('live_recording') }}" class="btn btn-primary"><i class="bi bi-record-circle"></i> 进入录播中心</a>
+            <a href="{{ url_for('live_recording', add_room=1) }}" class="btn btn-light border"><i class="bi bi-plus-lg"></i> 添加直播间</a>
+        </footer>
+    </article>
+</section>
+
 {% endblock %}

@@ -16,13 +16,13 @@
 </span>
 {%- endmacro %}
 {% macro platform_name(platform) -%}{{ '哔哩哔哩直播' if platform == 'bilibili' else ('抖音直播' if platform == 'douyin' else '斗鱼直播') }}{%- endmacro %}
-<section class="recorder-header">
+<section class="studio-page-header recorder-header">
     <div>
         <div class="recorder-eyebrow">LIVE RECORDER</div>
         <h1>直播录制</h1>
         <p>B站、斗鱼与抖音自动监控，每个录制分段完成后立即进入弹幕与上传流水线。</p>
     </div>
-    <div class="recorder-header-actions">
+    <div class="page-actions recorder-header-actions">
         <a class="btn btn-light border" href="{{ url_for('live_recording') }}"><i class="bi bi-arrow-clockwise"></i> 刷新</a>
         <button class="btn btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#rawLogModal"><i class="bi bi-terminal"></i> 原始日志</button>
         <button class="btn btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal"><i class="bi bi-folder2-open"></i> 文件管理</button>
@@ -856,6 +856,9 @@ document.addEventListener('DOMContentLoaded', function () {
         resolve(false);
     });
     document.querySelectorAll('[data-action="room-recording"]').forEach(button => button.addEventListener('click', controlRoomRecording));
+    if (new URLSearchParams(window.location.search).get('add_room') === '1' && addRoomModal) {
+        bootstrap.Modal.getOrCreateInstance(addRoomModal).show();
+    }
     refreshLiveStatus();
     window.setInterval(refreshLiveStatus, 5000);
 });

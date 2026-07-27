@@ -46,7 +46,7 @@
                             <div class="fw-semibold mb-1">
                                 {{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage or '处理') }}失败
                             </div>
-                            <div class="small text-break">{{ job.error or '任务执行失败，请查看流水线日志。' }}</div>
+                            <div class="small text-break">{{ job.error or '任务执行失败，请进入编辑审核。' }}</div>
                         </div>
                         <div class="d-flex justify-content-between small mb-1">
                             <span>已完成 {{ job.completed_stages }}/{{ job.total_stages }} 步</span>
@@ -64,9 +64,6 @@
                                 <i class="bi bi-trash3"></i> 删除任务
                             </button>
                         </form>
-                        <a href="{{ url_for('live_recording', job=job.id) }}" class="btn btn-outline-secondary">
-                            <i class="bi bi-diagram-3"></i> 查看流水线与日志
-                        </a>
                         <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-warning">
                             <i class="bi bi-pencil-square"></i> 进入编辑审核
                         </a>
