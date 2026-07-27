@@ -875,8 +875,9 @@ class BridgeTests(unittest.TestCase):
         instruction = bridge.recording_cover_dota2_instruction(
             "蓝猫中路对线",
             "火猫与紫猫切入",
-            "DOTA2 对局中小鱼人和白牛连续追击。",
+            "DOTA2 对局中老奶奶、小鱼人和白牛连续追击。",
         )
+        self.assertIn("老奶奶＝电炎绝手（Snapfire）", instruction)
         self.assertIn("蓝猫＝风暴之灵（Storm Spirit）", instruction)
         self.assertIn("火猫＝灰烬之灵（Ember Spirit）", instruction)
         self.assertIn("紫猫＝虚无之灵（Void Spirit）", instruction)
@@ -884,6 +885,11 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("白牛＝裂魂人（Spirit Breaker）", instruction)
         self.assertIn("绝对不能画成蓝色猫", instruction)
         self.assertIn("禁止混入《英雄联盟》、宝可梦或其他作品", instruction)
+
+    def test_dota2_metadata_prompt_disambiguates_old_lady_as_snapfire(self):
+        self.assertIn("老奶奶", bridge.DOTA2_METADATA_DISAMBIGUATION)
+        self.assertIn("电炎绝手（Snapfire）", bridge.DOTA2_METADATA_DISAMBIGUATION)
+        self.assertIn("不得理解为普通老年女性", bridge.DOTA2_METADATA_DISAMBIGUATION)
 
     def test_dota2_cover_prompt_does_not_force_storm_spirit_without_blue_cat(self):
         instruction = bridge.recording_cover_dota2_instruction(

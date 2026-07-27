@@ -54,6 +54,10 @@ DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "关键时刻和观众反应；只使用输入能够支持的事实，不虚构主播原话、比赛结果或人物。"
     "不要出现文件名、任务编号、内部路径和机械化套话，不超过1800字。"
 )
+DOTA2_METADATA_DISAMBIGUATION = (
+    "Dota 2 术语消歧：弹幕或直播内容中的“老奶奶”指英雄"
+    "电炎绝手（Snapfire），不得理解为普通老年女性。"
+)
 DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "围绕本段最核心的对局、英雄或节目效果构图，主体醒目、对比清楚、适合手机缩略图；"
     "人物形象与指定参考图保持一致，DOTA2 英雄、装备和技能必须符合游戏原设及官方图标。"
@@ -902,6 +906,7 @@ def recording_avatar_reference_instruction(streamer: str) -> str:
 
 
 _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("电炎绝手（Snapfire）", ("老奶奶", "电炎绝手", "snapfire")),
     ("风暴之灵（Storm Spirit）", ("蓝猫", "storm spirit")),
     ("灰烬之灵（Ember Spirit）", ("火猫", "ember spirit")),
     ("大地之灵（Earth Spirit）", ("土猫", "earth spirit")),
@@ -1689,6 +1694,7 @@ def generate_danmaku_metadata_with_ai(
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
 description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
 title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
+{DOTA2_METADATA_DISAMBIGUATION}
 本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
 返回 JSON 对象：{{"title_topic":"...","description":"..."}}，description 不超过 1200 个中文字符。
