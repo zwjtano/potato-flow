@@ -6868,18 +6868,7 @@ class TaskProcessor:
         title = task.get('video_title_translated', '') or task.get('video_title_original', '')
         description = task.get('description_translated', '') or task.get('description_original', '')
         
-        # 获取AI生成的标签
-        tags_string = ""
-        tags_list = [] # 初始化 tags_list
-        if task.get('tags_generated'):
-            try:
-                tags_list = json.loads(task.get('tags_generated', '[]'))
-                if tags_list:
-                    # 用于附加到描述的字符串可以保持原样，或者根据需要调整
-                    # tags_string = "，标签：" + "，".join(tags_list) 
-                    pass # 暂时不修改附加到描述的逻辑，主要确保tags_list被正确赋值
-            except json.JSONDecodeError:
-                task_logger.warning("解析AI生成标签失败，内容审核时将不包含标签。")
+        tags_list = _normalize_tags_list(task.get('tags_generated'))
 
         # 预处理内容，过滤掉URL等推广内容
         url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
@@ -6888,9 +6877,7 @@ class TaskProcessor:
         filtered_title = re.sub(url_pattern, '', title)
         filtered_title = re.sub(email_pattern, '', filtered_title)
         
-        # 将标签附加到描述文本后进行审核 (这部分可以保留，也可以考虑是否还需要)
-        # description_with_tags = description + tags_string 
-        # 为了更清晰，我们先只审核原始描述，标签单独审核
+        # 标题、简介和标签分别审核，避免标签改变简介的审核上下文。
         from modules.utils import safe_str
         filtered_description = re.sub(url_pattern, '', safe_str(description))
         filtered_description = re.sub(email_pattern, '', filtered_description)
@@ -6917,9 +6904,8 @@ class TaskProcessor:
         description_result = moderator.moderate_text(filtered_description, service_type=text_moderation_service)
         task_logger.info(f"描述审核结果: {description_result}")
 
-        tags_for_moderation_string = ""
-        if tags_list:
-            tags_for_moderation_string = "，".join(tags_list) # 将标签列表转换为逗号分隔的字符串进行审核
+        tags_for_moderation_string = "，".join(tags_list)
+        if tags_for_moderation_string:
             task_logger.info(f"用于审核的标签文本: {tags_for_moderation_string[:200]}...")
         
         tags_moderation_result = {"pass": True, "details": [{"label": "skipped", "suggestion": "pass", "reason": "没有生成标签或标签为空"}]}
@@ -6934,9 +6920,13 @@ class TaskProcessor:
         moderation_result = {
             "title": title_result,
             "description": description_result,
-            "tags": tags_moderation_result, # 添加标签审核结果
+            "tags": tags_moderation_result,
             "cover": cover_result,
-            "overall_pass": title_result.get("pass", True) and description_result.get("pass", True) and tags_moderation_result.get("pass", True) # 整体通过需要标签也通过
+            "overall_pass": (
+                title_result.get("pass", True)
+                and description_result.get("pass", True)
+                and tags_moderation_result.get("pass", True)
+            ),
         }
         
         task_logger.info(f"综合审核结果: overall_pass={moderation_result['overall_pass']}")

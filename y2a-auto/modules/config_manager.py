@@ -81,7 +81,7 @@ DEFAULT_CONFIG = {
     "BILIBILI_UPLOAD_LIMIT": 3, # 单文件上传并发数
     "DOUYIN_COOKIES_PATH": "cookies/douyin_cookies.json", # 可选的 biliup 抖音 Cookie
     "RECORDINGS_PATH": "docker-data/recordings", # 录播保存目录；相对路径以 PotatoFlow 项目根目录为准
-    # CookieCloud（首版仅用于手动拉取 YouTube Cookies）
+    # CookieCloud 同步 YouTube Cookies
     "COOKIECLOUD_ENABLED": False,
     "COOKIECLOUD_SERVER_URL": "",
     "COOKIECLOUD_UUID": "",
@@ -205,7 +205,7 @@ DEFAULT_CONFIG = {
     "WHISPER_LANGUAGE": "",  # 强制语言（如 en, zh, ja），空=自动检测
     "WHISPER_PROMPT": "",  # 转写提示（引导生成，减少幻觉）
     "WHISPER_TRANSLATE": False,  # 是否翻译为英文
-    "WHISPER_MAX_WORKERS": 3,  # 预留（当前顺序处理）
+    "WHISPER_MAX_WORKERS": 3,  # 音频分片识别最大并发数
     # 文本后处理
     "SUBTITLE_MAX_LINE_LENGTH": 42,  # 每行最大字符数
     "SUBTITLE_MAX_LINES": 2,  # 每个字幕最多行数

@@ -66,6 +66,19 @@ class BrandingTests(unittest.TestCase):
         self.assertIn("settings_recording_directories", settings_template)
         self.assertIn('"RECORDINGS_PATH": "docker-data/recordings"', config_source)
 
+    def test_ai_credentials_use_provider_neutral_labels(self):
+        settings_template = (
+            ROOT / "y2a-auto" / "templates" / "settings.html"
+        ).read_text(encoding="utf-8")
+        index_template = (
+            ROOT / "y2a-auto" / "templates" / "index.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('for="openai-key" class="form-label">API 密钥</label>', settings_template)
+        self.assertIn("AI 模型与专项配置", settings_template)
+        self.assertNotIn("OpenAI API 密钥", settings_template)
+        self.assertNotIn("配置OpenAI API密钥", index_template)
+
     def test_settings_only_uses_bundled_bootstrap_icons(self):
         settings_template = (
             ROOT / "y2a-auto" / "templates" / "settings.html"

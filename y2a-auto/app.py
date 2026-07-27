@@ -1530,8 +1530,6 @@ console_handler.setLevel(logging.WARNING)
 if os.name == 'nt':
     import sys
     import codecs
-    # 检查Python版本和reconfigure方法可用性
-    python_version = sys.version_info
     
     # 强制设置stdout和stderr为UTF-8编码
     if hasattr(sys.stdout, 'reconfigure'):
@@ -3980,34 +3978,6 @@ def get_cookie_status():
     except Exception as e:
         logger.error(f"获取cookie状态失败: {str(e)}")
         return jsonify({'error': '获取状态失败，请稍后重试'}), 500
-
-@app.route('/api/cookies/refresh-needed', methods=['POST'])
-@login_required
-def cookie_refresh_needed():
-    """
-    接收浏览器扩展的通知，标记某个网站的Cookie需要刷新
-    """
-    try:
-        data = request.get_json()
-        reason = data.get('reason', 'unknown')
-        video_url = data.get('video_url', '')
-        
-        logger.warning(f"收到Cookie刷新需求 - 原因: {reason}, 视频: {video_url}")
-        
-        # 这里可以实现通知机制，比如：
-        # 1. 发送到浏览器扩展
-        # 2. 在Web界面显示提示
-        # 3. 发送邮件通知等
-        
-        return jsonify({
-            'success': True,
-            'message': 'Cookie刷新需求已记录',
-            'suggestion': '请使用浏览器扩展重新同步Cookie'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"处理Cookie刷新需求失败: {str(e)}")
-        return jsonify({'error': '处理失败，请稍后重试'}), 500
 
 if __name__ == '__main__':
     logger.info("PotatoFlow 启动中...")

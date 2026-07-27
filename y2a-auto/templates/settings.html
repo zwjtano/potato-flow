@@ -672,7 +672,7 @@
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">模型接入</span>
-                                                    <h4>OpenAI 与字幕专用覆盖</h4>
+                                                    <h4>AI 模型与专项配置</h4>
                                                 </div>
                                             </div>
                                             <div class="settings-card-body">
@@ -692,7 +692,7 @@
                                                         </div>
                                                         <div class="col-md-6">
                                                             <div class="form-group">
-                                                                <label for="openai-key" class="form-label">OpenAI API 密钥</label>
+                                                                <label for="openai-key" class="form-label">API 密钥</label>
                                                                 <input type="password" id="openai-key" name="OPENAI_API_KEY" value="{{ config.OPENAI_API_KEY }}" class="form-control">
                                                             </div>
                                                         </div>
@@ -884,7 +884,7 @@
                                                     <div class="col-md-6">
                                                         <div class="form-group">
                                                             <label for="whisper-api-key" class="form-label">Whisper API 密钥</label>
-                                                            <input type="password" id="whisper-api-key" name="WHISPER_API_KEY" value="{{ config.get('WHISPER_API_KEY', '') }}" class="form-control" placeholder="留空沿用 OpenAI 密钥">
+                                                            <input type="password" id="whisper-api-key" name="WHISPER_API_KEY" value="{{ config.get('WHISPER_API_KEY', '') }}" class="form-control" placeholder="留空沿用全局 API 密钥">
                                                         </div>
                                                     </div>
                                                     <div class="col-md-6">
