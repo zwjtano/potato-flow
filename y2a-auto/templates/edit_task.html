@@ -18,7 +18,7 @@
                         任务信息
                     </div>
                     <div class="card-body">
-                        <p><strong>任务ID:</strong> {{ task.id }}</p>
+                        <p><strong>任务ID:</strong> {{ task.display_id or task.id[:8] }}</p>
                         <p><strong>创建时间:</strong> {{ task.created_at }}</p>
                         <p><strong>状态:</strong> 
                             <span class="badge rounded-pill bg-{{ task_status_color(task.status) }} task-status-badge">

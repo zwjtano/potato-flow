@@ -639,8 +639,8 @@ class TelegramControlService:
             lines.append(
                 f"{index}. {status_icons.get(status, '•')} "
                 f"{job.get('room_name') or '直播间'} · {status}{detail}\n"
-                f"   {job.get('title') or job.get('video_name') or job.get('short_id')}\n"
-                f"   ID: {job.get('short_id') or str(job.get('id') or '')[:12]}"
+                f"   {job.get('title') or job.get('video_name') or self._job_display_id(job)}\n"
+                f"   ID: {self._job_display_id(job)}"
             )
         lines.append("\n发送 /task <编号> 查看详情，例如：/task 1")
         return "\n".join(lines)[:4096]
@@ -654,10 +654,20 @@ class TelegramControlService:
             index = int(value)
             if 1 <= index <= len(jobs):
                 return jobs[index - 1]
+        display_matches = [
+            job
+            for job in jobs
+            if self._job_display_id(job).lower() == value.lower()
+        ]
+        if len(display_matches) == 1:
+            return display_matches[0]
         id_matches = [
             job
             for job in jobs
-            if str(job.get("id") or "").lower().startswith(value.lower())
+            if (
+                str(job.get("id") or "").lower().startswith(value.lower())
+                or str(job.get("short_id") or "").lower().startswith(value.lower())
+            )
         ]
         if len(id_matches) == 1 and len(value) >= 6:
             return id_matches[0]
@@ -670,6 +680,14 @@ class TelegramControlService:
         if len(title_matches) == 1:
             return title_matches[0]
         raise RecorderConfigError("没有找到唯一任务，请先发送 /tasks 查看编号")
+
+    @staticmethod
+    def _job_display_id(job: dict[str, Any]) -> str:
+        return str(
+            job.get("display_id")
+            or job.get("short_id")
+            or str(job.get("id") or "")[:12]
+        )
 
     @staticmethod
     def _clean_detail(value: Any, limit: int = 700) -> str:
@@ -709,7 +727,7 @@ class TelegramControlService:
         lines = [
             str(job.get("title") or job.get("video_name") or "录播任务"),
             "",
-            f"任务 ID：{job.get('short_id') or str(job.get('id') or '')[:12]}",
+            f"任务 ID：{self._job_display_id(job)}",
             f"直播间：{job.get('room_name') or '未匹配'}",
             f"状态：{status_labels.get(str(job.get('status')), str(job.get('status') or '未知'))}",
             f"总进度：{int(job.get('completed_stages') or 0)}/{int(job.get('total_stages') or 0)}",
@@ -757,11 +775,11 @@ class TelegramControlService:
             lines.append(f"\nBVID：{job.get('bvid')}")
         available = []
         if job.get("retryable"):
-            available.append(f"/retry {job.get('short_id')}")
+            available.append(f"/retry {self._job_display_id(job)}")
         if job.get("pausable"):
-            available.append(f"/pause {job.get('short_id')}")
+            available.append(f"/pause {self._job_display_id(job)}")
         if str(job.get("status")) not in {"processing", "video_uploaded"}:
-            available.append(f"/delete_task {job.get('short_id')}")
+            available.append(f"/delete_task {self._job_display_id(job)}")
         if available:
             lines.extend(["\n可用操作", "\n".join(available)])
         return "\n".join(lines)[:4096]
@@ -771,7 +789,7 @@ class TelegramControlService:
         self.manager.retry_pipeline_job(str(job.get("id") or ""))
         self._send_message(
             chat_id,
-            f"✅ 已开始重试任务 {job.get('short_id')}。\n"
+            f"✅ 已开始重试任务 {self._job_display_id(job)}。\n"
             "已有 AI 简介和封面会直接复用，不会重复生成。",
         )
 
@@ -780,7 +798,7 @@ class TelegramControlService:
         self.manager.pause_pipeline_job(str(job.get("id") or ""))
         self._send_message(
             chat_id,
-            f"✅ 已暂停任务 {job.get('short_id')}。\n源文件和处理产物均已保留。",
+            f"✅ 已暂停任务 {self._job_display_id(job)}。\n源文件和处理产物均已保留。",
         )
 
     def _request_task_delete(self, chat_id: str, user_id: str, reference: str) -> None:
@@ -795,7 +813,10 @@ class TelegramControlService:
             expires_at=time.time() + CONFIRM_TTL_SECONDS,
             target_id=str(job.get("id") or ""),
             target_name=str(
-                job.get("title") or job.get("video_name") or job.get("short_id") or "录播任务"
+                job.get("title")
+                or job.get("video_name")
+                or self._job_display_id(job)
+                or "录播任务"
             ),
         )
         with self._pending_lock:

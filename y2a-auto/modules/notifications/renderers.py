@@ -42,6 +42,10 @@ def _task_title(payload: dict[str, Any]) -> str:
     return "未命名任务"
 
 
+def _task_reference(payload: dict[str, Any]) -> str:
+    return _as_text(payload.get("display_id")) or _as_text(payload.get("task_id"))
+
+
 def _task_platform_result(payload: dict[str, Any]) -> str:
     if payload.get("bilibili_uploaded"):
         return "bilibili"
@@ -94,7 +98,12 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
                 _kv("主播", streamer),
                 _kv("录播文件", video_file),
                 _kv("处理目标", target),
-                _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+                _kv(
+                    "任务 ID",
+                    f"`{_as_text(payload.get('display_id'))}`"
+                    if _as_text(payload.get("display_id"))
+                    else "",
+                ),
                 _kv("直播间", _truncate(_as_text(payload.get("source_url")), 500)),
                 _kv("时间", _as_text(payload.get("occurred_at"))),
             )
@@ -102,9 +111,9 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
             return NotificationMessage(title=title, summary=summary, markdown=markdown)
 
         title = "PotatoFlow 📋 任务已添加"
-        summary = f"{payload.get('task_id', '')[:8]} | {_upload_target_label(payload.get('upload_target'))}"
+        summary = f"{_task_reference(payload)} | {_upload_target_label(payload.get('upload_target'))}"
         body = _section_block(
-            _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+            _kv("任务 ID", f"`{_task_reference(payload)}`"),
             _kv("投稿目标", _upload_target_label(payload.get("upload_target"))),
             _kv("YouTube URL", _truncate(_as_text(payload.get("youtube_url")), 500)),
             _kv("时间", _as_text(payload.get("occurred_at"))),
@@ -153,7 +162,12 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
                 _kv("处理结果", target),
                 _kv("BVID", _as_text(payload.get("bvid"))),
                 _kv("本地成品", _truncate(_as_text(payload.get("final_video_path")), 300)),
-                _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+                _kv(
+                    "任务 ID",
+                    f"`{_as_text(payload.get('display_id'))}`"
+                    if _as_text(payload.get("display_id"))
+                    else "",
+                ),
                 _kv("时间", _as_text(payload.get("occurred_at"))),
             )
             markdown = _markdown_lines(f"**✅ {kind_label}已完成**", "", body)
@@ -165,7 +179,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         summary = f"{task_title} | {platform_result}"
         body = _section_block(
             _kv("视频标题", _truncate(task_title, 120)),
-            _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+            _kv("任务 ID", f"`{_task_reference(payload)}`"),
             _kv("投稿结果", platform_result),
             _kv("投稿目标", _upload_target_label(payload.get("upload_target"))),
             _kv("时间", _as_text(payload.get("occurred_at"))),
@@ -192,7 +206,12 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
                 _kv("主播", streamer),
                 _kv("录播文件", video_file),
                 _kv("失败阶段", _as_text(payload.get("stage"))),
-                _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+                _kv(
+                    "任务 ID",
+                    f"`{_as_text(payload.get('display_id'))}`"
+                    if _as_text(payload.get("display_id"))
+                    else "",
+                ),
                 _kv("时间", _as_text(payload.get("occurred_at"))),
             )
             markdown = _markdown_lines(
@@ -211,7 +230,7 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         summary = f"{task_title} | {error_text}"
         body = _section_block(
             _kv("视频标题", _truncate(task_title, 120)),
-            _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+            _kv("任务 ID", f"`{_task_reference(payload)}`"),
             _kv("当前状态", _as_text(payload.get("status")) or "failed"),
             _kv("投稿目标", _upload_target_label(payload.get("upload_target"))),
         )

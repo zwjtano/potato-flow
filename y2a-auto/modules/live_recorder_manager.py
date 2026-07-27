@@ -133,6 +133,32 @@ def _room_file_marker(room: dict[str, Any]) -> str:
     return _slug(str(room.get("name") or "直播间"))
 
 
+def _task_display_name(value: Any) -> str:
+    """Return a compact streamer token that remains readable in task IDs."""
+    compact = "".join(char for char in str(value or "") if char.isalnum())
+    return compact[:12].upper() or "LIVE"
+
+
+def _task_display_date(video_path: Any, created_at: Any) -> str:
+    """Prefer the recording filename's local date, then fall back to the DB date."""
+    filename_match = re.search(r"(?<!\d)(20\d{6})(?:[_-]\d{2})", Path(str(video_path or "")).name)
+    if filename_match:
+        return filename_match.group(1)[4:]
+    created_match = re.match(r"20\d{2}-(\d{2})-(\d{2})", str(created_at or ""))
+    if created_match:
+        return "".join(created_match.groups())
+    return datetime.now().strftime("%m%d")
+
+
+def _task_display_platform(value: Any) -> str:
+    return {
+        "bilibili": "BL",
+        "douyin": "DY",
+        "douyu": "DYU",
+        "youtube": "YT",
+    }.get(str(value or "").strip().lower(), "LIVE")
+
+
 def _recording_file_type(path: Path) -> str | None:
     """Classify finalized recordings and FFmpeg's actively-written *.part files."""
     suffix = path.suffix.lower()
@@ -2228,13 +2254,100 @@ class LiveRecorderManager:
         except (TypeError, json.JSONDecodeError):
             return {}
 
+    @staticmethod
+    def _ensure_pipeline_display_ids(
+        db: sqlite3.Connection,
+        room_markers: list[dict[str, str]],
+    ) -> dict[str, str]:
+        """Persist stable, reader-facing IDs without replacing internal fingerprints."""
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS recording_display_ids (
+                fingerprint TEXT PRIMARY KEY,
+                display_id TEXT NOT NULL UNIQUE,
+                assigned_at TEXT NOT NULL
+            )"""
+        )
+        assigned = {
+            str(row["fingerprint"]): str(row["display_id"])
+            for row in db.execute(
+                "SELECT fingerprint, display_id FROM recording_display_ids"
+            ).fetchall()
+        }
+        used_ids = set(assigned.values())
+        upload_rows = db.execute(
+            """SELECT fingerprint, video_path, platform, created_at
+               FROM uploads
+               ORDER BY created_at, fingerprint"""
+        ).fetchall()
+        for row in upload_rows:
+            fingerprint = str(row["fingerprint"])
+            if fingerprint in assigned:
+                continue
+            video_name = Path(str(row["video_path"] or "")).name
+            matched_room = next(
+                (
+                    item
+                    for item in room_markers
+                    if item["marker"] and item["marker"] in video_name
+                ),
+                None,
+            )
+            platform = (
+                matched_room.get("platform")
+                if matched_room
+                else ("bilibili" if row["platform"] == "bilibili" else "")
+            )
+            room_name = matched_room.get("name") if matched_room else "LIVE"
+            base = "-".join(
+                (
+                    _task_display_platform(platform),
+                    _task_display_name(room_name),
+                    _task_display_date(row["video_path"], row["created_at"]),
+                )
+            )
+            sequence = 1
+            display_id = f"{base}-{sequence:03d}"
+            while display_id in used_ids:
+                sequence += 1
+                display_id = f"{base}-{sequence:03d}"
+            db.execute(
+                """INSERT OR IGNORE INTO recording_display_ids
+                   (fingerprint, display_id, assigned_at)
+                   VALUES (?, ?, ?)""",
+                (
+                    fingerprint,
+                    display_id,
+                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                ),
+            )
+            persisted = db.execute(
+                "SELECT display_id FROM recording_display_ids WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+            if persisted:
+                assigned[fingerprint] = str(persisted["display_id"])
+                used_ids.add(str(persisted["display_id"]))
+        db.commit()
+        return assigned
+
     def pipeline_jobs(self, limit: int = 30, room_id: str | None = None) -> list[dict[str, Any]]:
         state_path = self._pipeline_state_path()
         if not state_path.is_file():
             return []
+        room_markers = [
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or "直播间"),
+                "avatar_url": str(item.get("avatar_url") or ""),
+                "platform": str(item.get("platform") or ""),
+                "marker": _room_file_marker(item),
+            }
+            for item in self.list_rooms()
+        ]
         try:
             with sqlite3.connect(state_path, timeout=5) as db:
                 db.row_factory = sqlite3.Row
+                display_ids = self._ensure_pipeline_display_ids(db, room_markers)
                 uploads = db.execute(
                     "SELECT * FROM uploads ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 100)),)
                 ).fetchall()
@@ -2288,15 +2401,6 @@ class LiveRecorderManager:
             if room:
                 room_marker = _room_file_marker(room)
         jobs = []
-        room_markers = [
-            {
-                "id": str(item.get("id") or ""),
-                "name": str(item.get("name") or "直播间"),
-                "avatar_url": str(item.get("avatar_url") or ""),
-                "marker": _room_file_marker(item),
-            }
-            for item in self.list_rooms()
-        ]
         allowed_cover_root = self._recording_file_roots()["artifacts"].resolve()
         allowed_recordings_root = self._recording_file_roots()["recordings"].resolve()
         stage_orders = {
@@ -2453,7 +2557,9 @@ class LiveRecorderManager:
                         f"剩余时间：{float(eta):.1f}秒"
                     )
             jobs.append({
-                "id": row["fingerprint"], "short_id": row["fingerprint"][:12],
+                "id": row["fingerprint"],
+                "display_id": display_ids.get(row["fingerprint"], row["fingerprint"][:12]),
+                "short_id": row["fingerprint"][:12],
                 "video_path": video_path, "video_name": Path(video_path).name,
                 "title": title,
                 "description": description,

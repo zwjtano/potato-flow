@@ -502,6 +502,7 @@ def _build_task_notification_payload(task, overrides=None) -> dict:
         merged_task.update(overrides)
     return {
         'task_id': str(merged_task.get('id') or '').strip(),
+        'display_id': str(merged_task.get('display_id') or '').strip(),
         'youtube_url': str(merged_task.get('youtube_url') or '').strip(),
         'upload_target': normalize_upload_target(merged_task.get('upload_target')),
         'status': str(merged_task.get('status') or '').strip(),
@@ -906,6 +907,58 @@ def setup_task_logger(task_id):
     
     return logger
 
+
+def _task_display_date(value=None):
+    match = re.match(r"20\d{2}-(\d{2})-(\d{2})", str(value or ""))
+    if match:
+        return "".join(match.groups())
+    return datetime.now().strftime("%m%d")
+
+
+def _ensure_task_display_ids(conn):
+    """Backfill stable IDs for legacy YouTube tasks while retaining UUID primary keys."""
+    rows = conn.execute(
+        "SELECT id, created_at, display_id FROM tasks ORDER BY created_at, id"
+    ).fetchall()
+    used_ids = {
+        str(row[2]).strip()
+        for row in rows
+        if row[2] is not None and str(row[2]).strip()
+    }
+    for task_id, created_at, display_id in rows:
+        if display_id is not None and str(display_id).strip():
+            continue
+        base = f"YT-VIDEO-{_task_display_date(created_at)}"
+        sequence = 1
+        candidate = f"{base}-{sequence:03d}"
+        while candidate in used_ids:
+            sequence += 1
+            candidate = f"{base}-{sequence:03d}"
+        conn.execute(
+            "UPDATE tasks SET display_id = ? WHERE id = ?",
+            (candidate, task_id),
+        )
+        used_ids.add(candidate)
+
+
+def _next_task_display_id(conn):
+    base = f"YT-VIDEO-{_task_display_date()}"
+    existing = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT display_id FROM tasks WHERE display_id LIKE ?",
+            (f"{base}-%",),
+        ).fetchall()
+        if row[0]
+    }
+    sequence = 1
+    candidate = f"{base}-{sequence:03d}"
+    while candidate in existing:
+        sequence += 1
+        candidate = f"{base}-{sequence:03d}"
+    return candidate
+
+
 # 数据库操作
 def init_db():
     """初始化数据库，创建tasks表"""
@@ -922,6 +975,7 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
+        display_id TEXT,
         youtube_url TEXT NOT NULL,
         upload_target TEXT DEFAULT 'bilibili',
         status TEXT NOT NULL,
@@ -976,6 +1030,11 @@ def init_db():
         if 'upload_progress' not in columns:
             cursor.execute("ALTER TABLE tasks ADD COLUMN upload_progress TEXT")
             logger.info("数据库升级：添加upload_progress字段")
+            conn.commit()
+
+        if 'display_id' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN display_id TEXT")
+            logger.info("数据库升级：添加display_id字段")
             conn.commit()
 
         if 'subtitle_qc_failed' not in columns:
@@ -1100,6 +1159,11 @@ def init_db():
             """
         )
         cursor.execute("UPDATE tasks SET upload_target = 'bilibili' WHERE upload_target IS NULL OR LOWER(TRIM(upload_target)) <> 'bilibili'")
+        _ensure_task_display_ids(conn)
+        cursor.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS
+               idx_tasks_display_id ON tasks(display_id)"""
+        )
         conn.commit()
     except Exception as e:
         logger.warning(f"数据库升级检查失败（可能已是最新版本）: {e}")
@@ -1138,16 +1202,27 @@ def add_task(youtube_url, upload_target=None):
     task_id = str(uuid.uuid4())
     normalized_target = UPLOAD_TARGET_BILIBILI
     conn = get_db_connection()
+    display_id = None
     
     try:
         # 即使旧客户端仍传 acfun/both，新任务也只能进入 B 站上传通道。
         normalized_target = UPLOAD_TARGET_BILIBILI
+        conn.execute("BEGIN IMMEDIATE")
+        display_id = _next_task_display_id(conn)
         conn.execute(
-            'INSERT INTO tasks (id, youtube_url, upload_target, status) VALUES (?, ?, ?, ?)',
-            (task_id, youtube_url, normalized_target, TASK_STATES['PENDING'])
+            """INSERT INTO tasks
+               (id, display_id, youtube_url, upload_target, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            (task_id, display_id, youtube_url, normalized_target, TASK_STATES['PENDING'])
         )
         conn.commit()
-        logger.info(f"新任务添加成功, ID: {task_id}, URL: {youtube_url}, 平台: {normalized_target}")
+        logger.info(
+            "新任务添加成功, 展示 ID: %s, 内部 ID: %s, URL: %s, 平台: %s",
+            display_id,
+            task_id,
+            youtube_url,
+            normalized_target,
+        )
         
         # 新任务添加后，触发全局任务处理器检查是否需要启动任务
         try:
@@ -1180,6 +1255,7 @@ def add_task(youtube_url, upload_target=None):
                 event_type=EVENT_TASK_ADDED,
                 payload={
                     'task_id': task_id,
+                    'display_id': display_id,
                     'youtube_url': youtube_url,
                     'upload_target': normalized_target,
                 },

@@ -1,5 +1,7 @@
 import ast
 import pathlib
+import sqlite3
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +23,47 @@ def _load_app_partition_helper():
 
 
 class ForceUploadMetadataTests(unittest.TestCase):
+    def test_add_task_keeps_uuid_and_creates_display_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = pathlib.Path(temp_dir) / "tasks.db"
+            with patch.object(tm, "DB_PATH", str(db_path)), patch.object(
+                tm, "get_global_task_processor", return_value=None
+            ), patch.object(tm, "publish_task_event"), patch.object(
+                tm, "emit_notification_event"
+            ), patch.object(tm, "_task_display_date", return_value="0728"):
+                tm.init_db()
+                task_id = tm.add_task("https://www.youtube.com/watch?v=test")
+                task = tm.get_task(task_id)
+
+        self.assertRegex(task_id, r"^[0-9a-f-]{36}$")
+        self.assertEqual(task["id"], task_id)
+        self.assertEqual(task["display_id"], "YT-VIDEO-0728-001")
+
+    def test_standard_task_display_ids_backfill_and_increment(self):
+        with sqlite3.connect(":memory:") as db:
+            db.execute(
+                """CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT,
+                    display_id TEXT
+                )"""
+            )
+            db.executemany(
+                "INSERT INTO tasks VALUES (?, ?, ?)",
+                [
+                    ("first", "2026-07-28 01:00:00", None),
+                    ("second", "2026-07-28 02:00:00", None),
+                ],
+            )
+            tm._ensure_task_display_ids(db)
+            assigned = dict(db.execute("SELECT id, display_id FROM tasks"))
+
+            self.assertEqual(assigned["first"], "YT-VIDEO-0728-001")
+            self.assertEqual(assigned["second"], "YT-VIDEO-0728-002")
+
+            with patch.object(tm, "_task_display_date", return_value="0728"):
+                self.assertEqual(tm._next_task_display_id(db), "YT-VIDEO-0728-003")
+
     def test_normalize_tags_list_handles_none_and_invalid_json(self):
         self.assertEqual(tm._normalize_tags_list(None), [])
         self.assertEqual(tm._normalize_tags_list(''), [])

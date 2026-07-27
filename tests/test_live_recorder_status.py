@@ -1205,14 +1205,21 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 "id": "abcdef123456",
                 "name": "Alice",
                 "avatar_url": "https://example.com/alice.jpg",
+                "platform": "bilibili",
             }]
             with mock.patch.object(manager, "_pipeline_state_path", return_value=state_path), mock.patch.object(
                 manager, "list_rooms", return_value=rooms
             ):
                 jobs = manager.pipeline_jobs()
+            with sqlite3.connect(state_path) as db:
+                persisted_display_id = db.execute(
+                    "SELECT display_id FROM recording_display_ids WHERE fingerprint = ?",
+                    ("fingerprint-123",),
+                ).fetchone()[0]
 
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["source"], "recording")
+        self.assertEqual(jobs[0]["display_id"], "BL-ALICE-0723-001")
         self.assertEqual(jobs[0]["room_name"], "Alice")
         self.assertEqual(jobs[0]["bvid"], "BV1potato")
         self.assertTrue(jobs[0]["cover_available"])
@@ -1220,6 +1227,49 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(jobs[0]["local_cover_available"])
         self.assertEqual(jobs[0]["completed_stages"], 5)
         self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
+        self.assertEqual(persisted_display_id, "BL-ALICE-0723-001")
+
+    def test_pipeline_display_ids_use_stable_daily_sequence(self):
+        manager = LiveRecorderManager()
+        with sqlite3.connect(":memory:") as db:
+            db.row_factory = sqlite3.Row
+            db.execute(
+                """CREATE TABLE uploads (
+                    fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                    created_at TEXT
+                )"""
+            )
+            db.executemany(
+                "INSERT INTO uploads VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        "first",
+                        "/data/recordings/YYF_abcdef2026-07-28_09-00-00.flv",
+                        "bilibili",
+                        "2026-07-28T01:00:00+00:00",
+                    ),
+                    (
+                        "second",
+                        "/data/recordings/YYF_abcdef2026-07-28_10-00-00.flv",
+                        "bilibili",
+                        "2026-07-28T02:00:00+00:00",
+                    ),
+                ],
+            )
+            markers = [{
+                "id": "room-1",
+                "name": "YYF",
+                "avatar_url": "",
+                "platform": "douyu",
+                "marker": "YYF",
+            }]
+            assigned = manager._ensure_pipeline_display_ids(db, markers)
+            self.assertEqual(assigned["first"], "DYU-YYF-0728-001")
+            self.assertEqual(assigned["second"], "DYU-YYF-0728-002")
+
+            markers[0]["name"] = "YYF-Renamed"
+            assigned_again = manager._ensure_pipeline_display_ids(db, markers)
+            self.assertEqual(assigned_again, assigned)
 
     def test_pipeline_cover_fetches_bilibili_cover_by_bvid_and_caches_it(self):
         manager = LiveRecorderManager()

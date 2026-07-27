@@ -154,7 +154,7 @@
                                     {% endif %}
                                     {% if job.error %}
                                     <button type="button" class="btn btn-sm btn-outline-danger error-message-trigger"
-                                            data-task-id="{{ job.short_id }}" data-task-title="{{ job.title or job.video_name }}"
+                                            data-task-id="{{ job.display_id or job.short_id }}" data-task-title="{{ job.title or job.video_name }}"
                                             data-error-message="{{ job.error }}"><i class="bi bi-exclamation-circle"></i> 错误</button>
                                     {% endif %}
                                     {% if job.status == 'failed' and not job.record_only %}
@@ -1042,7 +1042,7 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         if (!modal || !body) return;
         modal.querySelector('#recordingJobDetailTitle').textContent = job.title || job.video_name || '录播任务详情';
         modal.querySelector('[data-role="recording-detail-meta"]').textContent =
-            `${job.room_name || '未匹配直播间'} · ${job.video_name || ''} · ${job.short_id || job.id?.slice(0, 12) || ''}`;
+            `${job.room_name || '未匹配直播间'} · ${job.video_name || ''} · ${job.display_id || job.short_id || job.id?.slice(0, 12) || ''}`;
 
         const stagesByKey = new Map((job.stages || []).map(stage => [stage.key, stage]));
         const visibleStageKeys = Array.isArray(job.stages) && job.stages.length

@@ -27,7 +27,7 @@
                 <article class="card h-100 border-warning">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span class="badge text-bg-warning"><i class="bi bi-patch-exclamation"></i> 失败待审核</span>
-                        <small class="text-muted">任务ID: <span class="text-monospace">{{ job.short_id }}</span></small>
+                        <small class="text-muted">任务ID: <span class="text-monospace">{{ job.display_id or job.short_id }}</span></small>
                     </div>
                     {% set cover_stage = job.stages|selectattr('key', 'equalto', 'cover')|first %}
                     {% if cover_stage and cover_stage.details and cover_stage.details.ai_cover_path %}
@@ -98,7 +98,7 @@
                             {% else %}
                             <span class="badge bg-warning"><i class="bi bi-hourglass-split"></i> 待审核</span>
                             {% endif %}
-                            <small class="text-muted">任务ID: <span class="text-monospace">{{ task.id[:8] }}...</span></small>
+                            <small class="text-muted">任务ID: <span class="text-monospace">{{ task.display_id or task.id[:8] }}</span></small>
                         </div>
                         
                         {% if task.cover_path_local %}

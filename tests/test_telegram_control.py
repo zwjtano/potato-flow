@@ -93,6 +93,7 @@ class _Manager:
         return [
             {
                 "id": "a" * 64,
+                "display_id": "DYU-YYF-0728-001",
                 "short_id": "a" * 12,
                 "status": "processing",
                 "active_stage": "upload",
@@ -115,6 +116,7 @@ class _Manager:
             },
             {
                 "id": "b" * 64,
+                "display_id": "DYU-YYF-0728-002",
                 "short_id": "b" * 12,
                 "status": "failed",
                 "failed_stage": "upload",
@@ -298,7 +300,7 @@ class TelegramControlTests(unittest.TestCase):
 
         self.assertIn("1. ⏳ YYF · processing · upload", self.session.last_payload["text"])
         self.assertIn("正在投稿的录播", self.session.last_payload["text"])
-        self.assertIn("ID: aaaaaaaaaaaa", self.session.last_payload["text"])
+        self.assertIn("ID: DYU-YYF-0728-001", self.session.last_payload["text"])
 
     def test_task_detail_shows_upload_percentage_speed_and_actions(self):
         self.service.process_update(_message_update("/task 1"))
@@ -306,11 +308,11 @@ class TelegramControlTests(unittest.TestCase):
         text = self.session.last_payload["text"]
         self.assertIn("上传：50.00%", text)
         self.assertIn("速度：10.0B/s", text)
-        self.assertIn("/pause aaaaaaaaaaaa", text)
+        self.assertIn("/pause DYU-YYF-0728-001", text)
 
     def test_retry_and_pause_task_commands_use_manager(self):
         self.service.process_update(_message_update("/retry 2"))
-        self.service.process_update(_message_update("/pause aaaaaa"))
+        self.service.process_update(_message_update("/pause DYU-YYF-0728-001"))
 
         self.assertEqual(self.manager.retried, ["b" * 64])
         self.assertEqual(self.manager.paused, ["a" * 64])
