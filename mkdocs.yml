@@ -9,8 +9,8 @@ copyright: Copyright &copy; 2026 zwjtano
 theme:
   name: material
   language: zh
-  logo: assets/logo.svg
-  favicon: assets/favicon.ico
+  logo: assets/logo.png
+  favicon: assets/favicon.png
   features:
     - navigation.tabs
     - navigation.sections
@@ -87,4 +87,3 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/zwjtano/potato-flow
       name: PotatoFlow on GitHub
-

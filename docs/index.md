@@ -12,7 +12,7 @@ hide:
       <a class="secondary" href="guides/live-recording/">查看录播流程</a>
     </div>
   </div>
-  <img src="assets/logo.svg" alt="PotatoFlow">
+  <img src="assets/logo.png" alt="PotatoFlow">
 </div>
 
 <div class="feature-grid">
@@ -52,4 +52,3 @@ flowchart LR
 
 !!! tip "从这里开始"
     新服务器优先使用 [Docker 安装](getting-started/docker.md)，然后按 [首次配置](getting-started/first-run.md) 完成 B站登录和 AI 设置。
-

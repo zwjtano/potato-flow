@@ -10,13 +10,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='lib/icons/bootstrap-icons.css') }}">
     <!-- 自定义样式 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/potato-flow.svg') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
     {% block extra_css %}{% endblock %}
 </head>
 <body class="app-shell-body {% block body_class %}{% endblock %}" data-app-version="{{ app_version }}">
     <aside class="app-sidebar" id="appSidebar">
         <a class="app-brand" href="{{ url_for('index') }}">
-            <img src="{{ url_for('static', filename='img/potato-flow.svg') }}" alt="" width="34" height="34">
+            <img src="{{ url_for('static', filename='img/potato-flow.png') }}" alt="" width="34" height="34">
             <span><strong>土豆录播姬</strong><small>PotatoFlow</small></span>
         </a>
         <nav class="app-nav" aria-label="主导航">

@@ -60,7 +60,10 @@ class DockerPackagingTests(unittest.TestCase):
         installer = (ROOT / "scripts" / "install-systemd.sh").read_text(encoding="utf-8")
 
         self.assertIn("PotatoFlow · 土豆录播姬", base)
-        self.assertIn("img/potato-flow.svg", base)
+        self.assertIn("img/potato-flow.png", base)
+        self.assertIn("img/favicon.png", base)
+        self.assertTrue((ROOT / "y2a-auto" / "static" / "img" / "potato-flow.png").is_file())
+        self.assertTrue((ROOT / "y2a-auto" / "static" / "img" / "favicon.png").is_file())
         self.assertIn('SERVICE_NAME="potato-flow"', installer)
         self.assertTrue((ROOT / "deploy" / "potato-flow.service").is_file())
 
