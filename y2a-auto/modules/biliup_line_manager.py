@@ -13,7 +13,6 @@ import json
 import os
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
@@ -166,10 +165,11 @@ def probe_and_select() -> dict[str, Any]:
     method = "get" if probe_meta.get("get") is not None else "post"
     payload = b"\0" * PROBE_SIZE if method == "post" else b""
     results: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=min(4, len(lines))) as pool:
-        futures = [pool.submit(_measure_line, item, method, payload) for item in lines if isinstance(item, dict)]
-        for future in as_completed(futures):
-            results.append(future.result())
+    # Probe strictly one line at a time. Concurrent uploads compete for the
+    # same server bandwidth and make both speed measurements misleading.
+    for item in lines:
+        if isinstance(item, dict):
+            results.append(_measure_line(item, method, payload))
     results.sort(key=lambda item: (
         not bool(item.get("ok")),
         not bool(item.get("supported")),

@@ -4,6 +4,8 @@ import os
 import stat
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -170,6 +172,61 @@ class BiliupUploaderAdapterTests(unittest.TestCase):
 
 
 class BiliupLineManagerTests(unittest.TestCase):
+    def test_probe_measures_upload_lines_strictly_one_at_a_time(self):
+        active = 0
+        maximum_active = 0
+        lock = threading.Lock()
+        measured = []
+
+        class ProbeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "probe": {"post": 1},
+                    "lines": [
+                        {"os": "tx", "probe_url": "https://tx.example/probe"},
+                        {"os": "alia", "probe_url": "https://alia.example/probe"},
+                    ],
+                }
+
+        def measure(item, method, payload):
+            nonlocal active, maximum_active
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.02)
+            measured.append(item["os"])
+            with lock:
+                active -= 1
+            return {
+                "line": item["os"],
+                "ok": True,
+                "supported": True,
+                "elapsed_ms": 20 if item["os"] == "tx" else 30,
+            }
+
+        config = {}
+        with (
+            patch.object(biliup_line_manager.requests, "get", return_value=ProbeResponse()),
+            patch.object(biliup_line_manager, "_measure_line", side_effect=measure),
+            patch.object(biliup_line_manager, "load_config", return_value=config),
+            patch.object(biliup_line_manager, "save_config", return_value=True),
+            patch.object(biliup_line_manager, "_write_json_atomic"),
+            patch.object(
+                biliup_line_manager,
+                "load_probe_state",
+                return_value={"selected_line": "tx", "results": []},
+            ),
+        ):
+            state = biliup_line_manager.probe_and_select()
+
+        self.assertEqual(measured, ["tx", "alia"])
+        self.assertEqual(maximum_active, 1)
+        self.assertEqual(config["BILIBILI_UPLOAD_LINE"], "tx")
+        self.assertEqual(state["selected_line"], "tx")
+
     def test_manual_selection_is_global_and_persistent(self):
         config = {"BILIBILI_UPLOAD_LINE": "bldsa"}
         with (
