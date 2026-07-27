@@ -424,7 +424,15 @@ class LiveRecorderManager:
         """Return the built-in prompts displayed by each room editor."""
         if str(WORKSPACE_ROOT) not in sys.path:
             sys.path.insert(0, str(WORKSPACE_ROOT))
-        import bridge
+        try:
+            import bridge
+        except ModuleNotFoundError as exc:
+            logger.warning("AI 投稿模块不完整，录制页暂时使用内置提示词摘要：%s", exc)
+            return {
+                "title": "根据本段直播内容提炼核心主题，生成准确、简洁的中文标题。",
+                "description": "根据本段弹幕与直播内容生成完整中文简介，保持客观且不虚构。",
+                "cover": "根据本段核心内容生成清晰醒目的横向视频封面；DOTA2 内容应遵循游戏原设。",
+            }
 
         return {
             "title": bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT,
@@ -504,7 +512,11 @@ class LiveRecorderManager:
                 return custom_path, "custom"
         if str(WORKSPACE_ROOT) not in sys.path:
             sys.path.insert(0, str(WORKSPACE_ROOT))
-        import bridge
+        try:
+            import bridge
+        except ModuleNotFoundError as exc:
+            logger.warning("无法加载 AI 封面底稿模块，直播录制页回退到主播头像：%s", exc)
+            return None, "avatar"
 
         dedicated = bridge.recording_cover_reference(str(room.get("name") or ""))
         if dedicated:
@@ -1626,21 +1638,37 @@ class LiveRecorderManager:
         reason = "服务重启中断了当前处理，请点击重试继续"
         try:
             with sqlite3.connect(state_path, timeout=5) as db:
-                fingerprints = [
+                interrupted_fingerprints = {
                     row[0]
                     for row in db.execute(
                         "SELECT DISTINCT fingerprint FROM upload_stages WHERE status IN ('running', 'queued')"
                     ).fetchall()
-                ]
+                }
+                inconsistent_fingerprints = {
+                    row[0]
+                    for row in db.execute(
+                        """SELECT DISTINCT uploads.fingerprint
+                           FROM uploads
+                           JOIN upload_stages
+                             ON upload_stages.fingerprint = uploads.fingerprint
+                           WHERE uploads.status IN ('processing', 'video_uploaded')
+                             AND upload_stages.status = 'failed'"""
+                    ).fetchall()
+                }
+                fingerprints = sorted(interrupted_fingerprints | inconsistent_fingerprints)
                 if not fingerprints:
                     return 0
                 placeholders = ",".join("?" for _ in fingerprints)
-                db.execute(
-                    f"""UPDATE upload_stages
-                        SET status='failed', error=?, finished_at=?, updated_at=?
-                        WHERE status IN ('running', 'queued') AND fingerprint IN ({placeholders})""",
-                    (reason, now, now, *fingerprints),
-                )
+                if interrupted_fingerprints:
+                    interrupted = sorted(interrupted_fingerprints)
+                    interrupted_placeholders = ",".join("?" for _ in interrupted)
+                    db.execute(
+                        f"""UPDATE upload_stages
+                            SET status='failed', error=?, finished_at=?, updated_at=?
+                            WHERE status IN ('running', 'queued')
+                              AND fingerprint IN ({interrupted_placeholders})""",
+                        (reason, now, now, *interrupted),
+                    )
                 db.execute(
                     f"""UPDATE uploads
                         SET status='failed', error=?, updated_at=?
@@ -2160,6 +2188,12 @@ class LiveRecorderManager:
                 1 for stage in stages if stage.get("status") in {"completed", "skipped"}
             )
             failed_stage = next((stage.get("key") for stage in stages if stage.get("status") == "failed"), None)
+            job_status = str(row["status"] or "")
+            if failed_stage and job_status in {"processing", "video_uploaded"}:
+                # A restart can happen after the stage is persisted as failed but
+                # before the parent upload row is updated. Never present that
+                # inconsistent state as an active task.
+                job_status = "failed"
             active_stage = next(
                 (
                     stage.get("key")
@@ -2172,7 +2206,7 @@ class LiveRecorderManager:
             attempts = int(row["attempts"] or 0)
             automatic_retries_used = max(0, attempts - 1)
             auto_retry_scheduled = bool(
-                row["status"] == "failed"
+                job_status == "failed"
                 and row["platform"] == "bilibili"
                 and failed_stage == "upload"
                 and automatic_retries_used < AUTO_UPLOAD_RETRY_MAX_RETRIES
@@ -2225,7 +2259,7 @@ class LiveRecorderManager:
                 "tags": tags,
                 "partition_id": partition_id,
                 "review_override": review,
-                "platform": row["platform"], "status": row["status"],
+                "platform": row["platform"], "status": job_status,
                 "record_only": row["platform"] == "record_only",
                 "attempts": attempts, "result": result, "error": row["error"],
                 "created_at": row["created_at"], "updated_at": row["updated_at"],
@@ -2258,17 +2292,17 @@ class LiveRecorderManager:
                 "auto_retry_number": attempts if auto_retry_scheduled else None,
                 "auto_retry_max_retries": AUTO_UPLOAD_RETRY_MAX_RETRIES,
                 "auto_retry_exhausted": bool(
-                    row["status"] == "failed"
+                    job_status == "failed"
                     and row["platform"] == "bilibili"
                     and failed_stage == "upload"
                     and automatic_retries_used >= AUTO_UPLOAD_RETRY_MAX_RETRIES
                 ),
-                "retryable": row["status"] in {"failed", "dry_run", "paused"},
+                "retryable": job_status in {"failed", "dry_run", "paused"},
                 "pausable": (
-                    row["status"] == "processing"
+                    job_status == "processing"
                     and upload_stage.get("status") in {"queued", "running"}
                 ),
-                "paused": row["status"] == "paused",
+                "paused": job_status == "paused",
                 "stages": stages,
             })
         return jobs
