@@ -9,10 +9,6 @@
         <h1 id="home-title">今天想做什么？</h1>
         <p>选择一个核心功能开始，PotatoFlow 会接管后续处理与哔哩哔哩投稿。</p>
     </div>
-    <span class="home-overall-state {{ 'has-issues' if stats.failed_total else ('is-working' if stats.in_progress else '') }}">
-        <span class="status-dot"></span>
-        {{ (stats.failed_total ~ ' 个任务需要处理') if stats.failed_total else ((stats.in_progress ~ ' 个任务处理中') if stats.in_progress else '所有流程正常') }}
-    </span>
 </section>
 
 <section class="home-choice-grid" aria-label="核心功能">

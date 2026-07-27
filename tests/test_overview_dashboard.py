@@ -13,6 +13,9 @@ STYLE_SOURCE = (ROOT / "y2a-auto" / "static" / "css" / "style.css").read_text(
 BASE_TEMPLATE_SOURCE = (
     ROOT / "y2a-auto" / "templates" / "base.html"
 ).read_text(encoding="utf-8")
+SETTINGS_TEMPLATE_SOURCE = (
+    ROOT / "y2a-auto" / "templates" / "settings.html"
+).read_text(encoding="utf-8")
 
 
 class OverviewDashboardTests(unittest.TestCase):
@@ -45,6 +48,8 @@ class OverviewDashboardTests(unittest.TestCase):
         self.assertNotIn("最近任务", TEMPLATE_SOURCE)
         self.assertNotIn("最近动态", TEMPLATE_SOURCE)
         self.assertNotIn("任务中心", TEMPLATE_SOURCE)
+        self.assertNotIn("home-overall-state", TEMPLATE_SOURCE)
+        self.assertNotIn("个任务需要处理", TEMPLATE_SOURCE)
         self.assertNotIn("home-task-hub", TEMPLATE_SOURCE)
         self.assertNotIn("home-activity-card", TEMPLATE_SOURCE)
         self.assertNotIn("live_recording_job_delete", TEMPLATE_SOURCE)
@@ -59,7 +64,8 @@ class OverviewDashboardTests(unittest.TestCase):
 
     def test_desktop_sidebar_uses_light_theme_tokens(self):
         self.assertIn("--studio-sidebar: #eef4fa", STYLE_SOURCE)
-        self.assertIn("background: #dfeefd", STYLE_SOURCE)
+        self.assertIn("--studio-primary: #00aeec", STYLE_SOURCE)
+        self.assertIn("background: #eafaff", STYLE_SOURCE)
         self.assertIn("核心功能", BASE_TEMPLATE_SOURCE)
         self.assertIn("任务中心", BASE_TEMPLATE_SOURCE)
         self.assertIn("<span>首页</span>", BASE_TEMPLATE_SOURCE)
@@ -69,6 +75,50 @@ class OverviewDashboardTests(unittest.TestCase):
             BASE_TEMPLATE_SOURCE.index("YouTube 监控"),
         )
         self.assertNotIn("--studio-sidebar: #191c23", STYLE_SOURCE)
+
+    def test_theme_can_toggle_or_follow_the_system(self):
+        self.assertIn("potatoflow-theme", BASE_TEMPLATE_SOURCE)
+        self.assertIn("prefers-color-scheme: dark", BASE_TEMPLATE_SOURCE)
+        self.assertIn("data-theme-toggle", BASE_TEMPLATE_SOURCE)
+        self.assertIn("window.PotatoTheme", BASE_TEMPLATE_SOURCE)
+        self.assertIn('html[data-theme="dark"]', STYLE_SOURCE)
+        self.assertIn("--studio-canvas: #0e141b", STYLE_SOURCE)
+        self.assertIn('data-theme-choice="light"', SETTINGS_TEMPLATE_SOURCE)
+        self.assertIn('data-theme-choice="dark"', SETTINGS_TEMPLATE_SOURCE)
+        self.assertIn('data-theme-choice="auto"', SETTINGS_TEMPLATE_SOURCE)
+        self.assertIn('data-theme-choice="schedule"', SETTINGS_TEMPLATE_SOURCE)
+        self.assertIn("hour >= 19 || hour < 7", BASE_TEMPLATE_SOURCE)
+        self.assertIn("scheduleNextThemeBoundary", BASE_TEMPLATE_SOURCE)
+
+    def test_dark_theme_covers_operational_content_and_modals(self):
+        for selector in (
+            'html[data-theme="dark"] .studio-empty-state',
+            'html[data-theme="dark"] .task-section-empty',
+            'html[data-theme="dark"] .modern-table table tbody tr',
+            'html[data-theme="dark"] .add-room-section',
+            'html[data-theme="dark"] .recording-files-modal .modal-body',
+            'html[data-theme="dark"] .file-table-wrap',
+            'html[data-theme="dark"] .page-header-stat',
+            'html[data-theme="dark"] .settings-container .form-control:not(.form-control-sm)',
+            'html[data-theme="dark"] .settings-actions-bar',
+            'html[data-theme="dark"] .progress',
+        ):
+            self.assertIn(selector, STYLE_SOURCE)
+
+    def test_sidebar_icons_use_one_consistent_line_icon_set(self):
+        for icon in (
+            "bi-house-door",
+            "bi-broadcast",
+            "bi-youtube",
+            "bi-cloud-upload",
+            "bi-shield-check",
+            "bi-sliders2",
+        ):
+            self.assertIn(icon, BASE_TEMPLATE_SOURCE)
+        self.assertIn(
+            'html[data-theme="dark"] .app-nav-link.active i',
+            STYLE_SOURCE,
+        )
 
 
 if __name__ == "__main__":
