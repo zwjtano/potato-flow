@@ -226,7 +226,7 @@ def upload_with_biliup(
                         detail = {
                             "uploaded_bytes": uploaded,
                             "total_bytes": total,
-                            "speed_bytes_per_sec": speed,
+                            "speed_bytes_per_second": speed,
                             "eta_seconds": remaining / speed if speed > 0 else None,
                             "percent": float(progress.get("percent") or 0),
                             "line": line,

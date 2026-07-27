@@ -1027,7 +1027,9 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
         if (!progress || typeof progress !== 'object') return '';
         const uploaded = Number(progress.uploaded_bytes || 0);
         const total = Number(progress.total_bytes || 0);
-        const speed = Number(progress.speed_bytes_per_second || 0);
+        const speed = Number(
+            progress.speed_bytes_per_second || progress.speed_bytes_per_sec || 0
+        );
         const eta = Number(progress.eta_seconds);
         if (!(total > 0) || !(speed > 0) || !Number.isFinite(eta)) return '';
         const mb = value => (value / 1024 / 1024).toFixed(1);
