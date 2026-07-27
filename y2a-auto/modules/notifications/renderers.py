@@ -6,8 +6,11 @@ from typing import Any
 from .models import (
     EVENT_LOGIN_LOCKED,
     EVENT_LOGIN_SUCCESS,
+    EVENT_COOKIE_INVALID,
     EVENT_QR_LOGIN_FAILED,
     EVENT_QR_LOGIN_SUCCESS,
+    EVENT_RECORDING_STARTED,
+    EVENT_RECORDING_STOPPED,
     EVENT_TASK_ADDED,
     EVENT_TASK_COMPLETED,
     EVENT_TASK_FAILED,
@@ -156,6 +159,51 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
             _kv("时间", occurred_at),
         )
         markdown = _markdown_lines(f"**{icon} {platform}扫码登录{status_text}**", "", body)
+        return NotificationMessage(title=title, summary=summary, markdown=markdown)
+
+    if event_type in (EVENT_RECORDING_STARTED, EVENT_RECORDING_STOPPED):
+        is_started = event_type == EVENT_RECORDING_STARTED
+        icon = "🔴" if is_started else "⏹️"
+        status_text = "录制已开始" if is_started else "录制已停止"
+        streamer = _as_text(payload.get("streamer")) or "未知主播"
+        live_title = _truncate(_as_text(payload.get("live_title")), 160)
+        platform = _as_text(payload.get("platform")) or "直播平台"
+        occurred_at = _as_text(payload.get("occurred_at"))
+        title = f"PotatoFlow {icon} {status_text}"
+        summary = f"{streamer} | {live_title or platform}"
+        body = _section_block(
+            _kv("主播", streamer),
+            _kv("平台", platform),
+            _kv("直播标题", live_title),
+            _kv("录制文件", _truncate(_as_text(payload.get("current_file")), 200)),
+            _kv("直播间", _truncate(_as_text(payload.get("room_url")), 500)),
+            _kv("录制开始", _as_text(payload.get("started_at"))),
+            _kv("录制时长", _as_text(payload.get("duration_text"))),
+            _kv("时间", occurred_at),
+        )
+        markdown = _markdown_lines(f"**{icon} {status_text}**", "", body)
+        return NotificationMessage(title=title, summary=summary, markdown=markdown)
+
+    if event_type == EVENT_COOKIE_INVALID:
+        platform = _as_text(payload.get("platform")) or "平台"
+        reason = _pretty_error_text(payload.get("reason"))
+        occurred_at = _as_text(payload.get("occurred_at"))
+        title = f"PotatoFlow 🍪 {platform} Cookie 已失效"
+        summary = f"{platform} | {reason}"
+        body = _section_block(
+            _kv("平台", platform),
+            _kv("检测位置", _as_text(payload.get("source"))),
+            _kv("处理建议", "请进入“系统设置 → 账号与网络”重新登录或上传 Cookie"),
+            _kv("时间", occurred_at),
+        )
+        markdown = _markdown_lines(
+            f"**🍪 {platform} Cookie 已失效**",
+            "",
+            body,
+            "",
+            "> **原因：**",
+            f"> {reason}",
+        )
         return NotificationMessage(title=title, summary=summary, markdown=markdown)
 
     title = "PotatoFlow 💬 系统通知"

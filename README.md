@@ -85,9 +85,9 @@ ASS 会保存在 `.bridge/artifacts/` 中供归档、查看和下载，不会烧
 ### 消息通知
 
 - 支持企业微信、Server酱、message-pusher 和 Telegram Bot；
-- 可分别启用任务新增、完成、失败以及关键登录事件；
+- 可分别启用任务新增、完成、失败、录制开始、录制停止、Cookie 失效以及关键登录事件；
 - 发送失败进入通知队列自动重试，不会阻塞录制或投稿流程；
-- Telegram 在“系统设置 → 消息通知”中填写 Bot Token 与 Chat ID，保存后可直接发送测试消息。
+- Telegram 在“系统设置 → 消息通知”中填写 Bot Token 与 Chat ID，可选填独立 HTTP/HTTPS 代理地址，保存后可直接发送测试消息。
 
 ## 系统要求
 

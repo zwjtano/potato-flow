@@ -29,6 +29,7 @@ from .notifications import (
     EVENT_TASK_FAILED,
     NotificationEvent,
     emit_notification_event,
+    notify_cookie_invalid,
 )
 import subprocess
 from typing import Any, Dict
@@ -2413,6 +2414,7 @@ class TaskProcessor:
             is_valid, error_msg = validate_cookies(cookies_path, "YouTube")
             if not is_valid:
                 task_logger.error(f"YouTube Cookies验证失败: {error_msg}")
+                notify_cookie_invalid("YouTube", error_msg, source="视频信息采集")
                 # 尝试不使用cookies继续
                 task_logger.info("尝试不使用cookies继续采集信息...")
                 cookies_path = None
@@ -2475,6 +2477,7 @@ class TaskProcessor:
             is_valid, error_msg = validate_cookies(cookies_path, "YouTube")
             if not is_valid:
                 task_logger.error(f"YouTube Cookies验证失败: {error_msg}")
+                notify_cookie_invalid("YouTube", error_msg, source="视频下载")
                 # 尝试不使用cookies继续
                 task_logger.info("尝试不使用cookies继续下载...")
                 cookies_path = None
@@ -7482,6 +7485,8 @@ class TaskProcessor:
         if missing_params:
             error_msg = f"上传参数不完整，缺少: {', '.join(missing_params)}"
             task_logger.error(error_msg)
+            if "BILIBILI_COOKIES_PATH" in missing_params:
+                notify_cookie_invalid("Bilibili", error_msg, source="投稿前检查")
             update_task(
                 task_id,
                 status=TASK_STATES['FAILED'],
@@ -7493,6 +7498,11 @@ class TaskProcessor:
         cookie_file_exists = os.path.exists(bilibili_cookies_path)
         if not cookie_file_exists:
             task_logger.error(f"Bilibili Cookies文件不存在: {bilibili_cookies_path}")
+            notify_cookie_invalid(
+                "Bilibili",
+                "Cookies 文件不存在",
+                source="投稿前检查",
+            )
             update_task(
                 task_id,
                 status=TASK_STATES['FAILED'],
@@ -7504,6 +7514,7 @@ class TaskProcessor:
         is_valid, error_msg = validate_cookies(bilibili_cookies_path, "Bilibili")
         if not is_valid:
             task_logger.error(f"Bilibili Cookies文件验证失败: {error_msg}")
+            notify_cookie_invalid("Bilibili", error_msg, source="投稿前检查")
             update_task(
                 task_id,
                 status=TASK_STATES['FAILED'],

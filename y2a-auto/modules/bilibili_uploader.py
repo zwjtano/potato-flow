@@ -18,6 +18,7 @@ from .bili_sdk.utils.network import Api
 
 from .bilibili_runtime import configure_bilibili_runtime
 from .bilibili_auth import load_credential_from_file, validate_credential_remote
+from .notifications import notify_cookie_invalid
 from .utils import get_app_subdir
 from .upload_queue import bilibili_upload_slot, default_bilibili_upload_lock
 
@@ -400,6 +401,11 @@ class BilibiliUploader:
             credential = load_credential_from_file(self.cookie_file)
             credential_ok, credential_msg = validate_credential_remote(credential)
             if not credential_ok:
+                notify_cookie_invalid(
+                    "Bilibili",
+                    credential_msg,
+                    source="已投稿稿件编辑",
+                )
                 return False, (
                     f"Bilibili登录态无效: {credential_msg}。"
                     "请在设置页重新扫码登录后重试。"
@@ -636,6 +642,11 @@ class BilibiliUploader:
             credential = load_credential_from_file(self.cookie_file)
             credential_ok, credential_msg = validate_credential_remote(credential)
             if not credential_ok:
+                notify_cookie_invalid(
+                    "Bilibili",
+                    credential_msg,
+                    source="投稿登录态校验",
+                )
                 return False, f"Bilibili登录态无效: {credential_msg}。请在设置页重新扫码登录后重试上传。"
 
             safe_title_limit = int(title_limit or BILIBILI_TITLE_LIMIT)

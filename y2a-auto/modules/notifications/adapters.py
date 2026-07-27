@@ -211,7 +211,16 @@ class TelegramNotifier(Notifier):
     def send(self, message: NotificationMessage, config: dict[str, Any]) -> None:
         token = str(config.get("NOTIFY_TELEGRAM_BOT_TOKEN") or "").strip()
         chat_id = str(config.get("NOTIFY_TELEGRAM_CHAT_ID") or "").strip()
+        proxy_url = str(config.get("NOTIFY_TELEGRAM_PROXY_URL") or "").strip()
+        if proxy_url and not re.match(r"^https?://", proxy_url, flags=re.IGNORECASE):
+            raise NotificationSendError("Telegram 代理地址仅支持 http:// 或 https://")
         url = f"https://api.telegram.org/bot{token}/sendMessage"
+        request_options: dict[str, Any] = {}
+        if proxy_url:
+            request_options["proxies"] = {
+                "http": proxy_url,
+                "https": proxy_url,
+            }
         try:
             response = requests.post(
                 url,
@@ -221,6 +230,7 @@ class TelegramNotifier(Notifier):
                     "disable_web_page_preview": True,
                 },
                 timeout=10,
+                **request_options,
             )
         except requests.RequestException as exc:
             # Telegram URL includes the bot token, so never persist the raw exception text.

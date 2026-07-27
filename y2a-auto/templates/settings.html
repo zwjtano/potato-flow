@@ -1635,6 +1635,18 @@
                                                         任务报错
                                                     </label>
                                                     <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_RECORDING_STARTED" {% if config.get('NOTIFY_EVENT_RECORDING_STARTED', True) %}checked{% endif %}>
+                                                        录制开始
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_RECORDING_STOPPED" {% if config.get('NOTIFY_EVENT_RECORDING_STOPPED', True) %}checked{% endif %}>
+                                                        录制停止
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_COOKIE_INVALID" {% if config.get('NOTIFY_EVENT_COOKIE_INVALID', True) %}checked{% endif %}>
+                                                        Cookie 失效
+                                                    </label>
+                                                    <label class="checkbox-label">
                                                         <input type="checkbox" name="NOTIFY_EVENT_LOGIN_SUCCESS" {% if config.get('NOTIFY_EVENT_LOGIN_SUCCESS', True) %}checked{% endif %}>
                                                         后台登录成功
                                                     </label>
@@ -1787,6 +1799,13 @@
                                                                     <label for="notify-telegram-chat-id" class="form-label">Chat ID</label>
                                                                     <input type="text" id="notify-telegram-chat-id" name="NOTIFY_TELEGRAM_CHAT_ID" value="{{ config.get('NOTIFY_TELEGRAM_CHAT_ID', '') }}" class="form-control" autocomplete="off" placeholder="-1001234567890">
                                                                     <div class="form-text">支持个人、群组和频道的数字 ID。</div>
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-12">
+                                                                <div class="form-group">
+                                                                    <label for="notify-telegram-proxy-url" class="form-label">Telegram 代理地址（可选）</label>
+                                                                    <input type="url" id="notify-telegram-proxy-url" name="NOTIFY_TELEGRAM_PROXY_URL" value="{{ config.get('NOTIFY_TELEGRAM_PROXY_URL', '') }}" class="form-control" autocomplete="off" placeholder="http://127.0.0.1:7890">
+                                                                    <div class="form-text">支持 HTTP/HTTPS 代理；留空时直接连接 Telegram Bot API。</div>
                                                                 </div>
                                                             </div>
                                                         </div>

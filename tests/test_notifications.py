@@ -1,6 +1,7 @@
 import pathlib
 import sys
 import unittest
+import uuid
 from unittest import mock
 
 import requests
@@ -20,6 +21,17 @@ from modules.notifications.adapters import (  # noqa: E402
     validate_channel_config_fields,
 )
 from modules.notifications.models import NotificationMessage  # noqa: E402
+from modules.notifications import (  # noqa: E402
+    EVENT_COOKIE_INVALID,
+    EVENT_RECORDING_STARTED,
+    EVENT_RECORDING_STOPPED,
+    NotificationEvent,
+    build_notification_message,
+)
+from modules.notifications.service import (  # noqa: E402
+    emit_notification_event_deduplicated,
+)
+from modules.live_recorder_manager import LiveRecorderManager  # noqa: E402
 
 
 class _Response:
@@ -59,6 +71,7 @@ class TelegramNotificationTests(unittest.TestCase):
             {
                 "NOTIFY_TELEGRAM_BOT_TOKEN": "123:secret",
                 "NOTIFY_TELEGRAM_CHAT_ID": "-100123",
+                "NOTIFY_TELEGRAM_PROXY_URL": "http://127.0.0.1:7890",
             },
         )
 
@@ -70,6 +83,13 @@ class TelegramNotificationTests(unittest.TestCase):
         self.assertNotIn("`", kwargs["json"]["text"])
         self.assertLessEqual(len(kwargs["json"]["text"]), 4096)
         self.assertEqual(kwargs["timeout"], 10)
+        self.assertEqual(
+            kwargs["proxies"],
+            {
+                "http": "http://127.0.0.1:7890",
+                "https": "http://127.0.0.1:7890",
+            },
+        )
 
     @mock.patch("modules.notifications.adapters.requests.post")
     def test_network_error_does_not_leak_bot_token(self, post):
@@ -116,11 +136,140 @@ class TelegramNotificationTests(unittest.TestCase):
             "NOTIFY_TELEGRAM_ENABLED",
             "NOTIFY_TELEGRAM_BOT_TOKEN",
             "NOTIFY_TELEGRAM_CHAT_ID",
+            "NOTIFY_TELEGRAM_PROXY_URL",
         ):
             self.assertIn(field, template)
             self.assertIn(field, config_source)
         self.assertIn('data-channel="telegram"', template)
         self.assertIn("CHANNEL_TELEGRAM", app_source)
+
+
+class NotificationEventExtensionTests(unittest.TestCase):
+    def test_recording_messages_include_streamer_and_title(self):
+        started = build_notification_message(
+            NotificationEvent(
+                EVENT_RECORDING_STARTED,
+                {
+                    "streamer": "YYF",
+                    "platform": "douyu",
+                    "live_title": "陪伴每一天",
+                    "room_url": "https://www.douyu.com/9999",
+                    "started_at": "2026-07-27 12:00:00",
+                },
+            )
+        )
+        stopped = build_notification_message(
+            NotificationEvent(
+                EVENT_RECORDING_STOPPED,
+                {
+                    "streamer": "YYF",
+                    "platform": "douyu",
+                    "live_title": "陪伴每一天",
+                    "duration_text": "1小时2分3秒",
+                },
+            )
+        )
+
+        self.assertIn("录制已开始", started.title)
+        self.assertIn("YYF", started.markdown)
+        self.assertIn("陪伴每一天", started.markdown)
+        self.assertIn("录制已停止", stopped.title)
+        self.assertIn("1小时2分3秒", stopped.markdown)
+
+    def test_cookie_invalid_message_has_relogin_guidance(self):
+        message = build_notification_message(
+            NotificationEvent(
+                EVENT_COOKIE_INVALID,
+                {
+                    "platform": "Bilibili",
+                    "reason": "登录态校验未通过",
+                    "source": "投稿登录态校验",
+                },
+            )
+        )
+
+        self.assertIn("Cookie 已失效", message.title)
+        self.assertIn("重新登录", message.markdown)
+        self.assertIn("投稿登录态校验", message.markdown)
+
+    @mock.patch("modules.notifications.service.emit_notification_event")
+    def test_deduplicated_event_only_emits_once_during_cooldown(self, emit):
+        emit.return_value = 1
+        event = NotificationEvent(
+            EVENT_COOKIE_INVALID,
+            {"platform": "Bilibili", "reason": "expired"},
+        )
+        key = f"test-{uuid.uuid4()}"
+
+        first = emit_notification_event_deduplicated(
+            event,
+            dedupe_key=key,
+            cooldown_seconds=3600,
+        )
+        second = emit_notification_event_deduplicated(
+            event,
+            dedupe_key=key,
+            cooldown_seconds=3600,
+        )
+
+        self.assertEqual(first, 1)
+        self.assertEqual(second, 0)
+        emit.assert_called_once_with(event)
+
+    @mock.patch("modules.notifications.emit_notification_event")
+    def test_recording_state_transitions_emit_once(self, emit):
+        manager = LiveRecorderManager()
+        room = {
+            "id": "room-1",
+            "name": "果小果",
+            "url": "https://www.douyu.com/123",
+            "runtime": {
+                "recording": False,
+                "live_title": "",
+                "started_at": "",
+                "duration_seconds": 0,
+                "current_file": "",
+            },
+        }
+        manager._reconcile_recording_notifications([room])
+        room["runtime"].update(
+            {
+                "recording": True,
+                "live_title": "天梯冲分",
+                "started_at": "2026-07-27 12:00:00",
+                "current_file": "果小果_天梯冲分.flv.part",
+            }
+        )
+        manager._reconcile_recording_notifications([room])
+        manager._reconcile_recording_notifications([room])
+        room["runtime"]["recording"] = False
+        manager._reconcile_recording_notifications([room])
+
+        self.assertEqual(emit.call_count, 2)
+        start_event = emit.call_args_list[0].args[0]
+        stop_event = emit.call_args_list[1].args[0]
+        self.assertEqual(start_event.event_type, EVENT_RECORDING_STARTED)
+        self.assertEqual(stop_event.event_type, EVENT_RECORDING_STOPPED)
+        self.assertEqual(start_event.payload["streamer"], "果小果")
+        self.assertEqual(start_event.payload["live_title"], "天梯冲分")
+
+    def test_settings_expose_new_event_switches_and_cookie_hooks(self):
+        template = (Y2A_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
+        config_source = (Y2A_ROOT / "modules" / "config_manager.py").read_text(encoding="utf-8")
+        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
+        task_source = (Y2A_ROOT / "modules" / "task_manager.py").read_text(encoding="utf-8")
+        uploader_source = (Y2A_ROOT / "modules" / "bilibili_uploader.py").read_text(encoding="utf-8")
+
+        for field in (
+            "NOTIFY_EVENT_RECORDING_STARTED",
+            "NOTIFY_EVENT_RECORDING_STOPPED",
+            "NOTIFY_EVENT_COOKIE_INVALID",
+        ):
+            self.assertIn(field, template)
+            self.assertIn(field, config_source)
+            self.assertIn(field, app_source)
+        self.assertIn("notify_cookie_invalid", task_source)
+        self.assertIn("notify_cookie_invalid", uploader_source)
 
 
 if __name__ == "__main__":

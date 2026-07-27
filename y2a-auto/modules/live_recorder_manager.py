@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import logging
 import os
 import re
 import shutil
@@ -60,6 +61,9 @@ LEGACY_RECORDING_DESCRIPTION_TEMPLATES = {
 DEFAULT_RECORDING_SEGMENT_MINUTES = 60
 AUTO_UPLOAD_RETRY_DELAY_SECONDS = 5 * 60
 AUTO_UPLOAD_RETRY_MAX_RETRIES = 3
+RECORDING_NOTIFICATION_POLL_SECONDS = 2
+
+logger = logging.getLogger("live_recorder_manager")
 
 
 class RecorderConfigError(ValueError):
@@ -385,6 +389,10 @@ class LiveRecorderManager:
         self._reload_thread: threading.Thread | None = None
         self._orphan_recovery_thread: threading.Thread | None = None
         self._upload_retry_thread: threading.Thread | None = None
+        self._recording_notification_thread: threading.Thread | None = None
+        self._recording_notification_lock = threading.Lock()
+        self._recording_notification_states: dict[str, bool] = {}
+        self._recording_notification_details: dict[str, dict[str, Any]] = {}
         if os.environ.pop("POTATO_FLOW_CONTAINER_START", "") == "1":
             self.recover_interrupted_pipeline_jobs()
             self._ensure_upload_retry_thread()
@@ -688,6 +696,135 @@ class LiveRecorderManager:
                 for room in rooms
             ],
         }
+
+    @staticmethod
+    def _recording_notification_payload(
+        room: dict[str, Any],
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        runtime = room.get("runtime") if isinstance(room.get("runtime"), dict) else {}
+        previous = dict(details or {})
+        room_url = str(room.get("url") or previous.get("room_url") or "").strip()
+        try:
+            platform = detect_platform(room_url)
+        except RecorderConfigError:
+            platform = str(previous.get("platform") or "直播平台")
+        duration_seconds = int(runtime.get("duration_seconds") or 0)
+        started_monotonic = float(previous.get("started_monotonic") or 0)
+        if duration_seconds <= 0 and started_monotonic > 0:
+            duration_seconds = max(0, int(time.monotonic() - started_monotonic))
+        duration_text = ""
+        if duration_seconds > 0:
+            hours, remainder = divmod(duration_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            duration_text = (
+                f"{hours}小时{minutes}分{seconds}秒"
+                if hours
+                else f"{minutes}分{seconds}秒"
+            )
+        return {
+            "room_id": str(room.get("id") or previous.get("room_id") or ""),
+            "streamer": str(room.get("name") or previous.get("streamer") or "未知主播"),
+            "platform": platform,
+            "room_url": room_url,
+            "live_title": str(
+                runtime.get("live_title")
+                or previous.get("live_title")
+                or room.get("live_title")
+                or ""
+            ),
+            "started_at": str(runtime.get("started_at") or previous.get("started_at") or ""),
+            "current_file": str(runtime.get("current_file") or previous.get("current_file") or ""),
+            "duration_seconds": duration_seconds,
+            "duration_text": duration_text,
+            "started_monotonic": started_monotonic or time.monotonic(),
+        }
+
+    def _reconcile_recording_notifications(self, rooms: list[dict[str, Any]]) -> None:
+        from .notifications import (
+            EVENT_RECORDING_STARTED,
+            EVENT_RECORDING_STOPPED,
+            NotificationEvent,
+            emit_notification_event,
+        )
+
+        events: list[NotificationEvent] = []
+        current_ids: set[str] = set()
+        with self._recording_notification_lock:
+            for room in rooms:
+                room_id = str(room.get("id") or "").strip()
+                if not room_id:
+                    continue
+                current_ids.add(room_id)
+                runtime = room.get("runtime") if isinstance(room.get("runtime"), dict) else {}
+                recording = bool(runtime.get("recording"))
+                previous_recording = bool(self._recording_notification_states.get(room_id, False))
+                previous_details = self._recording_notification_details.get(room_id, {})
+                if recording and not previous_recording:
+                    payload = self._recording_notification_payload(room)
+                    self._recording_notification_details[room_id] = payload
+                    events.append(NotificationEvent(EVENT_RECORDING_STARTED, payload))
+                elif recording:
+                    self._recording_notification_details[room_id] = (
+                        self._recording_notification_payload(room, details=previous_details)
+                    )
+                elif previous_recording:
+                    payload = self._recording_notification_payload(
+                        room,
+                        details=previous_details,
+                    )
+                    events.append(NotificationEvent(EVENT_RECORDING_STOPPED, payload))
+                    self._recording_notification_details.pop(room_id, None)
+                self._recording_notification_states[room_id] = recording
+
+            for room_id in set(self._recording_notification_states) - current_ids:
+                if self._recording_notification_states.get(room_id):
+                    details = self._recording_notification_details.get(room_id, {})
+                    payload = self._recording_notification_payload({}, details=details)
+                    events.append(NotificationEvent(EVENT_RECORDING_STOPPED, payload))
+                self._recording_notification_states.pop(room_id, None)
+                self._recording_notification_details.pop(room_id, None)
+
+        for event in events:
+            emit_notification_event(event)
+
+    def _recording_notification_snapshot(self) -> list[dict[str, Any]]:
+        rooms = self.list_rooms()
+        pid = self._pid()
+        if pid is None:
+            return self._merge_room_runtime(rooms, False)
+        status_payload = self._worker_status_payload(pid)
+        return self._merge_room_runtime(
+            rooms,
+            True,
+            status_payload,
+            status_payload.get("stream_infos", []),
+        )
+
+    def _ensure_recording_notification_thread(self) -> None:
+        if (
+            self._recording_notification_thread is not None
+            and self._recording_notification_thread.is_alive()
+        ):
+            return
+
+        def monitor() -> None:
+            while True:
+                try:
+                    self._reconcile_recording_notifications(
+                        self._recording_notification_snapshot()
+                    )
+                except Exception:
+                    logger.exception("同步录制开始/停止通知失败")
+                time.sleep(RECORDING_NOTIFICATION_POLL_SECONDS)
+
+        self._recording_notification_thread = threading.Thread(
+            target=monitor,
+            daemon=True,
+            name="potato-recording-notifications",
+        )
+        self._recording_notification_thread.start()
 
     def resolve_room(self, url: str) -> dict[str, Any]:
         """Resolve a supported room URL into canonical streamer metadata."""
@@ -1276,6 +1413,7 @@ class LiveRecorderManager:
             if self._pid() is not None:
                 self._ensure_orphan_recovery_thread()
                 self._ensure_upload_retry_thread()
+                self._ensure_recording_notification_thread()
                 return self.status()
             if not self.list_rooms():
                 raise RecorderConfigError("请先添加至少一个直播间")
@@ -1316,6 +1454,7 @@ class LiveRecorderManager:
                 )
             self._ensure_orphan_recovery_thread()
             self._ensure_upload_retry_thread()
+            self._ensure_recording_notification_thread()
             return self.status()
 
     def stop(self) -> dict[str, Any]:
@@ -1340,6 +1479,9 @@ class LiveRecorderManager:
                 self._log_handle = None
             PID_PATH.unlink(missing_ok=True)
             STATUS_PATH.unlink(missing_ok=True)
+            self._reconcile_recording_notifications(
+                self._merge_room_runtime(self.list_rooms(), False)
+            )
             return self.status()
 
     def tail_log(self, lines: int = 120) -> str:

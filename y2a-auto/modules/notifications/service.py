@@ -18,7 +18,12 @@ from .adapters import (
     build_notifier_registry,
     iter_enabled_channel_ids,
 )
-from .models import EVENT_CONFIG_KEY_MAP, NotificationEvent, NotificationMessage
+from .models import (
+    EVENT_CONFIG_KEY_MAP,
+    EVENT_COOKIE_INVALID,
+    NotificationEvent,
+    NotificationMessage,
+)
 from .renderers import build_notification_message
 
 
@@ -35,6 +40,8 @@ OUTBOX_STATUS_FAILED = "failed"
 
 _global_notification_service = None
 _global_notification_lock = threading.Lock()
+_event_dedupe_lock = threading.Lock()
+_event_dedupe_times: dict[str, float] = {}
 
 
 def _current_ts() -> str:
@@ -394,3 +401,45 @@ def emit_notification_event(event: NotificationEvent) -> int:
     except Exception as exc:
         logger.warning("写入通知队列失败: %s", exc)
         return 0
+
+
+def emit_notification_event_deduplicated(
+    event: NotificationEvent,
+    *,
+    dedupe_key: str,
+    cooldown_seconds: float = 3600,
+) -> int:
+    """Emit at most once per dedupe key during the cooldown window."""
+    key = f"{event.event_type}:{str(dedupe_key or '').strip()}"
+    now = time.monotonic()
+    with _event_dedupe_lock:
+        previous = _event_dedupe_times.get(key)
+        if previous is not None and now - previous < max(0.0, float(cooldown_seconds)):
+            return 0
+    queued = emit_notification_event(event)
+    if queued > 0:
+        with _event_dedupe_lock:
+            _event_dedupe_times[key] = now
+    return queued
+
+
+def notify_cookie_invalid(
+    platform: str,
+    reason: str,
+    *,
+    source: str = "",
+    cooldown_seconds: float = 3600,
+) -> int:
+    normalized_platform = str(platform or "平台").strip()
+    return emit_notification_event_deduplicated(
+        NotificationEvent(
+            event_type=EVENT_COOKIE_INVALID,
+            payload={
+                "platform": normalized_platform,
+                "reason": str(reason or "登录态校验未通过").strip(),
+                "source": str(source or "登录态校验").strip(),
+            },
+        ),
+        dedupe_key=normalized_platform.casefold(),
+        cooldown_seconds=cooldown_seconds,
+    )

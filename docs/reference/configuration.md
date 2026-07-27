@@ -38,5 +38,6 @@
 |---|---|
 | `NOTIFY_TELEGRAM_BOT_TOKEN` | 通过 Telegram 的 `@BotFather` 创建 Bot 后获得的 Token |
 | `NOTIFY_TELEGRAM_CHAT_ID` | 接收消息的个人、群组或频道数字 ID；群组和频道通常以 `-100` 开头 |
+| `NOTIFY_TELEGRAM_PROXY_URL` | 可选的 HTTP/HTTPS 代理地址，例如 `http://127.0.0.1:7890`；留空时直连 |
 
 先保存设置，再点击“发送测试消息”。Bot 必须已经加入目标群组或频道，并具有发言权限。Telegram 与其他通知渠道共用事件开关和失败重试队列，不会阻塞录制与投稿。
