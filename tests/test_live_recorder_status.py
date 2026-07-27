@@ -1218,6 +1218,59 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(jobs[0]["completed_stages"], 5)
         self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
 
+    def test_pipeline_jobs_accept_biliup_speed_field(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            fingerprint = "a" * 64
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', 2, '{}', NULL, ?, ?)",
+                    (
+                        fingerprint,
+                        "/data/recordings/test.flv",
+                        "2026-07-27T13:00:00+00:00",
+                        "2026-07-27T13:00:00+00:00",
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'running', ?, NULL, NULL, NULL, ?)",
+                    (
+                        fingerprint,
+                        json.dumps(
+                            {
+                                "upload_progress": {
+                                    "uploaded_bytes": 50 * 1024 * 1024,
+                                    "total_bytes": 100 * 1024 * 1024,
+                                    "speed_bytes_per_sec": 5 * 1024 * 1024,
+                                    "eta_seconds": 10,
+                                    "percent": 50,
+                                }
+                            }
+                        ),
+                        "2026-07-27T13:00:00+00:00",
+                    ),
+                )
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[]):
+                job = manager.pipeline_jobs()[0]
+
+        self.assertIn("当前速度：5.0MB/s", job["upload_progress_text"])
+
     def test_upload_queue_positions_and_paused_job_can_be_deleted(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

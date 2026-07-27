@@ -2435,7 +2435,11 @@ class LiveRecorderManager:
             if upload_progress:
                 uploaded = float(upload_progress.get("uploaded_bytes") or 0)
                 total_bytes = float(upload_progress.get("total_bytes") or 0)
-                speed = float(upload_progress.get("speed_bytes_per_second") or 0)
+                speed = float(
+                    upload_progress.get("speed_bytes_per_second")
+                    or upload_progress.get("speed_bytes_per_sec")
+                    or 0
+                )
                 eta = upload_progress.get("eta_seconds")
                 if total_bytes > 0 and speed > 0 and eta is not None:
                     upload_progress_text = (

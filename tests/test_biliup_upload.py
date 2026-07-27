@@ -70,6 +70,8 @@ class BiliupUploaderAdapterTests(unittest.TestCase):
             self.assertEqual(result["upload_engine"], "biliup")
             self.assertEqual(result["upload_line"], "tx")
             self.assertEqual(details[-1]["percent"], 50.0)
+            self.assertIn("speed_bytes_per_second", details[-1])
+            self.assertNotIn("speed_bytes_per_sec", details[-1])
             self.assertFalse(cookie.exists(), "临时 Biliup Cookie 应在进程结束后删除")
 
     def test_append_keeps_existing_bvid(self):
