@@ -177,6 +177,39 @@ class NotificationEventExtensionTests(unittest.TestCase):
         self.assertIn("仅录制任务已添加", record_only.title)
         self.assertIn("仅本地处理，不投稿", record_only.markdown)
 
+    def test_task_result_messages_distinguish_recording_job_types(self):
+        completed = build_notification_message(
+            NotificationEvent(
+                "TASK_COMPLETED",
+                {
+                    "task_id": "recording-1",
+                    "task_kind": "recording_upload",
+                    "streamer": "YYF",
+                    "video_file": "YYF_陪伴每一天.flv",
+                    "bvid": "BV1TEST",
+                },
+            )
+        )
+        failed = build_notification_message(
+            NotificationEvent(
+                "TASK_FAILED",
+                {
+                    "task_id": "recording-2",
+                    "task_kind": "record_only",
+                    "streamer": "果小果",
+                    "video_file": "果小果_天梯冲分.flv",
+                    "stage": "cover",
+                    "error_message": "图片模型不可用",
+                },
+            )
+        )
+
+        self.assertIn("录播投稿任务已完成", completed.title)
+        self.assertIn("BV1TEST", completed.markdown)
+        self.assertIn("仅录制任务失败", failed.title)
+        self.assertIn("图片模型不可用", failed.markdown)
+        self.assertIn("cover", failed.markdown)
+
     @mock.patch("modules.notifications.emit_notification_event")
     def test_bridge_emits_task_added_for_new_recording_job(self, emit):
         bridge.emit_recording_task_added_notification(
@@ -196,6 +229,42 @@ class NotificationEventExtensionTests(unittest.TestCase):
         self.assertEqual(event.payload["task_kind"], "recording_upload")
         self.assertEqual(event.payload["streamer"], "YYF")
         self.assertEqual(event.payload["upload_target"], "bilibili")
+
+    @mock.patch("modules.notifications.emit_notification_event")
+    def test_bridge_emits_recording_completion_and_failure(self, emit):
+        cfg = {
+            "_config_dir": str(ROOT),
+            "y2a_root": str(Y2A_ROOT),
+            "streamer_name": "果小果",
+            "source_url": "https://www.douyu.com/123",
+        }
+        video = pathlib.Path("/tmp/果小果_天梯冲分.flv")
+
+        bridge.emit_recording_task_result_notification(
+            cfg,
+            fingerprint_value="fingerprint-2",
+            video=video,
+            task_kind="recording_upload",
+            status="completed",
+            result={"bilibili": {"bvid": "BV1TEST"}},
+        )
+        bridge.emit_recording_task_result_notification(
+            cfg,
+            fingerprint_value="fingerprint-3",
+            video=video,
+            task_kind="record_only",
+            status="failed",
+            error="封面生成失败",
+            stage="cover",
+        )
+
+        completed = emit.call_args_list[0].args[0]
+        failed = emit.call_args_list[1].args[0]
+        self.assertEqual(completed.event_type, "TASK_COMPLETED")
+        self.assertEqual(completed.payload["bvid"], "BV1TEST")
+        self.assertEqual(failed.event_type, "TASK_FAILED")
+        self.assertEqual(failed.payload["stage"], "cover")
+        self.assertEqual(failed.payload["error_message"], "封面生成失败")
 
     def test_recording_messages_include_streamer_and_title(self):
         started = build_notification_message(

@@ -195,6 +195,73 @@ def emit_recording_task_added_notification(
         print(f"WARN 录播任务新增通知写入失败: {exc}", file=sys.stderr)
 
 
+def emit_recording_task_result_notification(
+    cfg: dict[str, Any],
+    *,
+    fingerprint_value: str,
+    video: Path,
+    task_kind: str,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error: str = "",
+    stage: str = "",
+) -> None:
+    """Queue a completion/failure notification for a recording job."""
+    if status not in {"completed", "failed"}:
+        return
+    try:
+        y2a_root = resolve_path(
+            str(cfg.get("y2a_root") or "y2a-auto"),
+            cfg,
+        )
+        if str(y2a_root) not in sys.path:
+            sys.path.insert(0, str(y2a_root))
+        from modules.notifications import (
+            EVENT_TASK_COMPLETED,
+            EVENT_TASK_FAILED,
+            NotificationEvent,
+            emit_notification_event,
+        )
+
+        normalized_result = dict(result or {})
+        bilibili_result = normalized_result.get("bilibili")
+        bilibili_result = bilibili_result if isinstance(bilibili_result, dict) else {}
+        emit_notification_event(
+            NotificationEvent(
+                event_type=(
+                    EVENT_TASK_COMPLETED
+                    if status == "completed"
+                    else EVENT_TASK_FAILED
+                ),
+                payload={
+                    "task_id": fingerprint_value,
+                    "task_kind": task_kind,
+                    "video_path": str(video),
+                    "video_file": video.name,
+                    "streamer": normalize_dota2_streamer_name(
+                        str(cfg.get("streamer_name") or "")
+                    ),
+                    "source_url": str(cfg.get("source_url") or ""),
+                    "upload_target": (
+                        "local"
+                        if task_kind == "record_only"
+                        else "bilibili"
+                    ),
+                    "status": status,
+                    "stage": str(stage or ""),
+                    "error_message": str(error or ""),
+                    "bvid": str(bilibili_result.get("bvid") or ""),
+                    "final_video_path": str(
+                        normalized_result.get("final_video_path") or ""
+                    ),
+                },
+            )
+        )
+    except Exception as exc:
+        # 通知失败不能改变已经落库的流水线结果。
+        print(f"WARN 录播任务结果通知写入失败: {exc}", file=sys.stderr)
+
+
 def stdin_paths() -> list[Path]:
     if sys.stdin.isatty():
         return []
@@ -1513,7 +1580,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
     if not store.claim(key, video, platform, retry=retry):
         print(f"SKIP 已处理或正在处理: {video}")
         return True
-    if is_new_task:
+    if is_new_task and not dry_run:
         emit_recording_task_added_notification(
             cfg,
             fingerprint_value=key,
@@ -1960,11 +2027,29 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 artifact_dir=work_dir,
             )
             store.finish(key, "completed", previous)
+        emit_recording_task_result_notification(
+            cfg,
+            fingerprint_value=key,
+            video=video,
+            task_kind="recording_upload",
+            status="completed",
+            result=previous,
+        )
         print(f"OK 上传完成: {video}")
         return True
     except Exception as exc:
         store.stage(key, current_stage, "failed", error=str(exc))
         store.finish(key, "failed", error=str(exc))
+        if not dry_run:
+            emit_recording_task_result_notification(
+                cfg,
+                fingerprint_value=key,
+                video=video,
+                task_kind="recording_upload",
+                status="failed",
+                error=str(exc),
+                stage=current_stage,
+            )
         print(f"ERROR {video}: {exc}", file=sys.stderr)
         return False
 
@@ -2251,6 +2336,15 @@ def main(argv: list[str] | None = None) -> int:
                     "safe_finalized": False,
                 }, error=error)
                 store.finish(key, "failed", error=error)
+                emit_recording_task_result_notification(
+                    record_cfg,
+                    fingerprint_value=key,
+                    video=path,
+                    task_kind="record_only",
+                    status="failed",
+                    error=error,
+                    stage="record",
+                )
                 print(f"ERROR 仅录制文件未找到 XML，已保留原 FLV: {path}", file=sys.stderr)
                 ok = False
                 continue
@@ -2322,9 +2416,26 @@ def main(argv: list[str] | None = None) -> int:
                     "original_flv_deleted": final_video != path,
                 }
                 store.finish(key, "completed", result)
+                emit_recording_task_result_notification(
+                    record_cfg,
+                    fingerprint_value=key,
+                    video=path,
+                    task_kind="record_only",
+                    status="completed",
+                    result=result,
+                )
             except Exception as exc:
                 store.stage(key, current_stage, "failed", error=str(exc))
                 store.finish(key, "failed", error=str(exc))
+                emit_recording_task_result_notification(
+                    record_cfg,
+                    fingerprint_value=key,
+                    video=path,
+                    task_kind="record_only",
+                    status="failed",
+                    error=str(exc),
+                    stage=current_stage,
+                )
                 print(
                     f"ERROR 仅录制本地处理失败，已保留原 FLV: {path}: {exc}",
                     file=sys.stderr,

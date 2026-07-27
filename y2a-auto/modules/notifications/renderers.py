@@ -113,6 +113,32 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         return NotificationMessage(title=title, summary=summary, markdown=markdown)
 
     if event_type == EVENT_TASK_COMPLETED:
+        task_kind = _as_text(payload.get("task_kind"))
+        if task_kind in {"recording_upload", "record_only"}:
+            is_record_only = task_kind == "record_only"
+            streamer = _as_text(payload.get("streamer")) or "未知主播"
+            video_file = _truncate(
+                _as_text(payload.get("video_file"))
+                or _as_text(payload.get("video_path")),
+                220,
+            )
+            target = "仅本地处理，不投稿" if is_record_only else "哔哩哔哩"
+            kind_label = "仅录制任务" if is_record_only else "录播投稿任务"
+            title = f"PotatoFlow ✅ {kind_label}已完成"
+            summary = f"{streamer} | {video_file}"
+            body = _section_block(
+                _kv("任务类型", kind_label),
+                _kv("主播", streamer),
+                _kv("录播文件", video_file),
+                _kv("处理结果", target),
+                _kv("BVID", _as_text(payload.get("bvid"))),
+                _kv("本地成品", _truncate(_as_text(payload.get("final_video_path")), 300)),
+                _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+                _kv("时间", _as_text(payload.get("occurred_at"))),
+            )
+            markdown = _markdown_lines(f"**✅ {kind_label}已完成**", "", body)
+            return NotificationMessage(title=title, summary=summary, markdown=markdown)
+
         task_title = _task_title(payload)
         platform_result = _task_platform_result(payload)
         title = "PotatoFlow ✅ 任务已完成"
@@ -128,6 +154,37 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         return NotificationMessage(title=title, summary=summary, markdown=markdown)
 
     if event_type == EVENT_TASK_FAILED:
+        task_kind = _as_text(payload.get("task_kind"))
+        if task_kind in {"recording_upload", "record_only"}:
+            is_record_only = task_kind == "record_only"
+            streamer = _as_text(payload.get("streamer")) or "未知主播"
+            video_file = _truncate(
+                _as_text(payload.get("video_file"))
+                or _as_text(payload.get("video_path")),
+                220,
+            )
+            error_text = _pretty_error_text(payload.get("error_message"))
+            kind_label = "仅录制任务" if is_record_only else "录播投稿任务"
+            title = f"PotatoFlow ❌ {kind_label}失败"
+            summary = f"{streamer} | {error_text}"
+            body = _section_block(
+                _kv("任务类型", kind_label),
+                _kv("主播", streamer),
+                _kv("录播文件", video_file),
+                _kv("失败阶段", _as_text(payload.get("stage"))),
+                _kv("任务 ID", f"`{_as_text(payload.get('task_id'))}`"),
+                _kv("时间", _as_text(payload.get("occurred_at"))),
+            )
+            markdown = _markdown_lines(
+                f"**❌ {kind_label}失败**",
+                "",
+                body,
+                "",
+                "> **错误详情：**",
+                f"> {error_text}",
+            )
+            return NotificationMessage(title=title, summary=summary, markdown=markdown)
+
         task_title = _task_title(payload)
         error_text = _pretty_error_text(payload.get("error_message"))
         title = "PotatoFlow ❌ 任务失败"
