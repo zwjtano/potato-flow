@@ -25,7 +25,10 @@ use std::ffi::OsStr;
 use std::io::Seek;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 use std::task::Poll;
 use std::time::Instant;
 use tracing::{info, warn};
@@ -142,8 +145,9 @@ pub async fn upload_by_command(
     }
     cover_up(&mut studio, &bili).await?;
     studio.videos = upload(&video_path, &bili, line, limit).await?;
+    apply_potatoflow_page_title(&mut studio.videos);
 
-    match submit {
+    let response = match submit {
         SubmitOption::BCutAndroid => bili
             .submit_by_bcut_android(&studio, proxy)
             .await
@@ -157,6 +161,9 @@ pub async fn upload_by_command(
             .await
             .change_context_lazy(|| AppError::Unknown)?,
     };
+    if std::env::var_os("POTATOFLOW_MACHINE_OUTPUT").is_some() {
+        println!("POTATOFLOW_RESULT={response}");
+    }
 
     Ok(())
 }
@@ -231,12 +238,13 @@ pub async fn append(
     }
     let bilibili = login_by_cookies(user_cookie, proxy).await?;
     let mut uploaded_videos = upload(&video_path, &bilibili, line, limit).await?;
+    apply_potatoflow_page_title(&mut uploaded_videos);
     let mut studio = bilibili
         .studio_data(&vid, proxy)
         .await
         .change_context_lazy(|| AppError::Unknown)?;
     studio.videos.append(&mut uploaded_videos);
-    match submit {
+    let response = match submit {
         SubmitOption::App => bilibili
             .edit_by_app(&studio, proxy)
             .await
@@ -246,8 +254,24 @@ pub async fn append(
             .await
             .change_context_lazy(|| AppError::Unknown)?,
     };
+    if std::env::var_os("POTATOFLOW_MACHINE_OUTPUT").is_some() {
+        println!("POTATOFLOW_RESULT={response}");
+    }
     // studio.edit(&login_info).await?;
     Ok(())
+}
+
+fn apply_potatoflow_page_title(videos: &mut [Video]) {
+    let Some(title) = std::env::var_os("POTATOFLOW_PAGE_TITLE") else {
+        return;
+    };
+    let title = title.to_string_lossy().trim().to_string();
+    if title.is_empty() {
+        return;
+    }
+    for video in videos {
+        video.title = Some(Video::truncate_title(&title, 80));
+    }
 }
 
 pub async fn show(user_cookie: PathBuf, vid: Vid, proxy: Option<&str>) -> AppResult<()> {
@@ -427,6 +451,21 @@ pub async fn upload(
 
     let mut videos = checkpoint.videos.clone();
     let client = StatelessClient::default();
+    let machine_output = std::env::var_os("POTATOFLOW_MACHINE_OUTPUT").is_some();
+    let machine_total_size = video_path
+        .iter()
+        .filter_map(|path| std::fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .sum::<u64>();
+    let machine_initial_uploaded = checkpoint
+        .uploaded_files
+        .iter()
+        .filter_map(|path| std::fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .sum::<u64>()
+        .min(machine_total_size);
+    let machine_uploaded_bytes = Arc::new(AtomicU64::new(machine_initial_uploaded));
+    let machine_last_percent = Arc::new(AtomicU64::new(u64::MAX));
     let line = match line {
         Some(UploadLine::Bldsa) => line::bldsa(),
         Some(UploadLine::Cnbldsa) => line::cnbldsa(),
@@ -543,14 +582,28 @@ pub async fn upload(
         // pb.tick()
 
         let instant = Instant::now();
+        let uploaded_bytes = Arc::clone(&machine_uploaded_bytes);
+        let last_percent = Arc::clone(&machine_last_percent);
 
         let video = uploader
             .upload(client.clone(), limit, |vs| {
                 vs.map(|chunk| {
                     let pb = pb.clone();
+                    let uploaded_bytes = Arc::clone(&uploaded_bytes);
+                    let last_percent = Arc::clone(&last_percent);
                     let chunk = chunk?;
                     let len = chunk.len();
-                    Ok((Progressbar::new(chunk, pb), len))
+                    Ok((
+                        Progressbar::new(
+                            chunk,
+                            pb,
+                            machine_output,
+                            machine_total_size,
+                            uploaded_bytes,
+                            last_percent,
+                        ),
+                        len,
+                    ))
                 })
             })
             .await
@@ -742,30 +795,73 @@ pub fn fopen_rw<P: AsRef<Path>>(path: P) -> AppResult<std::fs::File> {
 struct Progressbar {
     bytes: Bytes,
     pb: ProgressBar,
+    machine_output: bool,
+    total_size: u64,
+    uploaded_bytes: Arc<AtomicU64>,
+    last_percent: Arc<AtomicU64>,
 }
 
 impl Progressbar {
-    pub fn new(bytes: Bytes, pb: ProgressBar) -> Self {
-        Self { bytes, pb }
+    pub fn new(
+        bytes: Bytes,
+        pb: ProgressBar,
+        machine_output: bool,
+        total_size: u64,
+        uploaded_bytes: Arc<AtomicU64>,
+        last_percent: Arc<AtomicU64>,
+    ) -> Self {
+        Self {
+            bytes,
+            pb,
+            machine_output,
+            total_size,
+            uploaded_bytes,
+            last_percent,
+        }
+    }
+
+    fn report_progress(&self, count: usize) {
+        if !self.machine_output || self.total_size == 0 {
+            return;
+        }
+        let uploaded = self
+            .uploaded_bytes
+            .fetch_add(count as u64, Ordering::Relaxed)
+            .saturating_add(count as u64)
+            .min(self.total_size);
+        let percent = uploaded.saturating_mul(100) / self.total_size;
+        let previous = self.last_percent.load(Ordering::Relaxed);
+        if previous != percent
+            && self
+                .last_percent
+                .compare_exchange(previous, percent, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            println!(
+                "POTATOFLOW_PROGRESS={{\"uploaded_bytes\":{uploaded},\"total_bytes\":{},\"percent\":{percent}}}",
+                self.total_size
+            );
+        }
     }
 
     pub fn progress(&mut self) -> AppResult<Option<Bytes>> {
         let pb = &self.pb;
 
-        let content_bytes = &mut self.bytes;
-
-        let n = content_bytes.remaining();
+        let n = self.bytes.remaining();
 
         let pc = 4096;
         if n == 0 {
             Ok(None)
         } else if n < pc {
+            let output = self.bytes.copy_to_bytes(n);
             pb.inc(n as u64);
-            Ok(Some(content_bytes.copy_to_bytes(n)))
+            self.report_progress(n);
+            Ok(Some(output))
         } else {
+            let output = self.bytes.copy_to_bytes(pc);
             pb.inc(pc as u64);
-
-            Ok(Some(content_bytes.copy_to_bytes(pc)))
+            self.report_progress(pc);
+            Ok(Some(output))
         }
     }
 }

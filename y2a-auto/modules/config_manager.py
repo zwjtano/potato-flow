@@ -75,6 +75,9 @@ DEFAULT_CONFIG = {
     "LOGIN_SESSION_TIMEOUT_MINUTES": 30,  # 登录空闲超时时长（分钟）
     "YOUTUBE_COOKIES_PATH": "cookies/yt_cookies.txt", # 相对于项目根目录
     "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径
+    "BILIBILI_UPLOAD_ENGINE": "biliup", # B站投稿统一使用 biliup
+    "BILIBILI_UPLOAD_LINE": "bldsa", # 全局缓存的投稿线路，可在系统设置手动测速更换
+    "BILIBILI_UPLOAD_LIMIT": 3, # 单文件上传并发数
     "DOUYIN_COOKIES_PATH": "cookies/douyin_cookies.json", # 可选的 biliup 抖音 Cookie
     "RECORDINGS_PATH": "docker-data/recordings", # 录播保存目录；相对路径以 PotatoFlow 项目根目录为准
     # CookieCloud（首版仅用于手动拉取 YouTube Cookies）

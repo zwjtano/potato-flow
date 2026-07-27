@@ -416,6 +416,59 @@
                                     </div>
 
                                     <div class="col-12">
+                                        <article class="settings-card" id="biliup-line-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">BILIBILI UPLOAD</span>
+                                                    <h4>投稿节点探测与测试</h4>
+                                                </div>
+                                                <span class="settings-status-badge is-info" id="biliup-line-badge">
+                                                    {{ config.get('BILIBILI_UPLOAD_LINE') or '未测速' }}
+                                                </span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3 align-items-end">
+                                                    <div class="col-lg-6">
+                                                        <label for="biliup-line-select" class="form-label">全局投稿线路</label>
+                                                        <select id="biliup-line-select" class="form-select">
+                                                            <option value="">读取中…</option>
+                                                        </select>
+                                                        <p class="help-text mb-0">所有直播间与上传任务共用该线路，不在单个直播间重复设置。</p>
+                                                    </div>
+                                                    <div class="col-lg-6">
+                                                        <div class="settings-inline-actions">
+                                                            <button type="button" class="btn btn-primary" id="biliup-line-probe-btn">
+                                                                <i class="bi bi-speedometer2"></i> 测速并自动选择
+                                                            </button>
+                                                            <button type="button" class="btn btn-outline-primary" id="biliup-line-save-btn">
+                                                                <i class="bi bi-check2-circle"></i> 使用所选线路
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="alert alert-info mt-3 mb-3">
+                                                    <i class="bi bi-info-circle"></i>
+                                                    测速只在点击按钮时执行一次并缓存结果；正常投稿直接使用已选线路，不会重复上传测速数据。
+                                                </div>
+                                                <div id="biliup-line-status" class="help-text mb-2"></div>
+                                                <div class="table-responsive d-none" id="biliup-line-results-wrap">
+                                                    <table class="table align-middle mb-0">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>节点</th>
+                                                                <th>状态</th>
+                                                                <th>耗时</th>
+                                                                <th>测试速度</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody id="biliup-line-results"></tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
                                         <article class="settings-card">
                                             <div class="settings-card-header">
                                                 <div>
@@ -3478,6 +3531,143 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             picker.hide();
             window.PotatoUI.notify('已选择录播文件夹，保存设置后生效。', 'success');
+        });
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const card = document.getElementById('biliup-line-card');
+        if (!card) return;
+        const select = document.getElementById('biliup-line-select');
+        const probeButton = document.getElementById('biliup-line-probe-btn');
+        const saveButton = document.getElementById('biliup-line-save-btn');
+        const badge = document.getElementById('biliup-line-badge');
+        const status = document.getElementById('biliup-line-status');
+        const resultsWrap = document.getElementById('biliup-line-results-wrap');
+        const resultsBody = document.getElementById('biliup-line-results');
+
+        function notify(message, level) {
+            if (window.PotatoUI && typeof window.PotatoUI.notify === 'function') {
+                window.PotatoUI.notify(message, level || 'info');
+            }
+        }
+
+        function setBusy(busy, message) {
+            probeButton.disabled = busy;
+            saveButton.disabled = busy || !select.value;
+            probeButton.innerHTML = busy
+                ? '<span class="spinner-border spinner-border-sm"></span> 正在测速…'
+                : '<i class="bi bi-speedometer2"></i> 测速并自动选择';
+            if (message) status.textContent = message;
+        }
+
+        function render(data) {
+            const selected = String(data.selected_line || '');
+            const allSupported = Array.isArray(data.supported_lines) ? data.supported_lines : [];
+            const rows = Array.isArray(data.results) ? data.results : [];
+            const measured = rows
+                .filter(function (item) { return item.ok && item.supported; })
+                .map(function (item) {
+                    return {value: item.line, label: item.label || item.line};
+                });
+            const supported = measured.length ? measured : allSupported;
+            if (selected && !supported.some(function (item) { return item.value === selected; })) {
+                const fallback = allSupported.find(function (item) { return item.value === selected; });
+                supported.unshift(fallback || {value: selected, label: selected});
+            }
+            select.replaceChildren();
+            if (!supported.length) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = '暂无可用线路';
+                select.appendChild(option);
+            } else {
+                supported.forEach(function (item) {
+                    const option = document.createElement('option');
+                    option.value = item.value;
+                    option.textContent = item.label + ' (' + item.value + ')';
+                    option.selected = item.value === selected;
+                    select.appendChild(option);
+                });
+            }
+            badge.textContent = selected || '未测速';
+            saveButton.disabled = !select.value;
+            resultsBody.replaceChildren();
+            rows.forEach(function (item) {
+                const row = document.createElement('tr');
+                const name = document.createElement('td');
+                name.innerHTML = '<strong></strong><div class="help-text"></div>';
+                name.querySelector('strong').textContent = item.label || item.line || '未知节点';
+                name.querySelector('.help-text').textContent = item.line || '';
+                const state = document.createElement('td');
+                state.textContent = item.ok ? (item.supported ? '可用' : '当前版本不支持') : '失败';
+                state.className = item.ok && item.supported ? 'text-success' : 'text-danger';
+                const elapsed = document.createElement('td');
+                elapsed.textContent = item.elapsed_ms != null ? item.elapsed_ms + ' ms' : '—';
+                const speed = document.createElement('td');
+                speed.textContent = item.ok && item.speed_mbps != null ? item.speed_mbps + ' MB/s' : (item.error || '—');
+                row.append(name, state, elapsed, speed);
+                resultsBody.appendChild(row);
+            });
+            resultsWrap.classList.toggle('d-none', rows.length === 0);
+            if (data.tested_at) {
+                const tested = new Date(data.tested_at);
+                status.textContent = '上次测速：' + (Number.isNaN(tested.getTime()) ? data.tested_at : tested.toLocaleString())
+                    + '；当前全局线路：' + (selected || '未选择');
+            } else {
+                status.textContent = selected
+                    ? '当前全局线路：' + selected + '。尚无测速记录。'
+                    : '尚未测速，请先执行一次节点测试。';
+            }
+        }
+
+        async function requestJson(url, options) {
+            const response = await fetch(url, Object.assign({
+                headers: {'Accept': 'application/json'}
+            }, options || {}));
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.message || '请求失败');
+            return data;
+        }
+
+        requestJson('/settings/bilibili/upload-lines')
+            .then(render)
+            .catch(function (error) { status.textContent = error.message; });
+
+        select.addEventListener('change', function () {
+            saveButton.disabled = !select.value;
+        });
+
+        probeButton.addEventListener('click', async function () {
+            setBusy(true, '正在用 10 MB 测试数据探测当前服务器可用节点，请稍候…');
+            try {
+                const data = await requestJson('/settings/bilibili/upload-lines/probe', {method: 'POST'});
+                render(data);
+                notify(data.message || '节点测速完成。', 'success');
+            } catch (error) {
+                status.textContent = error.message;
+                notify(error.message, 'error');
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        saveButton.addEventListener('click', async function () {
+            if (!select.value) return;
+            setBusy(true, '正在保存全局投稿线路…');
+            try {
+                const data = await requestJson('/settings/bilibili/upload-lines/select', {
+                    method: 'POST',
+                    headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                    body: JSON.stringify({line: select.value})
+                });
+                render(data);
+                notify(data.message || '投稿线路已保存。', 'success');
+            } catch (error) {
+                status.textContent = error.message;
+                notify(error.message, 'error');
+            } finally {
+                setBusy(false);
+            }
         });
     });
 </script>

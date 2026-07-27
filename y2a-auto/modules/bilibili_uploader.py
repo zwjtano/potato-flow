@@ -18,6 +18,8 @@ from .bili_sdk.utils.network import Api
 
 from .bilibili_runtime import configure_bilibili_runtime
 from .bilibili_auth import load_credential_from_file, validate_credential_remote
+from .biliup_uploader import upload_with_biliup
+from .config_manager import load_config
 from .notifications import notify_cookie_invalid
 from .utils import get_app_subdir
 from .upload_queue import bilibili_upload_slot, default_bilibili_upload_lock
@@ -668,6 +670,27 @@ class BilibiliUploader:
             # YouTube/手动转载任务保持转载模式；本地直播录播可明确指定为自制。
             original = bool(is_original)
             source = None if original else (youtube_url or None)
+
+            upload_config = load_config()
+            if str(upload_config.get("BILIBILI_UPLOAD_ENGINE") or "biliup").strip().lower() == "biliup":
+                self.log(
+                    f"使用 Biliup 投稿，全局线路："
+                    f"{str(upload_config.get('BILIBILI_UPLOAD_LINE') or 'bldsa').strip().lower()}"
+                )
+                return upload_with_biliup(
+                    cookie_file=self.cookie_file,
+                    video_paths=video_paths,
+                    cover_file=cover_file_path,
+                    title=safe_title,
+                    description=safe_desc,
+                    tags=safe_tags,
+                    partition_id=tid,
+                    page_titles=page_titles,
+                    existing_submission=existing_submission,
+                    progress_callback=progress_callback,
+                    progress_detail_callback=progress_detail_callback,
+                    log_callback=self.log,
+                )
 
             meta = video_uploader.VideoMeta(
                 tid=tid,

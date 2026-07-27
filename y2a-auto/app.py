@@ -24,6 +24,11 @@ from werkzeug.security import safe_join
 from modules.youtube_handler import extract_video_urls_from_playlist
 from modules.utils import get_app_subdir
 from modules.config_manager import load_config, update_config, reset_specific_config
+from modules.biliup_line_manager import (
+    load_probe_state as load_biliup_probe_state,
+    probe_and_select as probe_biliup_upload_lines,
+    select_upload_line as select_biliup_upload_line,
+)
 from modules.whisper_languages import WHISPER_LANGUAGE_LIST
 from modules.task_manager import add_task, start_task, get_task, get_tasks_paginated, get_tasks_by_status, update_task, delete_task, force_upload_task, TASK_STATES, clear_all_tasks, retry_failed_tasks, register_task_updates_listener, unregister_task_updates_listener, resolve_cookie_file_path
 from modules.bilibili_auth import BilibiliQrLoginSession
@@ -3178,6 +3183,51 @@ def settings():
         builtin_prompts=builtin_prompts,
         recordings_path=str(recordings_dir()),
     )
+
+
+@app.route('/settings/bilibili/upload-lines', methods=['GET'])
+@login_required
+def settings_bilibili_upload_lines():
+    """Return the server-wide cached Biliup upload-line state."""
+    return jsonify({"success": True, **load_biliup_probe_state()})
+
+
+@app.route('/settings/bilibili/upload-lines/probe', methods=['POST'])
+@login_required
+def settings_probe_bilibili_upload_lines():
+    """Run the explicit 10 MiB probe and cache the fastest supported line."""
+    try:
+        state = probe_biliup_upload_lines()
+        return jsonify({
+            "success": True,
+            "message": f"测速完成，已选择 {state.get('selected_line') or '可用线路'}。",
+            **state,
+        })
+    except Exception as exc:
+        logger.exception("Biliup 投稿线路测速失败")
+        return jsonify({
+            "success": False,
+            "message": f"投稿线路测速失败：{str(exc).splitlines()[0][:240]}",
+        }), 502
+
+
+@app.route('/settings/bilibili/upload-lines/select', methods=['POST'])
+@login_required
+def settings_select_bilibili_upload_line():
+    """Select one cached/supported Biliup line for all submissions."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        state = select_biliup_upload_line(payload.get("line"))
+        return jsonify({
+            "success": True,
+            "message": f"全局投稿线路已改为 {state.get('selected_line')}。",
+            **state,
+        })
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except Exception:
+        logger.exception("保存 Biliup 投稿线路失败")
+        return jsonify({"success": False, "message": "投稿线路保存失败，请查看服务日志。"}), 500
 
 
 @app.route('/settings/recordings/directories', methods=['GET'])

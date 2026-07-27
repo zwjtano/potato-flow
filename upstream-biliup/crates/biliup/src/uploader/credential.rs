@@ -76,6 +76,13 @@ pub async fn login_by_cookies(file: impl AsRef<Path>, proxy: Option<&str>) -> Re
     let login_info: LoginInfo = serde_json::from_reader(std::io::BufReader::new(&file))?;
 
     let client: Credential = Credential::new(proxy);
+    // PotatoFlow may provide a browser-cookie-only LoginInfo. Web submission
+    // does not need an OAuth access token, so avoid rejecting or refreshing a
+    // perfectly valid SESSDATA login before the Web API can use it.
+    if login_info.token_info.access_token.trim().is_empty() {
+        debug!("通过网页 Cookie 登录，跳过 OAuth token 校验");
+        return bilibili_from_info(login_info, proxy);
+    }
     let need_refresh = client.validate_tokens(&login_info).await?;
 
     if need_refresh {
