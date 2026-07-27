@@ -189,6 +189,8 @@ class NotificationEventExtensionTests(unittest.TestCase):
                     "streamer": "YYF",
                     "video_file": "YYF_陪伴每一天.flv",
                     "bvid": "BV1TEST",
+                    "bilibili_url": "https://www.bilibili.com/video/BV1TEST",
+                    "title": "YYF｜炼金埋头刷钱错失强势期",
                 },
             )
         )
@@ -206,8 +208,15 @@ class NotificationEventExtensionTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("录播投稿任务已完成", completed.title)
-        self.assertIn("BV1TEST", completed.markdown)
+        self.assertIn("投稿任务完成", completed.title)
+        self.assertIn("主播：", completed.markdown)
+        self.assertIn("投稿标题：", completed.markdown)
+        self.assertIn("YYF｜炼金埋头刷钱错失强势期", completed.markdown)
+        self.assertIn("BV 链接：", completed.markdown)
+        self.assertIn("https://www.bilibili.com/video/BV1TEST", completed.markdown)
+        self.assertIn("时间：", completed.markdown)
+        self.assertNotIn("任务 ID：", completed.markdown)
+        self.assertNotIn("本地成品：", completed.markdown)
         self.assertIn("仅录制任务失败", failed.title)
         self.assertIn("图片模型不可用", failed.markdown)
         self.assertIn("cover", failed.markdown)
@@ -249,6 +258,7 @@ class NotificationEventExtensionTests(unittest.TestCase):
             task_kind="recording_upload",
             status="completed",
             result={"bilibili": {"bvid": "BV1TEST"}},
+            title="果小果｜天梯冲分",
         )
         bridge.emit_recording_task_result_notification(
             cfg,
@@ -264,6 +274,11 @@ class NotificationEventExtensionTests(unittest.TestCase):
         failed = emit.call_args_list[1].args[0]
         self.assertEqual(completed.event_type, "TASK_COMPLETED")
         self.assertEqual(completed.payload["bvid"], "BV1TEST")
+        self.assertEqual(
+            completed.payload["bilibili_url"],
+            "https://www.bilibili.com/video/BV1TEST",
+        )
+        self.assertEqual(completed.payload["title"], "果小果｜天梯冲分")
         self.assertEqual(failed.event_type, "TASK_FAILED")
         self.assertEqual(failed.payload["stage"], "cover")
         self.assertEqual(failed.payload["error_message"], "封面生成失败")

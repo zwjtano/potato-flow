@@ -95,6 +95,8 @@ DEFAULT_CONFIG = {
     "OPENAI_API_KEY": "",
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
     "OPENAI_MODEL_NAME": "gpt-3.5-turbo",
+    # 录播封面可独立指定 Images API 凭据；留空则回退到全局 OpenAI 配置。
+    "OPENAI_IMAGE_API_KEY": "",
     "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
     "OPENAI_IMAGE_BASE_URL": "",
     "OPENAI_IMAGE_SIZE": "1536x1024",

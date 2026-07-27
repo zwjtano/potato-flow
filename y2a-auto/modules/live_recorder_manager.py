@@ -2624,8 +2624,16 @@ class LiveRecorderManager:
             from .config_manager import load_config
 
             app_config = load_config()
-            if not app_config.get("OPENAI_API_KEY"):
-                raise RecorderConfigError("未配置 AI API Key，无法重新生成稿件信息")
+            if selected & {"title", "description"} and not app_config.get("OPENAI_API_KEY"):
+                raise RecorderConfigError("未配置全局 AI API Key，无法重新生成标题或简介")
+            if (
+                "cover" in selected
+                and not (
+                    app_config.get("OPENAI_IMAGE_API_KEY")
+                    or app_config.get("OPENAI_API_KEY")
+                )
+            ):
+                raise RecorderConfigError("未配置图片或全局 AI API Key，无法重新生成封面")
             bridge_config = bridge.load_config(BRIDGE_CONFIG_PATH)
             video_path = Path(str(job.get("video_path") or "recording.flv"))
             bridge_config = bridge.effective_config(bridge_config, video_path)

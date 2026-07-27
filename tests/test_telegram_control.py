@@ -63,6 +63,11 @@ class _Manager:
         self.added = []
         self.controls = []
         self.deleted = []
+        self.retried = []
+        self.paused = []
+        self.deleted_tasks = []
+        self.engine_starts = 0
+        self.engine_stops = 0
 
     def rooms_with_status(self):
         return [dict(room) for room in self.rooms]
@@ -87,15 +92,84 @@ class _Manager:
     def pipeline_jobs(self, limit):
         return [
             {
+                "id": "a" * 64,
+                "short_id": "a" * 12,
                 "status": "processing",
                 "active_stage": "upload",
                 "room_name": "YYF",
                 "title": "正在投稿的录播",
+                "completed_stages": 4,
+                "total_stages": 6,
+                "pausable": True,
+                "retryable": False,
+                "upload_progress": {
+                    "uploaded_bytes": 50,
+                    "total_bytes": 100,
+                    "speed_bytes_per_second": 10,
+                    "eta_seconds": 5,
+                },
+                "stages": [
+                    {"key": "ai", "status": "completed"},
+                    {"key": "upload", "status": "running"},
+                ],
+            },
+            {
+                "id": "b" * 64,
+                "short_id": "b" * 12,
+                "status": "failed",
+                "failed_stage": "upload",
+                "room_name": "YYF",
+                "title": "失败的录播",
+                "completed_stages": 5,
+                "total_stages": 6,
+                "pausable": False,
+                "retryable": True,
+                "error": "投稿连接中断",
+                "stages": [
+                    {"key": "ai", "status": "completed"},
+                    {"key": "cover", "status": "completed"},
+                    {"key": "upload", "status": "failed", "error": "投稿连接中断"},
+                ],
             }
         ][:limit]
 
     def status(self):
-        return {"running": True}
+        return {"running": True, "pid": 123}
+
+    def start(self):
+        self.engine_starts += 1
+        return {"running": True, "pid": 456}
+
+    def stop(self):
+        self.engine_stops += 1
+        return {"running": False, "pid": None}
+
+    def retry_pipeline_job(self, fingerprint):
+        self.retried.append(fingerprint)
+        return True
+
+    def pause_pipeline_job(self, fingerprint):
+        self.paused.append(fingerprint)
+        return True
+
+    def delete_pipeline_job(self, fingerprint, delete_files=False):
+        self.deleted_tasks.append((fingerprint, delete_files))
+        return {"deleted_file_count": 0}
+
+    def recording_files(self, limit):
+        return {
+            "files": [
+                {
+                    "name": "YYF_录播.flv",
+                    "type": "video",
+                    "size_bytes": 1024 * 1024,
+                    "locked": True,
+                    "lock_reason": "正在录制",
+                }
+            ][:limit],
+            "total_files": 1,
+            "total_size_bytes": 1024 * 1024,
+        }
 
 
 def _config(**overrides):
@@ -222,8 +296,80 @@ class TelegramControlTests(unittest.TestCase):
     def test_tasks_command_shows_active_stage(self):
         self.service.process_update(_message_update("/tasks"))
 
-        self.assertIn("YYF · processing · upload", self.session.last_payload["text"])
+        self.assertIn("1. ⏳ YYF · processing · upload", self.session.last_payload["text"])
         self.assertIn("正在投稿的录播", self.session.last_payload["text"])
+        self.assertIn("ID: aaaaaaaaaaaa", self.session.last_payload["text"])
+
+    def test_task_detail_shows_upload_percentage_speed_and_actions(self):
+        self.service.process_update(_message_update("/task 1"))
+
+        text = self.session.last_payload["text"]
+        self.assertIn("上传：50.00%", text)
+        self.assertIn("速度：10.0B/s", text)
+        self.assertIn("/pause aaaaaaaaaaaa", text)
+
+    def test_retry_and_pause_task_commands_use_manager(self):
+        self.service.process_update(_message_update("/retry 2"))
+        self.service.process_update(_message_update("/pause aaaaaa"))
+
+        self.assertEqual(self.manager.retried, ["b" * 64])
+        self.assertEqual(self.manager.paused, ["a" * 64])
+        self.assertIn("已暂停任务", self.session.last_payload["text"])
+
+    def test_delete_task_keeps_files_and_requires_confirmation(self):
+        self.service.process_update(_message_update("/delete_task 2"))
+        confirmation = self.session.last_payload
+        callback_data = confirmation["reply_markup"]["inline_keyboard"][0][0][
+            "callback_data"
+        ]
+        self.assertEqual(self.manager.deleted_tasks, [])
+
+        self.service.process_update(
+            {
+                "update_id": 2,
+                "callback_query": {
+                    "id": "callback-task",
+                    "from": {"id": 1001},
+                    "data": callback_data,
+                    "message": {
+                        "message_id": 12,
+                        "chat": {"id": -100200},
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(self.manager.deleted_tasks, [("b" * 64, False)])
+
+    def test_engine_stop_requires_confirmation(self):
+        self.service.process_update(_message_update("/engine stop"))
+        callback_data = self.session.last_payload["reply_markup"]["inline_keyboard"][0][0][
+            "callback_data"
+        ]
+        self.assertEqual(self.manager.engine_stops, 0)
+
+        self.service.process_update(
+            {
+                "update_id": 2,
+                "callback_query": {
+                    "id": "callback-engine",
+                    "from": {"id": 1001},
+                    "data": callback_data,
+                    "message": {
+                        "message_id": 13,
+                        "chat": {"id": -100200},
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(self.manager.engine_stops, 1)
+
+    def test_files_lists_recent_recording_artifacts(self):
+        self.service.process_update(_message_update("/files"))
+
+        self.assertIn("YYF_录播.flv", self.session.last_payload["text"])
+        self.assertIn("🔒正在录制", self.session.last_payload["text"])
 
     def test_settings_expose_control_switch_and_allowlist(self):
         template = (Y2A_ROOT / "templates" / "settings.html").read_text(

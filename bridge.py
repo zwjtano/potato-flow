@@ -219,6 +219,7 @@ def emit_recording_task_result_notification(
     result: dict[str, Any] | None = None,
     error: str = "",
     stage: str = "",
+    title: str = "",
 ) -> None:
     """Queue a completion/failure notification for a recording job."""
     if status not in {"completed", "failed"}:
@@ -265,6 +266,15 @@ def emit_recording_task_result_notification(
                     "stage": str(stage or ""),
                     "error_message": str(error or ""),
                     "bvid": str(bilibili_result.get("bvid") or ""),
+                    "bilibili_url": str(
+                        bilibili_result.get("url")
+                        or (
+                            f"https://www.bilibili.com/video/{bilibili_result.get('bvid')}"
+                            if bilibili_result.get("bvid")
+                            else ""
+                        )
+                    ),
+                    "title": str(title or ""),
                     "final_video_path": str(
                         normalized_result.get("final_video_path") or ""
                     ),
@@ -1159,12 +1169,18 @@ def generate_recording_cover_with_ai(
     }
     if not enabled:
         return None, details
-    if not ai_cfg.get("OPENAI_API_KEY"):
-        raise ValueError("未配置 AI API Key，无法生成录播封面")
+    image_api_key = str(
+        ai_cfg.get("OPENAI_IMAGE_API_KEY")
+        or ai_cfg.get("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    if not image_api_key:
+        raise ValueError("未配置图片或全局 AI API Key，无法生成录播封面")
 
     image_model = str(ai_cfg.get("OPENAI_IMAGE_MODEL_NAME") or "gpt-image-2").strip()
     image_base_url = str(ai_cfg.get("OPENAI_IMAGE_BASE_URL") or "").strip()
     client_config = dict(ai_cfg)
+    client_config["OPENAI_API_KEY"] = image_api_key
     if image_base_url:
         client_config["OPENAI_BASE_URL"] = image_base_url
     custom_reference_value = str(cfg.get("cover_reference_path") or "").strip()
@@ -2299,6 +2315,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             task_kind="recording_upload",
             status="completed",
             result=previous,
+            title=title,
         )
         print(f"OK 上传完成: {video}")
         return True

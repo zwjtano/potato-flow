@@ -56,12 +56,13 @@ def _human_bytes(value: int | float) -> str:
 
 
 @dataclass
-class PendingRoomDelete:
-    room_id: str
-    room_name: str
+class PendingConfirmation:
+    action: str
     user_id: str
     chat_id: str
     expires_at: float
+    target_id: str = ""
+    target_name: str = ""
 
 
 class TelegramControlError(RuntimeError):
@@ -84,7 +85,7 @@ class TelegramControlService:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._offset: int | None = None
-        self._pending_deletes: dict[str, PendingRoomDelete] = {}
+        self._pending_confirmations: dict[str, PendingConfirmation] = {}
         self._pending_lock = threading.Lock()
 
     @property
@@ -164,7 +165,7 @@ class TelegramControlService:
         self.stop()
         self._offset = None
         with self._pending_lock:
-            self._pending_deletes.clear()
+            self._pending_confirmations.clear()
         if self.enabled:
             self.start()
 
@@ -239,6 +240,12 @@ class TelegramControlService:
                         {"command": "stop", "description": "安全停止指定直播间"},
                         {"command": "delete", "description": "删除直播间（二次确认）"},
                         {"command": "tasks", "description": "查看最近录播任务"},
+                        {"command": "task", "description": "查看任务详情与上传进度"},
+                        {"command": "retry", "description": "重试失败或暂停的任务"},
+                        {"command": "pause", "description": "暂停正在投稿的任务"},
+                        {"command": "delete_task", "description": "删除任务记录（保留文件）"},
+                        {"command": "files", "description": "查看最近录播文件"},
+                        {"command": "engine", "description": "查看、启动或停止录制引擎"},
                         {"command": "status", "description": "查看服务与磁盘状态"},
                         {"command": "help", "description": "查看命令帮助"},
                     ]
@@ -367,6 +374,18 @@ class TelegramControlService:
             self._set_room_recording(chat_id, argument, False)
         elif command == "/tasks":
             self._send_message(chat_id, self._tasks_text())
+        elif command == "/task":
+            self._send_message(chat_id, self._task_text(argument))
+        elif command == "/retry":
+            self._retry_task(chat_id, argument)
+        elif command == "/pause":
+            self._pause_task(chat_id, argument)
+        elif command == "/delete_task":
+            self._request_task_delete(chat_id, user_id, argument)
+        elif command == "/files":
+            self._send_message(chat_id, self._files_text())
+        elif command == "/engine":
+            self._engine_command(chat_id, user_id, argument)
         elif command in {"/status", "/disk"}:
             self._send_message(chat_id, self._status_text())
         else:
@@ -381,7 +400,17 @@ class TelegramControlService:
             "/start 或 /record <编号/名称>  开始检测/录制\n"
             "/stop <编号/名称>  安全停止并收尾\n"
             "/delete <编号/名称>  删除直播间（二次确认）\n"
-            "/tasks  查看最近录播任务\n"
+            "\n任务处理\n"
+            "/tasks  查看最近任务及编号\n"
+            "/task <编号/任务ID>  查看详情、进度和错误\n"
+            "/retry <编号/任务ID>  重试失败或暂停任务\n"
+            "/pause <编号/任务ID>  暂停等待中/上传中的任务\n"
+            "/delete_task <编号/任务ID>  删除任务记录并保留文件\n"
+            "\n服务与文件\n"
+            "/files  查看最近录播文件\n"
+            "/engine  查看录制引擎状态\n"
+            "/engine start  启动录制引擎\n"
+            "/engine stop  停止录制引擎（二次确认）\n"
             "/status  查看服务与磁盘状态\n"
             "/disk  查看磁盘与录播目录空间\n"
             "/help  查看本帮助\n\n"
@@ -463,19 +492,20 @@ class TelegramControlService:
         if runtime.get("recording"):
             raise RecorderConfigError("该直播间正在录制，请先 /stop 并等待安全收尾")
         token = secrets.token_urlsafe(8)
-        pending = PendingRoomDelete(
-            room_id=str(room.get("id") or ""),
-            room_name=str(room.get("name") or "直播间"),
+        pending = PendingConfirmation(
+            action="room_delete",
             user_id=user_id,
             chat_id=chat_id,
             expires_at=time.time() + CONFIRM_TTL_SECONDS,
+            target_id=str(room.get("id") or ""),
+            target_name=str(room.get("name") or "直播间"),
         )
         with self._pending_lock:
-            self._pending_deletes[token] = pending
-            self._purge_pending_deletes()
+            self._pending_confirmations[token] = pending
+            self._purge_pending_confirmations()
         self._send_message(
             chat_id,
-            f"确定删除直播间“{pending.room_name}”吗？\n"
+            f"确定删除直播间“{pending.target_name}”吗？\n"
             "不会删除已有录播文件，确认按钮 2 分钟内有效。",
             reply_markup={
                 "inline_keyboard": [[
@@ -491,15 +521,15 @@ class TelegramControlService:
             },
         )
 
-    def _purge_pending_deletes(self) -> None:
+    def _purge_pending_confirmations(self) -> None:
         now = time.time()
         expired = [
             token
-            for token, pending in self._pending_deletes.items()
+            for token, pending in self._pending_confirmations.items()
             if pending.expires_at < now
         ]
         for token in expired:
-            self._pending_deletes.pop(token, None)
+            self._pending_confirmations.pop(token, None)
 
     def _handle_callback(self, callback: dict[str, Any]) -> None:
         callback_id = str(callback.get("id") or "")
@@ -520,8 +550,8 @@ class TelegramControlService:
             return
         action, _, token = data.partition(":")
         with self._pending_lock:
-            self._purge_pending_deletes()
-            pending = self._pending_deletes.pop(token, None)
+            self._purge_pending_confirmations()
+            pending = self._pending_confirmations.pop(token, None)
         if (
             pending is None
             or pending.user_id != user_id
@@ -536,20 +566,37 @@ class TelegramControlService:
                 },
             )
             return
-        if action == "room_cancel":
-            result_text = f"已取消删除“{pending.room_name}”。"
+        if action.endswith("_cancel"):
+            result_text = "已取消操作。"
+        elif action != pending.action:
+            result_text = "确认操作不匹配，未执行任何更改。"
         elif action == "room_delete":
-            state = self.manager.delete_room_and_reload(pending.room_id)
+            state = self.manager.delete_room_and_reload(pending.target_id)
             if state == "missing":
-                result_text = f"“{pending.room_name}”已经不存在。"
+                result_text = f"“{pending.target_name}”已经不存在。"
             else:
-                result_text = f"✅ 已删除直播间“{pending.room_name}”。\n已有录播文件未删除。"
+                result_text = f"✅ 已删除直播间“{pending.target_name}”。\n已有录播文件未删除。"
             logger.info(
                 "Telegram 控制删除直播间：user_id=%s room_id=%s state=%s",
                 user_id,
-                pending.room_id,
+                pending.target_id,
                 state,
             )
+        elif action == "task_delete":
+            self.manager.delete_pipeline_job(pending.target_id, delete_files=False)
+            result_text = (
+                f"✅ 已删除任务记录“{pending.target_name}”。\n"
+                "原始录播、字幕和封面文件均已保留。"
+            )
+            logger.info(
+                "Telegram 控制删除任务记录：user_id=%s task_id=%s",
+                user_id,
+                pending.target_id[:12],
+            )
+        elif action == "engine_stop":
+            self.manager.stop()
+            result_text = "✅ 录制引擎已停止，正在录制的文件已安全收尾。"
+            logger.info("Telegram 控制停止录制引擎：user_id=%s", user_id)
         else:
             result_text = "无法识别该确认操作。"
         self._api(
@@ -585,16 +632,259 @@ class TelegramControlService:
             "dry_run": "🧪",
         }
         lines = ["最近录播任务"]
-        for job in jobs[:10]:
+        for index, job in enumerate(jobs[:10], 1):
             status = str(job.get("status") or "unknown")
             active = str(job.get("active_stage") or job.get("failed_stage") or "")
             detail = f" · {active}" if active else ""
             lines.append(
-                f"{status_icons.get(status, '•')} "
+                f"{index}. {status_icons.get(status, '•')} "
                 f"{job.get('room_name') or '直播间'} · {status}{detail}\n"
-                f"   {job.get('title') or job.get('video_name') or job.get('short_id')}"
+                f"   {job.get('title') or job.get('video_name') or job.get('short_id')}\n"
+                f"   ID: {job.get('short_id') or str(job.get('id') or '')[:12]}"
+            )
+        lines.append("\n发送 /task <编号> 查看详情，例如：/task 1")
+        return "\n".join(lines)[:4096]
+
+    def _resolve_task(self, reference: str) -> dict[str, Any]:
+        value = str(reference or "").strip()
+        if not value:
+            raise RecorderConfigError("请提供任务编号，例如 /task 1")
+        jobs = list(self.manager.pipeline_jobs(100))
+        if value.isdigit():
+            index = int(value)
+            if 1 <= index <= len(jobs):
+                return jobs[index - 1]
+        id_matches = [
+            job
+            for job in jobs
+            if str(job.get("id") or "").lower().startswith(value.lower())
+        ]
+        if len(id_matches) == 1 and len(value) >= 6:
+            return id_matches[0]
+        title_matches = [
+            job
+            for job in jobs
+            if value.lower()
+            in str(job.get("title") or job.get("video_name") or "").lower()
+        ]
+        if len(title_matches) == 1:
+            return title_matches[0]
+        raise RecorderConfigError("没有找到唯一任务，请先发送 /tasks 查看编号")
+
+    @staticmethod
+    def _clean_detail(value: Any, limit: int = 700) -> str:
+        text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]+", " ", str(value or "")).strip()
+        return text[:limit] + ("…" if len(text) > limit else "")
+
+    def _task_text(self, reference: str) -> str:
+        job = self._resolve_task(reference)
+        status_labels = {
+            "completed": "已完成",
+            "processing": "处理中",
+            "failed": "失败",
+            "paused": "已暂停",
+            "pending": "等待中",
+            "dry_run": "试运行",
+        }
+        stage_labels = {
+            "detect": "识别",
+            "record": "录制",
+            "ass": "弹幕字幕",
+            "ai": "AI 简介",
+            "cover": "封面",
+            "remux": "封装",
+            "verify": "校验",
+            "cleanup": "清理",
+            "upload": "投稿",
+        }
+        stage_icons = {
+            "completed": "✅",
+            "skipped": "↪️",
+            "running": "⏳",
+            "queued": "🕓",
+            "failed": "❌",
+            "paused": "⏸",
+            "pending": "•",
+        }
+        lines = [
+            str(job.get("title") or job.get("video_name") or "录播任务"),
+            "",
+            f"任务 ID：{job.get('short_id') or str(job.get('id') or '')[:12]}",
+            f"直播间：{job.get('room_name') or '未匹配'}",
+            f"状态：{status_labels.get(str(job.get('status')), str(job.get('status') or '未知'))}",
+            f"总进度：{int(job.get('completed_stages') or 0)}/{int(job.get('total_stages') or 0)}",
+        ]
+        upload_progress = job.get("upload_progress")
+        if isinstance(upload_progress, dict):
+            uploaded = float(upload_progress.get("uploaded_bytes") or 0)
+            total = float(upload_progress.get("total_bytes") or 0)
+            speed = float(
+                upload_progress.get("speed_bytes_per_second")
+                or upload_progress.get("speed_bytes_per_sec")
+                or 0
+            )
+            percent = uploaded / total * 100 if total > 0 else 0
+            lines.append(
+                f"上传：{percent:.2f}% · {_human_bytes(uploaded)} / {_human_bytes(total)}"
+            )
+            if speed > 0:
+                lines.append(f"速度：{_human_bytes(speed)}/s")
+            eta = upload_progress.get("eta_seconds")
+            if eta is not None:
+                lines.append(f"预计剩余：{max(0, int(float(eta)))} 秒")
+        queue_position = job.get("upload_queue_position")
+        if queue_position:
+            lines.append(f"投稿队列：第 {queue_position} 位")
+        stages = list(job.get("stages") or [])
+        if stages:
+            lines.append("\n处理步骤")
+            for stage in stages:
+                key = str(stage.get("key") or "")
+                state = str(stage.get("status") or "pending")
+                lines.append(
+                    f"{stage_icons.get(state, '•')} {stage_labels.get(key, key)}：{state}"
+                )
+        error = self._clean_detail(job.get("error"))
+        if not error:
+            failed_stage = next(
+                (stage for stage in stages if stage.get("status") == "failed"),
+                {},
+            )
+            error = self._clean_detail(failed_stage.get("error"))
+        if error:
+            lines.extend(["\n错误", error])
+        if job.get("bvid"):
+            lines.append(f"\nBVID：{job.get('bvid')}")
+        available = []
+        if job.get("retryable"):
+            available.append(f"/retry {job.get('short_id')}")
+        if job.get("pausable"):
+            available.append(f"/pause {job.get('short_id')}")
+        if str(job.get("status")) not in {"processing", "video_uploaded"}:
+            available.append(f"/delete_task {job.get('short_id')}")
+        if available:
+            lines.extend(["\n可用操作", "\n".join(available)])
+        return "\n".join(lines)[:4096]
+
+    def _retry_task(self, chat_id: str, reference: str) -> None:
+        job = self._resolve_task(reference)
+        self.manager.retry_pipeline_job(str(job.get("id") or ""))
+        self._send_message(
+            chat_id,
+            f"✅ 已开始重试任务 {job.get('short_id')}。\n"
+            "已有 AI 简介和封面会直接复用，不会重复生成。",
+        )
+
+    def _pause_task(self, chat_id: str, reference: str) -> None:
+        job = self._resolve_task(reference)
+        self.manager.pause_pipeline_job(str(job.get("id") or ""))
+        self._send_message(
+            chat_id,
+            f"✅ 已暂停任务 {job.get('short_id')}。\n源文件和处理产物均已保留。",
+        )
+
+    def _request_task_delete(self, chat_id: str, user_id: str, reference: str) -> None:
+        job = self._resolve_task(reference)
+        if str(job.get("status") or "") in {"processing", "video_uploaded"}:
+            raise RecorderConfigError("任务仍在处理中，请先暂停或等待结束")
+        token = secrets.token_urlsafe(8)
+        pending = PendingConfirmation(
+            action="task_delete",
+            user_id=user_id,
+            chat_id=chat_id,
+            expires_at=time.time() + CONFIRM_TTL_SECONDS,
+            target_id=str(job.get("id") or ""),
+            target_name=str(
+                job.get("title") or job.get("video_name") or job.get("short_id") or "录播任务"
+            ),
+        )
+        with self._pending_lock:
+            self._pending_confirmations[token] = pending
+            self._purge_pending_confirmations()
+        self._send_message(
+            chat_id,
+            f"确定删除任务记录“{pending.target_name}”吗？\n"
+            "原始录播、字幕和封面文件都会保留，确认按钮 2 分钟内有效。",
+            reply_markup={
+                "inline_keyboard": [[
+                    {"text": "确认删除记录", "callback_data": f"task_delete:{token}"},
+                    {"text": "取消", "callback_data": f"task_cancel:{token}"},
+                ]]
+            },
+        )
+
+    def _files_text(self) -> str:
+        payload = self.manager.recording_files(limit=12)
+        files = list(payload.get("files") or [])
+        if not files:
+            return "录播目录中还没有视频、XML 弹幕或 ASS 字幕文件。"
+        type_icons = {"video": "🎬", "xml": "💬", "ass": "🔤"}
+        lines = [
+            f"最近录播文件（共 {int(payload.get('total_files') or len(files))} 个，"
+            f"{_human_bytes(payload.get('total_size_bytes') or 0)}）"
+        ]
+        for index, item in enumerate(files, 1):
+            lock = f" · 🔒{item.get('lock_reason')}" if item.get("locked") else ""
+            lines.append(
+                f"{index}. {type_icons.get(str(item.get('type')), '📄')} "
+                f"{item.get('name') or '未命名'}\n"
+                f"   {_human_bytes(item.get('size_bytes') or 0)}{lock}"
             )
         return "\n".join(lines)[:4096]
+
+    def _engine_command(self, chat_id: str, user_id: str, argument: str) -> None:
+        action = str(argument or "").strip().lower()
+        if not action:
+            status = self.manager.status()
+            self._send_message(
+                chat_id,
+                "录制引擎\n\n"
+                f"状态：{'运行中' if status.get('running') else '已停止'}\n"
+                f"进程 PID：{status.get('pid') or '—'}\n\n"
+                "使用 /engine start 启动，/engine stop 安全停止。",
+            )
+            return
+        if action == "start":
+            status = self.manager.start()
+            self._send_message(
+                chat_id,
+                f"✅ 录制引擎已启动，PID：{status.get('pid') or '—'}。",
+            )
+            return
+        if action != "stop":
+            raise RecorderConfigError("用法：/engine、/engine start 或 /engine stop")
+        status = self.manager.status()
+        if not status.get("running"):
+            self._send_message(chat_id, "录制引擎已经处于停止状态。")
+            return
+        active = sum(
+            1 for room in self._rooms() if (room.get("runtime") or {}).get("recording")
+        )
+        token = secrets.token_urlsafe(8)
+        pending = PendingConfirmation(
+            action="engine_stop",
+            user_id=user_id,
+            chat_id=chat_id,
+            expires_at=time.time() + CONFIRM_TTL_SECONDS,
+        )
+        with self._pending_lock:
+            self._pending_confirmations[token] = pending
+            self._purge_pending_confirmations()
+        warning = (
+            f"当前有 {active} 个直播间正在录制，将安全停止并收尾文件。"
+            if active
+            else "引擎停止后将不再自动检测开播。"
+        )
+        self._send_message(
+            chat_id,
+            f"确定停止整个录制引擎吗？\n{warning}\n确认按钮 2 分钟内有效。",
+            reply_markup={
+                "inline_keyboard": [[
+                    {"text": "确认停止引擎", "callback_data": f"engine_stop:{token}"},
+                    {"text": "取消", "callback_data": f"engine_cancel:{token}"},
+                ]]
+            },
+        )
 
     def _status_text(self) -> str:
         status = self.manager.status()

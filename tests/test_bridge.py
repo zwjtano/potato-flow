@@ -1005,8 +1005,10 @@ class BridgeTests(unittest.TestCase):
             config_module = types.ModuleType("modules.config_manager")
             config_module.load_config = Mock(return_value={
                 "AI_GENERATE_RECORDING_COVER": True,
-                "OPENAI_API_KEY": "test-key",
+                "OPENAI_API_KEY": "global-key",
+                "OPENAI_IMAGE_API_KEY": "image-key",
                 "OPENAI_BASE_URL": "https://example.com/v1",
+                "OPENAI_IMAGE_BASE_URL": "https://images.example.com/v1",
                 "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
                 "OPENAI_IMAGE_SIZE": "1536x1024",
             })
@@ -1039,6 +1041,12 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(cover.name, "record-only.jpg")
         self.assertTrue(details["ai_cover_generated"])
+        image_client_config = ai_module.get_openai_client.call_args.args[0]
+        self.assertEqual(image_client_config["OPENAI_API_KEY"], "image-key")
+        self.assertEqual(
+            image_client_config["OPENAI_BASE_URL"],
+            "https://images.example.com/v1",
+        )
         self.assertEqual(details["ai_cover_headline"], "新地图极限挑战")
         self.assertEqual(details["ai_cover_width"], 1920)
         self.assertEqual(details["ai_cover_height"], 1080)

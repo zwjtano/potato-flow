@@ -117,6 +117,26 @@ def build_notification_message(event: NotificationEvent) -> NotificationMessage:
         if task_kind in {"recording_upload", "record_only"}:
             is_record_only = task_kind == "record_only"
             streamer = _as_text(payload.get("streamer")) or "未知主播"
+            if not is_record_only:
+                bvid = _as_text(payload.get("bvid"))
+                bv_url = _as_text(payload.get("bilibili_url"))
+                if not bv_url and bvid:
+                    bv_url = f"https://www.bilibili.com/video/{bvid}"
+                post_title = (
+                    _as_text(payload.get("title"))
+                    or _as_text(payload.get("video_file"))
+                    or "未命名投稿"
+                )
+                title = "PotatoFlow ✅ 投稿任务完成"
+                summary = f"{streamer} | {post_title}"
+                body = _section_block(
+                    _kv("主播", streamer),
+                    _kv("投稿标题", _truncate(post_title, 120)),
+                    _kv("BV 链接", bv_url),
+                    _kv("时间", _as_text(payload.get("occurred_at"))),
+                )
+                markdown = _markdown_lines("**✅ 投稿任务完成**", "", body)
+                return NotificationMessage(title=title, summary=summary, markdown=markdown)
             video_file = _truncate(
                 _as_text(payload.get("video_file"))
                 or _as_text(payload.get("video_path")),
