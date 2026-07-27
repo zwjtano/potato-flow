@@ -2353,8 +2353,13 @@ class LiveRecorderManager:
             if not isinstance(bilibili_result, dict):
                 bilibili_result = upload_details.get("bilibili")
             bilibili_result = bilibili_result if isinstance(bilibili_result, dict) else {}
+            bvid = str(bilibili_result.get("bvid") or "").strip()
             bilibili_cover_url = str(bilibili_result.get("cover_url") or "").strip()
-            cover_available = local_cover_available or urlparse(bilibili_cover_url).scheme in {"http", "https"}
+            cover_route_available = local_cover_available or bool(bvid)
+            cover_available = (
+                cover_route_available
+                or urlparse(bilibili_cover_url).scheme in {"http", "https"}
+            )
             title = str(
                 review.get("title")
                 or upload_details.get("title")
@@ -2463,11 +2468,12 @@ class LiveRecorderManager:
                 "room_name": matched_room["name"] if matched_room else "未匹配直播间",
                 "room_avatar_url": matched_room["avatar_url"] if matched_room else "",
                 "source": "recording",
-                "bvid": str(bilibili_result.get("bvid") or ""),
+                "bvid": bvid,
                 "bilibili_url": str(bilibili_result.get("url") or ""),
                 "bilibili_cover_url": bilibili_cover_url,
                 "cover_available": cover_available,
                 "local_cover_available": local_cover_available,
+                "cover_route_available": cover_route_available,
                 "cover_updated_at": str(
                     review.get("updated_at")
                     or cover_stage.get("updated_at")
@@ -2985,15 +2991,69 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             or details.get("cover_used_for_upload")
             or ""
         ).strip()
-        if not candidate:
-            raise RecorderConfigError("该任务暂无可预览的 AI 封面")
-        path = Path(candidate).resolve()
         allowed_roots = tuple(self._recording_file_roots().values())
-        if not any(path == root or root in path.parents for root in allowed_roots):
-            raise RecorderConfigError("封面路径不在允许的录播产物目录中")
-        if not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
-            raise RecorderConfigError("录播封面文件不存在")
-        return path
+        if candidate:
+            path = Path(candidate).resolve()
+            if not any(path == root or root in path.parents for root in allowed_roots):
+                raise RecorderConfigError("封面路径不在允许的录播产物目录中")
+            if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+                return path
+
+        bvid = str(job.get("bvid") or "").strip()
+        if not bvid:
+            raise RecorderConfigError("该任务暂无可预览的封面")
+
+        cache_dir = self._recording_file_roots()["artifacts"] / "task-covers"
+
+        def image_suffix(data: bytes) -> str:
+            if data.startswith(b"\xff\xd8\xff"):
+                return ".jpg"
+            if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                return ".png"
+            if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                return ".webp"
+            return ""
+
+        for suffix in (".jpg", ".jpeg", ".png", ".webp"):
+            cached = (cache_dir / f"{fingerprint}{suffix}").resolve()
+            if not cached.is_file() or cached.stat().st_size <= 0:
+                continue
+            detected_suffix = image_suffix(cached.read_bytes()[:16])
+            if not detected_suffix:
+                continue
+            if detected_suffix != suffix and not (
+                suffix == ".jpeg" and detected_suffix == ".jpg"
+            ):
+                corrected = cached.with_suffix(detected_suffix)
+                cached.replace(corrected)
+                return corrected
+            return cached
+
+        referer = f"https://www.bilibili.com/video/{bvid}"
+        cover_url = str(job.get("bilibili_cover_url") or "").strip()
+        if urlparse(cover_url).scheme not in {"http", "https"}:
+            payload = _response_json(
+                "https://api.bilibili.com/x/web-interface/view?"
+                + urlencode({"bvid": bvid}),
+                referer=referer,
+                timeout=10,
+            )
+            data = payload.get("data")
+            data = data if isinstance(data, dict) else {}
+            cover_url = str(data.get("pic") or "").strip()
+        if urlparse(cover_url).scheme not in {"http", "https"}:
+            raise RecorderConfigError("B 站未返回该任务的封面")
+
+        image_data, _ = _open_url(cover_url, referer=referer, timeout=10)
+        detected_suffix = image_suffix(image_data[:16])
+        if len(image_data) < 64 or not detected_suffix:
+            raise RecorderConfigError("B 站返回的封面内容无效")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = (cache_dir / f"{fingerprint}{detected_suffix}").resolve()
+        temp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        temp_path.write_bytes(image_data)
+        temp_path.replace(cache_path)
+        return cache_path
 
     def retry_pipeline_job(self, fingerprint: str, *, automatic: bool = False) -> bool:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):

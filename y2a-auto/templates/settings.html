@@ -1842,7 +1842,7 @@
                                                 </article>
                                             </div>
 
-                                            <div class="col-12">
+                                            <div class="col-12 order-first">
                                                 <article class="settings-card">
                                                     <div class="settings-card-header">
                                                         <div>
@@ -1882,7 +1882,7 @@
                                                         <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
                                                             <div>
                                                                 <h5 class="mb-1">远程控制</h5>
-                                                                <p class="help-text mb-0">通过 Telegram 查看、添加、删除直播间，并控制单个直播间录制。默认关闭。</p>
+                                                                <p class="help-text mb-0">在 Telegram 内查看运行状态和最近任务，管理直播间，并远程开始或停止单个直播间录制。默认关闭。</p>
                                                             </div>
                                                             <label class="checkbox-label">
                                                                 <input type="checkbox" name="TELEGRAM_CONTROL_ENABLED" {% if config.get('TELEGRAM_CONTROL_ENABLED', False) %}checked{% endif %}>
@@ -1899,15 +1899,28 @@
                                                             </div>
                                                         </div>
                                                         <div class="settings-note mt-3">
-                                                            <strong>支持命令：</strong>
-                                                            <code>/rooms</code>、
-                                                            <code>/add &lt;链接&gt;</code>、
-                                                            <code>/start &lt;编号&gt;</code>、
-                                                            <code>/stop &lt;编号&gt;</code>、
-                                                            <code>/delete &lt;编号&gt;</code>、
-                                                            <code>/tasks</code>、
-                                                            <code>/status</code>。
-                                                            删除直播间必须在 2 分钟内点击二次确认，不会删除已有录播文件。
+                                                            <div class="mb-2">
+                                                                <strong>直播间管理：</strong>
+                                                                <code>/rooms</code> 查看列表，
+                                                                <code>/add &lt;直播间链接&gt;</code> 添加，
+                                                                <code>/delete &lt;编号/名称&gt;</code> 删除。
+                                                            </div>
+                                                            <div class="mb-2">
+                                                                <strong>录制控制：</strong>
+                                                                <code>/start</code> 或 <code>/record &lt;编号/名称&gt;</code> 开始，
+                                                                <code>/stop &lt;编号/名称&gt;</code> 停止；支持列表编号、完整房间号或唯一名称。
+                                                            </div>
+                                                            <div class="mb-2">
+                                                                <strong>状态查询：</strong>
+                                                                <code>/tasks</code> 最近任务，
+                                                                <code>/status</code> 服务状态，
+                                                                <code>/disk</code> 磁盘空间，
+                                                                <code>/help</code> 命令帮助。
+                                                            </div>
+                                                            <div>
+                                                                <strong>安全保护：</strong>
+                                                                命令必须同时匹配 Chat ID 和管理员 User ID 白名单；删除直播间须在 2 分钟内二次确认，且不会删除已有录播文件。
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </article>
@@ -2194,56 +2207,6 @@
                                                             <input type="number" id="login-session-timeout-minutes" name="LOGIN_SESSION_TIMEOUT_MINUTES" value="{{ config.get('LOGIN_SESSION_TIMEOUT_MINUTES', 30) }}" min="1" max="10080" class="form-control">
                                                             <div class="form-text">连续无操作超过该时长后自动退出，访问受保护页面会自动续期。</div>
                                                         </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </article>
-                                    </div>
-
-                                    <div class="col-12">
-                                        <article class="settings-card" id="tgbot-token-card" data-token-endpoint="{{ url_for('settings_tgbot_token') }}" data-token-csrf="{{ tgbot_token_csrf_token }}">
-                                            <div class="settings-card-header">
-                                                <div>
-                                                    <span class="section-eyebrow">最小权限 API</span>
-                                                    <h4>Telegram Bot API Token</h4>
-                                                </div>
-                                                <span id="tgbot-token-status-badge" class="settings-status-badge {{ 'is-success' if tgbot_token_state.configured else 'is-warning' }}">
-                                                    {{ '已配置' if tgbot_token_state.configured else '未配置' }}
-                                                </span>
-                                            </div>
-                                            <div class="settings-card-body">
-                                                <p class="help-text">
-                                                    该 Token 仅允许调用 <code>/tasks/add_via_extension</code> 提交视频任务，不能访问设置、日志、任务管理或维护接口。
-                                                </p>
-                                                <div class="alert alert-info mb-3">
-                                                    <i class="bi bi-info-circle"></i>
-                                                    明文 Token 只会在生成后显示一次；请复制到 y2a-auto-tgbot 的设置中。生成新 Token 会立即使旧 Token 失效。
-                                                </div>
-                                                <div class="row g-3">
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label class="form-label">当前状态</label>
-                                                            <div id="tgbot-token-state-text" class="form-control-plaintext">
-                                                                {% if tgbot_token_state.configured %}
-                                                                    已配置{% if tgbot_token_state.last4 %}，尾号 {{ tgbot_token_state.last4 }}{% endif %}{% if tgbot_token_state.created_at %}，生成于 {{ tgbot_token_state.created_at }}{% endif %}
-                                                                {% else %}
-                                                                    未配置
-                                                                {% endif %}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6 d-flex align-items-end gap-2 flex-wrap">
-                                                        <button type="button" id="tgbot-token-generate-btn" class="btn btn-outline-primary">
-                                                            {{ '重置 Token' if tgbot_token_state.configured else '生成 Token' }}
-                                                        </button>
-                                                        <button type="button" id="tgbot-token-revoke-btn" class="btn btn-outline-danger" {% if not tgbot_token_state.configured %}disabled{% endif %}>
-                                                            撤销 Token
-                                                        </button>
-                                                    </div>
-                                                    <div class="col-12 d-none" id="tgbot-token-result-wrap">
-                                                        <label for="tgbot-token-result" class="form-label">新 Token（仅显示一次）</label>
-                                                        <textarea id="tgbot-token-result" class="form-control font-monospace" rows="2" readonly></textarea>
-                                                        <div class="form-text">复制后请妥善保存；刷新页面后无法再次查看明文。</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -2579,129 +2542,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }, { once: true });
         bootstrap.Toast.getOrCreateInstance(toastEl, { delay: 4500 }).show();
     };
-
-    const tgbotTokenCard = document.getElementById('tgbot-token-card');
-    const tgbotTokenGenerateBtn = document.getElementById('tgbot-token-generate-btn');
-    const tgbotTokenRevokeBtn = document.getElementById('tgbot-token-revoke-btn');
-    const tgbotTokenResultWrap = document.getElementById('tgbot-token-result-wrap');
-    const tgbotTokenResult = document.getElementById('tgbot-token-result');
-    const tgbotTokenStateText = document.getElementById('tgbot-token-state-text');
-    const tgbotTokenStatusBadge = document.getElementById('tgbot-token-status-badge');
-
-    const updateTgbotTokenState = function (state) {
-        const configured = !!(state && state.configured);
-        if (tgbotTokenStatusBadge) {
-            tgbotTokenStatusBadge.textContent = configured ? '已配置' : '未配置';
-            tgbotTokenStatusBadge.classList.toggle('is-success', configured);
-            tgbotTokenStatusBadge.classList.toggle('is-warning', !configured);
-        }
-        if (tgbotTokenStateText) {
-            if (configured) {
-                let text = '已配置';
-                if (state.last4) {
-                    text += '，尾号 ' + state.last4;
-                }
-                if (state.created_at) {
-                    text += '，生成于 ' + state.created_at;
-                }
-                tgbotTokenStateText.textContent = text;
-            } else {
-                tgbotTokenStateText.textContent = '未配置';
-            }
-        }
-        if (tgbotTokenGenerateBtn) {
-            tgbotTokenGenerateBtn.textContent = configured ? '重置 Token' : '生成 Token';
-        }
-        if (tgbotTokenRevokeBtn) {
-            tgbotTokenRevokeBtn.disabled = !configured;
-        }
-    };
-
-    const submitTgbotTokenAction = async function (action) {
-        if (!tgbotTokenCard) {
-            return;
-        }
-        const endpoint = tgbotTokenCard.getAttribute('data-token-endpoint');
-        const csrfToken = tgbotTokenCard.getAttribute('data-token-csrf');
-        if (!endpoint || !csrfToken) {
-            showSettingsToast('error', 'Token 管理初始化失败，请刷新页面后重试。');
-            return;
-        }
-        const isGenerate = action === 'generate';
-        const targetButton = isGenerate ? tgbotTokenGenerateBtn : tgbotTokenRevokeBtn;
-        if (targetButton && targetButton.disabled) {
-            return;
-        }
-        if (isGenerate) {
-            if (!(await window.PotatoUI.confirm('生成新 Token 后，旧 Token 会立即失效。', {title: '重置 Telegram Token？', confirmText: '生成新 Token', danger: true}))) {
-                return;
-            }
-        } else if (!(await window.PotatoUI.confirm('撤销后，Telegram Bot 将无法继续提交新任务。', {title: '撤销 Telegram Token？', confirmText: '确认撤销', danger: true}))) {
-            return;
-        }
-
-        if (targetButton) {
-            targetButton.disabled = true;
-        }
-
-        fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: JSON.stringify({ action: action, csrf_token: csrfToken })
-        })
-            .then(function (response) {
-                return response.json().then(function (data) {
-                    return { ok: response.ok, data: data || {} };
-                });
-            })
-            .then(function (result) {
-                if (result.data.csrf_token) {
-                    tgbotTokenCard.setAttribute('data-token-csrf', result.data.csrf_token);
-                }
-                if (!result.ok || !result.data.success) {
-                    throw new Error(result.data.message || 'Token 操作失败');
-                }
-                updateTgbotTokenState(result.data.state || {});
-                if (result.data.token && tgbotTokenResult && tgbotTokenResultWrap) {
-                    tgbotTokenResult.value = result.data.token;
-                    tgbotTokenResultWrap.classList.remove('d-none');
-                    tgbotTokenResult.focus();
-                    tgbotTokenResult.select();
-                } else if (tgbotTokenResult && tgbotTokenResultWrap) {
-                    tgbotTokenResult.value = '';
-                    tgbotTokenResultWrap.classList.add('d-none');
-                }
-                showSettingsToast('success', result.data.message || 'Token 操作成功');
-            })
-            .catch(function (error) {
-                showSettingsToast('error', error.message || 'Token 操作失败');
-            })
-            .finally(function () {
-                if (targetButton === tgbotTokenGenerateBtn) {
-                    targetButton.disabled = false;
-                } else if (
-                    targetButton === tgbotTokenRevokeBtn
-                    && tgbotTokenStatusBadge
-                    && tgbotTokenStatusBadge.textContent !== '未配置'
-                ) {
-                    targetButton.disabled = false;
-                }
-            });
-    };
-
-    if (tgbotTokenGenerateBtn) {
-        tgbotTokenGenerateBtn.addEventListener('click', function () {
-            submitTgbotTokenAction('generate');
-        });
-    }
-    if (tgbotTokenRevokeBtn) {
-        tgbotTokenRevokeBtn.addEventListener('click', function () {
-            submitTgbotTokenAction('revoke');
-        });
-    }
 
     const notificationTestEndpoint = '{{ url_for("settings_test_notification") }}';
     document.querySelectorAll('.notify-test-btn').forEach(function (button) {

@@ -488,6 +488,91 @@ class BridgeTests(unittest.TestCase):
             self.assertFalse(video.exists())
             self.assertEqual(result["source_cleanup"]["deleted"], [str(video.resolve())])
 
+    def test_retry_reuses_completed_ai_metadata_and_cover(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.mp4"
+            cookie = root / "cookie.json"
+            persisted_cover = root / "artifacts" / "task-covers" / "saved.jpg"
+            persisted_cover.parent.mkdir(parents=True)
+            video.write_bytes(b"video")
+            cookie.write_text("[]", encoding="utf-8")
+            persisted_cover.write_bytes(b"saved-cover")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "cover_path": str(persisted_cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.claim(key, video, "bilibili")
+            store.stage(key, "ai", "completed", {
+                "title": "已生成标题",
+                "description": "已生成简介",
+                "title_topic": "已生成主题",
+                "final_tags": ["直播", "DOTA2"],
+                "selected_partition_id": "129",
+            })
+            store.stage(key, "cover", "completed", {
+                "ai_cover_generated": True,
+                "ai_cover_path": str(persisted_cover),
+                "cover_used_for_upload": str(persisted_cover),
+            })
+            store.finish(
+                key,
+                "failed",
+                {
+                    "cover_path": str(persisted_cover),
+                    "metadata_automation": {"selected_partition_id": "129"},
+                },
+                "upload failed",
+            )
+            uploads = []
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **kwargs):
+                    uploads.append(kwargs)
+                    return True, {
+                        "bvid": "BV1retry",
+                        "url": "https://www.bilibili.com/video/BV1retry",
+                    }
+
+            with patch.object(
+                bridge,
+                "generate_danmaku_metadata_with_ai",
+                side_effect=AssertionError("retry must reuse AI summary"),
+            ), patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                side_effect=AssertionError("retry must reuse AI metadata"),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                side_effect=AssertionError("retry must reuse AI cover"),
+            ), patch.object(
+                bridge,
+                "import_y2a",
+                return_value=(FakeUploader, None),
+            ):
+                self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
+
+            self.assertEqual(uploads[0]["title"], "已生成标题")
+            self.assertEqual(uploads[0]["description"], "已生成简介")
+            self.assertEqual(uploads[0]["tags"], ["直播", "DOTA2"])
+            self.assertEqual(uploads[0]["partition_id"], "129")
+            self.assertEqual(Path(uploads[0]["cover_file_path"]).read_bytes(), b"saved-cover")
+            self.assertTrue(store.stage_state(key, "ai")["details"]["reused_on_retry"])
+            self.assertTrue(store.stage_state(key, "cover")["details"]["reused_on_retry"])
+
     def test_retry_detaches_unsubmitted_first_part_from_stale_session(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -574,6 +659,26 @@ class BridgeTests(unittest.TestCase):
                 for path in (video, xml, upload_video, ass, ai_cover)
             ))
             self.assertFalse(upload_video.parent.exists())
+
+    def test_persist_pipeline_cover_survives_disposable_artifact_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = bridge.StateStore(root / "state.sqlite3")
+            artifact_dir = root / "artifacts" / "temporary-run"
+            artifact_dir.mkdir(parents=True)
+            cover = artifact_dir / "ai-cover.jpg"
+            cover.write_bytes(b"cover")
+
+            persistent = bridge.persist_pipeline_cover(store, "a" * 64, cover)
+            bridge.cleanup_uploaded_recording(
+                root / "missing.flv",
+                None,
+                root / "missing.flv",
+                artifact_dir=artifact_dir,
+            )
+
+            self.assertTrue(persistent.is_file())
+            self.assertEqual(persistent.read_bytes(), b"cover")
 
     def test_live_segments_append_to_one_bilibili_submission(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -689,7 +794,9 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(session["bilibili"]["part_count"], 2)
             self.assertEqual(session["partition_id"], "129")
             self.assertTrue(session["metadata_automation"]["cover_for_partition_ai"])
-            self.assertEqual(Path(session["cover_path"]), cover.resolve())
+            session_cover = Path(session["cover_path"])
+            self.assertEqual(session_cover.parent.name, "task-covers")
+            self.assertEqual(session_cover.read_bytes(), cover.read_bytes())
             self.assertEqual(
                 [part["title_topic"] for part in session["parts"]],
                 ["第一段 AI 主题", "第二段 AI 主题"],

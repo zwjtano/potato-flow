@@ -1215,8 +1215,74 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(jobs[0]["source"], "recording")
         self.assertEqual(jobs[0]["room_name"], "Alice")
         self.assertEqual(jobs[0]["bvid"], "BV1potato")
+        self.assertTrue(jobs[0]["cover_available"])
+        self.assertTrue(jobs[0]["cover_route_available"])
+        self.assertFalse(jobs[0]["local_cover_available"])
         self.assertEqual(jobs[0]["completed_stages"], 5)
         self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
+
+    def test_pipeline_cover_fetches_bilibili_cover_by_bvid_and_caches_it(self):
+        manager = LiveRecorderManager()
+        fingerprint = "a" * 64
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            roots = {
+                "recordings": root / "recordings",
+                "artifacts": root / "artifacts",
+            }
+            job = {
+                "bvid": "BV1potato",
+                "bilibili_cover_url": "",
+                "review_override": {},
+                "stages": [],
+            }
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager, "_recording_file_roots", return_value=roots
+            ), mock.patch.object(
+                recorder_module,
+                "_response_json",
+                return_value={"data": {"pic": "https://i0.hdslb.com/cover.jpg"}},
+            ) as response_json, mock.patch.object(
+                recorder_module,
+                "_open_url",
+                return_value=(b"\xff\xd8\xff" + b"x" * 128, "https://i0.hdslb.com/cover.jpg"),
+            ) as open_url:
+                first = manager.pipeline_cover(fingerprint)
+                second = manager.pipeline_cover(fingerprint)
+
+            self.assertEqual(first, second)
+            self.assertTrue(first.is_file())
+            self.assertEqual(first.read_bytes(), b"\xff\xd8\xff" + b"x" * 128)
+            response_json.assert_called_once()
+            open_url.assert_called_once()
+
+    def test_pipeline_cover_corrects_cached_extension_from_image_content(self):
+        manager = LiveRecorderManager()
+        fingerprint = "b" * 64
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            roots = {
+                "recordings": root / "recordings",
+                "artifacts": root / "artifacts",
+            }
+            cache_dir = roots["artifacts"] / "task-covers"
+            cache_dir.mkdir(parents=True)
+            wrong_path = cache_dir / f"{fingerprint}.jpg"
+            wrong_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 128)
+            job = {
+                "bvid": "BV1potato",
+                "bilibili_cover_url": "",
+                "review_override": {},
+                "stages": [],
+            }
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager, "_recording_file_roots", return_value=roots
+            ):
+                corrected = manager.pipeline_cover(fingerprint)
+
+            self.assertEqual(corrected.suffix, ".png")
+            self.assertTrue(corrected.is_file())
+            self.assertFalse(wrong_path.exists())
 
     def test_pipeline_jobs_accept_biliup_speed_field(self):
         manager = LiveRecorderManager()

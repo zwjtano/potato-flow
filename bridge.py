@@ -650,6 +650,26 @@ class StateStore:
                  error, started_at, finished_at, now),
             )
 
+    def stage_state(self, key: str, stage: str) -> dict[str, Any]:
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT status, details_json, error, updated_at
+                   FROM upload_stages WHERE fingerprint=? AND stage=?""",
+                (key, stage),
+            ).fetchone()
+        if not row:
+            return {}
+        try:
+            details = json.loads(row["details_json"]) if row["details_json"] else {}
+        except (TypeError, json.JSONDecodeError):
+            details = {}
+        return {
+            "status": str(row["status"] or ""),
+            "details": details if isinstance(details, dict) else {},
+            "error": str(row["error"] or ""),
+            "updated_at": str(row["updated_at"] or ""),
+        }
+
     def finish(self, key: str, status: str, result: Any = None, error: str | None = None) -> None:
         with self.connect() as db:
             db.execute(
@@ -1434,6 +1454,26 @@ def cleanup_uploaded_recording(
     return {"deleted": deleted, "failed": failed}
 
 
+def persist_pipeline_cover(
+    store: StateStore,
+    key: str,
+    cover: Path,
+) -> Path:
+    """Keep the task thumbnail outside its disposable per-run artifact folder."""
+    source = cover.resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"投稿封面不存在: {source}")
+    suffix = source.suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+        suffix = ".jpg"
+    target_dir = store.path.parent / "artifacts" / "task-covers"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = (target_dir / f"{key}{suffix}").resolve()
+    if source != target:
+        shutil.copy2(source, target)
+    return target
+
+
 def recording_metadata_values(
     video: Path,
     cfg: dict[str, Any],
@@ -1710,6 +1750,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             session_key = previous_session_key
     prior_result = store.results(key)
     review_override = store.review_override(key)
+    prior_ai_stage = store.stage_state(key, "ai") if retry else {}
+    prior_cover_stage = store.stage_state(key, "cover") if retry else {}
     is_new_task = not store.upload_exists(key)
     if not store.claim(key, video, platform, retry=retry):
         print(f"SKIP 已处理或正在处理: {video}")
@@ -1817,38 +1859,77 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         current_stage = "ai"
         ai_topic = ""
         ai_details: dict[str, Any] = {}
-        if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
-            store.stage(key, "ai", "running", {"comment_count": len(comments)})
-            description, ai_topic = generate_danmaku_metadata_with_ai(comments, description, cfg)
-            title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
-            ai_details.update({
-                "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
-                "title": title,
-                "description": description,
-                "comment_count": len(comments),
-            })
-        else:
-            reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
-            ai_details.update({"reason": reason, "title": title, "description": description})
-
+        prior_ai_details = (
+            prior_ai_stage.get("details")
+            if isinstance(prior_ai_stage.get("details"), dict)
+            else {}
+        )
+        reuse_ai = bool(
+            retry
+            and prior_ai_stage.get("status") in {"completed", "skipped"}
+            and prior_ai_details.get("title")
+            and prior_ai_details.get("description")
+        )
         partition = str(cfg.get("bilibili_partition_id", "")).strip()
         metadata_automation: dict[str, Any] = {}
-        if not dry_run and not existing_submission:
-            store.stage(key, "ai", "running", ai_details)
-            try:
-                tags, partition, metadata_automation = enhance_recording_metadata(
-                    title,
-                    description,
-                    tags,
-                    original_cover,
-                    partition,
-                    cfg,
-                )
-                ai_details.update(metadata_automation)
-            except Exception as exc:
-                metadata_automation = {"metadata_automation_error": str(exc)}
-                ai_details.update(metadata_automation)
-                print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
+        if reuse_ai:
+            ai_details = dict(prior_ai_details)
+            title = str(ai_details.get("title") or title)
+            description = str(ai_details.get("description") or description)
+            ai_topic = str(ai_details.get("title_topic") or "")
+            previous_tags = ai_details.get("final_tags")
+            if isinstance(previous_tags, list):
+                tags = [
+                    str(tag).strip()
+                    for tag in previous_tags
+                    if str(tag).strip()
+                ]
+            partition = str(
+                ai_details.get("selected_partition_id")
+                or prior_result.get("partition_id")
+                or partition
+            ).strip()
+            previous_automation = prior_result.get("metadata_automation")
+            if isinstance(previous_automation, dict):
+                metadata_automation = dict(previous_automation)
+            ai_details["reused_on_retry"] = True
+            store.stage(
+                key,
+                "ai",
+                str(prior_ai_stage.get("status") or "completed"),
+                ai_details,
+            )
+        else:
+            if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
+                store.stage(key, "ai", "running", {"comment_count": len(comments)})
+                description, ai_topic = generate_danmaku_metadata_with_ai(comments, description, cfg)
+                title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
+                ai_details.update({
+                    "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+                    "title": title,
+                    "description": description,
+                    "comment_count": len(comments),
+                })
+            else:
+                reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
+                ai_details.update({"reason": reason, "title": title, "description": description})
+
+            if not dry_run and not existing_submission:
+                store.stage(key, "ai", "running", ai_details)
+                try:
+                    tags, partition, metadata_automation = enhance_recording_metadata(
+                        title,
+                        description,
+                        tags,
+                        original_cover,
+                        partition,
+                        cfg,
+                    )
+                    ai_details.update(metadata_automation)
+                except Exception as exc:
+                    metadata_automation = {"metadata_automation_error": str(exc)}
+                    ai_details.update(metadata_automation)
+                    print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
 
         part_values = recording_metadata_values(video, cfg, ai_topic=ai_topic)
         part_topic = str(ai_topic or part_values["ai_topic"]).strip()
@@ -1939,7 +2020,25 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "cover"
         cover_generation: dict[str, Any] = {}
+        cover_stage_status = "skipped"
         session_cover = str(multipart.get("cover_path") or "").strip() if multipart else ""
+        prior_cover_details = (
+            prior_cover_stage.get("details")
+            if isinstance(prior_cover_stage.get("details"), dict)
+            else {}
+        )
+        retry_cover_path = ""
+        if retry:
+            for value in (
+                review_override.get("cover_path"),
+                prior_result.get("cover_path"),
+                prior_cover_details.get("ai_cover_path"),
+                prior_cover_details.get("cover_used_for_upload"),
+            ):
+                candidate = str(value or "").strip()
+                if candidate and Path(candidate).is_file():
+                    retry_cover_path = candidate
+                    break
         if manual_cover_path and Path(manual_cover_path).is_file():
             cover = Path(manual_cover_path)
             cover_generation = {
@@ -1948,6 +2047,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "cover_used_for_upload": str(cover),
                 "original_cover_path": str(original_cover),
             }
+            cover_stage_status = "completed"
             store.stage(key, "cover", "completed", cover_generation)
         elif session_cover and Path(session_cover).is_file():
             cover = Path(session_cover)
@@ -1957,7 +2057,22 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "ai_cover_path": str(cover),
                 "original_cover_path": str(original_cover),
             })
+            cover_stage_status = "completed"
             store.stage(key, "cover", "completed", cover_generation)
+        elif retry_cover_path:
+            cover = Path(retry_cover_path)
+            cover_generation = dict(prior_cover_details)
+            cover_generation.update({
+                "ai_cover_reused": True,
+                "reused_on_retry": True,
+                "ai_cover_path": str(cover),
+                "cover_used_for_upload": str(cover),
+                "original_cover_path": str(original_cover),
+            })
+            cover_stage_status = str(prior_cover_stage.get("status") or "completed")
+            if cover_stage_status not in {"completed", "skipped"}:
+                cover_stage_status = "completed"
+            store.stage(key, "cover", cover_stage_status, cover_generation)
         elif not dry_run and not existing_submission:
             store.stage(key, "cover", "running", {
                 "title": title,
@@ -1984,6 +2099,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     if cover_generation.get("ai_cover_generated")
                     else "skipped"
                 )
+                cover_stage_status = cover_status
                 store.stage(key, "cover", cover_status, cover_generation)
             except Exception as exc:
                 cover_generation = {
@@ -1995,6 +2111,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     "original_cover_path": str(original_cover),
                 }
                 cover = original_cover
+                cover_stage_status = "skipped"
                 store.stage(key, "cover", "skipped", cover_generation)
                 print(f"WARN AI 录播封面生成失败，回退视频截图: {exc}", file=sys.stderr)
         else:
@@ -2004,7 +2121,15 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "cover_used_for_upload": str(cover),
                 "original_cover_path": str(original_cover),
             }
+            cover_stage_status = "skipped"
             store.stage(key, "cover", "skipped", cover_generation)
+
+        if not dry_run:
+            cover = persist_pipeline_cover(store, key, cover)
+            cover_generation["cover_used_for_upload"] = str(cover)
+            if cover_generation.get("ai_cover_generated") or cover_generation.get("ai_cover_path"):
+                cover_generation["ai_cover_path"] = str(cover)
+            store.stage(key, "cover", cover_stage_status, cover_generation)
 
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,

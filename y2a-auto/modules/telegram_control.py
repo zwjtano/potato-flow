@@ -378,12 +378,14 @@ class TelegramControlService:
             "PotatoFlow 远程控制\n\n"
             "/rooms  查看直播间编号与状态\n"
             "/add <直播间链接>  添加直播间\n"
-            "/start <编号>  开始检测/录制\n"
-            "/stop <编号>  安全停止并收尾\n"
-            "/delete <编号>  删除直播间（二次确认）\n"
+            "/start 或 /record <编号/名称>  开始检测/录制\n"
+            "/stop <编号/名称>  安全停止并收尾\n"
+            "/delete <编号/名称>  删除直播间（二次确认）\n"
             "/tasks  查看最近录播任务\n"
             "/status  查看服务与磁盘状态\n"
-            "/help  查看本帮助"
+            "/disk  查看磁盘与录播目录空间\n"
+            "/help  查看本帮助\n\n"
+            "直播间可用列表编号、完整房间号或唯一名称选择。"
         )
 
     def _rooms(self) -> list[dict[str, Any]]:

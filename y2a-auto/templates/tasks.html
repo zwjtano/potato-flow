@@ -72,7 +72,7 @@
                             <td>
                                 <div class="recording-video-cell">
                                     {% if job.cover_available %}
-                                    {% set task_cover_url = (url_for('live_recording_job_cover', fingerprint=job.id) ~ '?v=' ~ (job.cover_updated_at|urlencode)) if job.local_cover_available else job.bilibili_cover_url %}
+                                    {% set task_cover_url = (url_for('live_recording_job_cover', fingerprint=job.id) ~ '?v=' ~ (job.cover_updated_at|urlencode)) if job.cover_route_available else job.bilibili_cover_url %}
                                     <button type="button" class="recording-cover-trigger"
                                             data-cover-url="{{ task_cover_url }}"
                                             data-cover-title="{{ job.title or job.video_name }}"
@@ -191,7 +191,7 @@
                     <div class="d-flex justify-content-between gap-3">
                         <div class="recording-video-cell min-w-0">
                             {% if job.cover_available %}
-                            {% set task_cover_url = (url_for('live_recording_job_cover', fingerprint=job.id) ~ '?v=' ~ (job.cover_updated_at|urlencode)) if job.local_cover_available else job.bilibili_cover_url %}
+                            {% set task_cover_url = (url_for('live_recording_job_cover', fingerprint=job.id) ~ '?v=' ~ (job.cover_updated_at|urlencode)) if job.cover_route_available else job.bilibili_cover_url %}
                             <button type="button" class="recording-cover-trigger"
                                     data-cover-url="{{ task_cover_url }}"
                                     data-cover-title="{{ job.title or job.video_name }}"
