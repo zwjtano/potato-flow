@@ -598,9 +598,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         payload = {
             "data": {
-                "relateShow": [{
-                    "rid": 9999,
-                    "nickName": "yyfyyf",
+                "list": [{
+                    "roomId": 9999,
+                    "nickname": "yyfyyf",
                     "avatar": "//example.com/avatar.jpg",
                     "roomName": "陪伴每一天",
                     "cateName": "DOTA2",
@@ -608,14 +608,24 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 }]
             }
         }
-        with mock.patch.object(recorder_module, "_response_json", return_value=payload):
-            rooms = manager.search_rooms("YYF")
+        with mock.patch.object(
+            recorder_module,
+            "_post_form_json",
+            return_value=payload,
+        ), mock.patch.object(
+            manager,
+            "_search_bilibili_rooms",
+            return_value=[],
+        ):
+            result = manager.search_rooms_with_diagnostics("YYF")
 
+        rooms = result["rooms"]
         self.assertEqual(len(rooms), 1)
         self.assertEqual(rooms[0]["url"], "https://www.douyu.com/9999")
         self.assertEqual(rooms[0]["name"], "yyfyyf")
         self.assertEqual(rooms[0]["avatar_url"], "https://example.com/avatar.jpg")
         self.assertTrue(rooms[0]["is_live"])
+        self.assertEqual(result["platforms"][1]["count"], 1)
 
     def test_maps_biliup_worker_status_per_room(self):
         payload = {

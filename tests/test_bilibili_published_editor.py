@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,7 +168,7 @@ class PublishedMetadataEditorTests(unittest.TestCase):
                 patch.object(
                     bilibili_uploader.video_uploader,
                     "upload_cover",
-                    return_value="https://example.com/new.jpg",
+                    new=AsyncMock(return_value="https://example.com/new.jpg"),
                 ),
             ):
                 ok, result = uploader.update_uploaded_metadata(

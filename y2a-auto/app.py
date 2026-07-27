@@ -702,7 +702,7 @@ def _persist_settings_uploads(form_data: dict, uploads: dict):
     file_specs = {
         'youtube_cookies_file': ('yt_cookies.txt', 'YOUTUBE_COOKIES_PATH', 'cookies/yt_cookies.txt', 'YouTube'),
         'bilibili_cookies_file': ('bili_cookies.json', 'BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json', 'Bilibili'),
-        'douyin_cookies_file': ('douyin_cookies.json', 'DOUYIN_COOKIES_PATH', 'cookies/douyin_cookies.json', '抖音'),
+        'douyin_cookies_file': ('douyin_cookies.txt', 'DOUYIN_COOKIES_PATH', 'cookies/douyin_cookies.txt', '抖音'),
     }
 
     for field_name, payload in uploads.items():
@@ -711,10 +711,21 @@ def _persist_settings_uploads(form_data: dict, uploads: dict):
             continue
         save_name, config_key, relative_path, service_name = spec
         target_path = os.path.join(cookies_dir, save_name)
+        content = payload.get('content') or b''
+        if field_name == 'douyin_cookies_file':
+            from modules.douyin_auth import normalize_douyin_cookie
+
+            normalized_cookie = normalize_douyin_cookie(content)
+            if not normalized_cookie:
+                raise ValueError(
+                    '抖音 Cookie 文件没有可用内容，请使用 Get cookies.txt LOCALLY '
+                    '在 douyin.com 登录后重新导出。'
+                )
+            content = (normalized_cookie + '\n').encode('utf-8')
         with open(target_path, 'wb') as target_file:
-            target_file.write(payload.get('content') or b'')
+            target_file.write(content)
         form_data[config_key] = relative_path
-        logger.info(f"{service_name} cookies文件已上传并保存到: {target_path}")
+        logger.info(f"{service_name} cookies文件已上传、转换并保存到: {target_path}")
 
 
 def _build_settings_progress_reporter(operation_id: str | None):
@@ -1517,8 +1528,10 @@ def live_recording_resolve_room():
 def live_recording_search_rooms():
     payload = request.get_json(silent=True) or request.form
     try:
-        rooms = live_recorder_manager.search_rooms(str(payload.get('query') or ''))
-        return jsonify({'ok': True, 'rooms': rooms})
+        result = live_recorder_manager.search_rooms_with_diagnostics(
+            str(payload.get('query') or '')
+        )
+        return jsonify({'ok': True, **result})
     except RecorderConfigError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
 

@@ -296,7 +296,7 @@
     <div class="add-room-section-heading"><span>1</span><div><strong>找到直播间</strong><small>链接可直接识别；主播名字会先显示搜索结果供你选择</small></div></div>
     <label class="form-label">直播间链接或主播名字</label>
     <div class="room-resolve-input"><i class="bi bi-search"></i><input class="form-control" name="url" type="text" data-role="room-url" placeholder="例如：yyfyyf 或 https://www.douyu.com/9999" autocomplete="off" required><span class="spinner-border spinner-border-sm d-none" data-role="room-resolve-spinner"></span></div>
-    <div class="form-text">链接支持 B站、斗鱼和抖音；主播名字搜索目前提供斗鱼候选结果。</div>
+    <div class="form-text">链接支持 B站、斗鱼和抖音；昵称搜索会分别测试三个平台并显示各平台结果。</div>
     <div class="room-resolve-error d-none" data-role="room-resolve-error"></div>
     <div class="room-search-results d-none" data-role="room-search-results"></div>
     <div class="room-resolve-preview d-none" data-role="room-resolve-preview">
@@ -504,11 +504,20 @@ document.addEventListener('DOMContentLoaded', function () {
     function isRoomUrl(value) {
         return /^https?:\/\//i.test(String(value || '').trim());
     }
-    function renderRoomSearchResults(rooms) {
+    function renderRoomSearchResults(rooms, platforms = []) {
+        const diagnostics = platforms.length ? `
+            <div class="room-search-diagnostics">
+                ${platforms.map(item => `
+                    <span class="badge ${item.ok ? 'text-bg-success' : 'text-bg-light'}"
+                          title="${escapeHtml(item.message || '')}">
+                        ${escapeHtml(item.label)}：${escapeHtml(item.message || (item.ok ? '可用' : '无结果'))}
+                    </span>
+                `).join('')}
+            </div>` : '';
         if (!rooms.length) {
-            roomSearchResults.innerHTML = '<div class="room-search-empty"><i class="bi bi-search"></i><span>没有找到匹配的斗鱼主播，请改用直播间链接添加。</span></div>';
+            roomSearchResults.innerHTML = diagnostics + '<div class="room-search-empty"><i class="bi bi-search"></i><span>三个平台都没有返回可选直播间，请检查 Cookie 或改用直播间链接。</span></div>';
         } else {
-            roomSearchResults.innerHTML = rooms.map(room => `
+            roomSearchResults.innerHTML = diagnostics + rooms.map(room => `
                 <button class="room-search-result" type="button" data-url="${escapeHtml(room.url)}">
                     ${room.avatar_url
                         ? `<img src="${escapeHtml(room.avatar_url)}" alt="" referrerpolicy="no-referrer">`
@@ -541,7 +550,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const result = await response.json();
             if ((roomUrlInput?.value || '').trim() !== query) return;
             if (!response.ok) throw new Error(result.error || '搜索主播失败');
-            renderRoomSearchResults(result.rooms || []);
+            renderRoomSearchResults(result.rooms || [], result.platforms || []);
         } catch (error) {
             roomResolveError.textContent = error.message;
             roomResolveError.classList.remove('d-none');

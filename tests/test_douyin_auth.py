@@ -34,6 +34,20 @@ class DouyinAuthTests(unittest.TestCase):
                 "sessionid=abc; ttwid=xyz",
             )
 
+    def test_loads_netscape_cookie_export(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "cookies.txt"
+            path.write_text(
+                "# Netscape HTTP Cookie File\n"
+                ".douyin.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n"
+                ".douyin.com\tTRUE\t/\tTRUE\t0\tttwid\txyz\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                load_douyin_cookie(path),
+                "sessionid=abc; ttwid=xyz",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

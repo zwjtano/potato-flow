@@ -29,6 +29,11 @@ from danmaku_pipeline import (
     probe_video_size,
     select_summary_comments,
 )
+from dota2_abilities import (
+    build_dota2_ability_reference_sheet,
+    dota2_ability_prompt_instruction,
+    match_dota2_abilities,
+)
 from dota2_items import (
     build_dota2_item_reference_sheet,
     dota2_item_prompt_instruction,
@@ -51,7 +56,7 @@ DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
 )
 DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "围绕本段最核心的对局、英雄或节目效果构图，主体醒目、对比清楚、适合手机缩略图；"
-    "人物形象与指定参考图保持一致，DOTA2 英雄和装备必须符合游戏原设及官方图标。"
+    "人物形象与指定参考图保持一致，DOTA2 英雄、装备和技能必须符合游戏原设及官方图标。"
     "画面不要出现日期、时间、房间号、平台界面、二维码或水印。"
 )
 WORKSPACE_ROOT = Path(__file__).resolve().parent
@@ -1213,6 +1218,49 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_item_reference_path"] = str(item_reference_path)
         else:
             details["ai_cover_dota2_item_reference_used"] = False
+    dota2_ability_matches = (
+        match_dota2_abilities(title, ai_topic, description)
+        if recording_cover_has_dota2_context(
+            streamer,
+            title,
+            ai_topic,
+            description,
+        )
+        else []
+    )
+    dota2_ability_instruction = dota2_ability_prompt_instruction(
+        dota2_ability_matches
+    )
+    if dota2_ability_matches:
+        ability_reference_path, ability_reference_errors = (
+            build_dota2_ability_reference_sheet(
+                dota2_ability_matches,
+                resolve_path(".dota2-ability-cache", cfg),
+                work_dir / "dota2_ability_references.png",
+            )
+        )
+        details["ai_cover_dota2_abilities"] = [
+            {
+                "alias": match.alias,
+                "hero_chinese_name": match.ability.hero_chinese_name,
+                "hero_english_name": match.ability.hero_english_name,
+                "chinese_name": match.ability.chinese_name,
+                "english_name": match.ability.english_name,
+                "icon_slug": match.ability.icon_slug,
+            }
+            for match in dota2_ability_matches
+        ]
+        details["ai_cover_dota2_ability_reference_errors"] = (
+            ability_reference_errors
+        )
+        if ability_reference_path is not None:
+            reference_paths.append(ability_reference_path)
+            details["ai_cover_dota2_ability_reference_used"] = True
+            details["ai_cover_dota2_ability_reference_path"] = str(
+                ability_reference_path
+            )
+        else:
+            details["ai_cover_dota2_ability_reference_used"] = False
     dota2_streamer_instruction = recording_cover_dota2_streamer_instruction(
         streamer,
         title,
@@ -1241,6 +1289,7 @@ AI 生成的核心标题：{headline}
 只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 {dota2_instruction}
 {dota2_item_instruction}
+{dota2_ability_instruction}
 {dota2_streamer_instruction}
 {streamer_expression_instruction}
 {reference_instruction}

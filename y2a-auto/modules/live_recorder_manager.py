@@ -189,8 +189,53 @@ def _open_url(
         raise RecorderConfigError(f"读取直播间信息失败：{exc}") from exc
 
 
-def _response_json(url: str, *, referer: str = "", timeout: int = 12) -> dict[str, Any]:
-    body, _ = _open_url(url, referer=referer, timeout=timeout)
+def _response_json(
+    url: str,
+    *,
+    referer: str = "",
+    cookie: str = "",
+    timeout: int = 12,
+) -> dict[str, Any]:
+    body, _ = _open_url(url, referer=referer, cookie=cookie, timeout=timeout)
+    try:
+        payload = json.loads(body.decode("utf-8", errors="replace"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RecorderConfigError(f"解析平台直播间信息失败：{exc}") from exc
+    if not isinstance(payload, dict):
+        raise RecorderConfigError("平台返回的直播间信息格式无效")
+    return payload
+
+
+def _post_form_json(
+    url: str,
+    data: dict[str, Any],
+    *,
+    referer: str = "",
+    cookie: str = "",
+    timeout: int = 12,
+) -> dict[str, Any]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+        ),
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    }
+    if referer:
+        headers["Referer"] = referer
+    if cookie:
+        headers["Cookie"] = cookie
+    request = Request(
+        url,
+        data=urlencode(data).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            body = response.read()
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise RecorderConfigError(f"读取直播间信息失败：{exc}") from exc
     try:
         payload = json.loads(body.decode("utf-8", errors="replace"))
     except (UnicodeError, json.JSONDecodeError) as exc:
@@ -943,20 +988,30 @@ class LiveRecorderManager:
             "live_title": str(room_data.get("room_name") or "").strip(),
         }
 
-    def search_rooms(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        """Search public live-room candidates by streamer name."""
-        keyword = str(query or "").strip()
-        if len(keyword) < 2:
-            raise RecorderConfigError("请输入至少 2 个字符的主播名字")
-        if len(keyword) > 80:
-            raise RecorderConfigError("主播名字不能超过 80 个字符")
-        payload = _response_json(
-            "https://www.douyu.com/japi/search/api/searchShow?"
-            + urlencode({"kw": keyword, "page": 1, "pageSize": max(1, min(20, limit))}),
-            referer="https://www.douyu.com/search/",
+    def _search_douyu_rooms(self, keyword: str, limit: int) -> list[dict[str, Any]]:
+        direct_match = re.fullmatch(
+            r"(?:https?://(?:www\.|m\.)?douyu\.com/)?(\d+)/?",
+            keyword.strip(),
+        )
+        if direct_match:
+            room_ref = direct_match.group(1)
+            resolved = self.resolve_room(f"https://www.douyu.com/{room_ref}")
+            resolved["is_live"] = None
+            resolved["category_name"] = "斗鱼直播"
+            return [resolved]
+
+        payload = _post_form_json(
+            "https://m.douyu.com/api/search/anchor",
+            {
+                "did": "00000003333",
+                "limit": max(1, min(20, limit)),
+                "offset": 0,
+                "sk": keyword,
+            },
+            referer="https://m.douyu.com/search",
         )
         data = payload.get("data")
-        candidates = data.get("relateShow") if isinstance(data, dict) else None
+        candidates = data.get("list") if isinstance(data, dict) else None
         if not isinstance(candidates, list):
             candidates = []
         rooms: list[dict[str, Any]] = []
@@ -964,8 +1019,8 @@ class LiveRecorderManager:
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
-            room_id = str(candidate.get("rid") or "").strip()
-            name = str(candidate.get("nickName") or "").strip()
+            room_id = str(candidate.get("roomId") or "").strip()
+            name = str(candidate.get("nickname") or "").strip()
             if not room_id or not name or room_id in seen:
                 continue
             seen.add(room_id)
@@ -986,6 +1041,143 @@ class LiveRecorderManager:
             if len(rooms) >= max(1, min(20, limit)):
                 break
         return rooms
+
+    def _search_bilibili_rooms(self, keyword: str, limit: int) -> list[dict[str, Any]]:
+        from .bilibili_auth import load_cookie_dict
+
+        cookie_path = _bilibili_cookie_path()
+        if not cookie_path.is_file():
+            raise RecorderConfigError("未上传 B站 Cookie")
+        cookies = load_cookie_dict(str(cookie_path))
+        cookie_header = "; ".join(
+            f"{name}={value}" for name, value in cookies.items() if name and value
+        )
+        payload = _response_json(
+            "https://api.bilibili.com/x/web-interface/search/type?"
+            + urlencode({
+                "search_type": "bili_user",
+                "keyword": keyword,
+                "page": 1,
+                "page_size": max(1, min(20, limit)),
+            }),
+            referer="https://search.bilibili.com/",
+            cookie=cookie_header,
+        )
+        if int(payload.get("code") or 0) != 0:
+            raise RecorderConfigError(
+                f"B站搜索失败：{payload.get('message') or payload.get('code')}"
+            )
+        data = payload.get("data")
+        candidates = data.get("result") if isinstance(data, dict) else None
+        if not isinstance(candidates, list):
+            candidates = []
+        rooms: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            mid = str(candidate.get("mid") or "").strip()
+            if not mid:
+                continue
+            room_payload = _response_json(
+                "https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?"
+                + urlencode({"mid": mid}),
+                referer=f"https://space.bilibili.com/{mid}",
+                cookie=cookie_header,
+            )
+            room_data = room_payload.get("data")
+            room_data = room_data if isinstance(room_data, dict) else {}
+            room_id = str(
+                room_data.get("roomid") or candidate.get("room_id") or ""
+            ).strip()
+            if not room_id or room_id == "0" or room_id in seen:
+                continue
+            seen.add(room_id)
+            name = html.unescape(
+                re.sub(r"<[^>]+>", "", str(candidate.get("uname") or "").strip())
+            )
+            avatar_url = str(
+                candidate.get("upic") or candidate.get("face") or ""
+            ).strip()
+            if avatar_url.startswith("//"):
+                avatar_url = f"https:{avatar_url}"
+            rooms.append({
+                "platform": "bilibili",
+                "platform_name": "B站",
+                "room_id": room_id,
+                "name": name or f"B站用户 {mid}",
+                "avatar_url": avatar_url,
+                "url": f"https://live.bilibili.com/{room_id}",
+                "live_title": str(candidate.get("usign") or "").strip(),
+                "is_live": bool(
+                    int(room_data.get("liveStatus") or candidate.get("is_live") or 0)
+                ),
+                "category_name": "哔哩哔哩直播",
+            })
+            if len(rooms) >= max(1, min(20, limit)):
+                break
+        return rooms
+
+    def search_rooms_with_diagnostics(
+        self,
+        query: str,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search supported platforms and expose per-platform diagnostics."""
+        keyword = str(query or "").strip()
+        if len(keyword) < 2:
+            raise RecorderConfigError("请输入至少 2 个字符的主播名字")
+        if len(keyword) > 80:
+            raise RecorderConfigError("主播名字不能超过 80 个字符")
+
+        rooms: list[dict[str, Any]] = []
+        platforms: list[dict[str, Any]] = []
+        for platform, label, searcher in (
+            ("bilibili", "B站", self._search_bilibili_rooms),
+            ("douyu", "斗鱼", self._search_douyu_rooms),
+        ):
+            try:
+                found = searcher(keyword, limit)
+                rooms.extend(found)
+                platforms.append({
+                    "platform": platform,
+                    "label": label,
+                    "ok": bool(found),
+                    "count": len(found),
+                    "message": (
+                        f"找到 {len(found)} 个候选"
+                        if found
+                        else f"{label}接口没有返回匹配直播间"
+                    ),
+                })
+            except Exception as exc:
+                platforms.append({
+                    "platform": platform,
+                    "label": label,
+                    "ok": False,
+                    "count": 0,
+                    "message": str(exc),
+                })
+
+        douyin_cookie = _douyin_cookie_header()
+        platforms.append({
+            "platform": "douyin",
+            "label": "抖音",
+            "ok": False,
+            "count": 0,
+            "message": (
+                "已检测到 Cookie；昵称搜索还需要抖音动态签名，本版本暂不返回候选"
+                if douyin_cookie
+                else "未上传抖音 Cookie，无法测试昵称搜索"
+            ),
+        })
+        return {
+            "rooms": rooms[:max(1, min(20, limit))],
+            "platforms": platforms,
+        }
+
+    def search_rooms(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        return self.search_rooms_with_diagnostics(query, limit)["rooms"]
 
     @staticmethod
     def _normalize_new_room_recording_settings(

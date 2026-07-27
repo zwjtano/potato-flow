@@ -378,6 +378,7 @@ body {
 .add-room-section-heading small { margin-top: 2px; color: #8a95a3; font-size: 9px; }
 .add-room-recording-settings { background: #f8fafc; }
 .room-search-results { display: grid; max-height: 265px; gap: 7px; overflow-y: auto; }
+.room-search-diagnostics { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 2px; }
 .room-search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 10px 12px; color: inherit; border: 1px solid #e2e7ed; border-radius: 10px; background: #fff; text-align: left; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .room-search-result:hover { border-color: #9fc5ef; box-shadow: 0 7px 18px rgba(29, 94, 154, .08); transform: translateY(-1px); }
 .room-search-result > img, .room-search-result-avatar { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; object-fit: cover; color: #fff; border-radius: 50%; background: #ff7a22; }
