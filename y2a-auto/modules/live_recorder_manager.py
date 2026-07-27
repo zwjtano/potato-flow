@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -931,8 +931,108 @@ class LiveRecorderManager:
             "live_title": str(room_data.get("room_name") or "").strip(),
         }
 
-    def add_room_from_url(self, url: str) -> dict[str, Any]:
+    def search_rooms(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Search public live-room candidates by streamer name."""
+        keyword = str(query or "").strip()
+        if len(keyword) < 2:
+            raise RecorderConfigError("请输入至少 2 个字符的主播名字")
+        if len(keyword) > 80:
+            raise RecorderConfigError("主播名字不能超过 80 个字符")
+        payload = _response_json(
+            "https://www.douyu.com/japi/search/api/searchShow?"
+            + urlencode({"kw": keyword, "page": 1, "pageSize": max(1, min(20, limit))}),
+            referer="https://www.douyu.com/search/",
+        )
+        data = payload.get("data")
+        candidates = data.get("relateShow") if isinstance(data, dict) else None
+        if not isinstance(candidates, list):
+            candidates = []
+        rooms: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            room_id = str(candidate.get("rid") or "").strip()
+            name = str(candidate.get("nickName") or "").strip()
+            if not room_id or not name or room_id in seen:
+                continue
+            seen.add(room_id)
+            avatar_url = str(candidate.get("avatar") or "").strip()
+            if avatar_url.startswith("//"):
+                avatar_url = f"https:{avatar_url}"
+            rooms.append({
+                "platform": "douyu",
+                "platform_name": "斗鱼",
+                "room_id": room_id,
+                "name": name,
+                "avatar_url": avatar_url,
+                "url": f"https://www.douyu.com/{room_id}",
+                "live_title": str(candidate.get("roomName") or "").strip(),
+                "is_live": bool(candidate.get("isLive")),
+                "category_name": str(candidate.get("cateName") or "").strip(),
+            })
+            if len(rooms) >= max(1, min(20, limit)):
+                break
+        return rooms
+
+    @staticmethod
+    def _normalize_new_room_recording_settings(
+        *,
+        segment_enabled: bool,
+        segment_minutes: Any,
+        multipart_enabled: bool,
+        record_only: bool,
+    ) -> dict[str, Any]:
+        try:
+            minutes = int(segment_minutes)
+        except (TypeError, ValueError) as exc:
+            raise RecorderConfigError("分段时长必须是整数分钟") from exc
+        if segment_enabled and not 1 <= minutes <= 1440:
+            raise RecorderConfigError("分段时长必须在 1 到 1440 分钟之间")
+        return {
+            "segment_enabled": bool(segment_enabled),
+            "segment_minutes": max(1, min(1440, minutes)),
+            "multipart_enabled": bool(
+                multipart_enabled and segment_enabled and not record_only
+            ),
+            "record_only": bool(record_only),
+        }
+
+    def add_room_from_url(
+        self,
+        url: str,
+        *,
+        segment_enabled: bool | None = None,
+        segment_minutes: Any = None,
+        multipart_enabled: bool | None = None,
+        record_only: bool | None = None,
+    ) -> dict[str, Any]:
         resolved = self.resolve_room(url)
+        settings_provided = any(
+            value is not None
+            for value in (
+                segment_enabled,
+                segment_minutes,
+                multipart_enabled,
+                record_only,
+            )
+        )
+        recording_settings = (
+            self._normalize_new_room_recording_settings(
+                segment_enabled=True if segment_enabled is None else segment_enabled,
+                segment_minutes=(
+                    DEFAULT_RECORDING_SEGMENT_MINUTES
+                    if segment_minutes is None
+                    else segment_minutes
+                ),
+                multipart_enabled=(
+                    False if multipart_enabled is None else multipart_enabled
+                ),
+                record_only=False if record_only is None else record_only,
+            )
+            if settings_provided
+            else {}
+        )
         with self._lock:
             rooms = self.list_rooms()
             existing = next(
@@ -950,10 +1050,15 @@ class LiveRecorderManager:
                 existing = {
                     "id": uuid.uuid4().hex,
                     "enabled": True,
-                    "segment_enabled": True,
-                    "segment_minutes": DEFAULT_RECORDING_SEGMENT_MINUTES,
-                    "multipart_enabled": False,
-                    "record_only": False,
+                    **(
+                        recording_settings
+                        or {
+                            "segment_enabled": True,
+                            "segment_minutes": DEFAULT_RECORDING_SEGMENT_MINUTES,
+                            "multipart_enabled": False,
+                            "record_only": False,
+                        }
+                    ),
                 }
                 rooms.append(existing)
             existing.update({
@@ -962,17 +1067,22 @@ class LiveRecorderManager:
                 "platform": resolved["platform"],
                 "platform_room_id": resolved["room_id"],
                 "avatar_url": resolved["avatar_url"],
+                **recording_settings,
             })
             _atomic_json(ROOMS_PATH, rooms)
             self.sync_configs(rooms)
             self._write_control_state(rooms)
             return dict(existing)
 
-    def add_room_from_url_and_reload(self, url: str) -> tuple[dict[str, Any], str]:
+    def add_room_from_url_and_reload(
+        self,
+        url: str,
+        **recording_settings: Any,
+    ) -> tuple[dict[str, Any], str]:
         """Resolve, save and reload a room without interrupting active recordings."""
         with self._lock:
             was_running = self._pid() is not None
-            room = self.add_room_from_url(url)
+            room = self.add_room_from_url(url, **recording_settings)
             if not was_running:
                 return room, "saved"
             if any(item.get("runtime", {}).get("recording") for item in self.rooms_with_status()):

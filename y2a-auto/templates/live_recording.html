@@ -291,16 +291,58 @@
     </div>
 </section>
 
-<div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="addRoomForm" method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">粘贴链接，自动识别主播名称和头像</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body">
-    <label class="form-label">B站、斗鱼或抖音直播间链接</label>
-    <div class="room-resolve-input"><i class="bi bi-link-45deg"></i><input class="form-control" name="url" type="url" data-role="room-url" placeholder="https://live.bilibili.com/123" autocomplete="off" required><span class="spinner-border spinner-border-sm d-none" data-role="room-resolve-spinner"></span></div>
-    <div class="form-text">支持 live.bilibili.com、b23.tv、douyu.com、live.douyin.com 和 v.douyin.com</div>
+<div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><form id="addRoomForm" method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">输入链接或主播名字，确认直播间后同时设置录制方式</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body add-room-modal-body">
+    <section class="add-room-section">
+    <div class="add-room-section-heading"><span>1</span><div><strong>找到直播间</strong><small>链接可直接识别；主播名字会先显示搜索结果供你选择</small></div></div>
+    <label class="form-label">直播间链接或主播名字</label>
+    <div class="room-resolve-input"><i class="bi bi-search"></i><input class="form-control" name="url" type="text" data-role="room-url" placeholder="例如：yyfyyf 或 https://www.douyu.com/9999" autocomplete="off" required><span class="spinner-border spinner-border-sm d-none" data-role="room-resolve-spinner"></span></div>
+    <div class="form-text">链接支持 B站、斗鱼和抖音；主播名字搜索目前提供斗鱼候选结果。</div>
     <div class="room-resolve-error d-none" data-role="room-resolve-error"></div>
+    <div class="room-search-results d-none" data-role="room-search-results"></div>
     <div class="room-resolve-preview d-none" data-role="room-resolve-preview">
         <div class="room-resolve-avatar"><img data-role="room-resolve-avatar" alt="" referrerpolicy="no-referrer"><i class="bi" data-role="room-resolve-platform-icon"></i></div>
         <div><span data-role="room-resolve-platform"></span><strong data-role="room-resolve-name"></strong><small data-role="room-resolve-title"></small></div>
         <i class="bi bi-check-circle-fill room-resolve-ok"></i>
     </div>
+    </section>
+    <section class="add-room-section add-room-recording-settings">
+        <div class="add-room-section-heading"><span>2</span><div><strong>录制分段与投稿方式</strong><small>这些设置只对新添加的这个直播间生效</small></div></div>
+        <div class="room-recording-setting-grid">
+            <label class="room-recording-setting-option">
+                <span class="room-setting-switch">
+                    <input type="checkbox" name="segment_enabled" value="on"
+                           data-role="segment-enabled" checked>
+                    <span></span>
+                </span>
+                <span><strong>开启录制分段</strong><small>默认开启；关闭后整场直播只生成一个视频。</small></span>
+            </label>
+            <label class="room-recording-duration">
+                <span><strong>每段录制时长</strong><small>1–1440 分钟，默认 60 分钟</small></span>
+                <span class="room-recording-duration-input">
+                    <input class="form-control" type="number" name="segment_minutes"
+                           min="1" max="1440" step="1" value="60"
+                           data-role="segment-minutes">
+                    <span>分钟</span>
+                </span>
+            </label>
+            <label class="room-recording-setting-option">
+                <span class="room-setting-switch">
+                    <input type="checkbox" name="multipart_enabled" value="on"
+                           data-role="multipart-enabled">
+                    <span></span>
+                </span>
+                <span><strong>同一场直播合并为分P</strong><small>默认关闭；关闭时每个分段独立投稿。</small></span>
+            </label>
+            <label class="room-recording-setting-option record-only">
+                <span class="room-setting-switch">
+                    <input type="checkbox" name="record_only" value="on"
+                           data-role="record-only">
+                    <span></span>
+                </span>
+                <span><strong>仅录制，不自动投稿</strong><small>默认关闭；仍会保留 XML、生成 ASS、AI 封面和 MP4。</small></span>
+            </label>
+        </div>
+    </section>
 </div><div class="modal-footer"><button type="button" class="btn btn-light border" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit" data-role="room-submit" disabled><i class="bi bi-plus-lg"></i> 识别并添加</button></div></form></div></div></div>
 <div class="modal fade delete-room-modal" id="deleteRoomConfirmModal" tabindex="-1" aria-labelledby="deleteRoomConfirmTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -373,6 +415,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const roomResolveSpinner = addRoomForm?.querySelector('[data-role="room-resolve-spinner"]');
     const roomResolveError = addRoomForm?.querySelector('[data-role="room-resolve-error"]');
     const roomResolvePreview = addRoomForm?.querySelector('[data-role="room-resolve-preview"]');
+    const roomSearchResults = addRoomForm?.querySelector('[data-role="room-search-results"]');
     const deleteRoomModalElement = document.getElementById('deleteRoomConfirmModal');
     const deleteRoomName = deleteRoomModalElement?.querySelector('[data-role="delete-room-name"]');
     const confirmDeleteRoomButton = deleteRoomModalElement?.querySelector('[data-action="confirm-delete-room"]');
@@ -455,11 +498,65 @@ document.addEventListener('DOMContentLoaded', function () {
         roomResolveSpinner.classList.add('d-none');
         roomResolveError.classList.add('d-none');
         roomResolvePreview.classList.add('d-none');
+        roomSearchResults.classList.add('d-none');
+        roomSearchResults.innerHTML = '';
     }
-    async function resolveRoomUrl() {
-        const requestedUrl = (roomUrlInput?.value || '').trim();
+    function isRoomUrl(value) {
+        return /^https?:\/\//i.test(String(value || '').trim());
+    }
+    function renderRoomSearchResults(rooms) {
+        if (!rooms.length) {
+            roomSearchResults.innerHTML = '<div class="room-search-empty"><i class="bi bi-search"></i><span>没有找到匹配的斗鱼主播，请改用直播间链接添加。</span></div>';
+        } else {
+            roomSearchResults.innerHTML = rooms.map(room => `
+                <button class="room-search-result" type="button" data-url="${escapeHtml(room.url)}">
+                    ${room.avatar_url
+                        ? `<img src="${escapeHtml(room.avatar_url)}" alt="" referrerpolicy="no-referrer">`
+                        : '<span class="room-search-result-avatar"><i class="bi bi-controller"></i></span>'}
+                    <span class="room-search-result-copy">
+                        <span>${escapeHtml(room.platform_name)} · 房间 ${escapeHtml(room.room_id)}${room.is_live ? ' · <b>直播中</b>' : ''}</span>
+                        <strong>${escapeHtml(room.name)}</strong>
+                        <small>${escapeHtml(room.live_title || room.category_name || '点击选择这个直播间')}</small>
+                    </span>
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+            `).join('');
+            roomSearchResults.querySelectorAll('[data-url]').forEach(button => {
+                button.addEventListener('click', function () {
+                    roomUrlInput.value = button.dataset.url;
+                    resolveRoomUrl(button.dataset.url);
+                });
+            });
+        }
+        roomSearchResults.classList.remove('d-none');
+    }
+    async function searchRoomName(query) {
+        roomResolveSpinner.classList.remove('d-none');
+        try {
+            const response = await fetch('/live-recording/rooms/search', {
+                method: 'POST',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                body: JSON.stringify({query}),
+            });
+            const result = await response.json();
+            if ((roomUrlInput?.value || '').trim() !== query) return;
+            if (!response.ok) throw new Error(result.error || '搜索主播失败');
+            renderRoomSearchResults(result.rooms || []);
+        } catch (error) {
+            roomResolveError.textContent = error.message;
+            roomResolveError.classList.remove('d-none');
+        } finally {
+            if ((roomUrlInput?.value || '').trim() === query) roomResolveSpinner.classList.add('d-none');
+        }
+    }
+    async function resolveRoomUrl(value = '') {
+        const requestedUrl = String(value || roomUrlInput?.value || '').trim();
         resetRoomResolution();
         if (!requestedUrl) return;
+        if (!isRoomUrl(requestedUrl)) {
+            await searchRoomName(requestedUrl);
+            return;
+        }
         roomResolveSpinner.classList.remove('d-none');
         try {
             const response = await fetch('/live-recording/rooms/resolve', {
@@ -480,14 +577,18 @@ document.addEventListener('DOMContentLoaded', function () {
             const platformIcon = roomResolvePreview.querySelector('[data-role="room-resolve-platform-icon"]');
             platformIcon.className = `bi ${room.platform === 'bilibili' ? 'bi-tv' : (room.platform === 'douyin' ? 'bi-music-note-beamed' : 'bi-controller')}`;
             platformIcon.style.background = room.platform === 'bilibili' ? '#f35b8a' : (room.platform === 'douyin' ? '#111827' : '#ff7a22');
-            resolvedRoomUrl = requestedUrl;
+            resolvedRoomUrl = room.url || requestedUrl;
+            roomUrlInput.value = resolvedRoomUrl;
             roomResolvePreview.classList.remove('d-none');
             roomSubmit.disabled = false;
         } catch (error) {
             roomResolveError.textContent = error.message;
             roomResolveError.classList.remove('d-none');
         } finally {
-            if ((roomUrlInput?.value || '').trim() === requestedUrl) roomResolveSpinner.classList.add('d-none');
+            const currentValue = (roomUrlInput?.value || '').trim();
+            if (currentValue === requestedUrl || currentValue === resolvedRoomUrl) {
+                roomResolveSpinner.classList.add('d-none');
+            }
         }
     }
     function formatDuration(seconds) {
@@ -649,19 +750,21 @@ document.addEventListener('DOMContentLoaded', function () {
         recordingToggle.title = enabled ? '安全停止当前录制并暂停自动检测' : '启动引擎并开始检测录制';
         recordingToggle.innerHTML = enabled ? '<i class="bi bi-stop-fill"></i> <span>停止录制</span>' : '<i class="bi bi-record-circle"></i> <span>开始录制</span>';
     }
-    document.querySelectorAll('[data-role="recording-settings-form"]').forEach(form => {
+    document.querySelectorAll('[data-role="recording-settings-form"], #addRoomForm').forEach(form => {
         const enabled = form.querySelector('[data-role="segment-enabled"]');
         const minutes = form.querySelector('[data-role="segment-minutes"]');
         const multipart = form.querySelector('[data-role="multipart-enabled"]');
+        const recordOnly = form.querySelector('[data-role="record-only"]');
         const syncState = () => {
             const active = Boolean(enabled?.checked);
             if (minutes) minutes.disabled = !active;
             if (multipart) {
-                multipart.disabled = !active;
-                if (!active) multipart.checked = false;
+                multipart.disabled = !active || Boolean(recordOnly?.checked);
+                if (!active || recordOnly?.checked) multipart.checked = false;
             }
         };
         enabled?.addEventListener('change', syncState);
+        recordOnly?.addEventListener('change', syncState);
         syncState();
     });
     async function refreshLiveStatus() {
@@ -718,6 +821,7 @@ document.addEventListener('DOMContentLoaded', function () {
     addRoomModal?.addEventListener('hidden.bs.modal', function () {
         addRoomForm.reset();
         resetRoomResolution();
+        addRoomForm.querySelector('[data-role="segment-enabled"]')?.dispatchEvent(new Event('change'));
     });
     filesModal?.addEventListener('shown.bs.modal', loadFiles);
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);

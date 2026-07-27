@@ -529,6 +529,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "name": "旧名称",
             "url": "https://www.douyu.com/9999",
             "platform": "douyu",
+            "segment_enabled": False,
+            "segment_minutes": 90,
+            "multipart_enabled": False,
+            "record_only": True,
         }
         resolved = {
             "platform": "douyu",
@@ -555,6 +559,63 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["name"], "新名称")
         self.assertEqual(room["platform_room_id"], "9999")
         self.assertEqual(room["avatar_url"], "https://apic.douyucdn.cn/new.jpg")
+        self.assertFalse(room["segment_enabled"])
+        self.assertEqual(room["segment_minutes"], 90)
+        self.assertTrue(room["record_only"])
+
+    def test_add_room_applies_recording_settings_at_creation(self):
+        manager = LiveRecorderManager()
+        resolved = {
+            "platform": "douyu",
+            "platform_name": "斗鱼",
+            "room_id": "9999",
+            "name": "yyfyyf",
+            "avatar_url": "https://example.com/avatar.jpg",
+            "url": "https://www.douyu.com/9999",
+            "live_title": "陪伴每一天",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rooms_path = Path(temp_dir) / "rooms.json"
+            with mock.patch.object(recorder_module, "ROOMS_PATH", rooms_path), mock.patch.object(
+                manager, "resolve_room", return_value=resolved
+            ), mock.patch.object(manager, "sync_configs"), mock.patch.object(
+                manager, "_write_control_state"
+            ):
+                room = manager.add_room_from_url(
+                    resolved["url"],
+                    segment_enabled=True,
+                    segment_minutes=45,
+                    multipart_enabled=True,
+                    record_only=True,
+                )
+
+        self.assertTrue(room["segment_enabled"])
+        self.assertEqual(room["segment_minutes"], 45)
+        self.assertTrue(room["record_only"])
+        self.assertFalse(room["multipart_enabled"])
+
+    def test_search_rooms_returns_douyu_candidates(self):
+        manager = LiveRecorderManager()
+        payload = {
+            "data": {
+                "relateShow": [{
+                    "rid": 9999,
+                    "nickName": "yyfyyf",
+                    "avatar": "//example.com/avatar.jpg",
+                    "roomName": "陪伴每一天",
+                    "cateName": "DOTA2",
+                    "isLive": 1,
+                }]
+            }
+        }
+        with mock.patch.object(recorder_module, "_response_json", return_value=payload):
+            rooms = manager.search_rooms("YYF")
+
+        self.assertEqual(len(rooms), 1)
+        self.assertEqual(rooms[0]["url"], "https://www.douyu.com/9999")
+        self.assertEqual(rooms[0]["name"], "yyfyyf")
+        self.assertEqual(rooms[0]["avatar_url"], "https://example.com/avatar.jpg")
+        self.assertTrue(rooms[0]["is_live"])
 
     def test_maps_biliup_worker_status_per_room(self):
         payload = {
@@ -1381,15 +1442,20 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][-2:], ["ingest", str(video)])
         self.assertNotIn("--session-key", run.call_args.args[0])
 
-    def test_add_room_form_only_requires_room_url(self):
+    def test_add_room_form_supports_name_search_and_recording_settings(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertNotIn('name="name"', source)
-        self.assertIn("粘贴链接，自动识别主播名称和头像", source)
+        self.assertIn("直播间链接或主播名字", source)
         self.assertIn("/live-recording/rooms/resolve", source)
+        self.assertIn("/live-recording/rooms/search", source)
+        self.assertIn('data-role="room-search-results"', source)
         self.assertIn("room.avatar_url", source)
         self.assertIn('name="segment_enabled"', source)
         self.assertIn('name="segment_minutes"', source)
+        self.assertIn('value="60"', source)
+        self.assertIn('name="multipart_enabled"', source)
+        self.assertIn('name="record_only"', source)
         self.assertIn('value="{{ room.segment_minutes }}"', source)
         self.assertIn("整场直播不分段", source)
         self.assertNotIn("按 2.5 GB 自动分段", source)

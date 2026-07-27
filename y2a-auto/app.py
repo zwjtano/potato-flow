@@ -1477,7 +1477,17 @@ def live_recording_files_batch_delete():
 def live_recording_save_room():
     try:
         room, reload_state = live_recorder_manager.add_room_from_url_and_reload(
-            request.form.get('url', '')
+            request.form.get('url', ''),
+            segment_enabled=_coerce_checkbox_value(
+                request.form.get('segment_enabled', 'off')
+            ),
+            segment_minutes=request.form.get('segment_minutes', '60'),
+            multipart_enabled=_coerce_checkbox_value(
+                request.form.get('multipart_enabled', 'off')
+            ),
+            record_only=_coerce_checkbox_value(
+                request.form.get('record_only', 'off')
+            ),
         )
         room_name = str(room.get('name') or '直播间')
         if reload_state == 'reloaded':
@@ -1498,6 +1508,17 @@ def live_recording_resolve_room():
     try:
         room = live_recorder_manager.resolve_room(str(payload.get('url') or ''))
         return jsonify({'ok': True, 'room': room})
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+
+
+@app.route('/live-recording/rooms/search', methods=['POST'])
+@login_required
+def live_recording_search_rooms():
+    payload = request.get_json(silent=True) or request.form
+    try:
+        rooms = live_recorder_manager.search_rooms(str(payload.get('query') or ''))
+        return jsonify({'ok': True, 'rooms': rooms})
     except RecorderConfigError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
 

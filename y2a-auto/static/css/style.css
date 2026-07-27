@@ -369,6 +369,25 @@ body {
 .room-resolve-preview strong { margin: 2px 0; color: #29313a; font-size: 13px; }
 .room-resolve-preview small { overflow: hidden; color: #858e98; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .room-resolve-ok { color: #32a66a; font-size: 18px; }
+.add-room-modal-body { display: grid; gap: 18px; }
+.add-room-section { display: grid; gap: 9px; padding: 17px; border: 1px solid #e4e9ef; border-radius: 12px; background: #fff; }
+.add-room-section-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 3px; }
+.add-room-section-heading > span { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; color: #fff; border-radius: 8px; background: var(--studio-primary); font-size: 11px; font-weight: 800; }
+.add-room-section-heading > div { display: flex; min-width: 0; flex-direction: column; }
+.add-room-section-heading strong { color: #263241; font-size: 13px; }
+.add-room-section-heading small { margin-top: 2px; color: #8a95a3; font-size: 9px; }
+.add-room-recording-settings { background: #f8fafc; }
+.room-search-results { display: grid; max-height: 265px; gap: 7px; overflow-y: auto; }
+.room-search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 10px 12px; color: inherit; border: 1px solid #e2e7ed; border-radius: 10px; background: #fff; text-align: left; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.room-search-result:hover { border-color: #9fc5ef; box-shadow: 0 7px 18px rgba(29, 94, 154, .08); transform: translateY(-1px); }
+.room-search-result > img, .room-search-result-avatar { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; object-fit: cover; color: #fff; border-radius: 50%; background: #ff7a22; }
+.room-search-result-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.room-search-result-copy > span { color: #8a94a1; font-size: 9px; }
+.room-search-result-copy b { color: #27a667; font-weight: 700; }
+.room-search-result-copy strong { margin: 1px 0; overflow: hidden; color: #27313d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.room-search-result-copy small { overflow: hidden; color: #778391; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.room-search-result > .bi-chevron-right { color: #a1aab5; }
+.room-search-empty { display: flex; align-items: center; gap: 8px; padding: 13px; color: #7f8996; border: 1px dashed #d9dfe6; border-radius: 9px; background: #fafbfc; font-size: 10px; }
 
 .stop-recording-modal .modal-dialog { max-width: 430px; padding: 16px; }
 .stop-recording-modal .modal-content { border-radius: 14px; box-shadow: 0 24px 80px rgba(24, 31, 42, .24); }

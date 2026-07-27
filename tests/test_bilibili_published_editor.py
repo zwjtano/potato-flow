@@ -168,10 +168,7 @@ class PublishedMetadataEditorTests(unittest.TestCase):
                 patch.object(
                     bilibili_uploader.video_uploader,
                     "upload_cover",
-                    return_value=asyncio.sleep(
-                        0,
-                        result="https://example.com/new.jpg",
-                    ),
+                    return_value="https://example.com/new.jpg",
                 ),
             ):
                 ok, result = uploader.update_uploaded_metadata(
