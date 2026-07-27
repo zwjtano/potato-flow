@@ -1601,7 +1601,7 @@
                                 <div class="settings-section-header">
                                     <div>
                                         <h3 class="mb-1">消息推送</h3>
-                                        <p class="section-lead mb-0">将任务新增、完成、报错和关键登录事件推送到企业微信、Server酱或 message-pusher。</p>
+                                        <p class="section-lead mb-0">将任务新增、完成、报错和关键登录事件推送到企业微信、Server酱、message-pusher 或 Telegram。</p>
                                     </div>
                                 </div>
                                 <div class="row g-4 settings-pane-grid">
@@ -1756,6 +1756,45 @@
                                                                 <i class="bi bi-send"></i> 发送测试消息
                                                             </button>
                                                             <span class="help-text">留空通道名时使用服务端默认通道。</span>
+                                                        </div>
+                                                    </div>
+                                                </article>
+                                            </div>
+
+                                            <div class="col-12">
+                                                <article class="settings-card">
+                                                    <div class="settings-card-header">
+                                                        <div>
+                                                            <span class="section-eyebrow">Telegram</span>
+                                                            <h4><i class="bi bi-telegram me-1"></i> Bot 消息</h4>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-card-body">
+                                                        <label class="checkbox-label mb-3">
+                                                            <input type="checkbox" name="NOTIFY_TELEGRAM_ENABLED" {% if config.get('NOTIFY_TELEGRAM_ENABLED', False) %}checked{% endif %}>
+                                                            启用 Telegram Bot 通知
+                                                        </label>
+                                                        <div class="row g-3">
+                                                            <div class="col-md-7">
+                                                                <div class="form-group">
+                                                                    <label for="notify-telegram-bot-token" class="form-label">Bot Token</label>
+                                                                    <input type="password" id="notify-telegram-bot-token" name="NOTIFY_TELEGRAM_BOT_TOKEN" value="{{ config.get('NOTIFY_TELEGRAM_BOT_TOKEN', '') }}" class="form-control" autocomplete="off" placeholder="123456789:AA...">
+                                                                    <div class="form-text">在 Telegram 中通过 @BotFather 创建 Bot 后获取。</div>
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-5">
+                                                                <div class="form-group">
+                                                                    <label for="notify-telegram-chat-id" class="form-label">Chat ID</label>
+                                                                    <input type="text" id="notify-telegram-chat-id" name="NOTIFY_TELEGRAM_CHAT_ID" value="{{ config.get('NOTIFY_TELEGRAM_CHAT_ID', '') }}" class="form-control" autocomplete="off" placeholder="-1001234567890">
+                                                                    <div class="form-text">支持个人、群组和频道的数字 ID。</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="settings-inline-actions mt-3">
+                                                            <button type="button" class="btn btn-outline-primary notify-test-btn" data-channel="telegram">
+                                                                <i class="bi bi-send"></i> 发送测试消息
+                                                            </button>
+                                                            <span class="help-text">先保存设置，再发送测试消息；Bot 必须有目标会话的发言权限。</span>
                                                         </div>
                                                     </div>
                                                 </article>

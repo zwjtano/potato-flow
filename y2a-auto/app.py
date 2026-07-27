@@ -49,6 +49,7 @@ from modules.notifications import (
     CHANNEL_LABELS,
     CHANNEL_MESSAGE_PUSHER,
     CHANNEL_SERVERCHAN,
+    CHANNEL_TELEGRAM,
     CHANNEL_WECOM,
     EVENT_LOGIN_LOCKED,
     EVENT_LOGIN_SUCCESS,
@@ -777,6 +778,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'NOTIFY_WECOM_ENABLED',
             'NOTIFY_SERVERCHAN_ENABLED',
             'NOTIFY_MESSAGE_PUSHER_ENABLED',
+            'NOTIFY_TELEGRAM_ENABLED',
             'COOKIECLOUD_ENABLED',
             'COOKIECLOUD_ALLOW_PLAINTEXT_EXPORT',
         ]
@@ -3275,7 +3277,7 @@ def settings_test_notification():
     else:
         channel = str(request.form.get('channel') or '').strip()
 
-    if channel not in (CHANNEL_WECOM, CHANNEL_SERVERCHAN, CHANNEL_MESSAGE_PUSHER):
+    if channel not in (CHANNEL_WECOM, CHANNEL_SERVERCHAN, CHANNEL_MESSAGE_PUSHER, CHANNEL_TELEGRAM):
         return jsonify({'success': False, 'message': '不支持的通知渠道'}), 400
 
     try:

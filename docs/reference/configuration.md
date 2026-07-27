@@ -29,3 +29,14 @@
 ## 录播文件夹
 
 “系统设置 → 运维与安全 → 录播文件夹”中的 `RECORDINGS_PATH` 控制程序内部使用的目录，默认值为 `docker-data/recordings`，即项目根目录的 `potato-flow/docker-data/recordings/`。点击“选择文件夹”可以直接浏览服务器目录，无需手动输入。Docker 用户更换宿主机磁盘时，还需要修改 `.env` 中的 `POTATO_RECORDINGS_DIR` 并重启容器。
+
+## Telegram 消息通知
+
+在“系统设置 → 消息通知”中开启 Telegram Bot 通知，并填写：
+
+| 字段 | 说明 |
+|---|---|
+| `NOTIFY_TELEGRAM_BOT_TOKEN` | 通过 Telegram 的 `@BotFather` 创建 Bot 后获得的 Token |
+| `NOTIFY_TELEGRAM_CHAT_ID` | 接收消息的个人、群组或频道数字 ID；群组和频道通常以 `-100` 开头 |
+
+先保存设置，再点击“发送测试消息”。Bot 必须已经加入目标群组或频道，并具有发言权限。Telegram 与其他通知渠道共用事件开关和失败重试队列，不会阻塞录制与投稿。

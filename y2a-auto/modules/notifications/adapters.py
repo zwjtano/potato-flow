@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,23 +12,27 @@ from .models import NotificationMessage
 CHANNEL_WECOM = "wecom"
 CHANNEL_SERVERCHAN = "serverchan"
 CHANNEL_MESSAGE_PUSHER = "message_pusher"
+CHANNEL_TELEGRAM = "telegram"
 
 ALL_CHANNELS = (
     CHANNEL_WECOM,
     CHANNEL_SERVERCHAN,
     CHANNEL_MESSAGE_PUSHER,
+    CHANNEL_TELEGRAM,
 )
 
 CHANNEL_LABELS = {
     CHANNEL_WECOM: "企业微信",
     CHANNEL_SERVERCHAN: "Server酱",
     CHANNEL_MESSAGE_PUSHER: "message-pusher",
+    CHANNEL_TELEGRAM: "Telegram",
 }
 
 CHANNEL_ENABLE_KEY_MAP = {
     CHANNEL_WECOM: "NOTIFY_WECOM_ENABLED",
     CHANNEL_SERVERCHAN: "NOTIFY_SERVERCHAN_ENABLED",
     CHANNEL_MESSAGE_PUSHER: "NOTIFY_MESSAGE_PUSHER_ENABLED",
+    CHANNEL_TELEGRAM: "NOTIFY_TELEGRAM_ENABLED",
 }
 
 CHANNEL_REQUIRED_CONFIG_MAP = {
@@ -37,6 +42,10 @@ CHANNEL_REQUIRED_CONFIG_MAP = {
         "NOTIFY_MESSAGE_PUSHER_SERVER",
         "NOTIFY_MESSAGE_PUSHER_USERNAME",
         "NOTIFY_MESSAGE_PUSHER_TOKEN",
+    ),
+    CHANNEL_TELEGRAM: (
+        "NOTIFY_TELEGRAM_BOT_TOKEN",
+        "NOTIFY_TELEGRAM_CHAT_ID",
     ),
 }
 
@@ -180,9 +189,62 @@ class MessagePusherNotifier(Notifier):
             raise NotificationSendError(str(data.get("message") or "message-pusher 推送失败"))
 
 
+def _telegram_plain_text(message: NotificationMessage) -> str:
+    markdown = str(message.markdown or "").strip()
+    markdown = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", markdown)
+    lines = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if line.startswith(">"):
+            line = line[1:].lstrip()
+        line = line.replace("**", "").replace("`", "")
+        lines.append(line)
+    body = "\n".join(lines).strip()
+    text = f"{message.title}\n\n{body}" if body else f"{message.title}\n\n{message.summary}"
+    return text[:4096]
+
+
+class TelegramNotifier(Notifier):
+    def __init__(self) -> None:
+        super().__init__(channel_id=CHANNEL_TELEGRAM, label=CHANNEL_LABELS[CHANNEL_TELEGRAM])
+
+    def send(self, message: NotificationMessage, config: dict[str, Any]) -> None:
+        token = str(config.get("NOTIFY_TELEGRAM_BOT_TOKEN") or "").strip()
+        chat_id = str(config.get("NOTIFY_TELEGRAM_CHAT_ID") or "").strip()
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        try:
+            response = requests.post(
+                url,
+                json={
+                    "chat_id": chat_id,
+                    "text": _telegram_plain_text(message),
+                    "disable_web_page_preview": True,
+                },
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            # Telegram URL includes the bot token, so never persist the raw exception text.
+            raise NotificationSendError(
+                f"Telegram 请求失败：{type(exc).__name__}"
+            ) from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            if not 200 <= int(response.status_code) < 300:
+                raise NotificationSendError(f"Telegram HTTP {response.status_code}") from exc
+            raise NotificationSendError("Telegram 返回了无效响应") from exc
+        description = str(data.get("description") or "").replace(token, "[redacted]")
+        if not 200 <= int(response.status_code) < 300:
+            raise NotificationSendError(description or f"Telegram HTTP {response.status_code}")
+        if not bool(data.get("ok")):
+            raise NotificationSendError(description or "Telegram 推送失败")
+
+
 def build_notifier_registry() -> dict[str, Notifier]:
     return {
         CHANNEL_WECOM: WeComNotifier(),
         CHANNEL_SERVERCHAN: ServerChanNotifier(),
         CHANNEL_MESSAGE_PUSHER: MessagePusherNotifier(),
+        CHANNEL_TELEGRAM: TelegramNotifier(),
     }
