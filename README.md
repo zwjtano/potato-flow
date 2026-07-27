@@ -1,125 +1,210 @@
 # PotatoFlow（土豆录播姬）
 
-土豆的直播录制与 AI 投稿流水线。PotatoFlow 把 [biliup](https://github.com/biliup/biliup) 的直播录制能力与 [Y2A-Auto](https://github.com/fqscfqj/Y2A-Auto) 的下载、AI 处理和投稿能力整合进同一个 WebUI。
+PotatoFlow 是一个面向 Linux 的直播录制、弹幕处理、AI 内容生成和哔哩哔哩投稿工具。录制、文件管理、任务队列、人工审核和系统设置集中在同一个 WebUI，对外只使用一个服务端口。
 
-[在线图文文档](https://zwjtano.github.io/potato-flow/) · [最新版本](https://github.com/zwjtano/potato-flow/releases/latest) · [问题反馈](https://github.com/zwjtano/potato-flow/issues)
+[图文文档](https://zwjtano.github.io/potato-flow/) · [最新版本](https://github.com/zwjtano/potato-flow/releases/latest) · [问题反馈](https://github.com/zwjtano/potato-flow/issues)
 
-本项目的边界很明确：
+## 支持范围
 
-- 录制平台支持 **哔哩哔哩直播**、**斗鱼**和**抖音直播**；
-- 投稿平台仅使用 **哔哩哔哩**；
-- B站视频上传统一使用内置 **Biliup**，可按当前服务器网络手动测速、自动选择并缓存投稿线路，正常投稿不会重复测速；
-- 保留 Y2A 的 YouTube 下载、频道监控、字幕、翻译和 AI 功能；
-- 每个录制分段完成后立即生成 ASS、根据弹幕生成 AI 简介并投稿，不必等待下播；
-- 默认每个录制分段独立投稿；可开启“同一场直播合并为分P”，让后续分段追加到同一 BVID，并根据各段弹幕分别生成分P主题与简介；
-- 默认不烧录弹幕，直接上传原视频，避免额外转码时间和性能消耗；
-- ASS 作为独立文件保留，可在文件管理中查看和下载，不导入 B站原生弹幕；
-- Linux 上只运行一个主服务、只开放一个 Web 端口；biliup 以无 HTTP 的内部 worker 运行。
+| 功能 | 当前支持 |
+| --- | --- |
+| 直播录制 | 哔哩哔哩直播、斗鱼、抖音 |
+| 弹幕采集 | B站、斗鱼、抖音 XML 弹幕 |
+| 视频投稿 | 仅哔哩哔哩 |
+| 投稿引擎 | 内置 Biliup |
+| YouTube | 视频下载、频道与关键词监控、字幕和 AI 处理 |
+| 部署方式 | Docker，或 Ubuntu / Debian 原生安装 |
+| Web 端口 | 默认 `5001` |
 
-## 工作流程
+当前不烧录录播弹幕，也不向 B站逐条导入原生弹幕。系统保留原视频画质，并生成独立 ASS 字幕文件。
+
+## 录播流程
 
 ```text
-B站直播 / 斗鱼 / 抖音
-        ↓
-biliup 录制视频 + XML 弹幕（每 1 小时自动分段）
-        ↓
-每个分段落盘后立即处理，录制继续
-        ↓
-生成 ASS ──→ AI 读取弹幕并生成投稿简介
-        ↓
-默认每段独立投稿；开启分P后 P1 创建稿件，P2、P3…追加到同一稿件
+检测直播
+  ↓
+录制视频与 XML 弹幕
+  ↓
+安全结束当前文件
+  ↓
+生成 ASS
+  ↓
+AI 生成标题、简介、标签、分区和封面
+  ↓
+Biliup 排队投稿哔哩哔哩
 ```
 
-ASS 会保存在 `.bridge/artifacts/` 中供归档、查看和下载，不会烧进视频，也不会逐条导入 B站原生弹幕。
+录制和投稿是两套独立队列。一个分段进入处理后，直播间可以继续录制下一段。
 
-## 主要功能
+## 当前功能
 
-### 直播录制
+### 直播间管理
 
-- 统一管理 B站、斗鱼和抖音直播间；
-- 添加直播间时只需粘贴链接，自动识别平台、真实房间号、主播名称和头像；
-- 一键启动或停止内置 biliup 录制引擎；
-- 搜索直播间并按“监控中 / 已停止”筛选；
-- 录制 B站、斗鱼与抖音 XML 弹幕；
-- 抖音沿用 biliup 原生解析方式，不依赖 Chromium；公开房间通常不需要登录，需要时可在“系统设置 → 账号与网络 → 平台账号”手动上传 JSON 或纯文本 Cookie；
-- 每满 1 小时自动结束当前录制分段并立即触发上传流水线，后续录制不受影响；手动停止时，不足 1 小时的最后一段也会正常处理；
-- 多个直播间的分段流水线并发运行，互不阻塞；后台每 5 分钟扫描一次已封口但没有任务记录的录播文件，并按所属直播间自动补回分P流水线；
-- 默认每个录制分段创建独立 B站稿件；开启“同一场直播合并为分P”后，首段创建稿件、后续文件依次追加为分P，各 P 使用本段弹幕生成自己的页面标题和摘要；
-- 每个录播文件都有独立的五阶段记录，可手动查看状态、时间、输入、产物和错误；
-- 历史任务可从下拉框切换，失败任务可在对应步骤详情中一键重试；
-- 录播任务会同步显示在“概览”和“上传任务”页，与 YouTube / 手动任务统一查看；
-- 已成功上传的录播任务可进入“AI 编辑稿件”，分别或一次性重新生成标题、简介和封面；生成结果先保存在本地供人工预览，确认后才更新 B站，视频内容和原有分P保持不变；
-- AI 重新生成按钮会显示明确的处理中状态；同步 B站前使用页面内居中确认弹窗，不再调用浏览器原生弹窗；
-- 每个直播间都可单独设置标题、简介和封面的 AI 提示词；三个系统默认提示词会直接显示在直播间设置中，任一项目留空即自动使用对应默认值；
-- 每个直播间可上传、预览、替换或恢复 AI 封面人物底稿；自定义底稿优先于内置人物图和直播间头像，并持久化保存在 Docker 数据目录；
-- “上传任务”页默认不自动刷新，展开任务详情后可稳定查看和滚动；需要最新状态时点击“手动刷新”或详情中的“刷新详情”；
-- 投稿 B站时单独实时显示已上传容量、当前速度和预计剩余时间；只更新这行数据，不刷新任务列表或打断详情查看；
-- 上传任务的录播视频列直接显示最终投稿封面缩略图，点击即可在居中弹窗查看完整封面；无封面的旧任务使用视频占位图；
-- 录播或 YouTube / 手动任务失败后会自动汇总到“人工审核”，集中查看错误、流水线日志并由人工决定修改、重试或放弃；
-- 页面内置录播文件管理，统一查看视频、XML 弹幕和 ASS 字幕，并支持搜索、筛选与下载；
-- 文件管理支持多选、全选筛选结果和批量删除；正在录制或流水线处理中的文件会自动锁定；
-- 投稿完成后，自动删除源视频和 XML，ASS 与任务日志继续保留；
-- WebUI 显示真实 biliup 进程状态，原始日志中的签名参数会自动隐藏。
+- 通过 B站、斗鱼或抖音直播间链接识别主播名、头像、标题和真实房间号。
+- 支持通过主播昵称搜索 B站和斗鱼直播间。
+- 斗鱼也可以直接输入房间号或靓号。
+- 抖音目前通过直播间链接添加，不支持昵称搜索。
+- 每个直播间可以独立开始、停止和恢复录制。
+- 删除直播间只删除监控配置，不删除已有录播文件和任务。
+- B站 Cookie 同时用于投稿和直播录制，可帮助获取账号可用的最高画质。
+- 抖音沿用 Biliup 的解析与录制方式；需要登录时可手动上传 Cookie 文件，不依赖 Chromium 扫码。
 
-### 弹幕处理
+### 分段与投稿方式
 
-- XML 转 ASS，保留原视频，不执行烧录；
-- AI 会对弹幕去重、抽样并生成有依据的投稿简介；
-- 简介只保留规范主播名、直播标题和 AI 弹幕总结，不暴露内部房间标识、原始文件名或录制时间；
-- P1 投稿成功后会把最终简介发布为一条 B站评论并尝试置顶；评论或置顶失败会记录在任务详情中，不影响视频投稿结果；
-- 录播沿用 Y2A 设置中的“自动生成标签”和“自动推荐分区”；推荐分区时可将当前分段自动截取的原视频封面一并交给支持图片输入的 AI；
-- 开启分P时只在 P1 执行一次标签与分区推荐，后续分P沿用同一组投稿元数据；
-- 可开启“AI 生成录播封面”：系统先根据弹幕生成核心主题和最终标题，再调用 `gpt-image-2` 生成 16:10 投稿封面；日期、年份、具体时间、时间戳和房间号会从封面主题与提示词中排除；
-- YYF 与果小果录播会优先使用项目内置人物参考图；其他主播自动使用直播间头像作为图片编辑底稿，并缓存头像供后续分P复用；头像不可用时再回退到普通生成与视频截图；
-- AI 封面只在 P1 生成一次，后续分P复用首个封面；生成失败会自动使用视频截图继续投稿；
-- ASS 可在录播文件管理中查看和下载；
-- 不执行耗时且容易触发限流的 B站原生弹幕逐条导入。
+每个直播间可以单独设置：
 
-### YouTube 与上传
+- 是否启用录制分段，默认开启。
+- 分段时长，范围 1–1440 分钟，默认 60 分钟。
+- 是否把同一场直播合并为分P，默认关闭。
+- 是否仅录制、不自动投稿，默认关闭。
 
-- YouTube 单视频、播放列表下载；
-- 频道和关键词监控；
-- 字幕下载、翻译、质检及语音识别；
-- AI 标题、简介、标签和分区建议；
-- 所有新任务的投稿目标固定为哔哩哔哩。
+关闭分段后，整场直播只生成一个视频。开启分段但关闭分P时，每个分段独立投稿；开启分P时，第一段创建稿件，后续分段依次追加到同一个 BVID。
 
-### 消息通知
+每一 P 都会根据本段弹幕生成独立的页面标题和摘要，稿件简介会汇总同场直播的分段内容。
 
-- 支持企业微信、Server酱、message-pusher 和 Telegram Bot；
-- 可分别启用任务新增、完成、失败、录制开始、录制停止、Cookie 失效以及关键登录事件；
-- “任务新增、完成、失败”同时覆盖普通上传、录播投稿和仅录制本地处理，并在消息中标明任务类型；
-- 发送失败进入通知队列自动重试，不会阻塞录制或投稿流程；
-- Telegram 在“系统设置 → 消息通知”中填写 Bot Token 与 Chat ID，可选填独立 HTTP/HTTPS 代理地址，保存后可直接发送测试消息。
-- Telegram 可单独开启机器人远程控制，并通过管理员 User ID 白名单限制操作人；支持查看、添加、删除直播间，单房间安全启停录制，以及查看录播任务和磁盘状态。删除直播间必须二次确认，且不会删除已有录播文件。
+### 弹幕与 ASS
 
-## 系统要求
+- 录制视频的同时保存 XML 弹幕。
+- 录制结束或分段完成后自动把 XML 转为 ASS。
+- ASS 使用与视频匹配的画面尺寸。
+- 视频与 XML 保存在同一场直播目录；生成的 ASS 作为任务产物显示在文件管理和任务详情中。
+- 仅录制模式会把 ASS 直接保存在视频旁边，并使用 `.zh-CN.ass` 文件名方便媒体库识别。
+- XML 无有效弹幕时不会生成伪造的空 ASS，任务详情会显示原因。
+- ASS 不烧录进视频，不额外转码录播画面。
 
-正式支持环境：
+### AI 标题、简介与封面
 
-- Ubuntu 22.04/24.04、Debian 12/13 或兼容的 64 位 Linux；
-- Python 3.11–3.13；
-- 最新稳定版 Rust（需要支持 Rust 2024 edition，建议通过 rustup 安装）；
-- FFmpeg 与 FFprobe；
-- 至少 8 GB 可用磁盘空间用于首次 Rust 构建和 Python 依赖安装；
-- 可正常访问直播平台、YouTube、哔哩哔哩以及你配置的 AI API。
+- 根据本段弹幕提取真实内容主题，生成标题和投稿简介。
+- 自动生成标签。
+- 自动推荐 B站分区。
+- 推荐分区时可把原视频截图一并提供给支持图片输入的 AI。
+- 使用 `gpt-image-2` 或配置的兼容图片模型生成录播封面。
+- 封面不会加入日期、时间、房间号、平台界面或二维码。
+- 内置 DOTA2 英雄、技能、装备及常见俗称提示，减少人物和物品对应错误。
+- 不同直播间可以分别设置标题、简介和封面提示词；留空时使用系统默认提示词。
+- 每个直播间可以上传、预览、替换和恢复人物形象底稿。
+- 没有专用人物底稿时，优先使用直播间头像作为封面参考图。
+- 已上传稿件可以重新生成标题、简介或封面，预览确认后再同步到 B站，不修改视频内容和已有分P。
+- 投稿成功后可把最终简介发布为评论并尝试置顶；评论失败不会改变视频投稿结果。
 
-macOS 仅用于开发验证；Windows 不属于当前整合版支持范围。
+### 仅录制模式
 
-## 安装
+仅录制模式不会投稿 B站，文件处理流程为：
 
-### Docker 安装（推荐）
+1. 安全结束 FLV 与 XML；
+2. 生成 ASS；
+3. 生成与视频分辨率匹配的 AI JPG 封面；
+4. 使用 FFmpeg `-c copy` 把 FLV 无转码封装为 MP4；
+5. 把 JPG 写入 MP4 作为内嵌封面；
+6. 验证 MP4 和内嵌封面后删除原 FLV。
 
-需要 Docker Engine 24+ 和 Docker Compose v2。仓库根目录只定义一个容器，容器内的 biliup 是无 HTTP 端口的子进程，对外只映射 `5001`。
+任一步失败都会保留原 FLV，避免录播丢失。
 
-可以从 [GitHub Releases](https://github.com/zwjtano/potato-flow/releases/latest) 下载最新版本的 **Source code (tar.gz)**，解压后进入项目目录运行：
+### 上传任务与人工审核
 
-```bash
-tar -xzf potato-flow-*.tar.gz
-cd potato-flow-*/
-docker compose up -d --build
-```
+- 录播任务、YouTube 任务和手动任务统一显示在“上传任务”。
+- 每个录播任务可以查看直播检测、录制收尾、ASS、AI 内容、AI 封面和 B站投稿的实际进度。
+- B站上传时显示已上传大小、文件总大小、当前速度和预计剩余时间。
+- 多个投稿任务自动排队，默认同时只执行一个 B站上传。
+- 等待投稿或正在投稿的录播任务可以暂停；暂停后可以删除。
+- 投稿失败后等待 5 分钟自动重试。
+- 单独重试投稿步骤时复用已经生成的标题、简介和封面，不重复调用 AI。
+- 失败任务进入“人工审核”，可修改标题、简介、标签、分区和封面后重新执行。
+- 任务详情和日志不会因列表刷新而自动关闭。
+- 所有任务均提供独立删除操作。
 
-也可以直接克隆仓库：
+### Biliup 投稿节点
+
+- 所有直播间和上传任务共用一个全局投稿节点。
+- 在“系统设置 → 账号与网络 → 投稿节点探测与测试”手动开始测速。
+- 测速严格逐个节点执行，前一个节点完成或超时后才测试下一个，避免节点互相抢占带宽。
+- 测速完成后自动选择最快的 Biliup 支持节点，也可以手动选择测速成功的节点。
+- 测速结果保存在服务器；正常投稿直接使用已选节点，不会每次重新测速。
+- 投稿页面显示 Biliup 的实时上传进度。
+
+### 文件管理
+
+- 按主播建立独立文件夹。
+- 每场直播建立 `主播名_直播标题_YYYY-MM-DD_HH-MM` 子文件夹。
+- 原始视频与 XML 保存在同一场直播目录。
+- 仅录制模式生成的 MP4、XML、ASS 和 JPG 保存在同一目录。
+- 支持按类型和关键字筛选文件。
+- 支持单文件下载和删除。
+- 支持多选、全选当前筛选结果和批量删除。
+- 正在录制或处理中使用的文件自动锁定，防止误删。
+- 录播成功投稿后自动清理源视频和 XML；任务状态、日志和需要保留的产物继续存在。
+
+### YouTube
+
+- 添加单个 YouTube 视频下载任务。
+- 监控指定频道或关键词。
+- 设置清晰度、下载代理和并发片段数。
+- 下载人工字幕或 YouTube 自动字幕。
+- 无字幕时可使用 OpenAI 兼容 Whisper、Voxtral 等 ASR 接口转写。
+- 支持 VAD、字幕质检、语义分段、翻译和字幕烧录。
+- 支持 AI 标题、简介、标签和分区。
+- YouTube 处理完成后的投稿目标仍然只有哔哩哔哩。
+
+### 登录与 Cookie
+
+- B站支持网页二维码登录。
+- B站也支持手动上传 JSON 或 Netscape Cookie 文件。
+- B站登录态用于直播录制和 Biliup 投稿。
+- 抖音支持手动上传浏览器导出的 Cookie 文件，上传后自动转换为录制器可用格式。
+- YouTube 支持手动 Cookie 文件和 CookieCloud 拉取。
+- 系统设置中可以检查 Cookie 状态。
+
+### 消息通知与 Telegram 控制
+
+支持以下通知渠道：
+
+- 企业微信机器人
+- Server酱
+- message-pusher
+- Telegram Bot
+
+可分别通知：
+
+- 任务新增
+- 任务完成
+- 任务失败
+- 录制开始
+- 录制停止
+- Cookie 失效
+- 登录成功、锁定和二维码登录结果
+
+任务通知覆盖普通上传、录播投稿和仅录制本地处理。通知失败会进入重试队列，不阻塞录制和投稿。
+
+Telegram 支持单独填写 HTTP/HTTPS 代理，并可开启机器人远程控制。设置管理员 User ID 白名单后，可以通过机器人：
+
+- 查看直播间和状态
+- 添加直播间
+- 删除直播间
+- 开始或停止单个直播间录制
+- 查看录播任务
+- 查看磁盘状态
+
+### 运维与安全
+
+- 可启用 Web 登录密码。
+- 支持登录失败锁定和会话超时。
+- 支持日志自动清理。
+- 支持下载文件定期清理。
+- 可设置普通任务并发数和上传并发数。
+- 自动检测并恢复卡住的任务。
+- WebUI 可以浏览并选择容器内已挂载且可写的录播目录。
+- 健康检查、任务日志和录制 worker 状态均可在页面查看。
+
+## Docker 安装
+
+### 环境要求
+
+- 64 位 Linux，支持 AMD64 或 ARM64
+- Docker Engine 24 或更新版本
+- Docker Compose v2
+- 建议至少预留 8 GB 磁盘用于首次构建
+
+### 启动
 
 ```bash
 git clone https://github.com/zwjtano/potato-flow.git
@@ -127,430 +212,129 @@ cd potato-flow
 docker compose up -d --build
 ```
 
-启动后打开 `http://服务器IP:5001/`。容器支持 AMD64 和 ARM64 原生构建。首次会编译 Rust 录制核心并安装 AI 依赖，之后会直接使用本地镜像。
+启动后访问：
 
-默认将全部录播视频和 XML 弹幕保存到仓库根目录的 `docker-data/recordings/`，容器内对应 `/data/recordings`。系统会先按主播创建独立目录，再为每场直播创建 `主播名_直播间标题_YYYY-MM-DD_HH-MM` 子目录；同一场直播的所有分段视频、XML 和 ASS 都保存在该子目录中，文件名不包含内部房间哈希。其他服务器需要修改宿主机目录时，可以复制 `.env.example` 为 `.env`：
-
-手动停止录制时，录制器会先安全收尾视频和 XML，再执行后处理；“仅录制”模式也会等待弹幕文件稳定后生成与视频同名的 `视频名.zh-CN.ass`，让媒体库正确识别为简体中文字幕，同时不会误删 XML。系统还会参考主播人物底稿、头像、直播标题和本段弹幕，在视频旁生成同名 AI JPG 封面，最终封面分辨率与该段录播视频一致。随后使用 FFmpeg `-c copy` 把 FLV 无转码封装为 MP4，并将 JPG 写为 MP4 内嵌封面；成功后删除原 FLV，失败时保留原 FLV。旧版生成的 `视频名.ass` 可直接改名为 `视频名.zh-CN.ass` 后刷新媒体库。
-
-```dotenv
-POTATO_RECORDINGS_DIR=/你的录播目录
+```text
+http://服务器IP:5001
 ```
 
-程序内使用的录播目录也可在“系统设置 → 运维与安全 → 录播文件夹”修改；点击“选择文件夹”可直接浏览服务器目录，不需要手动填写路径。Docker 中该路径必须位于已挂载的容器目录内；更换宿主机磁盘仍应修改 `.env` 并重启容器。
+首次构建会编译内置 Biliup 并安装 Python、FFmpeg 和 AI 处理依赖，因此耗时会比普通重启长。
 
-从旧版升级且仍想继续使用 `/vol1/1000/media/录播` 时，不需要搬文件，只需在更新前创建 `.env`：
+### 录播目录
 
-```dotenv
-POTATO_RECORDINGS_DIR=/vol1/1000/media/录播
+默认录播目录：
+
+```text
+potato-flow/docker-data/recordings/
 ```
 
-如果旧版文件位于项目根目录 `recordings/`，可以将其中内容移动到 `docker-data/recordings/`，或在 `.env` 继续设置 `POTATO_RECORDINGS_DIR=./recordings`。
+如需挂载其他宿主机目录，复制环境变量示例：
 
-常用命令：
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`：
+
+```dotenv
+POTATO_RECORDINGS_DIR=/你的宿主机录播目录
+```
+
+然后重建容器：
+
+```bash
+docker compose up -d --build
+```
+
+WebUI 的文件夹选择器只能选择容器已经挂载的目录。更换宿主机磁盘时，应先修改 `.env` 或 `docker-compose.yml` 的挂载配置。
+
+### 持久化数据
+
+除自定义录播目录外，持久化数据默认位于：
+
+```text
+potato-flow/docker-data/
+```
+
+其中包含：
+
+- 直播间配置
+- B站、抖音和 YouTube Cookie
+- AI 与系统设置
+- 任务数据库
+- 录制与任务日志
+- ASS、封面和流水线状态
+
+更新或重建容器时不要删除 `docker-data/`。
+
+### 更新
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+更新前建议备份：
+
+```bash
+cp -a docker-data docker-data.backup
+```
+
+### 常用命令
 
 ```bash
 docker compose ps
 docker compose logs -f
 docker compose restart
 docker compose down
-docker compose up -d --build   # 更新源码后重建
-```
-
-除原始录播视频和 XML 弹幕外，其余持久化数据位于仓库根目录的 `docker-data/`，包括录制房间、Cookie、授权数据、任务数据库、日志、ASS 弹幕和 AI 处理状态。原始录播保存在 `POTATO_RECORDINGS_DIR` 指定的宿主机目录。重建或删除容器不会删除这些目录，也不要将 `docker-data/` 提交到 Git。
-
-### 查看录播处理的每一步
-
-“直播录制”页直接展示各直播间最近生成的视频、XML 弹幕和 ASS，可下载或进入文件管理批量删除。录制结束后的处理进度统一在“上传任务”中查看：点击任务的“处理进度”即可打开详情，六个步骤都可以检查：
-
-1. **直播检测**：查看检测完成时间；
-2. **视频录制**：查看原始录播文件、大小和完成时间；
-3. **生成 ASS**：查看 XML、ASS 路径、弹幕数量以及是否烧录（默认否）；
-4. **AI 简介**：查看参与分析的弹幕数量、核心主题、最终标题、简介、标签和推荐分区；
-5. **AI 封面**：直接预览 `gpt-image-2` 生成的封面，并查看无日期时间标题、完整提示词、模型及回退情况；
-6. **投稿 B站**：查看最终标题、封面、BVID，以及简介评论的发布和置顶结果。
-
-阶段状态和产物写入 `.bridge/state.sqlite3`（Docker 中持久化到 `docker-data/bridge/state.sqlite3`）。处理中刷新页面或重启容器不会丢失记录。某一步失败后，详情中会显示原始错误和“重试失败任务”按钮。
-
-投稿完成后，可在“上传任务”中点击“AI 编辑稿件”。标题、简介和封面均可单独重新生成，也可全部生成；每次只更新本地预览。点击“确认同步到 B站”时，PotatoFlow 会先读取线上原稿的完整分P列表，再只替换标题、简介和封面。如果无法取得原稿分P信息，系统会取消更新以保护现有视频。即使源录播已经自动删除，只要任务仍保留 BVID/aid 且 B站登录态有效，这项功能仍可使用。
-
-### 为不同直播间设置 AI 提示词
-
-进入“直播录制”，选择一个直播间并展开“AI 投稿提示词”，可以分别设置：
-
-- 标题提示词：控制核心主题的侧重点与标题风格；
-- 简介提示词：控制内容结构、详略和表达方式；
-- 封面提示词：控制构图、色彩和希望突出的角色或事件。
-
-页面内可直接展开查看三个系统默认提示词。自定义内容只对当前直播间生效；留空则继续使用系统默认。直播结束后的首次自动生成，以及已上传稿件中的“AI 重新生成”，都会使用该直播间的同一套提示词。
-
-如果之前安装过 systemd 版本，需先释放 `5001` 端口：
-
-```bash
-sudo systemctl disable --now biliup-y2a
 docker compose up -d --build
 ```
 
-### 原生 Linux 安装
+## 原生 Linux 安装
 
-#### 1. 获取源码
+Ubuntu / Debian 可以使用项目安装脚本：
 
 ```bash
 git clone https://github.com/zwjtano/potato-flow.git
 cd potato-flow
-```
-
-#### 2. Linux 一键安装
-
-安装脚本会安装系统依赖、创建 Python 虚拟环境并构建无端口录制 worker：
-
-```bash
 ./scripts/install-linux.sh
 ```
 
-ARM64 Linux 请使用安装脚本在目标机器原生构建。
-
-安装完成后可直接启动：
+启动：
 
 ```bash
 ./y2a-auto/.venv/bin/python run.py
 ```
 
-#### 3. 手动安装（Ubuntu / Debian）
-
-```bash
-sudo apt update
-sudo apt install -y ca-certificates chromium curl python3 python3-venv python3-pip \
-  ffmpeg build-essential pkg-config libssl-dev
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-```
-
-确认版本：
-
-```bash
-python3 --version
-cargo --version
-ffmpeg -version
-```
-
-#### 4. 构建定制 biliup
-
-```bash
-cd upstream-biliup
-cargo build --release -p biliup-cli
-cd ..
-```
-
-首次 Rust Release 构建耗时较长。如果只是本地试用，可以改用：
-
-```bash
-cd upstream-biliup
-cargo build --bin biliup
-cd ..
-```
-
-主程序会优先使用 `upstream-biliup/target/release/biliup`，不存在时自动回退到 Debug 版本。也可以通过环境变量指定已有二进制：
-
-```bash
-export BILIUP_BIN=/absolute/path/to/biliup
-```
-
-#### 5. 安装 Python 依赖
-
-```bash
-cd y2a-auto
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt
-cd ..
-```
-
-#### 6. 创建桥接配置
-
-```bash
-cp bridge.config.example.json bridge.config.json
-```
-
-默认配置已经启用：
-
-```json
-{
-  "title_template": "{streamer}｜{ai_topic}｜{date}｜【直播回放】",
-  "danmaku_enabled": true,
-  "danmaku_burn_in": false,
-  "delete_recording_after_upload": true,
-  "ai_danmaku_summary_enabled": true
-}
-```
-
-默认投稿标题为 `{streamer}｜{ai_topic}｜{date}｜【直播回放】`。其中 `{streamer}` 是主播名，`{ai_topic}` 是 AI 根据弹幕生成的核心主题，`{date}` 使用 `MM-dd HH:mm` 格式（例如 `07-24 10:52`）；AI 不可用或没有有效弹幕时，核心主题会回退为直播标题。
-
-`delete_recording_after_upload` 默认开启：视频投稿完成后删除源视频、XML、ASS、临时转码视频、AI 封面及该任务的其他中间产物；如需保留这些文件，将它设为 `false`。失败或进入人工审核的任务不会自动删除文件。已完成任务只保留轻量的状态、标题和 BVID 记录，方便后续查询。
-
-## 启动
-
-在项目根目录运行：
-
-```bash
-python3 run.py
-```
-
-浏览器打开：
-
-- 管理后台：<http://127.0.0.1:5001>
-- 直播录制：<http://127.0.0.1:5001/live-recording>
-
-修改端口：
-
-```bash
-PORT=8080 python3 run.py
-```
-
-程序首次启动会自动创建 Y2A 配置和数据库，并自动启动无 HTTP 的录制 worker。整个应用只监听 `5001`（或 `PORT` 指定的端口），不再使用 `19159`。
-
-### 使用 systemd 常驻运行
-
-完成一键安装后执行：
+安装 systemd 服务：
 
 ```bash
 ./scripts/install-systemd.sh
+sudo systemctl enable --now potato-flow
 ```
 
-脚本会根据当前项目路径和用户生成 `potato-flow.service`。systemd 只管理一个主服务，并通过 `KillMode=control-group` 管理其内部录制 worker。
-
-```bash
-sudo systemctl status potato-flow
-journalctl -u potato-flow -f
-sudo systemctl restart potato-flow
-```
-
-防火墙只需放行主端口，例如：
-
-```bash
-sudo ufw allow 5001/tcp
-```
-
-## 首次配置
-
-### 1. 登录平台账号
-
-进入“系统设置 → 账号与网络”。B站用于投稿，支持扫码登录或手动上传 Cookie；抖音沿用 biliup 的原生解析方式，公开直播间通常无需登录，需要时可手动上传 JSON 或纯文本 Cookie，不提供 Chromium 扫码。默认路径为：
-
-```text
-y2a-auto/cookies/bili_cookies.json
-y2a-auto/cookies/douyin_cookies.json
-```
-
-Cookie、API Key、数据库和录播文件均已加入 `.gitignore`，不会提交到 GitHub。
-
-### 2. 配置 AI
-
-在“系统设置”中填写：
-
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL_NAME`
-- `OPENAI_THINKING_ENABLED`（可选）
-
-AI 弹幕简介只会发送弹幕时间与文本，不发送弹幕 UID 或用户名。未配置 API Key、弹幕为空或请求失败时，系统会保留模板简介并继续投稿。
-
-### 3. 配置投稿
-
-至少确认：
-
-- B站 Cookie 有效；
-- 首次安装建议进入“系统设置 → 账号与网络 → 投稿节点探测与测试”，点击“测速并自动选择”；该结果是当前服务器的全局配置，所有直播间和上传任务共用；
-- `FIXED_PARTITION_ID_BILIBILI` 或目标分区设置正确；
-- 直播录播按“自制”投稿；YouTube/手动转载任务需填写有效来源 URL；
-- 标题、简介和标签符合 B站投稿要求。
-
-直播录播任务明确按“自制”投稿，来源 URL 只用于 YouTube 或手动转载任务。直播录制页面会为每个直播间同步主播标签。
-
-### 4. 添加直播间
-
-进入“直播录制” → “新增直播间”，只需粘贴以下任一格式的直播间链接：
-
-```text
-https://live.bilibili.com/123456
-https://www.douyu.com/123456
-https://live.douyin.com/123456
-```
-
-系统会先显示识别到的平台、真实房间号、主播名称、头像和当前直播标题，确认识别成功后即可添加，不需要手动填写主播名称。
-
-添加完成后点击录制引擎的播放按钮。每个直播间默认开启分段录制，默认每 60 分钟安全收尾一个文件；也可以在直播间的“录制分段与投稿方式”里自定义 1～1440 分钟，或关闭分段、把整场直播录成一个文件。每个完成的文件都会立即进入 ASS、AI 简介和投稿流程，手动停止时不足设定时长的最后一段也会进入流水线。
-
-“同一场直播合并为分P”同样按直播间单独设置，默认关闭：
-
-- 关闭时，每个录制分段独立投稿；
-- 开启时，P1 创建稿件，后续分段逐个追加到同一个 BVID；
-- 每一 P 只分析本段弹幕，生成类似“14:00 凤凰翻盘”“15:00 关键团战”的独立页面标题与摘要，稿件总简介按 P1、P2、P3 自动汇总；
-- 关闭录制分段时，整场只有一个文件，因此分P开关自动停用；
-- 录制过程中修改设置会先让当前文件安全收尾，再重载录制引擎应用新设置。
-
-每个直播间还可以开启“仅录制，不自动投稿”，该开关默认关闭。开启后保存 XML 弹幕，在视频旁生成 `.zh-CN.ass` 外挂字幕与同名 AI JPG 封面，并把 FLV 无转码封装为带内嵌封面的 MP4；不创建 B站投稿任务。系统会登记这些文件并永久排除自动漏单恢复，之后关闭开关或重启容器也不会误投稿；MP4、XML、ASS 和 JPG 均保存在同一场直播文件夹中，文件管理会用同名 JPG 显示视频缩略图。
-
-## 手动验证桥接器
-
-仅检查配置和文件，不上传：
-
-```bash
-y2a-auto/.venv/bin/python bridge.py \
-  --config bridge.config.json \
-  ingest --dry-run /absolute/path/to/video.mp4
-```
-
-真实处理并上传：
-
-```bash
-y2a-auto/.venv/bin/python bridge.py \
-  --config bridge.config.json \
-  ingest /absolute/path/to/video.mp4
-```
-
-视频同目录存在同名 XML 时会自动匹配：
-
-```text
-主播_2026-07-23_20-00-00.flv
-主播_2026-07-23_20-00-00.xml
-```
-
-## 状态与重试
-
-```bash
-# 查看桥接任务状态
-y2a-auto/.venv/bin/python bridge.py --config bridge.config.json status
-
-# 重试失败任务
-y2a-auto/.venv/bin/python bridge.py --config bridge.config.json retry
-```
-
-状态保存在 `.bridge/state.sqlite3`。如果上传进程在得到 BVID 后意外中断，已记录的投稿结果可避免重复投稿。
-
-## 项目结构
-
-```text
-.
-├── run.py                         # 统一启动入口
-├── bridge.py                      # biliup → Y2A 桥接器
-├── danmaku_pipeline.py            # XML、ASS 与 AI 弹幕摘要
-├── bridge.config.example.json     # 可提交的配置模板
-├── upstream-biliup/               # 定制录制引擎，支持 B站/斗鱼/抖音
-├── y2a-auto/                      # 主 WebUI、YouTube 和 B站上传
-└── tests/                         # 整合层测试
-```
-
-## 测试
-
-整合层测试：
-
-```bash
-y2a-auto/.venv/bin/python -m unittest discover -s tests -v
-```
-
-biliup 平台限制测试：
-
-```bash
-cd upstream-biliup
-cargo test builtin_plugin_tests::only_bilibili_and_douyu_are_enabled
-```
-
-## 常见问题
-
-### 页面提示“录制引擎尚未构建”
-
-确认以下任一文件存在且可执行：
-
-```text
-upstream-biliup/target/release/biliup
-upstream-biliup/target/debug/biliup
-```
-
-也可以设置 `BILIUP_BIN` 指向其他位置。
-
-### 找不到 FFmpeg / FFprobe
-
-先确认：
-
-```bash
-ffmpeg -version
-ffprobe -version
-```
-
-如果没有加入 `PATH`，可在 Y2A 设置页填写 `FFMPEG_LOCATION`，并在 `bridge.config.json` 中分别设置 `ffmpeg` 和 `ffprobe` 的绝对路径。
-
-### 录制结束后没有自动上传
-
-依次检查：
-
-1. “原始日志”中是否出现 `postprocessor`；
-2. `bridge.config.json` 中的 Cookie、分区和来源 URL；
-3. `.bridge/state.sqlite3` 对应任务是否为失败；
-4. 使用 `retry` 命令重试。
-
-### Bilibili 登录提示 curl 60 / SSL certificate problem
-
-Linux 是本项目的主要部署目标。程序会优先使用系统 CA bundle（Debian/Ubuntu、RHEL/CentOS/Fedora 和 openSUSE 的常见路径均已支持），因此通过系统方式安装的企业或代理 CA 会自动生效；找不到系统 CA 时回退到 `certifi`。macOS 会合并系统钥匙串证书作为本地开发兼容。
-
-Debian / Ubuntu 先确认 CA 包已经安装：
-
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates
-sudo update-ca-certificates
-```
-
-如果使用企业或代理 CA，可将 PEM 格式且扩展名为 `.crt` 的根证书加入系统信任库：
-
-```bash
-sudo cp company-root-ca.crt /usr/local/share/ca-certificates/
-sudo update-ca-certificates
-```
-
-然后重启 WebUI，再重新发起扫码登录。
-
-不希望修改系统信任库时，也可显式指定完整 CA bundle：
-
-```bash
-export BILIBILI_CA_BUNDLE=/absolute/path/to/company-ca-bundle.pem
-python3 run.py
-```
-
-也兼容 `CURL_CA_BUNDLE`、`SSL_CERT_FILE` 和 `REQUESTS_CA_BUNDLE`。不要通过关闭 SSL 校验规避证书错误。
-
-### 想把 ASS 烧进视频
-
-将 `danmaku_burn_in` 设为 `true`。这会重新编码整个视频，显著增加 CPU/GPU 占用和处理时间，因此默认关闭。
-
-### 端口 5001 被占用
-
-统一服务只使用一个端口，可通过 `PORT` 修改：
-
-```bash
-PORT=8080 ./y2a-auto/.venv/bin/python run.py
-```
-
-如果升级前运行过旧版，请停止旧的 `biliup server`；新版不会监听或连接 `19159`。
-
-## 数据与安全
-
-不要提交以下内容：
-
-- B站、YouTube Cookie；
-- OpenAI 或其他服务 API Key；
-- `bridge.config.json`；
-- `y2a-auto/config/`、`db/`、`logs/`、`docker-data/recordings/`；
-- `.bridge/` 状态库；
-- 下载或录制的视频、XML、ASS 文件。
-
-公开部署时请在设置中启用 Web 密码保护，并通过反向代理提供 HTTPS。当前 Flask 自带服务器适合本地使用，不建议直接暴露到公网。
-
-## 上游版本与许可证
-
-本仓库基于：
-
-- biliup：`adf6a1c03be9f777a76c8c501038c27f3d90a097`，MIT License；
-- Y2A-Auto：`4419498d365414f5cef6842c78d75f43b7172292`，GNU GPL v3。
-
-定制源码分别保留在 `upstream-biliup/` 与 `y2a-auto/`，并保留各自的许可证文件。整合分发遵循 GNU GPL v3；使用时同时遵守直播平台、视频网站及内容版权的相关规则。
+原生安装同样只监听 `5001`。内置录制 worker 不开放第二个 Web 端口。
+
+## 首次使用
+
+1. 打开“系统设置 → 账号与网络”，登录 B站或上传 Cookie。
+2. 在“AI 与自动化”填写文本模型和图片模型接口。
+3. 按需要开启自动标签、自动分区、AI 封面和无人值守投稿。
+4. 在“投稿节点探测与测试”执行一次节点测速。
+5. 打开“直播录制”，添加直播间并设置分段、分P或仅录制模式。
+6. 在“上传任务”查看每一步进度；失败任务到“人工审核”处理。
+
+## 页面入口
+
+| 页面 | 路径 |
+| --- | --- |
+| 概览 | `/` |
+| 直播录制 | `/live-recording` |
+| 上传任务 | `/tasks` |
+| 人工审核 | `/manual_review` |
+| YouTube 监控 | `/youtube_monitor` |
+| 系统设置 | `/settings` |
+
+## 许可
+
+PotatoFlow 使用 [GNU GPL v3](LICENSE) 发布。
