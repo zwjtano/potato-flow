@@ -6,6 +6,7 @@ APP_DIR="/app"
 Y2A_DIR="${APP_DIR}/y2a-auto"
 
 mkdir -p \
+  "${DATA_DIR}/.bridge" \
   "${DATA_DIR}/bridge" \
   "${DATA_DIR}/config" \
   "${DATA_DIR}/cookies" \
@@ -50,7 +51,7 @@ export POTATO_FLOW_CONTAINER_START=1
 
 # 配置、数据库和日志可能从原生安装迁移而来，需一次性修正其文件
 # 所有权；录播和下载目录通常很大，只修正目录本身，已有媒体只需可读。
-for writable_dir in bridge config cookies db logs security static-covers temp; do
+for writable_dir in .bridge bridge config cookies db logs security static-covers temp; do
   chown -R biliup-y2a:biliup-y2a "${DATA_DIR}/${writable_dir}"
 done
 chown biliup-y2a:biliup-y2a \

@@ -42,8 +42,19 @@ class DockerPackagingTests(unittest.TestCase):
         entrypoint = (ROOT / "deploy" / "docker-entrypoint.sh").read_text(
             encoding="utf-8"
         )
-        for directory in ("config", "cookies", "db", "recordings", "temp"):
+        for directory in (
+            ".bridge",
+            "config",
+            "cookies",
+            "db",
+            "recordings",
+            "temp",
+        ):
             self.assertIn(f'"${{DATA_DIR}}/{directory}"', entrypoint)
+        self.assertIn(
+            "for writable_dir in .bridge bridge config cookies db logs security static-covers temp",
+            entrypoint,
+        )
         self.assertIn(
             'link_persistent_path "${DATA_DIR}/recordings" "${APP_DIR}/recordings"',
             entrypoint,
