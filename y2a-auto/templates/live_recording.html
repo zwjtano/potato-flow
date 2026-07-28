@@ -33,7 +33,7 @@
 <section class="recorder-workspace">
     <aside class="room-pane">
         <div class="room-pane-top">
-            <div class="engine-state">
+            <div class="engine-state {{ 'is-running' if recorder_status.running else 'is-stopped' }}">
                 <span class="engine-icon {{ 'is-running' if recorder_status.running }}"><i class="bi bi-broadcast"></i></span>
                 <div><strong>录制引擎</strong><small>{{ '运行中 · PID ' ~ recorder_status.pid if recorder_status.running else '当前未运行' }}</small></div>
                 <form class="ms-auto" method="post" action="{{ url_for('live_recording_stop' if recorder_status.running else 'live_recording_start') }}">

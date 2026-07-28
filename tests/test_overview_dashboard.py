@@ -107,8 +107,18 @@ class OverviewDashboardTests(unittest.TestCase):
             'html[data-theme="dark"] .default-prompts-preview',
             'html[data-theme="dark"] .room-recording-settings-note',
             'html[data-theme="dark"] .room-setting-number',
+            'html[data-theme="dark"] .engine-state.is-stopped small',
+            'html[data-theme="dark"] .engine-icon',
         ):
             self.assertIn(selector, STYLE_SOURCE)
+
+    def test_home_metrics_use_semantic_number_colors(self):
+        for metric_class in ("metric-total", "metric-active", "metric-completed"):
+            self.assertGreaterEqual(TEMPLATE_SOURCE.count(metric_class), 2)
+            self.assertIn(
+                f'html[data-theme="dark"] .home-product-metrics .{metric_class} strong',
+                STYLE_SOURCE,
+            )
 
     def test_sidebar_icons_use_one_consistent_line_icon_set(self):
         for icon in (

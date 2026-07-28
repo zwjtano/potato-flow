@@ -50,9 +50,11 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "不要包含主播名、日期、时间和“直播回放”，最多18个中文字符。"
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
-    "生成可直接用于哔哩哔哩投稿的完整中文简介，按事件发展概括本段的主要内容、"
-    "关键时刻和观众反应；只使用输入能够支持的事实，不虚构主播原话、比赛结果或人物。"
-    "不要出现文件名、任务编号、内部路径和机械化套话，不超过1800字。"
+    "生成可直接用于哔哩哔哩投稿、内容充实的完整中文简介：先用两至四段概括主要内容、"
+    "事件发展、关键时刻和观众反应，再列出重要时间点。时间点必须来自输入弹幕的时间轴，"
+    "每行以 MM:SS 或 HH:MM:SS 开头并紧跟事件说明，以便哔哩哔哩识别为可点击跳转；"
+    "没有足够证据时宁可少列，不得编造时间或事件。只使用输入能够支持的事实，不虚构主播"
+    "原话、比赛结果或人物。不要出现文件名、任务编号、内部路径和机械化套话，不超过1800字。"
 )
 DOTA2_METADATA_DISAMBIGUATION = (
     "Dota 2 术语消歧：弹幕或直播内容中的“老奶奶”指英雄"
@@ -1754,22 +1756,26 @@ def generate_danmaku_metadata_with_ai(
             cfg.get("ai_description_prompt") or DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
         ).strip()
         system_prompt = legacy_prompt or f"""
-你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和简洁中文简介。
+你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和内容充实的中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
 description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
+description 先用两至四段按事件发展总结主要内容，再添加“重要时间点”。
+重要事件每行必须严格写成“MM:SS 事件说明”或“HH:MM:SS 事件说明”，行首不要添加项目符号、
+括号或其他字符，以便哔哩哔哩识别为可点击时间跳转。时间必须依据 sampled_comments 中已有的
+时间戳并尽量贴近对应弹幕证据；若信息不足则减少条目，禁止为了凑数编造时间或事件。
 title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
 {DOTA2_METADATA_DISAMBIGUATION}
 本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
-返回 JSON 对象：{{"title_topic":"...","description":"..."}}，description 不超过 1200 个中文字符。
+返回 JSON 对象：{{"title_topic":"...","description":"..."}}，description 不超过 1600 个中文字符。
 """.strip()
         result = _request_json_object(
             client=get_openai_client(ai_cfg),
             model_name=str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini")),
             system_prompt=system_prompt,
             payload=payload,
-            max_tokens=900,
+            max_tokens=1400,
             temperature=0.2,
             thinking_enabled=bool(ai_cfg.get("OPENAI_THINKING_ENABLED", False)),
             logger_obj=None,

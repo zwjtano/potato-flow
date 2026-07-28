@@ -42,9 +42,9 @@
         </div>
 
         <div class="home-product-metrics">
-            <div><span>监控配置</span><strong>{{ youtube_summary.monitor_total }}</strong><small>{{ youtube_summary.monitor_enabled }} 项已启用</small></div>
-            <div><span>待处理</span><strong>{{ youtube_summary.queued + youtube_summary.processing }}</strong><small>队列与处理中</small></div>
-            <div><span>今日完成</span><strong>{{ youtube_summary.completed_today }}</strong><small>已完成投稿流程</small></div>
+            <div class="metric-total"><span>监控配置</span><strong>{{ youtube_summary.monitor_total }}</strong><small>{{ youtube_summary.monitor_enabled }} 项已启用</small></div>
+            <div class="metric-active"><span>待处理</span><strong>{{ youtube_summary.queued + youtube_summary.processing }}</strong><small>队列与处理中</small></div>
+            <div class="metric-completed"><span>今日完成</span><strong>{{ youtube_summary.completed_today }}</strong><small>已完成投稿流程</small></div>
         </div>
 
         {% if youtube_summary.review %}
@@ -91,9 +91,9 @@
         </div>
 
         <div class="home-product-metrics">
-            <div><span>直播间</span><strong>{{ recording_summary.room_total }}</strong><small>{{ recording_summary.room_enabled }} 个正在监控</small></div>
-            <div><span>正在录制</span><strong>{{ recording_summary.recording_now }}</strong><small>{{ '引擎运行中' if recording_summary.engine_running else '引擎未运行' }}</small></div>
-            <div><span>今日完成</span><strong>{{ recording_summary.completed_today }}</strong><small>已完成录播流程</small></div>
+            <div class="metric-total"><span>直播间</span><strong>{{ recording_summary.room_total }}</strong><small>{{ recording_summary.room_enabled }} 个正在监控</small></div>
+            <div class="metric-active"><span>正在录制</span><strong>{{ recording_summary.recording_now }}</strong><small>{{ '引擎运行中' if recording_summary.engine_running else '引擎未运行' }}</small></div>
+            <div class="metric-completed"><span>今日完成</span><strong>{{ recording_summary.completed_today }}</strong><small>已完成录播流程</small></div>
         </div>
 
         {% if recording_summary.review %}

@@ -213,4 +213,12 @@ def select_summary_comments(comments: list[DanmakuComment], limit: int = 400) ->
 
 
 def format_comments_for_ai(comments: list[DanmakuComment]) -> str:
-    return "\n".join(f"[{int(item.time // 60):02d}:{int(item.time % 60):02d}] {item.text}" for item in comments)
+    def timestamp(seconds: float) -> str:
+        total_seconds = max(0, int(seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
+    return "\n".join(f"[{timestamp(item.time)}] {item.text}" for item in comments)

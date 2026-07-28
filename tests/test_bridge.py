@@ -14,6 +14,14 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_default_recording_description_requests_clickable_timeline(self):
+        prompt = bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
+        self.assertIn("内容充实", prompt)
+        self.assertIn("MM:SS", prompt)
+        self.assertIn("HH:MM:SS", prompt)
+        self.assertIn("可点击跳转", prompt)
+        self.assertIn("不得编造时间或事件", prompt)
+
     def test_profile_override_and_metadata(self):
         base = {
             "title_template": "{stem}",

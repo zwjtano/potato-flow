@@ -50,6 +50,25 @@ class DanmakuPipelineTests(unittest.TestCase):
             self.assertEqual(len(selected), 2)
             self.assertNotIn("uid", format_comments_for_ai(selected).lower())
 
+    def test_ai_comment_timestamps_use_bilibili_chapter_format(self):
+        comments = parse_biliup_xml(
+            self._write_xml(
+                '<d p="65,1,25,16777215,0,0,1,0">一分五秒</d>'
+                '<d p="3661,1,25,16777215,0,0,2,0">一小时一分一秒</d>'
+            )
+        )
+        formatted = format_comments_for_ai(comments)
+        self.assertIn("[01:05] 一分五秒", formatted)
+        self.assertIn("[01:01:01] 一小时一分一秒", formatted)
+
+    def _write_xml(self, body: str) -> Path:
+        temp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False)
+        temp.close()
+        path = Path(temp.name)
+        path.write_text(f"<i>{body}</i>", encoding="utf-8")
+        self.addCleanup(path.unlink, missing_ok=True)
+        return path
+
 
 if __name__ == "__main__":
     unittest.main()
