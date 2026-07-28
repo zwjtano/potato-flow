@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import re
 import secrets
@@ -28,6 +29,15 @@ CONTROL_CONFIG_KEYS = (
     "NETWORK_PROXY_PASSWORD",
 )
 CONFIRM_TTL_SECONDS = 120
+_COPYABLE_ID_PATTERN = re.compile(
+    r"(?i)(?:\b(?:user\s+|chat\s+)?(?:id|pid|bvid))\s*[:：]\s*"
+    r"(?P<value>[A-Za-z0-9][A-Za-z0-9._:-]*)"
+)
+_COPYABLE_COMMAND_PATTERN = re.compile(
+    r"(?m)/(?:start|record|stop|delete|task|retry|pause|delete_task)\s+"
+    r"(?P<value>[A-Za-z0-9][A-Za-z0-9._:-]*)"
+)
+_COPYABLE_NUMBER_PATTERN = re.compile(r"(?<![\w])(?P<value>-?\d{5,})(?![\w])")
 
 
 def _as_bool(value: Any) -> bool:
@@ -53,6 +63,37 @@ def _human_bytes(value: int | float) -> str:
             return f"{size:.1f}{unit}"
         size /= 1024
     return f"{size:.1f}TB"
+
+
+def _telegram_copyable_html(value: Any) -> tuple[str, bool]:
+    """Render ID-like values as Telegram code entities that clients can copy."""
+    text = str(value or "")
+    spans: set[tuple[int, int]] = set()
+    for pattern in (
+        _COPYABLE_ID_PATTERN,
+        _COPYABLE_COMMAND_PATTERN,
+        _COPYABLE_NUMBER_PATTERN,
+    ):
+        for match in pattern.finditer(text):
+            token = match.group("value")
+            if pattern is _COPYABLE_COMMAND_PATTERN and not any(
+                character.isdigit() for character in token
+            ):
+                continue
+            spans.add(match.span("value"))
+    if not spans:
+        return text, False
+
+    output: list[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        if start < cursor:
+            continue
+        output.append(html.escape(text[cursor:start], quote=False))
+        output.append(f"<code>{html.escape(text[start:end], quote=False)}</code>")
+        cursor = end
+    output.append(html.escape(text[cursor:], quote=False))
+    return "".join(output), True
 
 
 @dataclass
@@ -207,11 +248,14 @@ class TelegramControlService:
         *,
         reply_markup: dict[str, Any] | None = None,
     ) -> Any:
+        rendered_text, has_copyable_values = _telegram_copyable_html(str(text)[:3800])
         payload: dict[str, Any] = {
             "chat_id": chat_id,
-            "text": str(text)[:4096],
+            "text": rendered_text,
             "disable_web_page_preview": True,
         }
+        if has_copyable_values:
+            payload["parse_mode"] = "HTML"
         if reply_markup:
             payload["reply_markup"] = reply_markup
         return self._api("sendMessage", payload)

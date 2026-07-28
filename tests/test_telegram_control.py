@@ -238,6 +238,8 @@ class TelegramControlTests(unittest.TestCase):
 
         self.assertEqual(self.manager.controls, [])
         self.assertIn("无权操作", self.session.last_payload["text"])
+        self.assertIn("User ID：<code>9999</code>", self.session.last_payload["text"])
+        self.assertEqual(self.session.last_payload["parse_mode"], "HTML")
 
     def test_commands_from_other_chat_are_ignored(self):
         self.service.process_update(_message_update("/stop 1", chat_id="-999"))
@@ -300,7 +302,11 @@ class TelegramControlTests(unittest.TestCase):
 
         self.assertIn("1. ⏳ YYF · processing · upload", self.session.last_payload["text"])
         self.assertIn("正在投稿的录播", self.session.last_payload["text"])
-        self.assertIn("ID: DYU-YYF-0728-001", self.session.last_payload["text"])
+        self.assertIn(
+            "ID: <code>DYU-YYF-0728-001</code>",
+            self.session.last_payload["text"],
+        )
+        self.assertEqual(self.session.last_payload["parse_mode"], "HTML")
 
     def test_task_detail_shows_upload_percentage_speed_and_actions(self):
         self.service.process_update(_message_update("/task 1"))
@@ -308,7 +314,14 @@ class TelegramControlTests(unittest.TestCase):
         text = self.session.last_payload["text"]
         self.assertIn("上传：50.00%", text)
         self.assertIn("速度：10.0B/s", text)
-        self.assertIn("/pause DYU-YYF-0728-001", text)
+        self.assertIn("/pause <code>DYU-YYF-0728-001</code>", text)
+
+    def test_engine_pid_is_copyable(self):
+        self.service.process_update(_message_update("/engine"))
+
+        payload = self.session.last_payload
+        self.assertIn("进程 PID：<code>123</code>", payload["text"])
+        self.assertEqual(payload["parse_mode"], "HTML")
 
     def test_retry_and_pause_task_commands_use_manager(self):
         self.service.process_update(_message_update("/retry 2"))
