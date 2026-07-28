@@ -185,6 +185,43 @@ html[data-theme="dark"] .app-restart-required { color: #fbbf24; }
 .room-ai-prompts-card > summary > span:nth-child(2) { display: flex; min-width: 0; flex-direction: column; }
 .room-ai-prompts-card > summary strong { color: #202b3a; font-size: 15px; }
 .room-ai-prompts-card > summary small { margin-top: 3px; color: #8a94a3; font-size: 11px; }
+.room-recording-summary-meta,
+.room-recording-summary-account {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+}
+.room-recording-summary-meta { gap: 12px; }
+.room-recording-summary-account {
+    max-width: 150px;
+    gap: 7px;
+    color: #526274;
+}
+.room-recording-summary-account > strong {
+    overflow: hidden;
+    color: inherit !important;
+    font-size: 11px !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.room-recording-summary-avatar {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    place-items: center;
+    overflow: hidden;
+    color: #138ab2;
+    border: 1px solid #c8dae7;
+    border-radius: 50%;
+    background: #e8f6fb;
+    font-size: 10px;
+}
+.room-recording-summary-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
 .room-ai-prompts-icon { display: grid; width: 36px; height: 36px; place-items: center; color: #176fc1; border-radius: 10px; background: #eaf4ff; font-size: 15px; }
 .room-ai-prompts-icon.recording-settings { color: #8a5a16; background: #fff3d7; }
 .room-ai-prompts-chevron { color: #9ca3af; transition: transform .2s ease; }
@@ -523,6 +560,7 @@ html[data-theme="dark"] .stop-recording-modal .btn-light:hover {
     .runtime-metrics { grid-template-columns: 1fr 1fr; }
     .room-ai-prompts-card > summary { grid-template-columns: 32px minmax(0, 1fr) 16px; padding: 14px; }
     .room-ai-prompts-card > summary .badge { display: none; }
+    .room-recording-summary-account { max-width: 110px; }
     .room-ai-prompts-form { padding-right: 14px; padding-left: 14px; }
     .room-reference-editor { grid-template-columns: 1fr; }
     .room-reference-preview { min-height: 160px; }
@@ -1106,6 +1144,219 @@ html[data-theme="dark"] .stop-recording-modal .btn-light:hover {
 }
 .settings-toggle-label:has(input[type='checkbox']:disabled:checked)::after {
     content: "固定开启";
+}
+.bilibili-account-list {
+    display: grid;
+    gap: .65rem;
+}
+.bilibili-account-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .7rem;
+    padding: .75rem;
+    border: 1px solid #dce5ee;
+    border-radius: .75rem;
+    background: #f8fafc;
+}
+.bilibili-account-avatar {
+    display: grid;
+    width: 2.35rem;
+    height: 2.35rem;
+    flex: 0 0 auto;
+    place-items: center;
+    color: #008fbd;
+    border-radius: .7rem;
+    background: #e2f7ff;
+    font-size: 1.1rem;
+    overflow: hidden;
+}
+.bilibili-account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.bilibili-account-copy {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+}
+.bilibili-account-copy strong,
+.bilibili-account-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bilibili-account-copy small { color: #6b7b8e; }
+.bilibili-account-picker {
+    width: 100%;
+    min-width: 0;
+}
+.bilibili-account-picker-toggle,
+.bilibili-account-picker-option {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    gap: .75rem;
+}
+.bilibili-account-picker-toggle {
+    min-height: 4.25rem;
+    padding: .65rem .8rem;
+    color: #1d2b3a;
+    border: 1px solid #b9c9d8;
+    border-radius: .75rem;
+    background: #fff;
+    text-align: left;
+}
+.bilibili-account-picker-toggle:hover,
+.bilibili-account-picker-toggle:focus,
+.bilibili-account-picker.show .bilibili-account-picker-toggle {
+    border-color: #27b9e6;
+    box-shadow: 0 0 0 .2rem rgba(0, 184, 230, .12);
+    outline: 0;
+}
+.bilibili-account-picker-avatar {
+    display: grid;
+    width: 2.65rem;
+    height: 2.65rem;
+    flex: 0 0 auto;
+    place-items: center;
+    overflow: hidden;
+    color: #008fbd;
+    border: 1px solid #cbe1ed;
+    border-radius: 50%;
+    background: #e9f8fd;
+    font-size: 1.05rem;
+}
+.bilibili-account-picker-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.bilibili-account-picker-copy {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+}
+.bilibili-account-picker-copy strong,
+.bilibili-account-picker-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bilibili-account-picker-copy strong { font-size: .98rem; }
+.bilibili-account-picker-copy small {
+    color: #718397;
+    font-size: .8rem;
+    font-weight: 500;
+}
+.bilibili-account-picker-chevron {
+    flex: 0 0 auto;
+    color: #718397;
+}
+.bilibili-account-picker-menu {
+    width: 100%;
+    max-height: 18rem;
+    padding: .4rem;
+    overflow-y: auto;
+    border-radius: .75rem;
+}
+.bilibili-account-picker-option {
+    padding: .55rem .6rem;
+    border-radius: .55rem;
+}
+.bilibili-account-picker-option.active,
+.bilibili-account-picker-option:active {
+    color: #083849;
+    background: #dff7ff;
+}
+.bilibili-account-picker-option.active .bilibili-account-picker-copy small {
+    color: #347185;
+}
+.bilibili-account-badges,
+.bilibili-account-login-actions,
+.bilibili-account-add-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+.bilibili-account-login-actions {
+    flex-basis: 100%;
+    padding-top: .65rem;
+    margin-left: 3.05rem;
+    border-top: 1px dashed #dce5ee;
+}
+.bilibili-account-add-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px dashed #b9cad9;
+    border-radius: .8rem;
+    background: #f7fbfe;
+}
+.settings-qrcode-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: .75rem;
+}
+html[data-theme="dark"] .bilibili-account-row {
+    border-color: #33495d;
+    background: #14212c;
+}
+html[data-theme="dark"] .bilibili-account-avatar {
+    color: #72ddff;
+    background: #123747;
+}
+html[data-theme="dark"] .bilibili-account-copy small { color: #9db0c2; }
+html[data-theme="dark"] .bilibili-account-picker-toggle {
+    color: #e6eef6;
+    border-color: #40576b;
+    background: #111e29;
+}
+html[data-theme="dark"] .bilibili-account-picker-avatar {
+    color: #72ddff;
+    border-color: #40576b;
+    background: #173344;
+}
+html[data-theme="dark"] .bilibili-account-picker-copy small,
+html[data-theme="dark"] .bilibili-account-picker-chevron {
+    color: #9db0c2;
+}
+html[data-theme="dark"] .bilibili-account-picker-menu {
+    border-color: #40576b;
+    background: #14212c;
+}
+html[data-theme="dark"] .bilibili-account-picker-option {
+    color: #dce8f2;
+}
+html[data-theme="dark"] .bilibili-account-picker-option:hover,
+html[data-theme="dark"] .bilibili-account-picker-option:focus,
+html[data-theme="dark"] .bilibili-account-picker-option.active {
+    color: #eafaff;
+    background: #123e50;
+}
+html[data-theme="dark"] .bilibili-account-login-actions { border-color: #33495d; }
+html[data-theme="dark"] .bilibili-account-add-panel {
+    border-color: #40566b;
+    background: #111e29;
+}
+@media (max-width: 575.98px) {
+    .bilibili-account-row { flex-wrap: wrap; }
+    .bilibili-account-copy { flex-basis: calc(100% - 3.1rem); }
+    .bilibili-account-badges,
+    .bilibili-account-login-actions {
+        flex-basis: 100%;
+        margin-left: 0;
+    }
+    .bilibili-account-add-panel {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .bilibili-account-add-actions .btn { flex: 1; }
 }
 html[data-theme="dark"] .settings-toggle-label input[type='checkbox'] {
     border-color: #7890a5;
@@ -2962,6 +3213,12 @@ html[data-theme="dark"] .home-product-heading h2,
 html[data-theme="dark"] .home-product-metrics strong,
 html[data-theme="dark"] .room-empty strong,
 html[data-theme="dark"] .room-ai-prompts-card > summary strong { color: var(--studio-text); }
+html[data-theme="dark"] .room-recording-summary-account { color: #b8c8d7; }
+html[data-theme="dark"] .room-recording-summary-avatar {
+    color: #78dcf7;
+    border-color: #40576b;
+    background: #173344;
+}
 html[data-theme="dark"] .studio-page-header p,
 html[data-theme="dark"] .home-welcome p,
 html[data-theme="dark"] .home-product-description,

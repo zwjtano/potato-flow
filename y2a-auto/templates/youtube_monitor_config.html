@@ -43,6 +43,66 @@
                             </div>
                         </div>
                     </div>
+                    <div class="mb-3">
+                        <label for="bilibili_account_id" class="form-label">B站投稿账号</label>
+                        {% set selected_bilibili_account_id = config.bilibili_account_id if config and config.bilibili_account_id else bilibili_default_account_id %}
+                        <div class="bilibili-account-picker dropdown" data-role="bilibili-account-picker">
+                            <input type="hidden" id="bilibili_account_id" name="bilibili_account_id"
+                                   value="{{ selected_bilibili_account_id }}">
+                            <button class="bilibili-account-picker-toggle" type="button"
+                                    data-bs-toggle="dropdown" aria-expanded="false">
+                            {% for account in bilibili_accounts %}
+                                {% if account.id == selected_bilibili_account_id %}
+                                <span class="bilibili-account-picker-avatar" data-role="selected-account-avatar">
+                                    {% if account.avatar_url %}
+                                    <img src="{{ account.avatar_url }}" alt="" referrerpolicy="no-referrer">
+                                    {% else %}
+                                    <i class="bi bi-person-fill"></i>
+                                    {% endif %}
+                                </span>
+                                <span class="bilibili-account-picker-copy">
+                                    <strong data-role="selected-account-name">{{ account.name }}</strong>
+                                    <small data-role="selected-account-uid">
+                                        {{ 'UID ' ~ account.bilibili_uid if account.bilibili_uid else 'UID 未识别' }}
+                                    </small>
+                                </span>
+                                {% endif %}
+                            {% endfor %}
+                                <i class="bi bi-chevron-down bilibili-account-picker-chevron"></i>
+                            </button>
+                            <ul class="dropdown-menu bilibili-account-picker-menu">
+                                {% for account in bilibili_accounts %}
+                                <li>
+                                    <button type="button"
+                                            class="dropdown-item bilibili-account-picker-option{% if account.id == selected_bilibili_account_id %} active{% endif %}"
+                                            data-role="bilibili-account-option"
+                                            data-account-id="{{ account.id }}"
+                                            data-account-name="{{ account.name }}"
+                                            data-account-uid="{{ account.bilibili_uid }}"
+                                            data-account-avatar="{{ account.avatar_url }}">
+                                        <span class="bilibili-account-picker-avatar">
+                                            {% if account.avatar_url %}
+                                            <img src="{{ account.avatar_url }}" alt="" referrerpolicy="no-referrer">
+                                            {% else %}
+                                            <i class="bi bi-person-fill"></i>
+                                            {% endif %}
+                                        </span>
+                                        <span class="bilibili-account-picker-copy">
+                                            <strong>{{ account.name }}</strong>
+                                            <small>{{ 'UID ' ~ account.bilibili_uid if account.bilibili_uid else 'UID 未识别' }}</small>
+                                        </span>
+                                        {% if account.id == bilibili_default_account_id %}
+                                        <span class="badge rounded-pill text-bg-primary ms-auto">默认</span>
+                                        {% endif %}
+                                    </button>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        <div class="form-text">
+                            此监控自动或手动创建的投稿任务都会固定使用该账号，后续重试和续传不会切换账号。
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -919,6 +979,41 @@ function loadTemplate(templateType) {
 document.addEventListener('DOMContentLoaded', function() {
     // 初始化监控类型选择（基于现有配置）
     initializeFormState();
+
+    document.querySelectorAll('[data-role="bilibili-account-picker"]').forEach(function(picker) {
+        const input = picker.querySelector('input[name="bilibili_account_id"]');
+        const selectedAvatar = picker.querySelector('[data-role="selected-account-avatar"]');
+        const selectedName = picker.querySelector('[data-role="selected-account-name"]');
+        const selectedUid = picker.querySelector('[data-role="selected-account-uid"]');
+        picker.querySelectorAll('[data-role="bilibili-account-option"]').forEach(function(option) {
+            option.addEventListener('click', function() {
+                if (input) input.value = option.dataset.accountId || '';
+                if (selectedName) selectedName.textContent = option.dataset.accountName || 'B站账号';
+                if (selectedUid) {
+                    selectedUid.textContent = option.dataset.accountUid
+                        ? 'UID ' + option.dataset.accountUid
+                        : 'UID 未识别';
+                }
+                if (selectedAvatar) {
+                    selectedAvatar.replaceChildren();
+                    if (option.dataset.accountAvatar) {
+                        const image = document.createElement('img');
+                        image.src = option.dataset.accountAvatar;
+                        image.alt = '';
+                        image.referrerPolicy = 'no-referrer';
+                        selectedAvatar.appendChild(image);
+                    } else {
+                        const icon = document.createElement('i');
+                        icon.className = 'bi bi-person-fill';
+                        selectedAvatar.appendChild(icon);
+                    }
+                }
+                picker.querySelectorAll('[data-role="bilibili-account-option"]').forEach(function(item) {
+                    item.classList.toggle('active', item === option);
+                });
+            });
+        });
+    });
     
     // 确保状态正确恢复
     setTimeout(function() {

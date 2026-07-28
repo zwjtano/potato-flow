@@ -65,8 +65,13 @@
         <tbody>
                     {% for config in configs %}
                     <tr>
-            <td data-label="名称">
+                        <td data-label="名称">
                             <strong>{{ config.name }}</strong>
+                            <br><small class="text-primary">
+                                <i class="bi bi-person-circle"></i>
+                                投稿：{{ config.bilibili_account_name }}
+                                {% if config.bilibili_account_uid %}· UID {{ config.bilibili_account_uid }}{% endif %}
+                            </small>
                             {% if config.monitor_type == 'youtube_search' and config.keywords %}
                                 <br><small class="text-muted" title="{{ config.keywords }}">关键词: {{ config.keywords[:30] }}{% if config.keywords|length > 30 %}...{% endif %}</small>
                             {% elif config.monitor_type == 'channel_monitor' and config.channel_ids %}

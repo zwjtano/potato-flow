@@ -148,6 +148,27 @@ async def _check_credential_remote(credential: Credential) -> bool:
     return data.get("code") == 0 and bool(body.get("isLogin"))
 
 
+async def _get_credential_identity(credential: Credential) -> Dict[str, str]:
+    cookies = await credential.get_buvid_cookies()
+    resp = await get_client().request(
+        method="GET",
+        url="https://api.bilibili.com/x/web-interface/nav",
+        headers=HEADERS.copy(),
+        cookies=cookies,
+    )
+    if resp.code != 200:
+        raise RuntimeError(f"Bilibili 账号信息接口返回 HTTP {resp.code}")
+    data = resp.json()
+    body = data.get("data") or {}
+    if data.get("code") != 0 or not body.get("isLogin"):
+        raise RuntimeError(str(data.get("message") or "Bilibili 登录态无效"))
+    return {
+        "uid": str(body.get("mid") or "").strip(),
+        "name": str(body.get("uname") or "").strip(),
+        "avatar_url": str(body.get("face") or "").strip(),
+    }
+
+
 def validate_credential_remote(credential: Credential) -> Tuple[bool, str]:
     ok, msg = validate_credential(credential)
     if not ok:
@@ -169,6 +190,12 @@ def load_credential_from_file(cookie_file: str) -> Credential:
     if not ok:
         raise ValueError(msg)
     return credential
+
+
+def get_account_identity(cookie_file: str) -> Dict[str, str]:
+    """Return the logged-in Bilibili user's public identity."""
+    credential = load_credential_from_file(cookie_file)
+    return _run_async(_get_credential_identity(credential))
 
 
 def save_credential_to_file(credential: Credential, cookie_file: str) -> bool:

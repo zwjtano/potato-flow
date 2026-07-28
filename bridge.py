@@ -2291,6 +2291,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                    "original_cover": str(original_cover), "platform": platform,
                    "title": title, "description": description, "tags": tags, "source_url": source_url,
                    "partition_id": partition, "metadata_automation": metadata_automation,
+                   "bilibili_account_id": str(cfg.get("bilibili_account_id") or ""),
+                   "bilibili_account_name": str(cfg.get("bilibili_account_name") or ""),
                    "cover_generation": cover_generation,
                    "multipart_session": session_key or None, "part_number": part_number,
                    "page_title": page_title, "part_title": part_generated_title,
@@ -2310,6 +2312,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "partition_id": partition,
             "part_number": part_number,
             "page_title": page_title,
+            "bilibili_account_id": str(cfg.get("bilibili_account_id") or ""),
+            "bilibili_account_name": str(cfg.get("bilibili_account_name") or ""),
             "existing_bvid": (
                 existing_submission.get("bvid")
                 if isinstance(existing_submission, dict)

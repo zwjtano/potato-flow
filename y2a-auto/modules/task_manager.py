@@ -38,6 +38,7 @@ from .task_lifecycle import (
     YOUTUBE_PAUSABLE_STATUSES,
 )
 from .task_runtime import TaskLeaseStore
+from .bilibili_accounts import resolve_account
 
 def _get_memory_usage_percent():
     """获取系统内存使用百分比，用于内存感知处理"""
@@ -1020,7 +1021,8 @@ def init_db():
         acfun_upload_response TEXT,
         bilibili_upload_response TEXT,
         asr_warning_message TEXT,  -- ASR/VAD阶段的非致命警告（如vad_low_coverage），不影响上传流程
-        subtitle_warning_message TEXT  -- 字幕处理阶段的非致命警告（如烧录失败），不影响上传流程
+        subtitle_warning_message TEXT,  -- 字幕处理阶段的非致命警告（如烧录失败），不影响上传流程
+        bilibili_account_id TEXT DEFAULT ''
     )
     ''')
     
@@ -1082,6 +1084,11 @@ def init_db():
         if 'bilibili_upload_response' not in columns:
             cursor.execute("ALTER TABLE tasks ADD COLUMN bilibili_upload_response TEXT")
             logger.info("数据库升级：添加bilibili_upload_response字段")
+            conn.commit()
+
+        if 'bilibili_account_id' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN bilibili_account_id TEXT DEFAULT ''")
+            logger.info("数据库升级：添加bilibili_account_id字段")
             conn.commit()
 
         if 'recommended_partition_id_acfun' not in columns:
@@ -1200,7 +1207,7 @@ def get_db_connection():
         logger.debug(f"设置SQLite连接参数失败，将使用默认参数: {e}")
     return conn
 
-def add_task(youtube_url, upload_target=None):
+def add_task(youtube_url, upload_target=None, bilibili_account_id=None):
     """
     添加新任务到数据库
     
@@ -1223,9 +1230,16 @@ def add_task(youtube_url, upload_target=None):
         display_id = _next_task_display_id(conn)
         conn.execute(
             """INSERT INTO tasks
-               (id, display_id, youtube_url, upload_target, status)
-               VALUES (?, ?, ?, ?, ?)""",
-            (task_id, display_id, youtube_url, normalized_target, TASK_STATES['PENDING'])
+               (id, display_id, youtube_url, upload_target, bilibili_account_id, status)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                task_id,
+                display_id,
+                youtube_url,
+                normalized_target,
+                str(bilibili_account_id or "").strip(),
+                TASK_STATES['PENDING'],
+            )
         )
         conn.commit()
         logger.info(
@@ -7650,12 +7664,23 @@ class TaskProcessor:
                 except Exception:
                     pass
 
+        from .config_manager import load_config
+
+        bilibili_account = resolve_account(
+            load_config(),
+            task.get('bilibili_account_id') if task else None,
+        )
         bilibili_cookies_path = resolve_cookie_file_path(
-            path_value=self.config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json'),
+            path_value=bilibili_account.get('cookies_path'),
             default_relative_path='cookies/bili_cookies.json',
-            service_name='Bilibili',
+            service_name=f"Bilibili（{bilibili_account.get('name') or '默认账号'}）",
             logger_obj=task_logger,
             allow_json_txt_fallback=False,
+        )
+        task_logger.info(
+            "本任务使用 B站投稿账号：%s (%s)",
+            bilibili_account.get('name'),
+            bilibili_account.get('id'),
         )
 
         # 固定 bilibili 分区优先；否则使用任务分区。并校验分区合法性

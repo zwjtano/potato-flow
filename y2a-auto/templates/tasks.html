@@ -151,7 +151,10 @@
                                     {% else %}
                                     <span class="recording-room-avatar fallback"><i class="bi bi-person-video3"></i></span>
                                     {% endif %}
-                                    <span class="small">{{ job.room_name }}</span>
+                                    <span>
+                                        <span class="small d-block">{{ job.room_name }}</span>
+                                        <small class="text-muted">{{ job.bilibili_account_name }} · {{ 'UID ' ~ job.bilibili_account_uid if job.bilibili_account_uid else 'UID 未识别' }}</small>
+                                    </span>
                                 </div>
                             </td>
                             <td class="text-center">
@@ -256,6 +259,7 @@
                                     {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
                                 </div>
                                 <div class="small text-muted mt-1">{{ job.room_name }}</div>
+                                <div class="small text-muted">{{ job.bilibili_account_name }} · {{ 'UID ' ~ job.bilibili_account_uid if job.bilibili_account_uid else 'UID 未识别' }}</div>
                             </div>
                         </div>
                         {% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
@@ -441,6 +445,17 @@
                         <input type="hidden" id="upload_target" name="upload_target" value="bilibili">
                         <input class="form-control" value="哔哩哔哩" disabled>
                         <div class="form-text">本整合版的投稿目标固定为哔哩哔哩</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="bilibili_account_id" class="form-label">B站投稿账号</label>
+                        <select class="form-select" id="bilibili_account_id" name="bilibili_account_id">
+                            {% for account in bilibili_accounts %}
+                            <option value="{{ account.id }}" {% if account.id == bilibili_default_account_id %}selected{% endif %}>
+                                {{ account.name }} · {{ 'UID ' ~ account.bilibili_uid if account.bilibili_uid else 'UID 未识别' }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">账号会绑定到任务，重试时不会跟随默认账号变化。</div>
                     </div>
                 </div>
                 <div class="modal-footer">

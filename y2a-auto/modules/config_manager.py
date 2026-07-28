@@ -76,6 +76,11 @@ DEFAULT_CONFIG = {
     "LOGIN_SESSION_TIMEOUT_MINUTES": 30,  # 登录空闲超时时长（分钟）
     "YOUTUBE_COOKIES_PATH": "cookies/yt_cookies.txt", # 相对于项目根目录
     "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径
+    "BILIBILI_ACCOUNT_NAME": "", # 默认兼容账号的 B站昵称
+    "BILIBILI_ACCOUNT_UID": "", # 默认兼容账号的 B站 UID
+    "BILIBILI_ACCOUNT_AVATAR_URL": "", # 默认兼容账号头像
+    "BILIBILI_ACCOUNTS": [], # 额外的 B站投稿账号；旧单账号始终作为 default 保留
+    "BILIBILI_DEFAULT_ACCOUNT_ID": "default", # 新任务未指定账号时使用
     "BILIBILI_UPLOAD_ENGINE": "biliup", # B站投稿统一使用 biliup
     "BILIBILI_UPLOAD_LINE": "bldsa", # 全局缓存的投稿线路，可在系统设置手动测速更换
     "BILIBILI_UPLOAD_LIMIT": 3, # 单文件上传并发数

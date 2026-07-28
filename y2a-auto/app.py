@@ -84,6 +84,16 @@ from modules.task_queue_view import (
     recording_queue_bucket,
     youtube_queue_bucket,
 )
+from modules.bilibili_accounts import (
+    DEFAULT_ACCOUNT_CONFIG_KEY,
+    LEGACY_ACCOUNT_ID,
+    account_cookie_destination,
+    create_account_record,
+    default_account_id,
+    normalize_accounts,
+    resolve_account,
+    serialize_custom_accounts,
+)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # 用于flash消息
@@ -417,7 +427,7 @@ def _cleanup_bilibili_qr_sessions():
             _BILIBILI_QR_SESSIONS.pop(sid, None)
 
 
-def _create_bilibili_qr_session():
+def _create_bilibili_qr_session(**metadata):
     _cleanup_bilibili_qr_sessions()
     session_id = str(uuid.uuid4())
     session_obj = BilibiliQrLoginSession()
@@ -427,19 +437,23 @@ def _create_bilibili_qr_session():
             'session': session_obj,
             'success_notified': False,
             'failure_notified': False,
+            **metadata,
         }
     return session_id, session_obj
 
 
-def _get_bilibili_qr_session(session_id: str):
+def _get_bilibili_qr_session_item(session_id: str):
     if not session_id:
         return None
     _cleanup_bilibili_qr_sessions()
     with _BILIBILI_QR_SESSION_LOCK:
         item = _BILIBILI_QR_SESSIONS.get(session_id)
-    if not item:
-        return None
-    return item.get('session')
+    return item
+
+
+def _get_bilibili_qr_session(session_id: str):
+    item = _get_bilibili_qr_session_item(session_id)
+    return item.get('session') if item else None
 
 
 def _mark_qr_notification_sent(session_store: dict, lock: threading.Lock, session_id: str, success: bool) -> bool:
@@ -1272,6 +1286,7 @@ def live_recording():
         else (str(rooms[0].get('id')) if rooms else '')
     )
     recording_files = live_recorder_manager.recording_files(limit=500).get("files", [])
+    config = load_config()
     return render_template(
         'live_recording.html',
         rooms=rooms,
@@ -1280,6 +1295,8 @@ def live_recording():
         recorder_log=live_recorder_manager.tail_log(),
         recording_prompt_defaults=live_recorder_manager.recording_prompt_defaults(),
         selected_room_id=selected_room_id,
+        bilibili_accounts=normalize_accounts(config),
+        bilibili_default_account_id=default_account_id(config),
     )
 
 
@@ -1504,6 +1521,7 @@ def live_recording_save_room():
             record_only=_coerce_checkbox_value(
                 request.form.get('record_only', 'off')
             ),
+            bilibili_account_id=request.form.get('bilibili_account_id', ''),
         )
         room_name = str(room.get('name') or '直播间')
         if reload_state == 'reloaded':
@@ -1606,6 +1624,7 @@ def live_recording_room_recording_settings(room_id):
             record_only=_coerce_checkbox_value(
                 request.form.get('record_only', 'off')
             ),
+            bilibili_account_id=request.form.get('bilibili_account_id', ''),
         )
         room_name = str(room.get('name') or '直播间')
         if reload_state == 'pending':
@@ -2390,7 +2409,12 @@ def tasks():
     queue_filter = normalize_queue_filter(request.args.get('status'))
     source_filter = normalize_source_filter(request.args.get('source'))
 
+    config = load_config()
     all_youtube_tasks = get_all_tasks()
+    for task in all_youtube_tasks:
+        account = resolve_account(config, task.get('bilibili_account_id'))
+        task['bilibili_account_name'] = account['name']
+        task['bilibili_account_uid'] = account.get('bilibili_uid', '')
     all_recording_jobs = live_recorder_manager.pipeline_jobs(500)
     queue_summary = build_queue_summary(all_youtube_tasks, all_recording_jobs)
 
@@ -2405,8 +2429,6 @@ def tasks():
         else []
     )
     pagination_data = paginate_items(youtube_tasks, page=page, per_page=per_page)
-    config = load_config()
-    
     return render_template('tasks.html', 
                          tasks=pagination_data['tasks'],
                          recording_jobs=recording_jobs,
@@ -2414,12 +2436,20 @@ def tasks():
                          config=config,
                          queue_summary=queue_summary,
                          queue_filter=queue_filter,
-                         source_filter=source_filter)
+                         source_filter=source_filter,
+                         bilibili_accounts=normalize_accounts(config),
+                         bilibili_default_account_id=default_account_id(config))
 
 
 def _render_task_fragments(task: dict, config: dict | None = None) -> dict:
     if config is None:
         config = load_config()
+    account = resolve_account(config, task.get('bilibili_account_id'))
+    task = {
+        **task,
+        'bilibili_account_name': account['name'],
+        'bilibili_account_uid': account.get('bilibili_uid', ''),
+    }
 
     return {
         'task_id': task.get('id'),
@@ -2721,6 +2751,10 @@ def add_task_route():
         return redirect(url_for('tasks'))
 
     config = load_config()
+    selected_account = resolve_account(
+        config,
+        request.form.get('bilibili_account_id', ''),
+    )
     # 判断是否为播放列表URL
     if 'youtube.com/playlist' in youtube_url or 'youtu.be/playlist' in youtube_url:
         # 提取所有视频URL
@@ -2731,13 +2765,21 @@ def add_task_route():
             return redirect(url_for('tasks'))
         added_count = 0
         for url in video_urls:
-            task_id = add_task(url, upload_target=upload_target)
+            task_id = add_task(
+                url,
+                upload_target=upload_target,
+                bilibili_account_id=selected_account['id'],
+            )
             if task_id:
                 added_count += 1
         flash(f'已批量添加 {added_count} 个视频任务（来自播放列表）', 'success')
         return redirect(url_for('tasks'))
     else:
-        task_id = add_task(youtube_url, upload_target=upload_target)
+        task_id = add_task(
+            youtube_url,
+            upload_target=upload_target,
+            bilibili_account_id=selected_account['id'],
+        )
         if task_id:
             if config.get('AUTO_MODE_ENABLED', False):
                 logger.info(f"自动模式已启用，立即开始处理任务 {task_id}")
@@ -3329,6 +3371,29 @@ def settings():
     
     # GET请求，显示设置页面
     config = load_config()
+    try:
+        from modules.bilibili_auth import get_account_identity
+
+        legacy_account = resolve_account(config, LEGACY_ACCOUNT_ID)
+        legacy_cookie = resolve_cookie_file_path(
+            legacy_account.get('cookies_path'),
+            'cookies/bili_cookies.json',
+            allow_json_txt_fallback=False,
+        )
+        if legacy_cookie and os.path.isfile(legacy_cookie):
+            identity = get_account_identity(legacy_cookie)
+            identity_changes = {
+                'BILIBILI_ACCOUNT_NAME': identity.get('name', ''),
+                'BILIBILI_ACCOUNT_UID': identity.get('uid', ''),
+                'BILIBILI_ACCOUNT_AVATAR_URL': identity.get('avatar_url', ''),
+            }
+            if any(
+                str(config.get(key) or '') != str(value or '')
+                for key, value in identity_changes.items()
+            ):
+                config = update_config(identity_changes)
+    except Exception as exc:
+        logger.debug("读取默认 B站账号名称失败，继续显示 Cookie 内 UID: %s", exc)
     bilibili_partition_mapping = _build_bilibili_partition_mapping()
     try:
         from modules.prompt_manager import get_builtin_prompt_previews
@@ -3339,11 +3404,193 @@ def settings():
     return render_template(
         'settings.html',
         config=config,
+        bilibili_accounts=normalize_accounts(config),
+        bilibili_default_account_id=default_account_id(config),
         whisper_languages=WHISPER_LANGUAGE_LIST,
         bilibili_partition_mapping=bilibili_partition_mapping,
         builtin_prompts=builtin_prompts,
         recordings_path=str(recordings_dir()),
     )
+
+
+@app.route('/settings/bilibili-accounts', methods=['POST'])
+@login_required
+def add_bilibili_account():
+    from modules.task_manager import validate_cookies
+    from modules.bilibili_auth import get_account_identity
+
+    upload = request.files.get('bilibili_account_cookie_file')
+    try:
+        if not upload or not str(upload.filename or '').strip():
+            raise ValueError('请选择账号 Cookies 文件')
+        config = load_config()
+        account = create_account_record(
+            '',
+            upload.filename,
+        )
+        destination = account_cookie_destination(account)
+        temporary = destination.with_name(f".{destination.name}.upload")
+        upload.save(temporary)
+        valid, error = validate_cookies(str(temporary), f"Bilibili（{account['name']}）")
+        if not valid:
+            temporary.unlink(missing_ok=True)
+            raise ValueError(f'Cookies 文件无效：{error}')
+        try:
+            identity = get_account_identity(str(temporary))
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            raise ValueError(f'无法读取 B站真实昵称，请确认 Cookie 有效：{exc}') from exc
+        if not identity.get('name') or not identity.get('uid'):
+            temporary.unlink(missing_ok=True)
+            raise ValueError('B站账号信息缺少真实昵称或 UID，请重新登录后导出 Cookie')
+        account.update({
+            'name': identity['name'],
+            'bilibili_name': identity['name'],
+            'bilibili_uid': identity['uid'],
+            'avatar_url': identity.get('avatar_url', ''),
+        })
+        temporary.replace(destination)
+
+        custom_accounts = serialize_custom_accounts(normalize_accounts(config))
+        custom_accounts.append(account)
+        changes = {'BILIBILI_ACCOUNTS': custom_accounts}
+        if _coerce_checkbox_value(request.form.get('make_default', 'off')):
+            changes[DEFAULT_ACCOUNT_CONFIG_KEY] = account['id']
+        update_config(changes)
+        try:
+            live_recorder_manager.refresh_credentials()
+        except RecorderConfigError as exc:
+            logger.warning("B站账号池已保存，但录制配置重载失败: %s", exc)
+        flash(f"已添加 B站投稿账号“{account['name']}”。", 'success')
+    except (OSError, ValueError) as exc:
+        flash(str(exc), 'danger')
+    return redirect(url_for('settings') + '#vtab-accounts')
+
+
+@app.route('/settings/bilibili-accounts/<account_id>/cookies', methods=['POST'])
+@login_required
+def update_bilibili_account_cookies(account_id):
+    """Replace one account's Cookie and refresh its public identity."""
+    from modules.task_manager import validate_cookies
+    from modules.bilibili_auth import get_account_identity
+
+    upload = request.files.get('bilibili_account_cookie_file')
+    try:
+        config = load_config()
+        account = next(
+            (item for item in normalize_accounts(config) if item['id'] == account_id),
+            None,
+        )
+        if not account:
+            raise ValueError('没有找到该 B站投稿账号')
+        if not upload or not str(upload.filename or '').strip():
+            raise ValueError('请选择账号 Cookies 文件')
+
+        if account_id == LEGACY_ACCOUNT_ID:
+            destination = Path(resolve_cookie_file_path(
+                path_value=account['cookies_path'],
+                default_relative_path='cookies/bili_cookies.json',
+                service_name='Bilibili',
+                logger_obj=logger,
+                allow_json_txt_fallback=False,
+            ))
+        else:
+            destination = account_cookie_destination(account)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.upload")
+        upload.save(temporary)
+        valid, error = validate_cookies(str(temporary), f"Bilibili（{account['name']}）")
+        if not valid:
+            temporary.unlink(missing_ok=True)
+            raise ValueError(f'Cookies 文件无效：{error}')
+        try:
+            identity = get_account_identity(str(temporary))
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            raise ValueError(f'无法读取 B站真实昵称，请确认 Cookie 有效：{exc}') from exc
+        if not identity.get('name') or not identity.get('uid'):
+            temporary.unlink(missing_ok=True)
+            raise ValueError('B站账号信息缺少真实昵称或 UID，请重新登录')
+        temporary.replace(destination)
+
+        if account_id == LEGACY_ACCOUNT_ID:
+            update_config({
+                'BILIBILI_ACCOUNT_NAME': identity['name'],
+                'BILIBILI_ACCOUNT_UID': identity['uid'],
+                'BILIBILI_ACCOUNT_AVATAR_URL': identity.get('avatar_url', ''),
+            })
+        else:
+            custom_accounts = serialize_custom_accounts(normalize_accounts(config))
+            for item in custom_accounts:
+                if item['id'] == account_id:
+                    item.update({
+                        'name': identity['name'],
+                        'bilibili_name': identity['name'],
+                        'bilibili_uid': identity['uid'],
+                        'avatar_url': identity.get('avatar_url', ''),
+                    })
+                    break
+            update_config({'BILIBILI_ACCOUNTS': custom_accounts})
+        try:
+            live_recorder_manager.refresh_credentials()
+        except RecorderConfigError as exc:
+            logger.warning("B站账号 Cookie 已更新，但录制配置重载失败: %s", exc)
+        flash(f"已更新 B站账号“{identity['name']}”。", 'success')
+    except (OSError, ValueError) as exc:
+        flash(str(exc), 'danger')
+    return redirect(url_for('settings') + '#vtab-accounts')
+
+
+@app.route('/settings/bilibili-accounts/<account_id>/default', methods=['POST'])
+@login_required
+def set_default_bilibili_account(account_id):
+    config = load_config()
+    account = next(
+        (item for item in normalize_accounts(config) if item['id'] == account_id),
+        None,
+    )
+    if not account:
+        flash('没有找到该 B站投稿账号。', 'danger')
+    else:
+        update_config({DEFAULT_ACCOUNT_CONFIG_KEY: account['id']})
+        try:
+            live_recorder_manager.refresh_credentials()
+        except RecorderConfigError as exc:
+            logger.warning("默认 B站账号已保存，但录制配置重载失败: %s", exc)
+        flash(f"已将“{account['name']}”设为默认投稿账号。", 'success')
+    return redirect(url_for('settings') + '#vtab-accounts')
+
+
+@app.route('/settings/bilibili-accounts/<account_id>/delete', methods=['POST'])
+@login_required
+def delete_bilibili_account(account_id):
+    if account_id == LEGACY_ACCOUNT_ID:
+        flash('默认兼容账号不能删除，可上传新 Cookies 覆盖。', 'danger')
+        return redirect(url_for('settings') + '#vtab-accounts')
+    config = load_config()
+    accounts = normalize_accounts(config)
+    account = next((item for item in accounts if item['id'] == account_id), None)
+    if not account:
+        flash('没有找到该 B站投稿账号。', 'danger')
+        return redirect(url_for('settings') + '#vtab-accounts')
+    custom_accounts = [
+        item for item in serialize_custom_accounts(accounts)
+        if item['id'] != account_id
+    ]
+    changes = {'BILIBILI_ACCOUNTS': custom_accounts}
+    if default_account_id(config) == account_id:
+        changes[DEFAULT_ACCOUNT_CONFIG_KEY] = LEGACY_ACCOUNT_ID
+    update_config(changes)
+    try:
+        live_recorder_manager.refresh_credentials()
+    except RecorderConfigError as exc:
+        logger.warning("B站账号已删除，但录制配置重载失败: %s", exc)
+    try:
+        account_cookie_destination(account).unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("删除 B站账号 Cookie 文件失败: %s", exc)
+    flash(f"已删除 B站投稿账号“{account['name']}”。", 'success')
+    return redirect(url_for('settings') + '#vtab-accounts')
 
 
 @app.route('/settings/bilibili/upload-lines', methods=['GET'])
@@ -3620,16 +3867,33 @@ def settings_sync_cookiecloud():
 def bilibili_qrcode_start():
     """发起 bilibili 二维码登录并返回二维码图片。"""
     config = load_config()
-    cookie_path = resolve_cookie_file_path(
-        path_value=config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json'),
-        default_relative_path='cookies/bili_cookies.json',
-        service_name='Bilibili',
-        logger_obj=logger,
-        allow_json_txt_fallback=False
+    payload = request.get_json(silent=True) or {}
+    requested_account_id = str(payload.get('account_id') or '').strip()
+    accounts = normalize_accounts(config)
+    account = next(
+        (item for item in accounts if item['id'] == requested_account_id),
+        None,
     )
+    is_new_account = account is None
+    if is_new_account:
+        account = create_account_record('', 'qrcode.json')
+    if account['id'] == LEGACY_ACCOUNT_ID:
+        cookie_path = resolve_cookie_file_path(
+            path_value=account['cookies_path'],
+            default_relative_path='cookies/bili_cookies.json',
+            service_name='Bilibili',
+            logger_obj=logger,
+            allow_json_txt_fallback=False,
+        )
+    else:
+        cookie_path = str(account_cookie_destination(account))
 
     try:
-        session_id, qr_session = _create_bilibili_qr_session()
+        session_id, qr_session = _create_bilibili_qr_session(
+            account=dict(account),
+            cookie_path=cookie_path,
+            is_new_account=is_new_account,
+        )
         qr_data = qr_session.generate()
         return jsonify({
             'success': True,
@@ -3647,18 +3911,20 @@ def bilibili_qrcode_start():
 @login_required
 def bilibili_qrcode_status(session_id):
     """轮询 bilibili 二维码登录状态。"""
-    qr_session = _get_bilibili_qr_session(session_id)
-    if not qr_session:
+    session_item = _get_bilibili_qr_session_item(session_id)
+    qr_session = session_item.get('session') if session_item else None
+    if not session_item or not qr_session:
         return jsonify({'success': False, 'message': '二维码会话不存在或已过期'}), 404
 
-    config = load_config()
     cookie_path = resolve_cookie_file_path(
-        path_value=config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json'),
+        path_value=str(session_item.get('cookie_path') or ''),
         default_relative_path='cookies/bili_cookies.json',
         service_name='Bilibili',
         logger_obj=logger,
-        allow_json_txt_fallback=False
+        allow_json_txt_fallback=False,
     )
+    account = dict(session_item.get('account') or {})
+    is_new_account = bool(session_item.get('is_new_account'))
 
     try:
         status_data = qr_session.check_status(cookie_file=cookie_path)
@@ -3671,6 +3937,57 @@ def bilibili_qrcode_status(session_id):
         )
         status = status_data.get('status')
         if status == 'done' and status_data.get('cookies_saved'):
+            from modules.bilibili_auth import get_account_identity
+
+            try:
+                identity = get_account_identity(cookie_path)
+                if not identity.get('name') or not identity.get('uid'):
+                    raise ValueError('B站账号信息缺少真实昵称或 UID')
+                config = load_config()
+                if account.get('id') == LEGACY_ACCOUNT_ID:
+                    update_config({
+                        'BILIBILI_ACCOUNT_NAME': identity['name'],
+                        'BILIBILI_ACCOUNT_UID': identity['uid'],
+                        'BILIBILI_ACCOUNT_AVATAR_URL': identity.get('avatar_url', ''),
+                    })
+                else:
+                    account.update({
+                        'name': identity['name'],
+                        'bilibili_name': identity['name'],
+                        'bilibili_uid': identity['uid'],
+                        'avatar_url': identity.get('avatar_url', ''),
+                    })
+                    custom_accounts = serialize_custom_accounts(normalize_accounts(config))
+                    existing_index = next(
+                        (index for index, item in enumerate(custom_accounts)
+                         if item['id'] == account['id']),
+                        None,
+                    )
+                    if existing_index is None:
+                        custom_accounts.append(account)
+                    else:
+                        custom_accounts[existing_index] = account
+                    changes = {'BILIBILI_ACCOUNTS': custom_accounts}
+                    if is_new_account and len(normalize_accounts(config)) == 1:
+                        changes[DEFAULT_ACCOUNT_CONFIG_KEY] = account['id']
+                    update_config(changes)
+                status_data.update({
+                    'account_id': account.get('id'),
+                    'account_name': identity['name'],
+                    'account_uid': identity['uid'],
+                })
+            except Exception as exc:
+                if is_new_account:
+                    try:
+                        Path(cookie_path).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                status_data.update({
+                    'status': 'failed',
+                    'cookies_saved': False,
+                    'message': f'登录成功，但读取真实账号信息失败：{exc}',
+                })
+                status = 'failed'
             try:
                 live_recorder_manager.refresh_credentials()
             except RecorderConfigError as exc:
@@ -4083,8 +4400,17 @@ def _build_youtube_monitor_readiness(config):
 def youtube_monitor_index():
     """YouTube监控主页"""
     configs = youtube_monitor.get_monitor_configs()
+    app_config = load_config()
+    for monitor_config in configs:
+        account = resolve_account(
+            app_config,
+            monitor_config.get('bilibili_account_id'),
+        )
+        monitor_config['bilibili_account_id'] = account['id']
+        monitor_config['bilibili_account_name'] = account['name']
+        monitor_config['bilibili_account_uid'] = account.get('bilibili_uid', '')
     history = youtube_monitor.get_monitor_history(limit=50)
-    readiness = _build_youtube_monitor_readiness(load_config())
+    readiness = _build_youtube_monitor_readiness(app_config)
     return render_template(
         'youtube_monitor.html',
         configs=configs,
@@ -4096,6 +4422,9 @@ def youtube_monitor_index():
 @login_required
 def youtube_monitor_config():
     """监控配置页面"""
+    app_config = load_config()
+    bilibili_accounts = normalize_accounts(app_config)
+    bilibili_default_account_id = default_account_id(app_config)
     if request.method == 'POST':
         try:
             # 安全的整数转换函数
@@ -4140,13 +4469,21 @@ def youtube_monitor_config():
                 'rate_limit_requests': safe_int(request.form.get('rate_limit_requests'), 20),
                 'rate_limit_window': safe_int(request.form.get('rate_limit_window'), 60),
                 'auto_add_to_tasks': 'auto_add_to_tasks' in request.form,
+                'bilibili_account_id': resolve_account(
+                    app_config,
+                    request.form.get('bilibili_account_id'),
+                )['id'],
                 'video_types': ','.join(request.form.getlist('video_types') or ['video','short','live'])
             }
             
             # 验证必填项
             if not config_data['name']:
                 flash('配置名称不能为空', 'danger')
-                return render_template('youtube_monitor_config.html')
+                return render_template(
+                    'youtube_monitor_config.html',
+                    bilibili_accounts=bilibili_accounts,
+                    bilibili_default_account_id=bilibili_default_account_id,
+                )
             
             config_id = youtube_monitor.create_monitor_config(config_data)
             flash(f'监控配置 "{config_data["name"]}" 创建成功！', 'success')
@@ -4155,12 +4492,19 @@ def youtube_monitor_config():
         except Exception as e:
             flash(f'创建监控配置失败: {str(e)}', 'danger')
     
-    return render_template('youtube_monitor_config.html')
+    return render_template(
+        'youtube_monitor_config.html',
+        bilibili_accounts=bilibili_accounts,
+        bilibili_default_account_id=bilibili_default_account_id,
+    )
 
 @app.route('/youtube_monitor/config/<int:config_id>/edit', methods=['GET', 'POST'])
 @login_required
 def youtube_monitor_config_edit(config_id):
     """编辑监控配置"""
+    app_config = load_config()
+    bilibili_accounts = normalize_accounts(app_config)
+    bilibili_default_account_id = default_account_id(app_config)
     config = youtube_monitor.get_monitor_config(config_id)
     if not config:
         flash('监控配置不存在', 'danger')
@@ -4210,13 +4554,23 @@ def youtube_monitor_config_edit(config_id):
                 'rate_limit_requests': safe_int(request.form.get('rate_limit_requests'), 20),
                 'rate_limit_window': safe_int(request.form.get('rate_limit_window'), 60),
                 'auto_add_to_tasks': 'auto_add_to_tasks' in request.form,
+                'bilibili_account_id': resolve_account(
+                    app_config,
+                    request.form.get('bilibili_account_id'),
+                )['id'],
                 'video_types': ','.join(request.form.getlist('video_types') or ['video','short','live'])
             }
             
             # 验证必填项
             if not config_data['name']:
                 flash('配置名称不能为空', 'danger')
-                return render_template('youtube_monitor_config.html', config=config, is_edit=True)
+                return render_template(
+                    'youtube_monitor_config.html',
+                    config=config,
+                    is_edit=True,
+                    bilibili_accounts=bilibili_accounts,
+                    bilibili_default_account_id=bilibili_default_account_id,
+                )
             
             youtube_monitor.update_monitor_config(config_id, config_data)
             flash(f'监控配置更新成功！', 'success')
@@ -4225,7 +4579,13 @@ def youtube_monitor_config_edit(config_id):
         except Exception as e:
             flash(f'更新监控配置失败: {str(e)}', 'danger')
     
-    return render_template('youtube_monitor_config.html', config=config, is_edit=True)
+    return render_template(
+        'youtube_monitor_config.html',
+        config=config,
+        is_edit=True,
+        bilibili_accounts=bilibili_accounts,
+        bilibili_default_account_id=bilibili_default_account_id,
+    )
 
 @app.route('/youtube_monitor/config/<int:config_id>/delete', methods=['POST'])
 @login_required

@@ -358,31 +358,92 @@
                                     </div>
                                 </div>
                                 <div class="row g-4 settings-pane-grid">
-                                    <div class="col-xl-6">
+                                    <div class="col-12">
                                         <article class="settings-card">
                                             <div class="settings-card-header">
                                                 <div>
-                                                    <span class="section-eyebrow">平台账号</span>
-                                                    <h4>bilibili 账号</h4>
+                                                    <span class="section-eyebrow">MULTI ACCOUNT</span>
+                                                    <h4>B站投稿账号</h4>
                                                 </div>
+                                                <span class="settings-status-badge is-info">{{ bilibili_accounts|length }} 个账号</span>
                                             </div>
                                             <div class="settings-card-body">
-                                                <div class="form-group">
-                                                    <label for="bilibili-cookies" class="form-label">Cookies 文件路径</label>
-                                                    <input type="text" id="bilibili-cookies" name="BILIBILI_COOKIES_PATH" value="{{ config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json') }}" class="form-control">
-                                                    <p class="help-text">推荐用二维码登录自动生成，也支持手动上传 JSON/Netscape 文件。该登录态同时用于 B站投稿和直播录制，可帮助获取账号可用的最高画质。</p>
+                                                <div class="bilibili-account-list">
+                                                    {% for account in bilibili_accounts %}
+                                                    <div class="bilibili-account-row">
+                                                        <span class="bilibili-account-avatar">
+                                                            {% if account.avatar_url %}
+                                                            <img src="{{ account.avatar_url }}" alt="" referrerpolicy="no-referrer">
+                                                            {% else %}
+                                                            <i class="bi bi-person-badge"></i>
+                                                            {% endif %}
+                                                        </span>
+                                                        <div class="bilibili-account-copy">
+                                                            <strong>{{ account.name }}</strong>
+                                                            <small>
+                                                                {{ 'UID ' ~ account.bilibili_uid if account.bilibili_uid else 'UID 未识别' }}
+                                                                · {{ account.cookies_path }}
+                                                            </small>
+                                                        </div>
+                                                        <div class="bilibili-account-badges">
+                                                            {% if account.id == bilibili_default_account_id %}
+                                                            <span class="badge rounded-pill text-bg-primary">默认投稿</span>
+                                                            {% else %}
+                                                            <button type="submit" class="btn btn-sm btn-outline-primary"
+                                                                    formaction="{{ url_for('set_default_bilibili_account', account_id=account.id) }}"
+                                                                    formmethod="post" formnovalidate>设为默认</button>
+                                                            {% endif %}
+                                                            {% if not account.legacy %}
+                                                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                                                    data-role="delete-bilibili-account"
+                                                                    data-account-name="{{ account.name }}"
+                                                                    data-delete-url="{{ url_for('delete_bilibili_account', account_id=account.id) }}">
+                                                                删除
+                                                            </button>
+                                                            {% endif %}
+                                                        </div>
+                                                        <div class="bilibili-account-login-actions">
+                                                            <label class="btn btn-sm btn-outline-secondary mb-0">
+                                                                <i class="bi bi-file-earmark-arrow-up"></i> Cookie 登录
+                                                                <input class="visually-hidden" type="file" accept=".json,.txt"
+                                                                       data-role="bilibili-account-cookie-input"
+                                                                       data-upload-url="{{ url_for('update_bilibili_account_cookies', account_id=account.id) }}">
+                                                            </label>
+                                                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                                                    data-role="bilibili-account-qr-start"
+                                                                    data-account-id="{{ account.id }}"
+                                                                    data-account-name="{{ account.name }}">
+                                                                <i class="bi bi-qr-code"></i> 扫码登录
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    {% endfor %}
                                                 </div>
-                                                <div class="form-group">
-                                                    <label for="bilibili-cookies-file" class="form-label">上传新的 Cookies 文件</label>
-                                                    <input type="file" id="bilibili-cookies-file" name="bilibili_cookies_file" class="form-control">
+
+                                                <div class="bilibili-account-add-panel">
+                                                    <div>
+                                                        <strong>添加 B站账号</strong>
+                                                        <p class="help-text mb-0">支持 Cookie 文件或扫码登录，成功后自动读取真实昵称、UID 和头像。</p>
+                                                    </div>
+                                                    <div class="bilibili-account-add-actions">
+                                                        <label class="btn btn-outline-secondary mb-0">
+                                                            <i class="bi bi-file-earmark-arrow-up"></i> Cookie 添加
+                                                            <input class="visually-hidden" type="file" id="bilibili-account-cookie-file"
+                                                                   name="bilibili_account_cookie_file" accept=".json,.txt"
+                                                                   data-role="bilibili-account-add-cookie">
+                                                        </label>
+                                                        <button type="button" class="btn btn-primary"
+                                                                data-role="bilibili-account-qr-start" data-account-id="">
+                                                            <i class="bi bi-qr-code"></i> 扫码添加
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                                <div class="settings-inline-actions">
-                                                    <button type="button" class="btn btn-outline-primary" id="bili-qrcode-start-btn">
-                                                        <i class="bi bi-qr-code"></i> 获取二维码登录
-                                                    </button>
-                                                    <span class="help-text">扫码并在手机端确认后会自动写入 Cookies。</span>
-                                                </div>
+
                                                 <div class="settings-qrcode-panel d-none" id="bili-qrcode-wrap">
+                                                    <div class="settings-qrcode-heading">
+                                                        <strong id="bili-qrcode-title">扫码登录 B站</strong>
+                                                        <button type="button" class="btn-close" id="bili-qrcode-close-btn" aria-label="关闭"></button>
+                                                    </div>
                                                     <img id="bili-qrcode-image" alt="bilibili 登录二维码" class="qrcode-img">
                                                     <div class="mt-2">
                                                         <button type="button" class="btn btn-sm btn-outline-secondary" id="bili-qrcode-check-btn">
@@ -391,6 +452,9 @@
                                                         <span class="ms-2" id="bili-qrcode-status-text"></span>
                                                     </div>
                                                 </div>
+                                                <p class="help-text mt-3 mb-0">
+                                                    每个任务和直播间都会保存所选账号；上传、重试、续传及稿件更新始终使用同一账号。
+                                                </p>
                                             </div>
                                         </article>
                                     </div>
@@ -3257,10 +3321,12 @@ document.addEventListener('DOMContentLoaded', function () {
         el.classList.add('text-muted');
     }
 
-    const biliStartBtn = document.getElementById('bili-qrcode-start-btn');
+    const biliStartButtons = document.querySelectorAll('[data-role="bilibili-account-qr-start"]');
     const biliCheckBtn = document.getElementById('bili-qrcode-check-btn');
+    const biliCloseBtn = document.getElementById('bili-qrcode-close-btn');
     const biliWrap = document.getElementById('bili-qrcode-wrap');
     const biliImage = document.getElementById('bili-qrcode-image');
+    const biliTitle = document.getElementById('bili-qrcode-title');
     const biliStatusText = document.getElementById('bili-qrcode-status-text');
     let biliSessionId = null;
     let biliTimer = null;
@@ -3295,7 +3361,11 @@ document.addEventListener('DOMContentLoaded', function () {
                     setBiliStatus('等待手机端确认登录', 'neutral');
                 } else if (status === 'done') {
                     if (data.cookies_saved === true) {
-                        setBiliStatus('登录成功，Cookies 已保存', 'success');
+                        setBiliStatus('登录成功：' + (data.account_name || '账号') + ' · UID ' + (data.account_uid || ''), 'success');
+                        window.setTimeout(function () {
+                            window.location.href = '{{ url_for("settings") }}#vtab-accounts';
+                            window.location.reload();
+                        }, 800);
                     } else {
                         setBiliStatus(data.message || '登录成功，但 Cookies 保存失败', 'error');
                     }
@@ -3316,9 +3386,15 @@ document.addEventListener('DOMContentLoaded', function () {
             });
     };
 
-    if (biliStartBtn) {
-        biliStartBtn.addEventListener('click', function () {
-            fetch('/settings/bilibili/qrcode/start', { method: 'POST' })
+    biliStartButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+            const accountId = button.dataset.accountId || '';
+            const accountName = button.dataset.accountName || '';
+            fetch('/settings/bilibili/qrcode/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_id: accountId })
+            })
                 .then(function (resp) { return resp.json(); })
                 .then(function (data) {
                     if (!data.success) {
@@ -3331,6 +3407,12 @@ document.addEventListener('DOMContentLoaded', function () {
                     }
                     if (biliWrap) {
                         biliWrap.classList.remove('d-none');
+                        biliWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                    if (biliTitle) {
+                        biliTitle.textContent = accountId
+                            ? '扫码登录“' + (accountName || 'B站账号') + '”'
+                            : '扫码添加 B站账号';
                     }
                     setBiliStatus('二维码已生成，请扫码登录', 'neutral');
                     stopBiliPolling();
@@ -3340,11 +3422,49 @@ document.addEventListener('DOMContentLoaded', function () {
                     setBiliStatus('获取二维码失败: ' + err, 'error');
                 });
         });
-    }
+    });
 
     if (biliCheckBtn) {
         biliCheckBtn.addEventListener('click', function () {
             checkBiliStatus();
+        });
+    }
+
+    if (biliCloseBtn) {
+        biliCloseBtn.addEventListener('click', function () {
+            stopBiliPolling();
+            biliSessionId = null;
+            if (biliWrap) biliWrap.classList.add('d-none');
+        });
+    }
+
+    const uploadBilibiliCookie = function (input, uploadUrl) {
+        const file = input && input.files ? input.files[0] : null;
+        if (!file || !uploadUrl) return;
+        const formData = new FormData();
+        formData.append('bilibili_account_cookie_file', file);
+        input.disabled = true;
+        fetch(uploadUrl, { method: 'POST', body: formData })
+            .then(function (response) {
+                if (!response.ok) throw new Error('上传失败');
+                window.location.href = '{{ url_for("settings") }}#vtab-accounts';
+                window.location.reload();
+            })
+            .catch(function (error) {
+                input.disabled = false;
+                showSettingsToast('error', 'Cookie 登录失败：' + error.message);
+            });
+    };
+
+    document.querySelectorAll('[data-role="bilibili-account-cookie-input"]').forEach(function (input) {
+        input.addEventListener('change', function () {
+            uploadBilibiliCookie(input, input.dataset.uploadUrl || '');
+        });
+    });
+    const addBilibiliCookieInput = document.querySelector('[data-role="bilibili-account-add-cookie"]');
+    if (addBilibiliCookieInput) {
+        addBilibiliCookieInput.addEventListener('change', function () {
+            uploadBilibiliCookie(addBilibiliCookieInput, '{{ url_for("add_bilibili_account") }}');
         });
     }
 
@@ -3697,5 +3817,24 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     });
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-role="delete-bilibili-account"]').forEach(function (button) {
+        button.addEventListener('click', async function () {
+            const name = button.dataset.accountName || '该账号';
+            const accepted = await window.PotatoUI.confirm(
+                `删除 B站投稿账号“${name}”？已绑定任务保留账号 ID，但后续重试会回退到当前默认账号。`,
+                {title: '删除投稿账号？', confirmText: '确认删除', danger: true}
+            );
+            if (!accepted) return;
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = button.dataset.deleteUrl;
+            document.body.appendChild(form);
+            form.submit();
+        });
+    });
+});
 </script>
 {% endblock %}

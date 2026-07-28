@@ -1,5 +1,58 @@
 {% extends "base.html" %}
 
+{% macro bilibili_account_picker(accounts, selected_id) %}
+<div class="bilibili-account-picker dropdown" data-role="bilibili-account-picker">
+    <input type="hidden" name="bilibili_account_id" value="{{ selected_id }}">
+    <button class="bilibili-account-picker-toggle" type="button"
+            data-bs-toggle="dropdown" aria-expanded="false">
+        {% for account in accounts %}
+            {% if account.id == selected_id %}
+            <span class="bilibili-account-picker-avatar" data-role="selected-account-avatar">
+                {% if account.avatar_url %}
+                <img src="{{ account.avatar_url }}" alt="" referrerpolicy="no-referrer">
+                {% else %}
+                <i class="bi bi-person-fill"></i>
+                {% endif %}
+            </span>
+            <span class="bilibili-account-picker-copy">
+                <strong data-role="selected-account-name">{{ account.name }}</strong>
+                <small data-role="selected-account-uid">{{ 'UID ' ~ account.bilibili_uid if account.bilibili_uid else 'UID 未识别' }}</small>
+            </span>
+            {% endif %}
+        {% endfor %}
+        <i class="bi bi-chevron-down bilibili-account-picker-chevron"></i>
+    </button>
+    <ul class="dropdown-menu bilibili-account-picker-menu">
+        {% for account in accounts %}
+        <li>
+            <button type="button"
+                    class="dropdown-item bilibili-account-picker-option{% if account.id == selected_id %} active{% endif %}"
+                    data-role="bilibili-account-option"
+                    data-account-id="{{ account.id }}"
+                    data-account-name="{{ account.name }}"
+                    data-account-uid="{{ account.bilibili_uid }}"
+                    data-account-avatar="{{ account.avatar_url }}">
+                <span class="bilibili-account-picker-avatar">
+                    {% if account.avatar_url %}
+                    <img src="{{ account.avatar_url }}" alt="" referrerpolicy="no-referrer">
+                    {% else %}
+                    <i class="bi bi-person-fill"></i>
+                    {% endif %}
+                </span>
+                <span class="bilibili-account-picker-copy">
+                    <strong>{{ account.name }}</strong>
+                    <small>{{ 'UID ' ~ account.bilibili_uid if account.bilibili_uid else 'UID 未识别' }}</small>
+                </span>
+                {% if account.id == bilibili_default_account_id %}
+                <span class="badge rounded-pill text-bg-primary ms-auto">默认</span>
+                {% endif %}
+            </button>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endmacro %}
+
 {% block title %}直播录制 - PotatoFlow{% endblock %}
 {% block body_class %}live-console-page{% endblock %}
 {% block main_class %}live-console-main{% endblock %}
@@ -93,9 +146,26 @@
                         <strong>录制分段与投稿方式</strong>
                         <small>仅控制这个直播间，分段默认开启并设为 60 分钟</small>
                     </span>
-                    <span class="badge rounded-pill text-bg-light">
-                        {% if room.segment_enabled %}<span class="room-setting-number">{{ room.segment_minutes }}</span> 分钟{% else %}不分段{% endif %}
-                        · {{ '仅录制' if room.record_only else ('合并分P' if room.multipart_enabled and room.segment_enabled else '独立投稿') }}
+                    <span class="room-recording-summary-meta">
+                        {% set room_summary_account_id = room.bilibili_account_id or bilibili_default_account_id %}
+                        {% for account in bilibili_accounts %}
+                            {% if account.id == room_summary_account_id %}
+                            <span class="room-recording-summary-account" title="投稿账号：{{ account.name }}">
+                                <span class="room-recording-summary-avatar">
+                                    {% if account.avatar_url %}
+                                    <img src="{{ account.avatar_url }}" alt="" referrerpolicy="no-referrer">
+                                    {% else %}
+                                    <i class="bi bi-person-fill"></i>
+                                    {% endif %}
+                                </span>
+                                <strong>{{ account.name }}</strong>
+                            </span>
+                            {% endif %}
+                        {% endfor %}
+                        <span class="badge rounded-pill text-bg-light">
+                            {% if room.segment_enabled %}<span class="room-setting-number">{{ room.segment_minutes }}</span> 分钟{% else %}不分段{% endif %}
+                            · {{ '仅录制' if room.record_only else ('合并分P' if room.multipart_enabled and room.segment_enabled else '独立投稿') }}
+                        </span>
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
                 </summary>
@@ -103,6 +173,10 @@
                       action="{{ url_for('live_recording_room_recording_settings', room_id=room.id) }}"
                       class="room-recording-settings-form" data-role="recording-settings-form">
                     <div class="room-recording-setting-grid">
+                        <label class="room-recording-duration">
+                            <span><strong>B站投稿账号</strong><small>仅影响这个直播间生成的新投稿任务</small></span>
+                            {{ bilibili_account_picker(bilibili_accounts, room.bilibili_account_id or bilibili_default_account_id) }}
+                        </label>
                         <label class="room-recording-setting-option">
                             <span class="room-setting-switch">
                                 <input type="checkbox" name="segment_enabled" value="on"
@@ -308,6 +382,10 @@
     <section class="add-room-section add-room-recording-settings">
         <div class="add-room-section-heading"><span>2</span><div><strong>录制分段与投稿方式</strong><small>这些设置只对新添加的这个直播间生效</small></div></div>
         <div class="room-recording-setting-grid">
+            <label class="room-recording-duration">
+                <span><strong>B站投稿账号</strong><small>后续录播任务固定使用该账号</small></span>
+                {{ bilibili_account_picker(bilibili_accounts, bilibili_default_account_id) }}
+            </label>
             <label class="room-recording-setting-option">
                 <span class="room-setting-switch">
                     <input type="checkbox" name="segment_enabled" value="on"
@@ -403,6 +481,38 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-role="bilibili-account-picker"]').forEach(function(picker) {
+        const input = picker.querySelector('input[name="bilibili_account_id"]');
+        const selectedAvatar = picker.querySelector('[data-role="selected-account-avatar"]');
+        const selectedName = picker.querySelector('[data-role="selected-account-name"]');
+        const selectedUid = picker.querySelector('[data-role="selected-account-uid"]');
+        picker.querySelectorAll('[data-role="bilibili-account-option"]').forEach(function(option) {
+            option.addEventListener('click', function() {
+                if (input) input.value = option.dataset.accountId || '';
+                if (selectedName) selectedName.textContent = option.dataset.accountName || 'B站账号';
+                if (selectedUid) selectedUid.textContent = option.dataset.accountUid
+                    ? 'UID ' + option.dataset.accountUid
+                    : 'UID 未识别';
+                if (selectedAvatar) {
+                    selectedAvatar.replaceChildren();
+                    if (option.dataset.accountAvatar) {
+                        const image = document.createElement('img');
+                        image.src = option.dataset.accountAvatar;
+                        image.alt = '';
+                        image.referrerPolicy = 'no-referrer';
+                        selectedAvatar.appendChild(image);
+                    } else {
+                        const icon = document.createElement('i');
+                        icon.className = 'bi bi-person-fill';
+                        selectedAvatar.appendChild(icon);
+                    }
+                }
+                picker.querySelectorAll('[data-role="bilibili-account-option"]').forEach(function(item) {
+                    item.classList.toggle('active', item === option);
+                });
+            });
+        });
+    });
     const items = [...document.querySelectorAll('.room-item')];
     const panels = [...document.querySelectorAll('.room-detail-panel')];
     const search = document.getElementById('roomSearch');

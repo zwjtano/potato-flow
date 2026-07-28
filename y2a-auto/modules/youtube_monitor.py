@@ -107,6 +107,7 @@ MONITOR_CONFIG_FIELD_DEFAULTS: Dict[str, Any] = {
     'rate_limit_requests': 100,
     'rate_limit_window': 60,
     'auto_add_to_tasks': False,
+    'bilibili_account_id': '',
     'historical_progress_date': '',
     'historical_offset': 0,
     'video_types': 'video,short,live',
@@ -163,6 +164,7 @@ class YouTubeMonitor:
                     start_date TEXT DEFAULT '',
                     rate_limit_requests INTEGER DEFAULT 20,
                     rate_limit_window INTEGER DEFAULT 60,
+                    bilibili_account_id TEXT DEFAULT '',
                     last_run_time TEXT,
                     created_time TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_time TEXT DEFAULT CURRENT_TIMESTAMP
@@ -192,6 +194,11 @@ class YouTubeMonitor:
             
             try:
                 cursor.execute("ALTER TABLE monitor_configs ADD COLUMN auto_add_to_tasks BOOLEAN DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                cursor.execute("ALTER TABLE monitor_configs ADD COLUMN bilibili_account_id TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
             
@@ -1584,7 +1591,12 @@ class YouTubeMonitor:
             
             # 如果启用自动添加到任务队列，直接添加
             if auto_add_to_tasks:
-                task_id = self._add_video_to_tasks(video_info, auto_start=True)
+                monitor_config = self.get_monitor_config(config_id) or {}
+                task_id = self._add_video_to_tasks(
+                    video_info,
+                    auto_start=True,
+                    bilibili_account_id=monitor_config.get('bilibili_account_id'),
+                )
                 if task_id:
                     # 更新数据库标记为已添加
                     cursor.execute(
@@ -1592,11 +1604,19 @@ class YouTubeMonitor:
                         (video_info['id'], config_id)
                     )
     
-    def _add_video_to_tasks(self, video_info, auto_start=True):
+    def _add_video_to_tasks(
+        self,
+        video_info,
+        auto_start=True,
+        bilibili_account_id=None,
+    ):
         """将视频添加到任务队列"""
         try:
             video_url = f"https://www.youtube.com/watch?v={video_info['id']}"
-            task_id = add_task(video_url)
+            task_id = add_task(
+                video_url,
+                bilibili_account_id=bilibili_account_id,
+            )
             
             if task_id:
                 logger.info(f"视频已添加到任务队列: {video_info['title']}, 任务ID: {task_id}")
@@ -1671,7 +1691,12 @@ class YouTubeMonitor:
                         logger.warning(f"读取配置文件失败: {str(e)}")
             
             logger.info(f"手动添加视频到任务队列")
-            task_id = self._add_video_to_tasks(video_info, auto_start=False)
+            monitor_config = self.get_monitor_config(config_id) or {}
+            task_id = self._add_video_to_tasks(
+                video_info,
+                auto_start=False,
+                bilibili_account_id=monitor_config.get('bilibili_account_id'),
+            )
             if task_id:
                 self._mark_video_added_to_tasks(video_id, config_id)
                 logger.info(f"视频成功添加到任务队列: {video_info['title']}, 任务ID: {task_id}")

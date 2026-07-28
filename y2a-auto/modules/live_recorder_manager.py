@@ -761,6 +761,7 @@ class LiveRecorderManager:
             room.setdefault("segment_minutes", DEFAULT_RECORDING_SEGMENT_MINUTES)
             room.setdefault("multipart_enabled", False)
             room.setdefault("record_only", False)
+            room.setdefault("bilibili_account_id", "")
         return rooms
 
     @staticmethod
@@ -1492,6 +1493,7 @@ class LiveRecorderManager:
         segment_minutes: Any,
         multipart_enabled: bool,
         record_only: bool,
+        bilibili_account_id: str = "",
     ) -> dict[str, Any]:
         try:
             minutes = int(segment_minutes)
@@ -1506,6 +1508,7 @@ class LiveRecorderManager:
                 multipart_enabled and segment_enabled and not record_only
             ),
             "record_only": bool(record_only),
+            "bilibili_account_id": str(bilibili_account_id or "").strip(),
         }
 
     def add_room_from_url(
@@ -1516,6 +1519,7 @@ class LiveRecorderManager:
         segment_minutes: Any = None,
         multipart_enabled: bool | None = None,
         record_only: bool | None = None,
+        bilibili_account_id: str | None = None,
     ) -> dict[str, Any]:
         resolved = self.resolve_room(url)
         settings_provided = any(
@@ -1525,6 +1529,7 @@ class LiveRecorderManager:
                 segment_minutes,
                 multipart_enabled,
                 record_only,
+                bilibili_account_id,
             )
         )
         recording_settings = (
@@ -1539,6 +1544,7 @@ class LiveRecorderManager:
                     False if multipart_enabled is None else multipart_enabled
                 ),
                 record_only=False if record_only is None else record_only,
+                bilibili_account_id=bilibili_account_id or "",
             )
             if settings_provided
             else {}
@@ -1782,6 +1788,7 @@ class LiveRecorderManager:
         segment_minutes: Any,
         multipart_enabled: bool,
         record_only: bool = False,
+        bilibili_account_id: str = "",
     ) -> tuple[dict[str, Any], str]:
         """Save per-room segmentation/upload mode and safely rotate active files."""
         try:
@@ -1806,6 +1813,7 @@ class LiveRecorderManager:
                 "segment_minutes": minutes,
                 "multipart_enabled": bool(multipart_enabled and segment_enabled),
                 "record_only": bool(record_only),
+                "bilibili_account_id": str(bilibili_account_id or "").strip(),
             })
             if (room["record_only"] or not room["multipart_enabled"]) and not target_recording:
                 self._clear_stale_multipart_session(room_id)
@@ -1986,8 +1994,16 @@ class LiveRecorderManager:
             config["ffmpeg"] = str(FFMPEG_DIR / "ffmpeg")
         if (FFMPEG_DIR / "ffprobe").is_file():
             config["ffprobe"] = str(FFMPEG_DIR / "ffprobe")
+        from .bilibili_accounts import resolve_account
+        from .config_manager import load_config
+
+        app_config = load_config()
         profiles = []
         for room in rooms:
+            account = resolve_account(
+                app_config,
+                room.get("bilibili_account_id"),
+            )
             profile = {
                 "match": f"*{_room_file_marker(room)}*",
                 "source_url": room["url"],
@@ -1997,6 +2013,12 @@ class LiveRecorderManager:
                 "ai_title_prompt": str(room.get("ai_title_prompt") or ""),
                 "ai_description_prompt": str(room.get("ai_description_prompt") or ""),
                 "ai_cover_prompt": str(room.get("ai_cover_prompt") or ""),
+                "bilibili_account_id": str(account["id"]),
+                "bilibili_account_name": str(account["name"]),
+                "bilibili_cookies": _workspace_runtime_path(
+                    account.get("cookies_path"),
+                    "y2a-auto/cookies/bili_cookies.json",
+                ),
             }
             custom_reference_name = Path(
                 str(room.get("cover_reference_file") or "")
@@ -2697,6 +2719,10 @@ class LiveRecorderManager:
             "record_only": ("record", "ass", "cover", "remux", "verify", "cleanup"),
             "bilibili": ("detect", "record", "ass", "ai", "cover", "upload"),
         }
+        from .bilibili_accounts import resolve_account
+        from .config_manager import load_config
+
+        account_config = load_config()
         for row in uploads:
             result = self._decode_json(row["result_json"])
             video_path = str(
@@ -2794,6 +2820,12 @@ class LiveRecorderManager:
                 or upload_details.get("partition_id")
                 or ai_details.get("selected_partition_id")
                 or ""
+            )
+            selected_account = resolve_account(
+                account_config,
+                result.get("bilibili_account_id")
+                or upload_details.get("bilibili_account_id")
+                or (matched_room or {}).get("bilibili_account_id"),
             )
             completed_stages = sum(
                 1 for stage in stages if stage.get("status") in {"completed", "skipped"}
@@ -2903,6 +2935,9 @@ class LiveRecorderManager:
                 "room_id": matched_room["id"] if matched_room else None,
                 "room_name": matched_room["name"] if matched_room else "未匹配直播间",
                 "room_avatar_url": matched_room["avatar_url"] if matched_room else "",
+                "bilibili_account_id": selected_account["id"],
+                "bilibili_account_name": selected_account["name"],
+                "bilibili_account_uid": selected_account.get("bilibili_uid", ""),
                 "source": "recording",
                 "bvid": bvid,
                 "bilibili_url": str(bilibili_result.get("url") or ""),
@@ -3247,9 +3282,16 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 sys.path.insert(0, str(APP_ROOT))
             from .bilibili_uploader import BilibiliUploader
 
-            bridge_config = json.loads(BRIDGE_CONFIG_PATH.read_text(encoding="utf-8"))
+            from .bilibili_accounts import resolve_account
+            from .config_manager import load_config
+
+            account = resolve_account(
+                load_config(),
+                (job.get("result") or {}).get("bilibili_account_id")
+                or job.get("bilibili_account_id"),
+            )
             cookie_file = _workspace_runtime_path(
-                bridge_config.get("bilibili_cookies"),
+                account.get("cookies_path"),
                 "y2a-auto/cookies/bili_cookies.json",
             )
             uploader = BilibiliUploader(cookie_file=cookie_file)

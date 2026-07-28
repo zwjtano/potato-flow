@@ -75,6 +75,10 @@
         <div class="d-flex align-items-start justify-content-between gap-2">
             <div class="flex-grow-1">
                 <div class="task-title text-body fw-semibold title-clamp title-clamp-3" title="{{ display_title }}">{{ display_title }}</div>
+                <div class="small text-muted text-truncate mt-1">
+                    投稿账号：{{ task.bilibili_account_name }} ·
+                    {{ 'UID ' ~ task.bilibili_account_uid if task.bilibili_account_uid else 'UID 未识别' }}
+                </div>
                 {% if task.video_title_translated and task.video_title_original %}
                     <div class="small text-muted text-truncate mt-1" title="原标题: {{ task.video_title_original }}">原标题: {{ task.video_title_original }}</div>
                 {% endif %}
