@@ -102,6 +102,11 @@ class OverviewDashboardTests(unittest.TestCase):
             'html[data-theme="dark"] .settings-container .form-control:not(.form-control-sm)',
             'html[data-theme="dark"] .settings-actions-bar',
             'html[data-theme="dark"] .progress',
+            'html[data-theme="dark"] .room-recording-settings-form',
+            'html[data-theme="dark"] .room-prompt-field',
+            'html[data-theme="dark"] .default-prompts-preview',
+            'html[data-theme="dark"] .room-recording-settings-note',
+            'html[data-theme="dark"] .room-setting-number',
         ):
             self.assertIn(selector, STYLE_SOURCE)
 

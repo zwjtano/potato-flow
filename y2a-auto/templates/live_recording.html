@@ -94,7 +94,7 @@
                         <small>仅控制这个直播间，分段默认开启并设为 60 分钟</small>
                     </span>
                     <span class="badge rounded-pill text-bg-light">
-                        {{ (room.segment_minutes ~ ' 分钟') if room.segment_enabled else '不分段' }}
+                        {% if room.segment_enabled %}<span class="room-setting-number">{{ room.segment_minutes }}</span> 分钟{% else %}不分段{% endif %}
                         · {{ '仅录制' if room.record_only else ('合并分P' if room.multipart_enabled and room.segment_enabled else '独立投稿') }}
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>

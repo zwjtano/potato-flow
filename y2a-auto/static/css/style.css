@@ -230,7 +230,8 @@ body {
 .room-recording-setting-option.record-only { border-color: #dce8f5; background: #f8fbff; }
 .room-recording-duration { justify-content: space-between; }
 .room-recording-duration-input { display: flex; width: 112px; flex: 0 0 auto; align-items: center; gap: 6px; color: #7b8592; font-size: 10px; }
-.room-recording-duration-input .form-control { min-width: 0; font-size: 12px; }
+.room-recording-duration-input .form-control { min-width: 0; color: #087cc1; font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.room-setting-number { color: #087cc1; font-weight: 800; font-variant-numeric: tabular-nums; }
 .room-recording-settings-note { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; color: #647284; border: 1px solid #d9e7f5; border-radius: 9px; background: #f1f7fd; font-size: 10px; line-height: 1.65; }
 .room-recording-settings-note i { margin-top: 1px; color: #3284c8; }
 .pipeline-card, .events-card { margin-bottom: 16px; padding: 22px; background: #fff; border: 1px solid var(--studio-border); border-radius: 8px; }
@@ -2748,6 +2749,7 @@ html[data-theme="dark"] .home-product-alert:hover { color: #ffc1c9; background: 
 html[data-theme="dark"] .card-header,
 html[data-theme="dark"] .card-footer,
 html[data-theme="dark"] .room-ai-prompts-form,
+html[data-theme="dark"] .room-recording-settings-form,
 html[data-theme="dark"] .modal-header,
 html[data-theme="dark"] .modal-footer {
     color: var(--studio-text);
@@ -2909,6 +2911,58 @@ html[data-theme="dark"] .btn-close:hover { opacity: 1; }
 html[data-theme="dark"] .room-search,
 html[data-theme="dark"] .room-reference-editor,
 html[data-theme="dark"] .room-reference-preview { color: #a8b9cb; border-color: var(--studio-border); background: var(--studio-surface-soft); }
+html[data-theme="dark"] .room-prompt-field,
+html[data-theme="dark"] .default-prompts-preview {
+    color: var(--studio-text);
+    border-color: var(--studio-border);
+    background: #17212c;
+}
+html[data-theme="dark"] .room-prompt-field label,
+html[data-theme="dark"] .room-reference-title h4,
+html[data-theme="dark"] .default-prompts-preview strong {
+    color: var(--studio-text);
+}
+html[data-theme="dark"] .room-prompt-label small,
+html[data-theme="dark"] .prompt-default-hint,
+html[data-theme="dark"] .room-reference-copy > p,
+html[data-theme="dark"] .room-reference-filename,
+html[data-theme="dark"] .room-ai-prompts-actions > span {
+    color: var(--studio-muted);
+}
+html[data-theme="dark"] .room-prompt-label > span {
+    color: #63b9ff;
+    background: #172f46;
+}
+html[data-theme="dark"] .room-prompt-field textarea {
+    color: var(--studio-text);
+    border-color: #33475a;
+    background: #111a24;
+}
+html[data-theme="dark"] .room-prompt-field textarea::placeholder { color: #71859a; }
+html[data-theme="dark"] .room-prompt-field textarea:focus {
+    color: var(--studio-text);
+    border-color: var(--studio-primary);
+    background: #131e29;
+    box-shadow: 0 0 0 3px rgba(0, 174, 236, .18);
+}
+html[data-theme="dark"] .default-prompts-preview > summary {
+    color: #b8c7d7;
+}
+html[data-theme="dark"] .default-prompts-preview > div {
+    border-top-color: var(--studio-border);
+}
+html[data-theme="dark"] .default-prompts-preview p {
+    color: #a9b9ca;
+}
+html[data-theme="dark"] .room-recording-settings-note {
+    color: #a9b9ca;
+    border-color: #315b7d;
+    background: #172f46;
+}
+html[data-theme="dark"] .room-recording-duration-input .form-control,
+html[data-theme="dark"] .room-setting-number {
+    color: #63dafb;
+}
 html[data-theme="dark"] .room-item:hover { background: #1a2733; }
 html[data-theme="dark"] .room-item.active { border-color: #276174; background: #12313b; }
 html[data-theme="dark"] .room-avatar > img,
