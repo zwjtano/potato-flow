@@ -29,6 +29,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ app_version }}-7">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
     {% block extra_css %}{% endblock %}
+    <!-- 全局界面精修层：放在页面样式之后，统一跨页面视觉语言 -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/ui-refinement.css') }}?v={{ app_version }}-1">
 </head>
 <body class="app-shell-body {% block body_class %}{% endblock %}" data-app-version="{{ app_version }}">
     <aside class="app-sidebar" id="appSidebar">
