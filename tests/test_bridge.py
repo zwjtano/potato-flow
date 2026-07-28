@@ -799,7 +799,11 @@ class BridgeTests(unittest.TestCase):
                 ))
 
             enhance_metadata.assert_called_once()
-            generate_cover.assert_called_once()
+            self.assertEqual(generate_cover.call_count, 2)
+            self.assertEqual(
+                [call.kwargs["target_size"] for call in generate_cover.call_args_list],
+                [(1920, 1080), (1600, 1200)],
+            )
             self.assertEqual(generate_summary.call_count, 2)
             self.assertIsNone(calls[0]["existing_submission"])
             self.assertEqual(calls[0]["page_titles"], ["09:00 第一段 AI 主题"])

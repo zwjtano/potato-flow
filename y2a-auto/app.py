@@ -1164,7 +1164,17 @@ def live_recording_job(fingerprint):
 @login_required
 def live_recording_job_cover(fingerprint):
     try:
-        path = live_recorder_manager.pipeline_cover(fingerprint)
+        path = live_recorder_manager.pipeline_cover(fingerprint, "16x9")
+        return send_file(path, conditional=True)
+    except RecorderConfigError as exc:
+        return jsonify({'error': str(exc)}), 404
+
+
+@app.route('/live-recording/jobs/<fingerprint>/cover/<variant>')
+@login_required
+def live_recording_job_cover_variant(fingerprint, variant):
+    try:
+        path = live_recorder_manager.pipeline_cover(fingerprint, variant)
         return send_file(path, conditional=True)
     except RecorderConfigError as exc:
         return jsonify({'error': str(exc)}), 404
@@ -1236,6 +1246,7 @@ def live_recording_job_review(fingerprint):
                 tags=tags or job.get('tags', []),
                 partition_id=request.form.get('partition_id', '') or job.get('partition_id', ''),
                 cover_file=request.files.get('cover_file'),
+                cover43_file=request.files.get('cover43_file'),
             )
             regenerate_fields = {
                 'regenerate_title': {'title'},
@@ -1261,7 +1272,7 @@ def live_recording_job_review(fingerprint):
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action == 'apply_to_bilibili':
                 live_recorder_manager.update_published_metadata(fingerprint)
-                flash('标题、简介和封面已同步到 B站，视频与分P未改动。', 'success')
+                flash('标题、简介和两种封面已同步到 B站，视频与分P未改动。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action == 'save_and_retry':
                 live_recorder_manager.retry_pipeline_job(fingerprint)

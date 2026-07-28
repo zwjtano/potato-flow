@@ -754,7 +754,7 @@
                                                         <div class="col-md-4">
                                                             <div class="form-group">
                                                                 <label for="openai-image-size-4x3" class="form-label">首页推荐封面（4:3）生成尺寸</label>
-                                                                {% set image_size_4x3 = config.get('OPENAI_IMAGE_SIZE_4X3', config.get('OPENAI_IMAGE_SIZE', '1536x1024')) %}
+                                                                {% set image_size_4x3 = config.get('OPENAI_IMAGE_SIZE_4X3', '1024x1024') %}
                                                                 <select id="openai-image-size-4x3" name="OPENAI_IMAGE_SIZE_4X3" class="form-select">
                                                                     <option value="1536x1024" {% if image_size_4x3 == '1536x1024' %}selected{% endif %}>1536 × 1024（横向，推荐）</option>
                                                                     <option value="1024x1024" {% if image_size_4x3 == '1024x1024' %}selected{% endif %}>1024 × 1024（不推荐）</option>

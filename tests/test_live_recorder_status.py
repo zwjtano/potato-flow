@@ -1795,6 +1795,15 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("live_recording_job_delete", tasks_source)
         self.assertIn('class="recording-progress-trigger', tasks_source)
         self.assertIn('id="recordingJobDetailModal"', tasks_source)
+        self.assertIn(
+            'html[data-theme="dark"] #recordingJobDetailModal .recording-detail-summary',
+            tasks_source,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage',
+            tasks_source,
+        )
+        self.assertIn("background: var(--studio-surface-raised)", tasks_source)
         self.assertIn("FLV 转 MP4（-c copy）", tasks_source)
         self.assertIn("验证内嵌封面", tasks_source)
         self.assertIn("清理原 FLV", tasks_source)

@@ -703,6 +703,7 @@ class VideoUploader(AsyncEvent):
         meta: Union[VideoMeta, dict],
         credential: Credential,
         cover: Optional[Union[str, Picture]] = "",
+        cover43: Optional[Union[str, Picture]] = "",
         line: Optional[Lines] = None,
     ):
         """
@@ -755,6 +756,11 @@ class VideoUploader(AsyncEvent):
             self.meta.cover
             if isinstance(self.meta, VideoMeta)
             else cover if isinstance(cover, Picture) else Picture().from_file(cover)
+        )
+        self.cover43 = (
+            Picture().from_file(cover43)
+            if isinstance(cover43, str) and cover43
+            else cover43
         )
         self.line = line
         self.__task: Union[Task, None] = None
@@ -960,11 +966,17 @@ class VideoUploader(AsyncEvent):
         videos = await self.upload_pages()
 
         cover_url = await self._upload_cover()
+        cover43_url = (
+            await upload_cover(self.cover43, self.credential)
+            if self.cover43
+            else ""
+        )
 
-        result = await self._submit(videos, cover_url)
+        result = await self._submit(videos, cover_url, cover43_url)
         if isinstance(result, dict):
             result["_uploaded_videos"] = videos
             result["_cover_url"] = cover_url
+            result["_cover43_url"] = cover43_url
 
         self.dispatch(VideoUploaderEvents.COMPLETED.value, result)
         return result
@@ -985,13 +997,22 @@ class VideoUploader(AsyncEvent):
             )
         return videos
 
-    async def edit(self, videos: list[dict], *, aid: int, cover_url: str) -> dict:
+    async def edit(
+        self,
+        videos: list[dict],
+        *,
+        aid: int,
+        cover_url: str,
+        cover43_url: str = "",
+    ) -> dict:
         """Replace an existing archive's page list after uploading new pages."""
         meta = copy(
             self.meta.__dict__() if isinstance(self.meta, VideoMeta) else self.meta
         )
         meta["aid"] = int(aid)
         meta["cover"] = cover_url
+        if cover43_url:
+            meta["cover43"] = cover43_url
         meta["videos"] = videos
         meta["csrf"] = self.credential.bili_jct
         api = _API["edit"]
@@ -1324,7 +1345,12 @@ class VideoUploader(AsyncEvent):
             "cid": preupload["biz_id"],
         }
 
-    async def _submit(self, videos: list, cover_url: str = "") -> dict:
+    async def _submit(
+        self,
+        videos: list,
+        cover_url: str = "",
+        cover43_url: str = "",
+    ) -> dict:
         """
         提交视频
 
@@ -1340,6 +1366,8 @@ class VideoUploader(AsyncEvent):
             self.meta.__dict__() if isinstance(self.meta, VideoMeta) else self.meta
         )
         meta["cover"] = cover_url
+        if cover43_url:
+            meta["cover43"] = cover43_url
         meta["videos"] = videos
 
         self.dispatch(VideoUploaderEvents.PRE_SUBMIT.value, deepcopy(meta))

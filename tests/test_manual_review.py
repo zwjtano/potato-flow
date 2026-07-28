@@ -115,6 +115,19 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn("封面人物底稿", live_template)
         self.assertIn("保存 AI 设置", live_template)
 
+    def test_recording_detail_explains_every_pipeline_status_in_text(self):
+        tasks_template = (
+            ROOT / "y2a-auto" / "templates" / "tasks.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("状态说明", tasks_template)
+        for label in ("绿色：已完成", "蓝色：处理中", "黄色：等待中", "灰色：已跳过", "红色：失败"):
+            self.assertIn(label, tasks_template)
+        self.assertIn(
+            "recording-detail-stage-status ${escapeRecordingDetail(status)}",
+            tasks_template,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

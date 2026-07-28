@@ -382,6 +382,7 @@ class BilibiliUploader:
         title: str,
         description: str,
         cover_file_path: str = "",
+        cover43_file_path: str = "",
     ) -> Tuple[bool, Union[dict, str]]:
         """Update one published Bilibili archive without touching its pages."""
         bvid = str(result.get("bvid") or "").strip() if isinstance(result, dict) else ""
@@ -397,6 +398,8 @@ class BilibiliUploader:
             return False, "标题为空，无法更新 B站稿件"
         if cover_file_path and not os.path.isfile(cover_file_path):
             return False, f"新封面文件不存在: {cover_file_path}"
+        if cover43_file_path and not os.path.isfile(cover43_file_path):
+            return False, f"新首页推荐封面文件不存在: {cover43_file_path}"
 
         try:
             configure_bilibili_runtime()
@@ -462,9 +465,17 @@ class BilibiliUploader:
                         for item in tags
                     )
                 cover_url = str(archive.get("cover") or result.get("cover_url") or "").strip()
+                cover43_url = str(
+                    archive.get("cover43") or result.get("cover43_url") or ""
+                ).strip()
                 if cover_file_path:
                     cover_url = await video_uploader.upload_cover(
                         cover_file_path,
+                        credential,
+                    )
+                if cover43_file_path:
+                    cover43_url = await video_uploader.upload_cover(
+                        cover43_file_path,
                         credential,
                     )
                 if not cover_url:
@@ -503,6 +514,8 @@ class BilibiliUploader:
                     "videos": safe_videos,
                     "csrf": credential.bili_jct,
                 }
+                if cover43_url:
+                    payload["cover43"] = cover43_url
                 if payload["tid"] <= 0:
                     raise RuntimeError("B站没有返回原稿分区，已取消更新")
                 response = await (
@@ -518,15 +531,15 @@ class BilibiliUploader:
                     .update_data(**payload)
                     .result
                 )
-                return response, int(resolved_aid), cover_url, len(safe_videos)
+                return response, int(resolved_aid), cover_url, cover43_url, len(safe_videos)
 
             try:
-                response, resolved_aid, cover_url, page_count = asyncio.run(_update())
+                response, resolved_aid, cover_url, cover43_url, page_count = asyncio.run(_update())
             except RuntimeError as exc:
                 if "cannot be called from a running event loop" not in str(exc):
                     raise
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    response, resolved_aid, cover_url, page_count = pool.submit(
+                    response, resolved_aid, cover_url, cover43_url, page_count = pool.submit(
                         asyncio.run,
                         _update(),
                     ).result()
@@ -544,6 +557,7 @@ class BilibiliUploader:
                 "aid": resolved_aid,
                 "bvid": bvid or updated.get("bvid"),
                 "cover_url": cover_url,
+                "cover43_url": cover43_url,
                 "part_count": page_count,
                 "metadata_updated": True,
             })
@@ -563,6 +577,7 @@ class BilibiliUploader:
         description: str,
         tags: List[str],
         partition_id: Union[str, int],
+        cover43_file_path: str = "",
         youtube_url: str = "",
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
@@ -589,6 +604,7 @@ class BilibiliUploader:
             return self._upload_video_unlocked(
                 video_file_path=video_file_path,
                 cover_file_path=cover_file_path,
+                cover43_file_path=cover43_file_path,
                 title=title,
                 description=description,
                 tags=tags,
@@ -612,6 +628,7 @@ class BilibiliUploader:
         description: str,
         tags: List[str],
         partition_id: Union[str, int],
+        cover43_file_path: str = "",
         youtube_url: str = "",
         task_id: Optional[str] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
@@ -640,6 +657,8 @@ class BilibiliUploader:
                 return False, f"视频文件不存在: {missing_videos[0]}"
             if not os.path.exists(cover_file_path):
                 return False, f"封面文件不存在: {cover_file_path}"
+            if cover43_file_path and not os.path.exists(cover43_file_path):
+                return False, f"首页推荐封面文件不存在: {cover43_file_path}"
 
             credential = load_credential_from_file(self.cookie_file)
             credential_ok, credential_msg = validate_credential_remote(credential)
@@ -677,7 +696,7 @@ class BilibiliUploader:
                     f"使用 Biliup 投稿，全局线路："
                     f"{str(upload_config.get('BILIBILI_UPLOAD_LINE') or 'bldsa').strip().lower()}"
                 )
-                return upload_with_biliup(
+                biliup_ok, biliup_result = upload_with_biliup(
                     cookie_file=self.cookie_file,
                     video_paths=video_paths,
                     cover_file=cover_file_path,
@@ -691,6 +710,24 @@ class BilibiliUploader:
                     progress_detail_callback=progress_detail_callback,
                     log_callback=self.log,
                 )
+                if (
+                    biliup_ok
+                    and cover43_file_path
+                    and not existing_submission
+                    and isinstance(biliup_result, dict)
+                ):
+                    edit_ok, edit_result = self.update_uploaded_metadata(
+                        result=biliup_result,
+                        title=safe_title,
+                        description=safe_desc,
+                        cover43_file_path=cover43_file_path,
+                    )
+                    if not edit_ok:
+                        self.log(f"4:3 首页推荐封面同步失败（稿件已上传）: {edit_result}")
+                        biliup_result["cover43_error"] = str(edit_result)
+                    elif isinstance(edit_result, dict):
+                        biliup_result = edit_result
+                return biliup_ok, biliup_result
 
             meta = video_uploader.VideoMeta(
                 tid=tid,
@@ -718,12 +755,15 @@ class BilibiliUploader:
                         title=page_title[:80],
                     )
                 )
-            uploader = video_uploader.VideoUploader(
-                pages=pages,
-                meta=meta,
-                credential=credential,
-                cover=cover_file_path,
-            )
+            uploader_kwargs = {
+                "pages": pages,
+                "meta": meta,
+                "credential": credential,
+                "cover": cover_file_path,
+            }
+            if cover43_file_path:
+                uploader_kwargs["cover43"] = cover43_file_path
+            uploader = video_uploader.VideoUploader(**uploader_kwargs)
 
             last_emitted_text = ""
             chunk_progress = _BilibiliChunkProgress(uploader.pages)
@@ -865,16 +905,17 @@ class BilibiliUploader:
 
                 new_parts = await uploader.upload_pages()
                 combined_parts = [*existing_parts, *new_parts]
-                edit_result = await uploader.edit(
-                    combined_parts,
-                    aid=int(aid),
-                    cover_url=cover_url,
-                )
+                edit_kwargs = {"aid": int(aid), "cover_url": cover_url}
+                existing_cover43_url = str(existing_submission.get("cover43_url") or "")
+                if existing_cover43_url:
+                    edit_kwargs["cover43_url"] = existing_cover43_url
+                edit_result = await uploader.edit(combined_parts, **edit_kwargs)
                 merged = dict(edit_result) if isinstance(edit_result, dict) else {}
                 merged.setdefault("aid", aid)
                 merged.setdefault("bvid", existing_submission.get("bvid"))
                 merged["_uploaded_videos"] = combined_parts
                 merged["_cover_url"] = cover_url
+                merged["_cover43_url"] = str(existing_submission.get("cover43_url") or "")
                 return merged
 
             try:
@@ -893,6 +934,7 @@ class BilibiliUploader:
 
             uploaded_parts = result.pop("_uploaded_videos", None)
             cover_url = result.pop("_cover_url", "")
+            cover43_url = result.pop("_cover43_url", "")
             bvid = result.get("bvid")
             aid = result.get("aid")
             if not bvid and isinstance(result.get("data"), dict):
@@ -911,6 +953,7 @@ class BilibiliUploader:
                 "part_count": len(uploaded_parts) if isinstance(uploaded_parts, list) else len(video_paths),
                 "uploaded_parts": uploaded_parts if isinstance(uploaded_parts, list) else [],
                 "cover_url": cover_url,
+                "cover43_url": cover43_url,
             }
 
         except ArgsException as e:

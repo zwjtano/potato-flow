@@ -2730,12 +2730,32 @@ class LiveRecorderManager:
                     or allowed_recordings_root in cover_path.parents
                 )
             )
+            cover43_candidate = str(
+                review.get("cover43_path")
+                or cover_details.get("ai_cover_4x3_path")
+                or cover_details.get("cover43_used_for_upload")
+                or result.get("cover43_path")
+                or ""
+            ).strip()
+            cover43_path = Path(cover43_candidate).resolve() if cover43_candidate else None
+            local_cover43_available = bool(
+                cover43_path
+                and cover43_path.is_file()
+                and cover43_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+                and (
+                    cover43_path == allowed_cover_root
+                    or allowed_cover_root in cover43_path.parents
+                    or cover43_path == allowed_recordings_root
+                    or allowed_recordings_root in cover43_path.parents
+                )
+            )
             bilibili_result = result.get("bilibili")
             if not isinstance(bilibili_result, dict):
                 bilibili_result = upload_details.get("bilibili")
             bilibili_result = bilibili_result if isinstance(bilibili_result, dict) else {}
             bvid = str(bilibili_result.get("bvid") or "").strip()
             bilibili_cover_url = str(bilibili_result.get("cover_url") or "").strip()
+            bilibili_cover43_url = str(bilibili_result.get("cover43_url") or "").strip()
             cover_route_available = local_cover_available or bool(bvid)
             cover_available = (
                 cover_route_available
@@ -2854,8 +2874,14 @@ class LiveRecorderManager:
                 "bvid": bvid,
                 "bilibili_url": str(bilibili_result.get("url") or ""),
                 "bilibili_cover_url": bilibili_cover_url,
+                "bilibili_cover43_url": bilibili_cover43_url,
                 "cover_available": cover_available,
                 "local_cover_available": local_cover_available,
+                "local_cover43_available": local_cover43_available,
+                "cover43_available": (
+                    local_cover43_available
+                    or urlparse(bilibili_cover43_url).scheme in {"http", "https"}
+                ),
                 "cover_route_available": cover_route_available,
                 "cover_updated_at": str(
                     review.get("updated_at")
@@ -2898,6 +2924,7 @@ class LiveRecorderManager:
         tags: list[str],
         partition_id: str,
         cover_file: Any = None,
+        cover43_file: Any = None,
     ) -> dict[str, Any]:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise RecorderConfigError("任务编号无效")
@@ -2925,17 +2952,24 @@ class LiveRecorderManager:
         previous = job.get("review_override")
         previous = previous if isinstance(previous, dict) else {}
         cover_path = str(previous.get("cover_path") or "").strip()
-        if cover_file and str(getattr(cover_file, "filename", "") or "").strip():
-            suffix = Path(str(cover_file.filename)).suffix.lower()
+        cover43_path = str(previous.get("cover43_path") or "").strip()
+
+        def save_cover(upload: Any, stem: str) -> str:
+            if not upload or not str(getattr(upload, "filename", "") or "").strip():
+                return ""
+            suffix = Path(str(upload.filename)).suffix.lower()
             if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
                 raise RecorderConfigError("封面只支持 JPG、PNG 或 WEBP")
             artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
             artifact_dir.mkdir(parents=True, exist_ok=True)
-            destination = artifact_dir / f"manual-review-cover{suffix}"
-            cover_file.save(destination)
+            destination = artifact_dir / f"{stem}{suffix}"
+            upload.save(destination)
             if not destination.is_file() or destination.stat().st_size <= 0:
                 raise RecorderConfigError("封面保存失败")
-            cover_path = str(destination)
+            return str(destination)
+
+        cover_path = save_cover(cover_file, "manual-review-cover-16x9") or cover_path
+        cover43_path = save_cover(cover43_file, "manual-review-cover-4x3") or cover43_path
 
         now = datetime.now(timezone.utc).isoformat()
         metadata = {
@@ -2945,6 +2979,7 @@ class LiveRecorderManager:
             "tags": clean_tags,
             "partition_id": clean_partition,
             "cover_path": cover_path or None,
+            "cover43_path": cover43_path or None,
             "pending_published_update": job.get("status") == "completed",
             "updated_at": now,
         }
@@ -3096,20 +3131,44 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             previous = job.get("review_override")
             previous = previous if isinstance(previous, dict) else {}
             cover_path = str(previous.get("cover_path") or "").strip()
+            cover43_path = str(previous.get("cover43_path") or "").strip()
             cover_details: dict[str, Any] = {}
             if "cover" in selected:
                 artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
-                generated_cover, cover_details = bridge.generate_recording_cover_with_ai(
-                    title=title,
-                    ai_topic=title_topic or str(ai_details.get("title_topic") or ""),
-                    description=description,
-                    streamer=str(job.get("room_name") or values.get("streamer") or ""),
-                    cfg=bridge_config,
-                    work_dir=artifact_dir,
+                errors: list[str] = []
+                variants = (
+                    ("16x9", (1920, 1080), artifact_dir / "ai_cover_16x9.jpg"),
+                    ("4x3", (1600, 1200), artifact_dir / "ai_cover_4x3.jpg"),
                 )
-                if not generated_cover:
-                    raise RecorderConfigError("AI 封面功能未启用，或没有生成可用封面")
-                cover_path = str(generated_cover)
+                for variant, target_size, output_path in variants:
+                    try:
+                        generated_path, variant_details = (
+                            bridge.generate_recording_cover_with_ai(
+                                title=title,
+                                ai_topic=title_topic or str(ai_details.get("title_topic") or ""),
+                                description=description,
+                                streamer=str(job.get("room_name") or values.get("streamer") or ""),
+                                cfg=bridge_config,
+                                work_dir=artifact_dir,
+                                target_size=target_size,
+                                output_path=output_path,
+                            )
+                        )
+                        cover_details[variant] = variant_details
+                        if generated_path:
+                            if variant == "16x9":
+                                cover_path = str(generated_path)
+                            else:
+                                cover43_path = str(generated_path)
+                        else:
+                            errors.append(f"{variant} 未生成")
+                    except Exception as exc:
+                        cover_details[variant] = {"error": str(exc)}
+                        errors.append(f"{variant}: {exc}")
+                if errors and not cover_path and not cover43_path:
+                    raise RecorderConfigError("两种 AI 封面均生成失败：" + "；".join(errors))
+                if errors:
+                    cover_details["errors"] = errors
 
             now = datetime.now(timezone.utc).isoformat()
             metadata = {
@@ -3119,6 +3178,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 "tags": list(job.get("tags") or []),
                 "partition_id": str(job.get("partition_id") or ""),
                 "cover_path": cover_path or None,
+                "cover43_path": cover43_path or None,
                 "ai_regenerated_fields": sorted(selected),
                 "ai_regenerated_at": now,
                 "ai_title_topic": title_topic or None,
@@ -3145,6 +3205,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         title = str(review.get("title") or job.get("title") or "").strip()
         description = str(review.get("description") or job.get("description") or "").strip()
         cover_path = str(review.get("cover_path") or "").strip()
+        cover43_path = str(review.get("cover43_path") or "").strip()
         bilibili_result = job.get("result", {}).get("bilibili")
         if not isinstance(bilibili_result, dict):
             raise RecorderConfigError("任务中缺少原始 B站投稿结果，无法安全更新")
@@ -3165,6 +3226,9 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 title=title,
                 description=description,
                 cover_file_path=cover_path if cover_path and Path(cover_path).is_file() else "",
+                cover43_file_path=(
+                    cover43_path if cover43_path and Path(cover43_path).is_file() else ""
+                ),
             )
             if not ok or not isinstance(updated_result, dict):
                 raise RecorderConfigError(str(updated_result))
@@ -3185,6 +3249,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 "tags": list(job.get("tags") or []),
                 "partition_id": str(job.get("partition_id") or ""),
                 "cover_path": cover_path or None,
+                "cover43_path": cover43_path or None,
                 "pending_published_update": False,
                 "published_updated_at": now,
                 "published_update_result": {
@@ -3463,6 +3528,9 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             manual_cover = str(review.get("cover_path") or "").strip()
             if manual_cover:
                 candidates.add(Path(manual_cover))
+            manual_cover43 = str(review.get("cover43_path") or "").strip()
+            if manual_cover43:
+                candidates.add(Path(manual_cover43))
 
             roots = tuple(self._recording_file_roots().values())
             for candidate in candidates:
@@ -3494,7 +3562,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             "deleted_file_count": len(deleted_files),
         }
 
-    def pipeline_cover(self, fingerprint: str) -> Path:
+    def pipeline_cover(self, fingerprint: str, variant: str = "16x9") -> Path:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise RecorderConfigError("任务编号无效")
         job = self.pipeline_job(fingerprint)
@@ -3508,12 +3576,23 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         )
         details = cover_stage.get("details") if isinstance(cover_stage, dict) else {}
         details = details if isinstance(details, dict) else {}
-        candidate = str(
-            review.get("cover_path")
-            or details.get("ai_cover_path")
-            or details.get("cover_used_for_upload")
-            or ""
-        ).strip()
+        if variant not in {"16x9", "4x3"}:
+            raise RecorderConfigError("封面类型无效")
+        if variant == "4x3":
+            candidate = str(
+                review.get("cover43_path")
+                or details.get("ai_cover_4x3_path")
+                or details.get("cover43_used_for_upload")
+                or ""
+            ).strip()
+        else:
+            candidate = str(
+                review.get("cover_path")
+                or details.get("ai_cover_16x9_path")
+                or details.get("ai_cover_path")
+                or details.get("cover_used_for_upload")
+                or ""
+            ).strip()
         allowed_roots = tuple(self._recording_file_roots().values())
         if candidate:
             path = Path(candidate).resolve()
@@ -3523,6 +3602,22 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 return path
 
         bvid = str(job.get("bvid") or "").strip()
+        if variant == "4x3":
+            cover43_url = str(job.get("bilibili_cover43_url") or "").strip()
+            if urlparse(cover43_url).scheme not in {"http", "https"}:
+                raise RecorderConfigError("该任务暂无可预览的 4:3 首页推荐封面")
+            image_data, _ = _open_url(
+                cover43_url,
+                referer=f"https://www.bilibili.com/video/{bvid}",
+                timeout=10,
+            )
+            detected_suffix = image_suffix(image_data[:16])
+            if len(image_data) < 64 or not detected_suffix:
+                raise RecorderConfigError("B 站返回的 4:3 封面内容无效")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = (cache_dir / f"{fingerprint}-4x3{detected_suffix}").resolve()
+            cache_path.write_bytes(image_data)
+            return cache_path
         if not bvid:
             raise RecorderConfigError("该任务暂无可预览的封面")
 

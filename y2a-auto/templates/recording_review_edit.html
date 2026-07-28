@@ -53,11 +53,11 @@
             </div>
 
             <div class="card mb-4">
-                <div class="card-header">{{ '待确认封面预览' if job.review_override.pending_published_update else '当前投稿封面' }}</div>
+                <div class="card-header">个人空间封面（16:9）</div>
                 <div class="review-cover">
-                    <img src="{{ url_for('live_recording_job_cover', fingerprint=job.id) }}"
+                    <img src="{{ url_for('live_recording_job_cover_variant', fingerprint=job.id, variant='16x9') }}"
                          data-fallback-src="{{ job.bilibili_cover_url }}"
-                         alt="录播投稿封面"
+                         alt="个人空间 16:9 封面"
                          onerror="if(this.dataset.fallbackSrc && !this.dataset.fallbackUsed){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc;}else{this.closest('.review-cover').classList.add('cover-missing');this.remove();}">
                     <div class="cover-placeholder">
                         <i class="bi bi-image"></i>
@@ -70,6 +70,23 @@
                     {% else %}
                     上传新封面后会优先使用人工封面，不再使用本次任务原有的 AI 封面。
                     {% endif %}
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">首页推荐封面（4:3）</div>
+                <div class="review-cover review-cover-4x3">
+                    <img src="{{ url_for('live_recording_job_cover_variant', fingerprint=job.id, variant='4x3') }}"
+                         data-fallback-src="{{ job.bilibili_cover43_url }}"
+                         alt="首页推荐 4:3 封面"
+                         onerror="if(this.dataset.fallbackSrc && !this.dataset.fallbackUsed){this.dataset.fallbackUsed='1';this.src=this.dataset.fallbackSrc;}else{this.closest('.review-cover').classList.add('cover-missing');this.remove();}">
+                    <div class="cover-placeholder">
+                        <i class="bi bi-image"></i>
+                        <span>{{ '旧任务尚未生成 4:3 封面' if not job.cover43_available else '当前没有可预览封面' }}</span>
+                    </div>
+                </div>
+                <div class="card-body small text-muted">
+                    这张图由图片模型独立生成并提交到 B站 <code>cover43</code>，不会从 16:9 封面裁切。
                 </div>
             </div>
 
@@ -112,7 +129,7 @@
                                     重新生成简介
                                 </button>
                                 <button type="submit" name="action" value="regenerate_cover" class="btn btn-sm btn-outline-primary ai-generate-btn">
-                                    重新生成封面
+                                    重新生成两种封面
                                 </button>
                                 <button type="submit" name="action" value="regenerate_all" class="btn btn-sm btn-primary ai-generate-btn">
                                     全部重新生成
@@ -182,9 +199,19 @@
                 <div class="card mb-4">
                     <div class="card-header">更换投稿封面</div>
                     <div class="card-body">
-                        <input type="file" name="cover_file" class="form-control"
-                               accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
-                        <div class="form-text">默认保留 AI 封面；仅在 AI 封面不可用或你想更换时选择文件。支持 JPG、PNG、WEBP。</div>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">个人空间封面（16:9）</label>
+                                <input type="file" name="cover_file" class="form-control"
+                                       accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">首页推荐封面（4:3）</label>
+                                <input type="file" name="cover43_file" class="form-control"
+                                       accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+                            </div>
+                        </div>
+                        <div class="form-text mt-2">留空即分别保留现有封面；两张图互不替代。支持 JPG、PNG、WEBP。</div>
                     </div>
                 </div>
 
@@ -221,11 +248,11 @@
                 <div class="published-update-copy">
                     <div class="page-eyebrow">CONFIRM UPDATE</div>
                     <h5 id="publishedUpdateConfirmTitle">确认更新 B站稿件？</h5>
-                    <p>当前预览中的标题、简介和封面将同步到 <strong>{{ job.bvid }}</strong>。</p>
+                    <p>当前预览中的标题、简介和两种封面将同步到 <strong>{{ job.bvid }}</strong>。</p>
                     <div class="published-update-items">
                         <span><i class="bi bi-type"></i> 标题</span>
                         <span><i class="bi bi-card-text"></i> 简介</span>
-                        <span><i class="bi bi-image"></i> 封面</span>
+                        <span><i class="bi bi-image"></i> 16:9 / 4:3 封面</span>
                     </div>
                     <div class="published-update-note">
                         <i class="bi bi-shield-check"></i>
@@ -322,6 +349,7 @@ document.addEventListener('DOMContentLoaded', function () {
 .review-facts dd { margin: 0; }
 .review-cover { min-height: 210px; background: #111827; display: grid; place-items: center; position: relative; overflow: hidden; }
 .review-cover img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+.review-cover.review-cover-4x3 img { aspect-ratio: 4/3; }
 .cover-placeholder { display: none; color: #94a3b8; flex-direction: column; align-items: center; gap: .5rem; }
 .cover-placeholder i { font-size: 2rem; }
 .review-cover.cover-missing .cover-placeholder { display: flex; }

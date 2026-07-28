@@ -1170,7 +1170,7 @@ def generate_recording_cover_with_ai(
     target_size: tuple[int, int] | None = None,
     output_path: Path | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
-    """Generate an AI cover and crop it to Bilibili or recording dimensions."""
+    """Generate one independent AI cover for the requested Bilibili aspect ratio."""
     root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -1339,6 +1339,21 @@ def generate_recording_cover_with_ai(
         if target_size is None
         else f"{target_width}:{target_height}"
     )
+    if abs((target_width / target_height) - (16 / 9)) < 0.02:
+        composition_instruction = (
+            "这是个人空间横向封面。主体和唯一标题必须完整留在 16:9 横向安全区域，"
+            "左右保留呼吸空间，适合个人空间大图展示。"
+        )
+        cover_variant = "16x9"
+    elif abs((target_width / target_height) - (4 / 3)) < 0.02:
+        composition_instruction = (
+            "这是首页推荐 4:3 卡片封面。重新采用更集中、更紧凑的独立构图，"
+            "主体和唯一标题靠近视觉中心，不能沿用或模拟 16:9 封面的裁切结果。"
+        )
+        cover_variant = "4x3"
+    else:
+        composition_instruction = "请针对目标画幅独立构图，主体和标题均保持完整。"
+        cover_variant = aspect_label.replace(":", "x")
     prompt = f"""
 为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -1346,6 +1361,7 @@ AI 生成的核心标题：{headline}
 内容摘要：{str(description or "")[:500]}
 
 只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+{composition_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
 {dota2_ability_instruction}
@@ -1416,7 +1432,7 @@ AI 生成的核心标题：{headline}
         raise RuntimeError("图片模型返回了空图片")
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    source = work_dir / "ai_cover_source.png"
+    source = work_dir / f"ai_cover_{cover_variant}_source.png"
     cover = output_path or (work_dir / "ai_cover.jpg")
     cover.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes(raw)
@@ -1448,6 +1464,8 @@ AI 生成的核心标题：{headline}
         "ai_cover_prompt": prompt,
         "ai_cover_width": target_width,
         "ai_cover_height": target_height,
+        "ai_cover_variant": cover_variant,
+        "ai_cover_requested_size": image_size,
     })
     return cover, details
 
@@ -1508,6 +1526,7 @@ def persist_pipeline_cover(
     store: StateStore,
     key: str,
     cover: Path,
+    variant: str = "16x9",
 ) -> Path:
     """Keep the task thumbnail outside its disposable per-run artifact folder."""
     source = cover.resolve()
@@ -1518,7 +1537,8 @@ def persist_pipeline_cover(
         suffix = ".jpg"
     target_dir = store.path.parent / "artifacts" / "task-covers"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = (target_dir / f"{key}{suffix}").resolve()
+    safe_variant = "4x3" if variant == "4x3" else "16x9"
+    target = (target_dir / f"{key}-{safe_variant}{suffix}").resolve()
     if source != target:
         shutil.copy2(source, target)
     return target
@@ -1859,12 +1879,18 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         title, description, tags = render_metadata(video, cfg)
         manual_cover_path = str(review_override.get("cover_path") or "").strip()
+        manual_cover43_path = str(review_override.get("cover43_path") or "").strip()
         if manual_cover_path and Path(manual_cover_path).is_file():
             original_cover = Path(manual_cover_path)
         else:
             current_stage = "cover"
             original_cover = find_cover(video, cfg, work_dir)
         cover = original_cover
+        cover43: Path | None = (
+            Path(manual_cover43_path)
+            if manual_cover43_path and Path(manual_cover43_path).is_file()
+            else None
+        )
         source_url = str(cfg.get("source_url", "")).strip()
 
         current_stage = "ass"
@@ -2080,6 +2106,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             else {}
         )
         retry_cover_path = ""
+        retry_cover43_path = ""
         if retry:
             for value in (
                 review_override.get("cover_path"),
@@ -2090,6 +2117,16 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 candidate = str(value or "").strip()
                 if candidate and Path(candidate).is_file():
                     retry_cover_path = candidate
+                    break
+            for value in (
+                review_override.get("cover43_path"),
+                prior_result.get("cover43_path"),
+                prior_cover_details.get("ai_cover_4x3_path"),
+                prior_cover_details.get("cover43_used_for_upload"),
+            ):
+                candidate = str(value or "").strip()
+                if candidate and Path(candidate).is_file():
+                    retry_cover43_path = candidate
                     break
         if manual_cover_path and Path(manual_cover_path).is_file():
             cover = Path(manual_cover_path)
@@ -2139,6 +2176,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     streamer=recording_metadata_values(video, cfg)["streamer"],
                     cfg=cfg,
                     work_dir=work_dir,
+                    target_size=(1920, 1080),
+                    output_path=work_dir / "ai_cover_16x9.jpg",
                 )
                 if generated_cover:
                     cover = generated_cover
@@ -2176,17 +2215,63 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             cover_stage_status = "skipped"
             store.stage(key, "cover", "skipped", cover_generation)
 
+        # The homepage 4:3 cover is a second, independent model request. It is
+        # optional for upload and is never synthesized from the 16:9 image.
+        if cover43 is None and session_cover:
+            session_cover43 = str(multipart.get("cover43_path") or "").strip()
+            if session_cover43 and Path(session_cover43).is_file():
+                cover43 = Path(session_cover43)
+        if cover43 is None and retry_cover43_path:
+            cover43 = Path(retry_cover43_path)
+        if (
+            cover43 is None
+            and not dry_run
+            and not existing_submission
+            and not manual_cover43_path
+        ):
+            try:
+                generated_cover43, cover43_details = generate_recording_cover_with_ai(
+                    title=title,
+                    ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+                    description=description,
+                    streamer=recording_metadata_values(video, cfg)["streamer"],
+                    cfg=cfg,
+                    work_dir=work_dir,
+                    target_size=(1600, 1200),
+                    output_path=work_dir / "ai_cover_4x3.jpg",
+                )
+                if generated_cover43:
+                    cover43 = generated_cover43
+                cover_generation.update({
+                    f"ai_cover_4x3_{key_name.removeprefix('ai_cover_')}": value
+                    for key_name, value in cover43_details.items()
+                })
+            except Exception as exc:
+                cover_generation.update({
+                    "ai_cover_4x3_generated": False,
+                    "ai_cover_4x3_error": str(exc),
+                })
+                print(f"WARN AI 4:3 首页推荐封面生成失败（不影响 16:9 投稿）: {exc}", file=sys.stderr)
+
         if not dry_run:
-            cover = persist_pipeline_cover(store, key, cover)
+            cover = persist_pipeline_cover(store, key, cover, "16x9")
             cover_generation["cover_used_for_upload"] = str(cover)
+            cover_generation["ai_cover_16x9_path"] = str(cover)
             if cover_generation.get("ai_cover_generated") or cover_generation.get("ai_cover_path"):
                 cover_generation["ai_cover_path"] = str(cover)
+            if cover43 is not None and cover43.is_file():
+                cover43 = persist_pipeline_cover(store, key, cover43, "4x3")
+                cover_generation["ai_cover_4x3_path"] = str(cover43)
+                cover_generation["cover43_used_for_upload"] = str(cover43)
             store.stage(key, "cover", cover_stage_status, cover_generation)
 
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
                    "ass_path": str(ass_path) if ass_path else None,
                    "danmaku_count": len(comments), "cover": str(cover),
+                   "cover_path": str(cover),
+                   "cover43": str(cover43) if cover43 else None,
+                   "cover43_path": str(cover43) if cover43 else None,
                    "original_cover": str(original_cover), "platform": platform,
                    "title": title, "description": description, "tags": tags, "source_url": source_url,
                    "partition_id": partition, "metadata_automation": metadata_automation,
@@ -2228,6 +2313,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "metadata_automation": metadata_automation,
             "cover_generation": cover_generation,
             "cover_path": str(cover),
+            "cover43_path": str(cover43) if cover43 else None,
         })
         result = previous.get("bilibili")
         uploader = None
@@ -2253,6 +2339,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
             ok, result = uploader.upload_video(
                 video_file_path=str(upload_video), cover_file_path=str(cover), title=title,
+                cover43_file_path=str(cover43) if cover43 else "",
                 description=description, tags=tags, partition_id=partition,
                 youtube_url=source_url, task_id=None,
                 page_titles=[page_title],
@@ -2310,6 +2397,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "metadata_automation": metadata_automation,
                 "cover_generation": cover_generation,
                 "cover_path": str(cover),
+                "cover43_path": str(cover43) if cover43 else None,
                 "last_video": str(video),
                 "recording_intro": recording_intro,
                 "parts": multipart_parts,
@@ -2322,6 +2410,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         store.stage(key, "upload", "completed", {
             "title": title, "description": description, "cover": str(cover),
+            "cover43": str(cover43) if cover43 else None,
             "tags": tags, "partition_id": partition,
             "bilibili": previous.get("bilibili"),
             "description_comment": previous.get("description_comment"),
