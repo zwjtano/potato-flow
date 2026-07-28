@@ -214,6 +214,12 @@ def extract_supported_room_url(value: str) -> str:
     )
 
 
+def extract_douyin_share_name(value: str) -> str:
+    """Extract the visible streamer name from Douyin's standard share copy."""
+    match = re.search(r"【([^【】\r\n]{1,80})】\s*正在直播", str(value or ""))
+    return match.group(1).strip() if match else ""
+
+
 def _open_url(
     url: str,
     *,
@@ -449,6 +455,120 @@ def _first_json_text(text: str, keys: tuple[str, ...]) -> str:
     return ""
 
 
+def _douyin_relation_sec_uid(query: str) -> str:
+    """Return the target streamer ID embedded in a Douyin live share URL."""
+    values = parse_qs(query)
+    outer_sec_uid = str((values.get("sec_user_id") or [""])[0]).strip()
+    try:
+        extra_params = json.loads(
+            str((values.get("extra_params") or ["{}"])[0])
+        )
+        live_params = json.loads(
+            str(extra_params.get("live_common_share_params") or "{}")
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return outer_sec_uid
+    return str(
+        live_params.get("sec_relation_user_id") or outer_sec_uid
+    ).strip()
+
+
+def _douyin_target_user_info(text: str, sec_uid: str) -> dict[str, Any]:
+    """Select the requested profile instead of the signed-in viewer profile."""
+    if not sec_uid:
+        return {}
+    render_match = re.search(
+        r'<script[^>]+id=["\']RENDER_DATA["\'][^>]*>(.*?)</script>',
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if not render_match:
+        return {}
+    try:
+        payload = json.loads(unquote(render_match.group(1)))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    app = payload.get("app") if isinstance(payload, dict) else None
+    user = app.get("user") if isinstance(app, dict) else None
+    info = user.get("info") if isinstance(user, dict) else None
+    if not isinstance(info, dict):
+        return {}
+    returned_sec_uid = str(
+        info.get("secUid") or info.get("sec_uid") or ""
+    ).strip()
+    return info if returned_sec_uid == sec_uid else {}
+
+
+def _douyin_avatar_url(user: dict[str, Any]) -> str:
+    for key in ("avatar_thumb", "avatar_medium", "avatar_larger"):
+        avatar = user.get(key)
+        if not isinstance(avatar, dict):
+            continue
+        urls = avatar.get("url_list")
+        if isinstance(urls, list) and urls:
+            value = str(urls[0] or "").strip()
+            if value:
+                return value
+    return str(
+        user.get("avatarUrl") or user.get("avatar300Url") or ""
+    ).strip()
+
+
+def _resolve_douyin_reflow_metadata(
+    room_id: str,
+    request_sec_uid: str,
+    cookie: str,
+) -> dict[str, str]:
+    """Read the authoritative room owner from Douyin's live reflow API."""
+    params = {
+        "room_id": room_id,
+        "sec_user_id": request_sec_uid,
+        "type_id": "0",
+        "live_id": "1",
+        "version_code": "99.99.99",
+        "app_id": "1128",
+        "aid": "6383",
+    }
+    payload = _response_json(
+        "https://webcast.amemv.com/webcast/room/reflow/info/?"
+        + urlencode(params),
+        referer="https://live.douyin.com/",
+        cookie=cookie,
+        timeout=20,
+    )
+    data = payload.get("data")
+    room = data.get("room") if isinstance(data, dict) else None
+    owner = room.get("owner") if isinstance(room, dict) else None
+    if not isinstance(room, dict) or not isinstance(owner, dict):
+        return {}
+    owner_sec_uid = str(
+        owner.get("sec_uid") or owner.get("secUid") or ""
+    ).strip()
+    web_rid = str(
+        owner.get("web_rid") or owner.get("webRid") or ""
+    ).strip()
+    canonical_url = (
+        f"https://live.douyin.com/{web_rid}"
+        if web_rid
+        else (
+            f"https://www.douyin.com/user/{quote(owner_sec_uid, safe='')}"
+            if owner_sec_uid
+            else ""
+        )
+    )
+    return {
+        "room_id": str(
+            room.get("id_str") or room.get("id") or room_id
+        ).strip(),
+        "web_rid": web_rid,
+        "sec_uid": owner_sec_uid,
+        "name": str(owner.get("nickname") or "").strip(),
+        "avatar_url": _douyin_avatar_url(owner),
+        "live_title": str(room.get("title") or "").strip(),
+        "url": canonical_url,
+    }
+
+
 def _resolve_douyin_metadata(url: str) -> dict[str, str]:
     """Resolve direct/short Douyin live URLs from the official room HTML."""
     cookie = _douyin_cookie_header()
@@ -466,10 +586,29 @@ def _resolve_douyin_metadata(url: str) -> dict[str, str]:
         if redirect_host == "webcast.amemv.com":
             room_match = re.search(r"/reflow/(\d+)", parsed_redirect.path)
             redirect_room_id = room_match.group(1) if room_match else ""
-            redirect_query = parse_qs(parsed_redirect.query)
-            sec_uid = str(
-                (redirect_query.get("sec_user_id") or [""])[0]
+            redirect_values = parse_qs(parsed_redirect.query)
+            request_sec_uid = str(
+                (redirect_values.get("sec_user_id") or [""])[0]
             ).strip()
+            if redirect_room_id:
+                try:
+                    reflow_metadata = _resolve_douyin_reflow_metadata(
+                        redirect_room_id,
+                        request_sec_uid,
+                        cookie,
+                    )
+                except RecorderConfigError:
+                    logger.warning(
+                        "抖音直播回流接口未返回主播资料，回退到用户页解析"
+                    )
+                else:
+                    if (
+                        reflow_metadata.get("name")
+                        and reflow_metadata.get("sec_uid")
+                        and reflow_metadata.get("url")
+                    ):
+                        return reflow_metadata
+            sec_uid = _douyin_relation_sec_uid(parsed_redirect.query)
             if not sec_uid:
                 raise RecorderConfigError("抖音分享链接中没有有效的用户 ID")
             url = f"https://www.douyin.com/user/{quote(sec_uid, safe='')}"
@@ -499,29 +638,54 @@ def _resolve_douyin_metadata(url: str) -> dict[str, str]:
     if render_match:
         text = f"{text}\n{unquote(render_match.group(1))}"
 
-    web_rid = _first_json_text(text, ("web_rid", "webRid")) or room_ref
-    room_id = (
-        redirect_room_id
-        or _first_json_text(text, ("roomId", "room_id", "id_str"))
-        or web_rid
-    )
-    sec_uid = sec_uid or _first_json_text(
-        text,
-        ("sec_uid", "secUid", "sec_user_id"),
-    )
-    name = _first_json_text(text, ("nickname", "nick_name", "user_name"))
-    title = _first_json_text(text, ("title", "room_title"))
-    avatar_url = ""
-    avatar_match = re.search(
-        r'"avatar_(?:thumb|medium|large)"\s*:\s*\{.*?'
-        r'"url_list"\s*:\s*\[\s*"((?:\\.|[^"\\])*)"',
-        text,
-        flags=re.DOTALL,
-    )
-    if avatar_match:
-        avatar_url = _decode_json_string(avatar_match.group(1))
-    if not avatar_url:
-        avatar_url = _first_json_text(text, ("avatar", "avatarUrl"))
+    target_user = _douyin_target_user_info(text, sec_uid)
+    if target_user:
+        room_data = target_user.get("roomData")
+        room_data = room_data if isinstance(room_data, dict) else {}
+        web_rid = str(
+            room_data.get("webRid")
+            or room_data.get("web_rid")
+            or ""
+        ).strip()
+        room_id = str(
+            redirect_room_id
+            or room_data.get("roomId")
+            or room_data.get("room_id")
+            or ""
+        ).strip()
+        name = str(target_user.get("nickname") or "").strip()
+        title = str(
+            room_data.get("title") or room_data.get("roomTitle") or ""
+        ).strip()
+        avatar_url = str(
+            target_user.get("avatarUrl")
+            or target_user.get("avatar300Url")
+            or ""
+        ).strip()
+    else:
+        web_rid = _first_json_text(text, ("web_rid", "webRid")) or room_ref
+        room_id = (
+            redirect_room_id
+            or _first_json_text(text, ("roomId", "room_id", "id_str"))
+            or web_rid
+        )
+        sec_uid = sec_uid or _first_json_text(
+            text,
+            ("sec_uid", "secUid", "sec_user_id"),
+        )
+        name = _first_json_text(text, ("nickname", "nick_name", "user_name"))
+        title = _first_json_text(text, ("title", "room_title"))
+        avatar_url = ""
+        avatar_match = re.search(
+            r'"avatar_(?:thumb|medium|large)"\s*:\s*\{.*?'
+            r'"url_list"\s*:\s*\[\s*"((?:\\.|[^"\\])*)"',
+            text,
+            flags=re.DOTALL,
+        )
+        if avatar_match:
+            avatar_url = _decode_json_string(avatar_match.group(1))
+        if not avatar_url:
+            avatar_url = _first_json_text(text, ("avatar", "avatarUrl"))
     if not title:
         title_match = re.search(
             r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
@@ -530,10 +694,13 @@ def _resolve_douyin_metadata(url: str) -> dict[str, str]:
         )
         if title_match:
             title = html.unescape(title_match.group(1)).strip()
-    if not name:
-        name = f"抖音主播{web_rid}"
-    if not web_rid:
-        raise RecorderConfigError("抖音直播间链接中没有有效房间号")
+    if not room_id and not sec_uid:
+        raise RecorderConfigError("抖音直播间链接中没有有效房间号或用户 ID")
+    canonical_url = (
+        f"https://live.douyin.com/{web_rid}"
+        if web_rid
+        else f"https://www.douyin.com/user/{quote(sec_uid, safe='')}"
+    )
     return {
         "room_id": room_id,
         "web_rid": web_rid,
@@ -541,7 +708,7 @@ def _resolve_douyin_metadata(url: str) -> dict[str, str]:
         "name": name,
         "avatar_url": avatar_url,
         "live_title": title,
-        "url": f"https://live.douyin.com/{web_rid}",
+        "url": canonical_url,
     }
 
 
@@ -1004,7 +1171,8 @@ class LiveRecorderManager:
 
     def resolve_room(self, url: str) -> dict[str, Any]:
         """Resolve a supported room URL into canonical streamer metadata."""
-        url = extract_supported_room_url(url)
+        raw_input = str(url or "")
+        url = extract_supported_room_url(raw_input)
         platform = detect_platform(url)
         if platform == "bilibili":
             parsed = urlparse(url)
@@ -1054,6 +1222,12 @@ class LiveRecorderManager:
 
         if platform == "douyin":
             resolved = _resolve_douyin_metadata(url)
+            if not resolved.get("name"):
+                resolved["name"] = extract_douyin_share_name(raw_input)
+            if not resolved.get("name"):
+                raise RecorderConfigError(
+                    "抖音没有返回真实主播资料；请更新抖音 Cookie 后重试"
+                )
             return {
                 "platform": "douyin",
                 "platform_name": "抖音",
@@ -1364,6 +1538,11 @@ class LiveRecorderManager:
                     if room.get("platform") == resolved["platform"]
                     and (
                         str(room.get("platform_room_id") or "") == resolved["room_id"]
+                        or (
+                            bool(resolved.get("sec_uid"))
+                            and str(room.get("platform_user_id") or "")
+                            == str(resolved.get("sec_uid"))
+                        )
                         or str(room.get("url") or "").rstrip("/") == resolved["url"]
                     )
                 ),

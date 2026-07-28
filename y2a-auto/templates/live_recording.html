@@ -582,7 +582,10 @@ document.addEventListener('DOMContentLoaded', function () {
             const avatar = roomResolvePreview.querySelector('[data-role="room-resolve-avatar"]');
             avatar.src = room.avatar_url || '';
             avatar.hidden = !room.avatar_url;
-            roomResolvePreview.querySelector('[data-role="room-resolve-platform"]').textContent = `${room.platform_name} · 房间 ${room.room_id}`;
+            const displayRoomId = room.platform === 'douyin'
+                ? (room.web_rid || room.room_id)
+                : room.room_id;
+            roomResolvePreview.querySelector('[data-role="room-resolve-platform"]').textContent = `${room.platform_name} · 房间 ${displayRoomId}`;
             roomResolvePreview.querySelector('[data-role="room-resolve-name"]').textContent = room.name;
             roomResolvePreview.querySelector('[data-role="room-resolve-title"]').textContent = room.live_title || '主播资料识别成功';
             const platformIcon = roomResolvePreview.querySelector('[data-role="room-resolve-platform-icon"]');

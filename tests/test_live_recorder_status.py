@@ -254,9 +254,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         page = b"""
         <script id="RENDER_DATA" type="application/json">
-        %7B%22web_rid%22%3A%22778899%22%2C%22id_str%22%3A%221234567%22%2C
+        %7B%22app%22%3A%7B%22user%22%3A%7B%22info%22%3A%7B
+        %22secUid%22%3A%22target-sec-user-id%22%2C
         %22nickname%22%3A%22DouyinHost%22%2C
-        %22avatarUrl%22%3A%22https%3A%2F%2Fexample.com%2Favatar.jpg%22%7D
+        %22avatarUrl%22%3A%22https%3A%2F%2Fexample.com%2Favatar.jpg%22%2C
+        %22roomData%22%3A%7B%22webRid%22%3A%22778899%22%7D
+        %7D%7D%7D%7D
         </script>
         """
         share_message = (
@@ -266,7 +269,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         )
         redirect_url = (
             "https://webcast.amemv.com/douyin/webcast/reflow/1234567"
-            "?sec_user_id=sec-user-id"
+            "?sec_user_id=viewer-sec-user-id"
+            "&extra_params=%7B%22live_common_share_params%22%3A"
+            "%22%7B%5C%22sec_relation_user_id%5C%22%3A"
+            "%5C%22target-sec-user-id%5C%22%7D%22%7D"
         )
         with mock.patch.object(
             recorder_module,
@@ -274,8 +280,30 @@ class LiveRecorderStatusTests(unittest.TestCase):
             return_value=redirect_url,
         ), mock.patch.object(
             recorder_module,
+            "_response_json",
+            return_value={
+                "status_code": 0,
+                "data": {
+                    "room": {
+                        "id_str": "1234567",
+                        "title": "TonightLive",
+                        "owner": {
+                            "sec_uid": "target-sec-user-id",
+                            "web_rid": "778899",
+                            "nickname": "DouyinHost",
+                            "avatar_thumb": {
+                                "url_list": [
+                                    "https://example.com/avatar.jpg",
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        ), mock.patch.object(
+            recorder_module,
             "_open_url",
-            return_value=(page, "https://www.douyin.com/user/sec-user-id"),
+            return_value=(page, "https://www.douyin.com/user/target-sec-user-id"),
         ) as open_url, mock.patch.object(
             recorder_module,
             "_douyin_cookie_header",
@@ -283,15 +311,70 @@ class LiveRecorderStatusTests(unittest.TestCase):
         ):
             room = manager.resolve_room(share_message)
 
-        self.assertEqual(
-            open_url.call_args.args[0],
-            "https://www.douyin.com/user/sec-user-id",
-        )
+        open_url.assert_not_called()
         self.assertEqual(room["platform"], "douyin")
         self.assertEqual(room["room_id"], "1234567")
-        self.assertEqual(room["sec_uid"], "sec-user-id")
+        self.assertEqual(room["sec_uid"], "target-sec-user-id")
         self.assertEqual(room["avatar_url"], "https://example.com/avatar.jpg")
         self.assertEqual(room["url"], "https://live.douyin.com/778899")
+
+    def test_uses_streamer_name_from_douyin_share_message_when_page_omits_it(self):
+        manager = LiveRecorderManager()
+        page = b"""
+        <script id="RENDER_DATA" type="application/json">
+        %7B%22web_rid%22%3A%22778899%22%7D
+        </script>
+        """
+        share_message = (
+            "#在抖音，记录美好生活#【天才青争】正在直播，来和我一起支持Ta吧。"
+            " https://v.douyin.com/kG8lGVITcRI/"
+        )
+        with mock.patch.object(
+            recorder_module,
+            "_resolve_redirect_url",
+            return_value=(
+                "https://webcast.amemv.com/douyin/webcast/reflow/1234567"
+                "?sec_user_id=sec-user-id"
+            ),
+        ), mock.patch.object(
+            recorder_module,
+            "_response_json",
+            side_effect=RecorderConfigError("reflow unavailable"),
+        ), mock.patch.object(
+            recorder_module,
+            "_open_url",
+            return_value=(page, "https://www.douyin.com/user/sec-user-id"),
+        ), mock.patch.object(
+            recorder_module,
+            "_douyin_cookie_header",
+            return_value="",
+        ):
+            room = manager.resolve_room(share_message)
+
+        self.assertEqual(room["name"], "天才青争")
+        self.assertNotEqual(room["name"], f"抖音主播{room['room_id']}")
+
+    def test_rejects_douyin_room_when_real_streamer_name_is_unavailable(self):
+        manager = LiveRecorderManager()
+        page = b"""
+        <script id="RENDER_DATA" type="application/json">
+        %7B%22web_rid%22%3A%22778899%22%7D
+        </script>
+        """
+        with mock.patch.object(
+            recorder_module,
+            "_open_url",
+            return_value=(page, "https://live.douyin.com/778899"),
+        ), mock.patch.object(
+            recorder_module,
+            "_douyin_cookie_header",
+            return_value="",
+        ):
+            with self.assertRaisesRegex(
+                RecorderConfigError,
+                "没有返回真实主播资料",
+            ):
+                manager.resolve_room("https://live.douyin.com/778899")
 
     def test_resolves_numeric_douyu_vanity_room_id(self):
         manager = LiveRecorderManager()
@@ -1709,6 +1792,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('data-role="room-url" maxlength="2000"', source)
         self.assertIn("抖音可直接粘贴 App 生成的整段直播分享文案", source)
         self.assertIn("(?:bilibili|douyu|douyin)", source)
+        self.assertIn("(room.web_rid || room.room_id)", source)
         self.assertIn("/live-recording/rooms/resolve", source)
         self.assertIn("/live-recording/rooms/search", source)
         self.assertIn('data-role="room-search-results"', source)
