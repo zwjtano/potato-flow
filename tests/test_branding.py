@@ -123,7 +123,14 @@ class BrandingTests(unittest.TestCase):
         self.assertIn("response.headers['X-PotatoFlow-Version'] = __version__", app_source)
         self.assertIn("@app.route('/api/version')", app_source)
         self.assertIn("<span>by</span>", base_template)
-        self.assertIn("<span>{{ app_author }}</span>", base_template)
+        self.assertIn(
+            'class="app-author-link" href="https://github.com/zwjtano"',
+            base_template,
+        )
+        self.assertIn(
+            'aria-label="{{ app_author }} GitHub 主页">{{ app_author }}</a>',
+            base_template,
+        )
         self.assertIn(
             "https://avatars.githubusercontent.com/u/64340982?v=4",
             base_template,
