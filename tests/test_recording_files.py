@@ -157,6 +157,29 @@ class RecordingFilesTests(unittest.TestCase):
         self.assertTrue(info["locked"])
         self.assertEqual(info["lock_reason"], "流水线处理中")
 
+    def test_uploaded_job_source_stays_locked_until_cleanup_finishes(self):
+        video = self.recordings / "uploaded-but-not-cleaned.flv"
+        video.write_bytes(b"video")
+        self.manager.pipeline_jobs.return_value = [{
+            "status": "video_uploaded",
+            "video_path": str(video),
+            "stages": [
+                {
+                    "key": "cleanup",
+                    "status": "running",
+                    "details": {"video_path": str(video)},
+                }
+            ],
+        }]
+
+        info = self.manager.recording_files()["files"][0]
+
+        self.assertTrue(info["locked"])
+        self.assertEqual(info["lock_reason"], "流水线处理中")
+        with self.assertRaisesRegex(RecorderConfigError, "流水线处理中"):
+            self.manager.delete_recording_file(info["id"])
+        self.assertTrue(video.exists())
+
     def _create_pipeline_job(self, fingerprint: str, video: Path, status: str = "failed"):
         state_path = self.root / ".bridge" / "state.sqlite3"
         with sqlite3.connect(state_path) as db:
@@ -196,7 +219,7 @@ class RecordingFilesTests(unittest.TestCase):
         with sqlite3.connect(state_path) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 0)
 
-    def test_delete_pipeline_job_removes_related_files_and_rejects_active_job(self):
+    def test_delete_pipeline_job_removes_related_files_and_rejects_untracked_active_job(self):
         fingerprint = "b" * 64
         video = self.recordings / "finished.flv"
         xml = video.with_suffix(".xml")
@@ -234,7 +257,7 @@ class RecordingFilesTests(unittest.TestCase):
                 "INSERT INTO uploads VALUES (?, ?, ?)",
                 (active_fingerprint, str(active_video), "processing"),
             )
-        with self.assertRaisesRegex(RecorderConfigError, "仍在处理中"):
+        with self.assertRaisesRegex(RecorderConfigError, "尚未停止"):
             self.manager.delete_pipeline_job(active_fingerprint, delete_files=True)
         self.assertTrue(active_video.exists())
 

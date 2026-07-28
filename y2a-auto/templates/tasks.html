@@ -417,6 +417,9 @@
             </div>
             <div class="modal-body">
                 <p>确定要删除任务 <strong id="deleteTaskTitle"></strong> 吗？</p>
+                <p class="small text-muted d-none" id="deleteRecordingTaskHint">
+                    如果任务仍在处理，将先停止当前处理进程，再删除任务记录。
+                </p>
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="deleteFiles" checked>
                     <label class="form-check-label" for="deleteFiles">
@@ -858,6 +861,10 @@ html[data-theme="dark"] .recording-task-cover-fallback { color: #8fa1b4; border-
         const recordingUrl = "{{ url_for('live_recording_job_delete', fingerprint='TASK_ID') }}";
         document.getElementById('deleteTaskForm').action =
             (taskSource === 'recording' ? recordingUrl : standardUrl).replace('TASK_ID', taskId);
+        document.getElementById('deleteRecordingTaskHint')?.classList.toggle(
+            'd-none',
+            taskSource !== 'recording'
+        );
 
         const deleteFilesCheckbox = document.getElementById('deleteFiles');
         const deleteFilesInput = document.getElementById('deleteFilesInput');
@@ -927,13 +934,13 @@ html[data-theme="dark"] .recording-task-cover-fallback { color: #8fa1b4; border-
                 headers: {'Accept': 'application/json'}
             });
             const result = await response.json();
-            if (!response.ok) throw new Error(result.error || '暂停投稿任务失败');
+            if (!response.ok) throw new Error(result.error || '暂停录播任务失败');
             button.innerHTML = '<i class="bi bi-check2"></i> 已暂停';
             window.setTimeout(() => refreshTasksData(true), 500);
         } catch (error) {
             button.innerHTML = original;
             button.disabled = false;
-            showTaskErrorMessage(jobId.slice(0, 12), '暂停投稿任务失败', error.message);
+            showTaskErrorMessage(jobId.slice(0, 12), '暂停录播任务失败', error.message);
         }
     }
 

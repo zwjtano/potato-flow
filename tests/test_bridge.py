@@ -441,7 +441,10 @@ class BridgeTests(unittest.TestCase):
                     (key,),
                 ).fetchall()
             stages = {row["stage"]: row for row in rows}
-            self.assertEqual(set(stages), {"detect", "record", "ass", "ai", "cover", "upload"})
+            self.assertEqual(
+                set(stages),
+                {"detect", "record", "ass", "ai", "cover", "upload", "cleanup"},
+            )
             self.assertEqual(stages["record"]["status"], "completed")
             self.assertEqual(stages["ass"]["status"], "completed")
             self.assertEqual(json.loads(stages["ass"]["details_json"])["danmaku_count"], 12)
@@ -473,6 +476,18 @@ class BridgeTests(unittest.TestCase):
                 def __init__(self, **_kwargs):
                     raise AssertionError("retry must not instantiate uploader")
 
+            cleanup_observations = []
+            real_cleanup = bridge.cleanup_uploaded_recording
+
+            def observed_cleanup(*args, **kwargs):
+                with store.connect() as db:
+                    status = db.execute(
+                        "SELECT status FROM uploads WHERE fingerprint=?",
+                        (key,),
+                    ).fetchone()["status"]
+                cleanup_observations.append((status, video.is_file()))
+                return real_cleanup(*args, **kwargs)
+
             with patch.object(
                 bridge,
                 "enhance_recording_metadata",
@@ -482,8 +497,21 @@ class BridgeTests(unittest.TestCase):
                 "generate_recording_cover_with_ai",
                 return_value=(None, {"ai_cover_enabled": False}),
             ), patch.object(bridge, "import_y2a", return_value=(MustNotUpload, None)):
-                self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
+                with patch.object(
+                    bridge,
+                    "cleanup_uploaded_recording",
+                    side_effect=observed_cleanup,
+                ):
+                    self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
             result = store.results(key)
+            with store.connect() as db:
+                status = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?",
+                    (key,),
+                ).fetchone()["status"]
+            self.assertEqual(cleanup_observations, [("video_uploaded", True)])
+            self.assertEqual(status, "completed")
+            self.assertEqual(store.stage_state(key, "cleanup")["status"], "completed")
             self.assertEqual(result["bilibili"]["bvid"], "BV1existing")
             self.assertFalse(video.exists())
             self.assertEqual(result["source_cleanup"]["deleted"], [str(video.resolve())])

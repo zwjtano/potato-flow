@@ -356,6 +356,16 @@ class TelegramControlTests(unittest.TestCase):
 
         self.assertEqual(self.manager.deleted_tasks, [("b" * 64, False)])
 
+    def test_active_task_can_request_delete_confirmation(self):
+        self.service.process_update(_message_update("/delete_task 1"))
+
+        confirmation = self.session.last_payload
+        self.assertIn("若任务仍在处理会先停止", confirmation["text"])
+        self.assertIn(
+            "task_delete:",
+            confirmation["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+        )
+
     def test_engine_stop_requires_confirmation(self):
         self.service.process_update(_message_update("/engine stop"))
         callback_data = self.session.last_payload["reply_markup"]["inline_keyboard"][0][0][

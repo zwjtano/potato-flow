@@ -136,6 +136,19 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def ensure_pipeline_process_group() -> None:
+    """Give one bridge task its own process group so it can be stopped safely."""
+    if os.name != "posix":
+        return
+    try:
+        if os.getpgrp() != os.getpid():
+            os.setsid()
+    except OSError:
+        # Retry workers are already session leaders because they are spawned
+        # with ``start_new_session=True``.
+        pass
+
+
 def load_config(path: Path) -> dict[str, Any]:
     path = path.expanduser().resolve()
     with path.open("r", encoding="utf-8") as handle:
@@ -550,7 +563,8 @@ class StateStore:
             )
             for stage, status in (("detect", "completed"), ("record", "completed"),
                                   ("ass", "pending"), ("ai", "pending"),
-                                  ("cover", "pending"), ("upload", "pending")):
+                                  ("cover", "pending"), ("upload", "pending"),
+                                  ("cleanup", "pending")):
                 db.execute(
                     """INSERT INTO upload_stages
                        (fingerprint, stage, status, updated_at, started_at, finished_at)
@@ -579,7 +593,11 @@ class StateStore:
     ) -> bool:
         """Create an inspectable task for local record-only post-processing."""
         now = utc_now()
-        result = {"room_id": room_id, "record_only": True}
+        result = {
+            "room_id": room_id,
+            "record_only": True,
+            "worker_pid": os.getpid(),
+        }
         stages = ("record", "ass", "cover", "remux", "verify", "cleanup")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1346,7 +1364,11 @@ AI 生成的核心标题：{headline}
         image_size_key = "OPENAI_IMAGE_SIZE_4X3"
     else:
         image_size_key = "OPENAI_IMAGE_SIZE"
-    image_size = str(ai_cfg.get(image_size_key) or ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024")
+    image_size = str(
+        ai_cfg.get(image_size_key)
+        or ai_cfg.get("OPENAI_IMAGE_SIZE")
+        or "1536x1024"
+    )
     if reference_paths:
         with ExitStack() as stack:
             reference_handles = [
@@ -1824,6 +1846,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
     )
     store.finish(key, "processing", {
         **prior_result,
+        "worker_pid": os.getpid(),
         "multipart_session": session_key or None,
         "part_number": part_number,
     })
@@ -2173,6 +2196,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                    "part_description": part_description}
         if dry_run:
             store.stage(key, "upload", "skipped", {"reason": "试运行未投稿"})
+            store.stage(key, "cleanup", "skipped", {"reason": "试运行不清理源文件"})
             store.finish(key, "dry_run", summary)
             print(json.dumps(summary, ensure_ascii=False, indent=2))
             return True
@@ -2306,15 +2330,38 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "part_title": part_generated_title,
             "part_description": part_description,
         })
-        store.finish(key, "completed", previous)
+        # The upload result is durable, but the task has not reached its
+        # terminal state until the configured source cleanup has finished.
+        # Keeping the top-level status at video_uploaded also prevents file
+        # management endpoints from treating the source as deletable.
+        store.finish(key, "video_uploaded", previous)
         if bool(cfg.get("delete_recording_after_upload", True)):
+            current_stage = "cleanup"
+            store.stage(key, "cleanup", "running", {
+                "video_path": str(video),
+                "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
+                "upload_video_path": str(upload_video),
+            })
             previous["source_cleanup"] = cleanup_uploaded_recording(
                 video,
                 danmaku_xml,
                 upload_video,
                 artifact_dir=work_dir,
             )
-            store.finish(key, "completed", previous)
+            store.stage(
+                key,
+                "cleanup",
+                "completed",
+                previous["source_cleanup"],
+            )
+        else:
+            store.stage(
+                key,
+                "cleanup",
+                "skipped",
+                {"reason": "配置为上传后保留录播源文件"},
+            )
+        store.finish(key, "completed", previous)
         emit_recording_task_result_notification(
             cfg,
             fingerprint_value=key,
@@ -2566,7 +2613,16 @@ def video_duration_seconds(path: Path, ffprobe: str = "ffprobe") -> float | None
     """Return media duration, or None when the recorder file cannot be probed."""
     try:
         completed = subprocess.run(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1:nk=1",
+                str(path),
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -2581,6 +2637,7 @@ def video_duration_seconds(path: Path, ffprobe: str = "ffprobe") -> float | None
 
 
 def main(argv: list[str] | None = None) -> int:
+    ensure_pipeline_process_group()
     configure_linux_ca_environment()
     args = build_parser().parse_args(argv)
     cfg = load_config(Path(args.config))
@@ -2775,11 +2832,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR 文件不存在: {path}", file=sys.stderr)
             ok = False
             continue
-        minimum_duration = max(0.0, float(cfg.get("MIN_RECORDING_UPLOAD_DURATION_SECONDS", 60) or 60))
+        minimum_duration = max(
+            0.0,
+            float(cfg.get("MIN_RECORDING_UPLOAD_DURATION_SECONDS", 60) or 60),
+        )
         duration = video_duration_seconds(path, str(cfg.get("ffprobe", "ffprobe")))
         if duration is not None and duration < minimum_duration:
             print(
-                f"SKIP 视频时长 {duration:.1f} 秒，小于 {minimum_duration:.0f} 秒：不创建任务、不进行 AI 处理或投稿: {path}",
+                f"SKIP 视频时长 {duration:.1f} 秒，小于 {minimum_duration:.0f} 秒："
+                f"不创建任务、不进行 AI 处理或投稿: {path}",
                 file=sys.stderr,
             )
             continue

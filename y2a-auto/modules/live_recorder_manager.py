@@ -2883,10 +2883,7 @@ class LiveRecorderManager:
                     and automatic_retries_used >= AUTO_UPLOAD_RETRY_MAX_RETRIES
                 ),
                 "retryable": job_status in {"failed", "dry_run", "paused"},
-                "pausable": (
-                    job_status == "processing"
-                    and upload_stage.get("status") in {"queued", "running"}
-                ),
+                "pausable": job_status in {"processing", "video_uploaded"},
                 "paused": job_status == "paused",
                 "stages": stages,
             })
@@ -3207,45 +3204,161 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
         return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)
 
+    @staticmethod
+    def _pipeline_process_cmdline(pid: int) -> str:
+        try:
+            return (
+                Path(f"/proc/{pid}/cmdline")
+                .read_bytes()
+                .replace(b"\0", b" ")
+                .decode("utf-8", errors="replace")
+            )
+        except OSError:
+            return ""
+
+    def _pipeline_worker_pid(self, job: dict[str, Any]) -> int:
+        """Resolve a bridge worker PID, including tasks created by older releases."""
+        candidates: list[Any] = []
+        result = job.get("result")
+        if isinstance(result, dict):
+            candidates.append(result.get("worker_pid"))
+        for stage in job.get("stages") or []:
+            details = stage.get("details") if isinstance(stage, dict) else None
+            if isinstance(details, dict):
+                candidates.append(details.get("worker_pid"))
+
+        expected_path = str(job.get("video_path") or "")
+        expected_name = Path(expected_path).name
+
+        def command_for(pid: int) -> str:
+            return self._pipeline_process_cmdline(pid)
+
+        def matches(pid: int, *, require_video: bool) -> bool:
+            cmdline = self._pipeline_process_cmdline(pid)
+            return bool(
+                "bridge.py" in cmdline
+                and (
+                    not require_video
+                    or not expected_name
+                    or expected_path in cmdline
+                    or expected_name in cmdline
+                )
+            )
+
+        for value in candidates:
+            try:
+                pid = int(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if pid > 1 and matches(pid, require_video=False):
+                return pid
+
+        proc_root = Path("/proc")
+        try:
+            process_dirs = list(proc_root.iterdir())
+        except OSError:
+            return 0
+        bridge_pids: list[int] = []
+        for process_dir in process_dirs:
+            if not process_dir.name.isdigit():
+                continue
+            pid = int(process_dir.name)
+            if pid <= 1 or "bridge.py" not in command_for(pid):
+                continue
+            bridge_pids.append(pid)
+            if matches(pid, require_video=True):
+                return pid
+        # Older releases received the video path through stdin, so it is not
+        # visible in /proc/<pid>/cmdline. A single live bridge process is still
+        # unambiguous and safe to stop.
+        return bridge_pids[0] if len(bridge_pids) == 1 else 0
+
+    @staticmethod
+    def _pipeline_descendant_pids(pid: int) -> list[int]:
+        """Return Linux child processes so legacy non-group workers stop cleanly."""
+        descendants: list[int] = []
+        pending = [pid]
+        seen = {pid}
+        while pending:
+            parent = pending.pop()
+            children_path = Path(f"/proc/{parent}/task/{parent}/children")
+            try:
+                children = [
+                    int(value)
+                    for value in children_path.read_text(
+                        encoding="utf-8",
+                        errors="ignore",
+                    ).split()
+                    if value.isdigit()
+                ]
+            except OSError:
+                children = []
+            for child in children:
+                if child <= 1 or child in seen:
+                    continue
+                seen.add(child)
+                descendants.append(child)
+                pending.append(child)
+        return descendants
+
+    def _terminate_pipeline_worker(self, job: dict[str, Any]) -> int:
+        pid = self._pipeline_worker_pid(job)
+        if pid <= 1:
+            return 0
+        try:
+            process_group = os.getpgid(pid)
+        except ProcessLookupError:
+            return 0
+        except PermissionError as exc:
+            raise RecorderConfigError(f"没有权限读取任务进程：{exc}") from exc
+
+        try:
+            if process_group == pid:
+                os.killpg(process_group, signal.SIGTERM)
+            else:
+                for child_pid in reversed(self._pipeline_descendant_pids(pid)):
+                    try:
+                        os.kill(child_pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError as exc:
+            raise RecorderConfigError(f"没有权限暂停任务进程：{exc}") from exc
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if not self._pipeline_process_cmdline(pid):
+                return pid
+            time.sleep(0.05)
+        try:
+            if process_group == pid:
+                os.killpg(process_group, signal.SIGKILL)
+            else:
+                for child_pid in reversed(self._pipeline_descendant_pids(pid)):
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError as exc:
+            raise RecorderConfigError(f"没有权限强制停止任务进程：{exc}") from exc
+        return pid
+
     def pause_pipeline_job(self, fingerprint: str) -> bool:
-        """Stop a queued/running bridge uploader and preserve every source artifact."""
+        """Stop any active bridge stage and preserve every source artifact."""
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise RecorderConfigError("任务编号无效")
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        upload_stage = next(
-            (stage for stage in job.get("stages", []) if stage.get("key") == "upload"),
-            {},
-        )
-        if (
-            job.get("status") != "processing"
-            or upload_stage.get("status") not in {"queued", "running"}
-        ):
-            raise RecorderConfigError("只有等待投稿或正在投稿的任务可以暂停")
+        if job.get("status") not in {"processing", "video_uploaded"}:
+            raise RecorderConfigError("只有正在处理的任务可以暂停")
 
-        details = upload_stage.get("details")
-        details = details if isinstance(details, dict) else {}
-        try:
-            worker_pid = int(details.get("worker_pid") or 0)
-        except (TypeError, ValueError):
-            worker_pid = 0
-        if worker_pid > 1:
-            cmdline_path = Path(f"/proc/{worker_pid}/cmdline")
-            try:
-                cmdline = cmdline_path.read_bytes().replace(b"\0", b" ").decode(
-                    "utf-8", errors="replace"
-                )
-            except OSError:
-                cmdline = ""
-            expected_name = Path(str(job.get("video_path") or "")).name
-            if "bridge.py" in cmdline and (not expected_name or expected_name in cmdline):
-                try:
-                    os.kill(worker_pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                except PermissionError as exc:
-                    raise RecorderConfigError(f"没有权限暂停投稿进程：{exc}") from exc
+        self._terminate_pipeline_worker(job)
 
         state_path = self._pipeline_state_path()
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -3257,29 +3370,42 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             if not current:
                 raise RecorderConfigError("没有找到该录播任务")
             if current[0] == "completed":
-                raise RecorderConfigError("投稿已经完成，无法暂停")
+                raise RecorderConfigError("任务已经完成，无法暂停")
             db.execute(
                 """UPDATE upload_stages
                    SET status='paused', error=NULL, finished_at=?, updated_at=?
-                   WHERE fingerprint=? AND stage='upload'
-                     AND status IN ('queued', 'running')""",
+                   WHERE fingerprint=? AND status IN ('queued', 'running')""",
                 (now, now, fingerprint),
             )
             db.execute(
                 """UPDATE uploads
                    SET status='paused', error=NULL, updated_at=?
-                   WHERE fingerprint=? AND status='processing'""",
+                   WHERE fingerprint=? AND status IN ('processing', 'video_uploaded')""",
                 (now, fingerprint),
             )
         return True
 
     def delete_pipeline_job(self, fingerprint: str, delete_files: bool = False) -> dict[str, Any]:
-        """Delete one finished recording pipeline job and, optionally, its files."""
+        """Stop and delete one recording pipeline job and, optionally, its files."""
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise RecorderConfigError("任务编号无效")
         state_path = self._pipeline_state_path()
         if not state_path.is_file():
             raise RecorderConfigError("没有找到该录播任务")
+
+        with sqlite3.connect(state_path, timeout=30) as db:
+            status_row = db.execute(
+                "SELECT status FROM uploads WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+        if not status_row:
+            raise RecorderConfigError("没有找到该录播任务")
+        if status_row[0] in {"processing", "video_uploaded"}:
+            job = self.pipeline_job(fingerprint)
+            if not job:
+                raise RecorderConfigError("任务进程尚未停止，无法安全删除")
+            if job.get("status") in {"processing", "video_uploaded"}:
+                self.pause_pipeline_job(fingerprint)
 
         with self._lock, sqlite3.connect(state_path, timeout=30) as db:
             db.row_factory = sqlite3.Row
@@ -3290,7 +3416,13 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             if not row:
                 raise RecorderConfigError("没有找到该录播任务")
             if row["status"] in {"processing", "video_uploaded"}:
-                raise RecorderConfigError("任务仍在处理中，请等待完成或失败后再删除")
+                failed_stage = db.execute(
+                    """SELECT 1 FROM upload_stages
+                       WHERE fingerprint=? AND status='failed' LIMIT 1""",
+                    (fingerprint,),
+                ).fetchone()
+                if not failed_stage:
+                    raise RecorderConfigError("任务进程尚未停止，请稍后重试删除")
 
             stage_rows = db.execute(
                 "SELECT details_json FROM upload_stages WHERE fingerprint=?",

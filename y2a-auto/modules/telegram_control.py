@@ -847,8 +847,6 @@ class TelegramControlService:
 
     def _request_task_delete(self, chat_id: str, user_id: str, reference: str) -> None:
         job = self._resolve_task(reference)
-        if str(job.get("status") or "") in {"processing", "video_uploaded"}:
-            raise RecorderConfigError("任务仍在处理中，请先暂停或等待结束")
         token = secrets.token_urlsafe(8)
         pending = PendingConfirmation(
             action="task_delete",
@@ -869,7 +867,8 @@ class TelegramControlService:
         self._send_message(
             chat_id,
             f"确定删除任务记录“{pending.target_name}”吗？\n"
-            "原始录播、字幕和封面文件都会保留，确认按钮 2 分钟内有效。",
+            "若任务仍在处理会先停止；原始录播、字幕和封面文件都会保留，"
+            "确认按钮 2 分钟内有效。",
             reply_markup={
                 "inline_keyboard": [[
                     {"text": "确认删除记录", "callback_data": f"task_delete:{token}"},
