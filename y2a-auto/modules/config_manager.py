@@ -100,6 +100,11 @@ DEFAULT_CONFIG = {
     "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
     "OPENAI_IMAGE_BASE_URL": "",
     "OPENAI_IMAGE_SIZE": "1536x1024",
+    # 双封面生成分别使用的 Images API 原生尺寸；留空时回退到 OPENAI_IMAGE_SIZE。
+    "OPENAI_IMAGE_SIZE_16X9": "1536x1024",
+    # 当前 Images API 仅提供 3:2 / 1:1 / 2:3 原生尺寸；4:3 选横向高分辨率源图后单独处理。
+    "OPENAI_IMAGE_SIZE_4X3": "1536x1024",
+    "MIN_RECORDING_UPLOAD_DURATION_SECONDS": 60,
     "OPENAI_THINKING_ENABLED": False,
     "OPENAI_TIMEOUT_SECONDS": 600,  # OpenAI API 请求超时秒数；思考模型输出可达64k token，建议不低于300
     # bilibili固定分区ID（可选）：如设置则bilibili推荐分区将直接使用该ID

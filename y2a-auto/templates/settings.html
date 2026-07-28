@@ -742,17 +742,28 @@
                                                         </div>
                                                         <div class="col-md-4">
                                                             <div class="form-group">
-                                                                <label for="openai-image-size" class="form-label">生成尺寸</label>
-                                                                <select id="openai-image-size" name="OPENAI_IMAGE_SIZE" class="form-select">
-                                                                    {% set image_size = config.get('OPENAI_IMAGE_SIZE', '1536x1024') %}
-                                                                    <option value="1536x1024" {% if image_size == '1536x1024' %}selected{% endif %}>1536 × 1024</option>
-                                                                    <option value="1024x1024" {% if image_size == '1024x1024' %}selected{% endif %}>1024 × 1024</option>
-                                                                    <option value="1024x1536" {% if image_size == '1024x1536' %}selected{% endif %}>1024 × 1536</option>
+                                                                <label for="openai-image-size-16x9" class="form-label">个人空间封面（16:9）生成尺寸</label>
+                                                                {% set image_size_16x9 = config.get('OPENAI_IMAGE_SIZE_16X9', config.get('OPENAI_IMAGE_SIZE', '1536x1024')) %}
+                                                                <select id="openai-image-size-16x9" name="OPENAI_IMAGE_SIZE_16X9" class="form-select">
+                                                                    <option value="1536x1024" {% if image_size_16x9 == '1536x1024' %}selected{% endif %}>1536 × 1024（横向）</option>
+                                                                    <option value="1024x1024" {% if image_size_16x9 == '1024x1024' %}selected{% endif %}>1024 × 1024</option>
+                                                                    <option value="1024x1536" {% if image_size_16x9 == '1024x1536' %}selected{% endif %}>1024 × 1536（竖向）</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-image-size-4x3" class="form-label">首页推荐封面（4:3）生成尺寸</label>
+                                                                {% set image_size_4x3 = config.get('OPENAI_IMAGE_SIZE_4X3', config.get('OPENAI_IMAGE_SIZE', '1536x1024')) %}
+                                                                <select id="openai-image-size-4x3" name="OPENAI_IMAGE_SIZE_4X3" class="form-select">
+                                                                    <option value="1536x1024" {% if image_size_4x3 == '1536x1024' %}selected{% endif %}>1536 × 1024（横向，推荐）</option>
+                                                                    <option value="1024x1024" {% if image_size_4x3 == '1024x1024' %}selected{% endif %}>1024 × 1024（不推荐）</option>
+                                                                    <option value="1024x1536" {% if image_size_4x3 == '1024x1536' %}selected{% endif %}>1024 × 1536（竖向）</option>
                                                                 </select>
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    <p class="help-text mt-2 mb-0">接口地址、API 密钥留空时分别继承全局配置；填写后只用于录播封面，不影响标题、简介和字幕模型。</p>
+                                                    <p class="help-text mt-2 mb-0">两种封面将分别调用图片模型生成。模型不提供精确 16:9 / 4:3 尺寸时，系统会按各自的构图提示生成后独立处理为投稿比例。接口地址、API 密钥留空时分别继承全局配置。</p>
                                                 </div>
 
                                                 <div class="settings-subcard">

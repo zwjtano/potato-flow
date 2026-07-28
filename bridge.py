@@ -1339,7 +1339,14 @@ AI 生成的核心标题：{headline}
 本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
 """.strip()
     image_client = get_openai_client(client_config).images
-    image_size = str(ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024")
+    requested_ratio = (target_width / target_height) if target_height else 0
+    if abs(requested_ratio - (16 / 9)) < 0.02:
+        image_size_key = "OPENAI_IMAGE_SIZE_16X9"
+    elif abs(requested_ratio - (4 / 3)) < 0.02:
+        image_size_key = "OPENAI_IMAGE_SIZE_4X3"
+    else:
+        image_size_key = "OPENAI_IMAGE_SIZE"
+    image_size = str(ai_cfg.get(image_size_key) or ai_cfg.get("OPENAI_IMAGE_SIZE") or "1536x1024")
     if reference_paths:
         with ExitStack() as stack:
             reference_handles = [
@@ -2555,6 +2562,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def video_duration_seconds(path: Path, ffprobe: str = "ffprobe") -> float | None:
+    """Return media duration, or None when the recorder file cannot be probed."""
+    try:
+        completed = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return None
+        duration = float(completed.stdout.strip())
+        return duration if duration >= 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_linux_ca_environment()
     args = build_parser().parse_args(argv)
@@ -2749,6 +2774,14 @@ def main(argv: list[str] | None = None) -> int:
         if not path.is_file():
             print(f"ERROR 文件不存在: {path}", file=sys.stderr)
             ok = False
+            continue
+        minimum_duration = max(0.0, float(cfg.get("MIN_RECORDING_UPLOAD_DURATION_SECONDS", 60) or 60))
+        duration = video_duration_seconds(path, str(cfg.get("ffprobe", "ffprobe")))
+        if duration is not None and duration < minimum_duration:
+            print(
+                f"SKIP 视频时长 {duration:.1f} 秒，小于 {minimum_duration:.0f} 秒：不创建任务、不进行 AI 处理或投稿: {path}",
+                file=sys.stderr,
+            )
             continue
         danmaku_xml = find_danmaku_xml(path, received_paths)
         ok = upload_one(

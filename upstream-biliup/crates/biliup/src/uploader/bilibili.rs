@@ -32,10 +32,16 @@ pub struct Studio {
     #[builder(default = 171)]
     pub tid: u16,
 
-    /// 视频封面
+    /// 视频封面（个人空间，16:9）
     #[cfg_attr(feature = "cli", clap(long, default_value_t))]
     #[serde(default)]
     pub cover: String,
+
+    /// 首页推荐封面（4:3）
+    #[cfg_attr(feature = "cli", clap(long, default_value_t))]
+    #[serde(default)]
+    #[builder(default)]
+    pub cover43: String,
 
     /// 视频标题
     #[cfg_attr(feature = "cli", clap(long, default_value_t))]
@@ -152,6 +158,29 @@ fn parse_extra_fields(s: &str) -> std::result::Result<HashMap<String, Value>, St
 
 fn default_copyright() -> u8 {
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Studio;
+
+    #[test]
+    fn studio_serializes_independent_home_recommend_cover() {
+        let studio: Studio = serde_json::from_value(serde_json::json!({
+            "copyright": 1, "source": "", "tid": 171,
+            "cover": "https://example.invalid/space-16x9.jpg",
+            "cover43": "https://example.invalid/home-4x3.jpg",
+            "title": "test", "desc_format_id": 0, "desc": "", "desc_v2": null,
+            "dynamic": "", "subtitle": {"open": 0, "lan": ""}, "tag": "", "videos": [],
+            "dtime": null, "open_subtitle": false, "interactive": 0, "mission_id": null,
+            "dolby": 0, "lossless_music": 0, "no_reprint": 0, "is_only_self": null,
+            "charging_pay": 0, "aid": null, "up_selection_reply": false,
+            "up_close_reply": false, "up_close_danmu": false, "extra_fields": null
+        })).unwrap();
+        let payload = serde_json::to_value(studio).unwrap();
+        assert_eq!(payload["cover"], "https://example.invalid/space-16x9.jpg");
+        assert_eq!(payload["cover43"], "https://example.invalid/home-4x3.jpg");
+    }
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]

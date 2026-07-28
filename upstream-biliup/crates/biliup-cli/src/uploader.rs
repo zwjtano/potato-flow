@@ -405,6 +405,18 @@ pub async fn cover_up(studio: &mut Studio, bili: &BiliBili) -> AppResult<()> {
         info!("{url}");
         studio.cover = url;
     }
+    if !studio.cover43.is_empty() {
+        let expanded = shellexpand::tilde(&studio.cover43);
+        let cover_path = PathBuf::from(expanded.as_ref());
+        let url = bili
+            .cover_up(&std::fs::read(&cover_path).change_context_lazy(|| {
+                AppError::Custom(format!("cover43: {}", cover_path.display()))
+            })?)
+            .await
+            .change_context_lazy(|| AppError::Unknown)?;
+        info!("{url}");
+        studio.cover43 = url;
+    }
     Ok(())
 }
 
