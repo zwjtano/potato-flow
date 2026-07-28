@@ -44,7 +44,7 @@
             <div class="settings-nav-heading">
                 <div>
                     <span>设置目录</span>
-                    <small>按功能分组，修改后统一保存</small>
+                    <small>每个分组独立保存，互不影响</small>
                 </div>
                 <span class="settings-nav-count">6</span>
             </div>
@@ -318,13 +318,13 @@
                                                     <div class="col-md-6">
                                                         <div class="form-group">
                                                             <label for="aliyun-key" class="form-label">AccessKey ID</label>
-                                                            <input type="password" id="aliyun-key" name="ALIYUN_ACCESS_KEY_ID" value="{{ config.ALIYUN_ACCESS_KEY_ID }}" class="form-control">
+                                                            <input type="password" id="aliyun-key" name="ALIYUN_ACCESS_KEY_ID" value="{{ secret_field_value('ALIYUN_ACCESS_KEY_ID') }}" class="form-control" autocomplete="off">
                                                         </div>
                                                     </div>
                                                     <div class="col-md-6">
                                                         <div class="form-group">
                                                             <label for="aliyun-secret" class="form-label">AccessKey Secret</label>
-                                                            <input type="password" id="aliyun-secret" name="ALIYUN_ACCESS_KEY_SECRET" value="{{ config.ALIYUN_ACCESS_KEY_SECRET }}" class="form-control">
+                                                            <input type="password" id="aliyun-secret" name="ALIYUN_ACCESS_KEY_SECRET" value="{{ secret_field_value('ALIYUN_ACCESS_KEY_SECRET') }}" class="form-control" autocomplete="off">
                                                         </div>
                                                     </div>
                                                     <div class="col-md-6">
@@ -497,7 +497,7 @@
                                                     <div class="col-md-6">
                                                         <div class="form-group">
                                                             <label for="network-proxy-password" class="form-label">代理密码</label>
-                                                            <input type="password" id="network-proxy-password" name="NETWORK_PROXY_PASSWORD" value="{{ config.get('NETWORK_PROXY_PASSWORD', '') }}" class="form-control" autocomplete="off" placeholder="可选">
+                                                            <input type="password" id="network-proxy-password" name="NETWORK_PROXY_PASSWORD" value="{{ secret_field_value('NETWORK_PROXY_PASSWORD') }}" class="form-control" autocomplete="off" placeholder="可选">
                                                         </div>
                                                     </div>
                                                 </div>
@@ -611,7 +611,7 @@
                                                     <div class="col-md-6">
                                                         <div class="form-group">
                                                             <label for="cookiecloud-password" class="form-label">密码</label>
-                                                            <input type="password" id="cookiecloud-password" name="COOKIECLOUD_PASSWORD" class="form-control" autocomplete="off" placeholder="CookieCloud 密码（留空则保留当前值）">
+                                                            <input type="password" id="cookiecloud-password" name="COOKIECLOUD_PASSWORD" value="{{ secret_field_value('COOKIECLOUD_PASSWORD') }}" class="form-control" autocomplete="off" placeholder="CookieCloud 密码">
                                                             <div class="form-text">为避免在页面源码中暴露明文密码，密码框不会回填；留空保存时会保留现有值。</div>
                                                         </div>
                                                     </div>
@@ -696,7 +696,7 @@
                                                         <div class="col-md-6">
                                                             <div class="form-group">
                                                                 <label for="openai-key" class="form-label">API 密钥</label>
-                                                                <input type="password" id="openai-key" name="OPENAI_API_KEY" value="{{ config.OPENAI_API_KEY }}" class="form-control">
+                                                                <input type="password" id="openai-key" name="OPENAI_API_KEY" value="{{ secret_field_value('OPENAI_API_KEY') }}" class="form-control" autocomplete="off">
                                                             </div>
                                                         </div>
                                                         <div class="col-md-6">
@@ -731,7 +731,7 @@
                                                         <div class="col-12">
                                                             <div class="form-group">
                                                                 <label for="openai-image-key" class="form-label">图片 API 密钥（可选）</label>
-                                                                <input type="password" id="openai-image-key" name="OPENAI_IMAGE_API_KEY" value="{{ config.get('OPENAI_IMAGE_API_KEY', '') }}" class="form-control" autocomplete="off" placeholder="留空则沿用全局 API 密钥">
+                                                                <input type="password" id="openai-image-key" name="OPENAI_IMAGE_API_KEY" value="{{ secret_field_value('OPENAI_IMAGE_API_KEY') }}" class="form-control" autocomplete="off" placeholder="留空则沿用全局 API 密钥">
                                                             </div>
                                                         </div>
                                                         <div class="col-md-8">
@@ -783,7 +783,7 @@
                                                         <div class="col-md-6">
                                                             <div class="form-group">
                                                                 <label for="subtitle-openai-key" class="form-label">字幕专用 API 密钥</label>
-                                                                <input type="password" id="subtitle-openai-key" name="SUBTITLE_OPENAI_API_KEY" value="{{ config.get('SUBTITLE_OPENAI_API_KEY', '') }}" class="form-control" placeholder="留空则沿用全局">
+                                                                <input type="password" id="subtitle-openai-key" name="SUBTITLE_OPENAI_API_KEY" value="{{ secret_field_value('SUBTITLE_OPENAI_API_KEY') }}" class="form-control" autocomplete="off" placeholder="留空则沿用全局">
                                                             </div>
                                                         </div>
                                                         <div class="col-md-6">
@@ -818,7 +818,7 @@
                                                         <div class="col-md-6">
                                                             <div class="form-group">
                                                                 <label for="subtitle-qc-key" class="form-label">质检专用 API 密钥</label>
-                                                                <input type="password" id="subtitle-qc-key" name="SUBTITLE_QC_API_KEY" value="{{ config.get('SUBTITLE_QC_API_KEY', '') }}" class="form-control" placeholder="留空则沿用字幕翻译专用密钥/全局密钥">
+                                                                <input type="password" id="subtitle-qc-key" name="SUBTITLE_QC_API_KEY" value="{{ secret_field_value('SUBTITLE_QC_API_KEY') }}" class="form-control" autocomplete="off" placeholder="留空则沿用字幕翻译专用密钥/全局密钥">
                                                             </div>
                                                         </div>
                                                         <div class="col-md-6">
@@ -898,7 +898,7 @@
                                                     <div class="col-md-6">
                                                         <div class="form-group">
                                                             <label for="whisper-api-key" class="form-label">Whisper API 密钥</label>
-                                                            <input type="password" id="whisper-api-key" name="WHISPER_API_KEY" value="{{ config.get('WHISPER_API_KEY', '') }}" class="form-control" placeholder="留空沿用全局 API 密钥">
+                                                            <input type="password" id="whisper-api-key" name="WHISPER_API_KEY" value="{{ secret_field_value('WHISPER_API_KEY') }}" class="form-control" autocomplete="off" placeholder="留空沿用全局 API 密钥">
                                                         </div>
                                                     </div>
                                                     <div class="col-md-6">
@@ -1057,7 +1057,7 @@
                                                     <div class="col-md-6">
                                                         <div class="form-group">
                                                             <label for="voxtral-api-key" class="form-label">Voxtral API 密钥</label>
-                                                            <input type="password" id="voxtral-api-key" name="VOXTRAL_API_KEY" value="{{ config.get('VOXTRAL_API_KEY', '') }}" class="form-control" placeholder="Mistral API 密钥">
+                                                            <input type="password" id="voxtral-api-key" name="VOXTRAL_API_KEY" value="{{ secret_field_value('VOXTRAL_API_KEY') }}" class="form-control" autocomplete="off" placeholder="Mistral API 密钥">
                                                         </div>
                                                     </div>
                                                     <div class="col-md-6">
@@ -1269,7 +1269,7 @@
                                                         <div class="col-md-6">
                                                             <div class="form-group">
                                                                 <label for="ai-seg-key" class="form-label">智能分段专用 API 密钥</label>
-                                                                <input type="password" id="ai-seg-key" name="AI_SEGMENTATION_API_KEY" value="{{ config.get('AI_SEGMENTATION_API_KEY', '') }}" class="form-control" placeholder="留空则沿用全局">
+                                                                <input type="password" id="ai-seg-key" name="AI_SEGMENTATION_API_KEY" value="{{ secret_field_value('AI_SEGMENTATION_API_KEY') }}" class="form-control" autocomplete="off" placeholder="留空则沿用全局">
                                                             </div>
                                                         </div>
                                                         <div class="col-md-6">
@@ -1774,7 +1774,7 @@
                                                         </label>
                                                         <div class="form-group mb-3">
                                                             <label for="notify-wecom-webhook" class="form-label">Webhook URL</label>
-                                                            <input type="url" id="notify-wecom-webhook" name="NOTIFY_WECOM_WEBHOOK_URL" value="{{ config.get('NOTIFY_WECOM_WEBHOOK_URL', '') }}" class="form-control" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
+                                                            <input type="password" id="notify-wecom-webhook" name="NOTIFY_WECOM_WEBHOOK_URL" value="{{ secret_field_value('NOTIFY_WECOM_WEBHOOK_URL') }}" class="form-control" autocomplete="off" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
                                                         </div>
                                                         <div class="settings-inline-actions">
                                                             <button type="button" class="btn btn-outline-primary notify-test-btn" data-channel="wecom">
@@ -1801,7 +1801,7 @@
                                                         </label>
                                                         <div class="form-group mb-3">
                                                             <label for="notify-serverchan-sendkey" class="form-label">SendKey</label>
-                                                            <input type="password" id="notify-serverchan-sendkey" name="NOTIFY_SERVERCHAN_SENDKEY" value="{{ config.get('NOTIFY_SERVERCHAN_SENDKEY', '') }}" class="form-control" autocomplete="off" placeholder="SCTxxxxxxxxxxxxxxxx">
+                                                            <input type="password" id="notify-serverchan-sendkey" name="NOTIFY_SERVERCHAN_SENDKEY" value="{{ secret_field_value('NOTIFY_SERVERCHAN_SENDKEY') }}" class="form-control" autocomplete="off" placeholder="SCTxxxxxxxxxxxxxxxx">
                                                         </div>
                                                         <div class="settings-inline-actions">
                                                             <button type="button" class="btn btn-outline-primary notify-test-btn" data-channel="serverchan">
@@ -1842,7 +1842,7 @@
                                                             <div class="col-md-6">
                                                                 <div class="form-group">
                                                                     <label for="notify-message-pusher-token" class="form-label">Token</label>
-                                                                    <input type="password" id="notify-message-pusher-token" name="NOTIFY_MESSAGE_PUSHER_TOKEN" value="{{ config.get('NOTIFY_MESSAGE_PUSHER_TOKEN', '') }}" class="form-control" autocomplete="off">
+                                                                    <input type="password" id="notify-message-pusher-token" name="NOTIFY_MESSAGE_PUSHER_TOKEN" value="{{ secret_field_value('NOTIFY_MESSAGE_PUSHER_TOKEN') }}" class="form-control" autocomplete="off">
                                                                 </div>
                                                             </div>
                                                             <div class="col-md-6">
@@ -1879,7 +1879,7 @@
                                                             <div class="col-md-7">
                                                                 <div class="form-group">
                                                                     <label for="notify-telegram-bot-token" class="form-label">Bot Token</label>
-                                                                    <input type="password" id="notify-telegram-bot-token" name="NOTIFY_TELEGRAM_BOT_TOKEN" value="{{ config.get('NOTIFY_TELEGRAM_BOT_TOKEN', '') }}" class="form-control" autocomplete="off" placeholder="123456789:AA...">
+                                                                    <input type="password" id="notify-telegram-bot-token" name="NOTIFY_TELEGRAM_BOT_TOKEN" value="{{ secret_field_value('NOTIFY_TELEGRAM_BOT_TOKEN') }}" class="form-control" autocomplete="off" placeholder="123456789:AA...">
                                                                     <div class="form-text">在 Telegram 中通过 @BotFather 创建 Bot 后获取。</div>
                                                                 </div>
                                                             </div>
@@ -2159,7 +2159,7 @@
                                                     <div class="col-12">
                                                         <div class="form-group">
                                                             <label for="youtube-api-key" class="form-label">YouTube Data API v3 密钥</label>
-                                                            <input type="password" id="youtube-api-key" name="YOUTUBE_API_KEY" value="{{ config.YOUTUBE_API_KEY }}" class="form-control">
+                                                            <input type="password" id="youtube-api-key" name="YOUTUBE_API_KEY" value="{{ secret_field_value('YOUTUBE_API_KEY') }}" class="form-control" autocomplete="off">
                                                             <p class="help-text">配置后可在 <a href="{{ url_for('youtube_monitor_index') }}">YouTube 监控</a> 页面启用自动监控。</p>
                                                         </div>
                                                     </div>
@@ -2252,12 +2252,13 @@
 
                 <div class="settings-actions-bar">
                     <div class="settings-save-context">
-                        <i class="bi bi-check2"></i>
-                        <span>修改会在点击保存后统一生效</span>
+                        <i class="bi bi-check2-circle"></i>
+                        <span id="settings-save-context-text">当前分组没有未保存修改</span>
+                        <span id="settings-unsaved-total" class="settings-unsaved-total d-none">0 项未保存</span>
                     </div>
                     <div class="d-flex justify-content-end gap-2">
                         <button type="button" id="reset-settings-btn" class="btn btn-outline-secondary"><i class="bi bi-arrow-counterclockwise"></i> 重置当前分组</button>
-                        <button type="submit" id="save-settings-btn" class="btn btn-primary"><i class="bi bi-save"></i> 保存设置</button>
+                        <button type="submit" id="save-settings-btn" class="btn btn-primary" disabled><i class="bi bi-save"></i> 保存当前分组</button>
                     </div>
                 </div>
             </form>
@@ -2288,9 +2289,9 @@
                 </div>
                 <div class="modal-body">
                     <div class="directory-picker-toolbar">
-                        <button class="btn btn-light border" type="button" data-action="directory-parent" title="返回上级目录"><i class="bi bi-arrow-up"></i></button>
+                        <button class="btn btn-light border" type="button" data-action="directory-parent" title="返回上级目录" aria-label="返回上级目录"><i class="bi bi-arrow-up"></i></button>
                         <div class="directory-current-path"><i class="bi bi-folder2"></i><code data-role="directory-current">读取中…</code></div>
-                        <button class="btn btn-light border" type="button" data-action="directory-refresh" title="刷新"><i class="bi bi-arrow-clockwise"></i></button>
+                        <button class="btn btn-light border" type="button" data-action="directory-refresh" title="刷新" aria-label="刷新目录列表"><i class="bi bi-arrow-clockwise"></i></button>
                     </div>
                     <div class="directory-quick-paths" data-role="directory-quick-paths"></div>
                     <div class="directory-list" data-role="directory-list">
@@ -2335,6 +2336,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const summaryCards = document.querySelectorAll('[data-settings-target]');
     const youtubeQualityModeSelect = document.getElementById('youtube-download-quality-mode');
     const youtubeQualityMaxHeightGroup = document.getElementById('youtube-download-max-height-group');
+    let allowSettingsNavigation = false;
 
     const showTabBySelector = function (selector) {
         if (!selector || !selector.startsWith('#')) {
@@ -2430,6 +2432,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 .then(function (response) { return response.json(); })
                 .then(function (data) {
                     if (data.status === 'success') {
+                        allowSettingsNavigation = true;
                         window.location.reload();
                     } else {
                         window.PotatoUI.notify('重置失败: ' + data.message, 'danger');
@@ -2797,7 +2800,154 @@ document.addEventListener('DOMContentLoaded', function () {
     const saveProgressModal = (saveProgressModalEl && typeof bootstrap !== 'undefined')
         ? bootstrap.Modal.getOrCreateInstance(saveProgressModalEl, { backdrop: 'static', keyboard: false })
         : null;
+    const saveContextText = document.getElementById('settings-save-context-text');
+    const unsavedTotalBadge = document.getElementById('settings-unsaved-total');
+    const settingsPaneBaselines = new Map();
+    let activeSavePaneId = '';
     let saveProgressPollTimer = null;
+
+    const settingsPaneControls = function (pane) {
+        if (!pane) return [];
+        return Array.from(pane.querySelectorAll('input[name], select[name], textarea[name]'))
+            .filter(function (control) {
+                return !!control.name && !control.disabled;
+            });
+    };
+
+    const settingsControlValue = function (control) {
+        if (control.type === 'checkbox' || control.type === 'radio') {
+            return control.checked ? ('checked:' + control.value) : 'unchecked';
+        }
+        if (control.type === 'file') {
+            return Array.from(control.files || []).map(function (file) {
+                return [file.name, file.size, file.lastModified].join(':');
+            }).join('|');
+        }
+        if (control.tagName === 'SELECT' && control.multiple) {
+            return Array.from(control.selectedOptions).map(function (option) {
+                return option.value;
+            }).join('|');
+        }
+        return control.value;
+    };
+
+    const settingsPaneSignature = function (pane) {
+        return settingsPaneControls(pane).map(function (control) {
+            return [control.name, control.type || control.tagName, settingsControlValue(control)].join('=');
+        }).join('\n');
+    };
+
+    const settingsPaneDirtyCount = function (pane) {
+        if (!pane) return 0;
+        const baseline = settingsPaneBaselines.get(pane.id);
+        if (baseline === settingsPaneSignature(pane)) return 0;
+        const dirtyNames = new Set();
+        settingsPaneControls(pane).forEach(function (control) {
+            const initialKey = 'data-settings-initial-value';
+            const currentValue = settingsControlValue(control);
+            if (control.getAttribute(initialKey) !== currentValue) {
+                dirtyNames.add(control.name);
+            }
+        });
+        return dirtyNames.size;
+    };
+
+    const settingsGroupName = function (pane) {
+        if (!pane) return '当前分组';
+        const link = document.querySelector('.settings-nav .nav-link[href="#' + pane.id + '"]');
+        const label = link ? link.querySelector('.settings-nav-copy strong') : null;
+        return label ? label.textContent.trim() : '当前分组';
+    };
+
+    const refreshSettingsDirtyUi = function () {
+        const panes = Array.from(document.querySelectorAll('#settings-tabContent > .tab-pane'));
+        let totalDirty = 0;
+        panes.forEach(function (pane) {
+            const dirtyCount = settingsPaneDirtyCount(pane);
+            totalDirty += dirtyCount;
+            const link = document.querySelector('.settings-nav .nav-link[href="#' + pane.id + '"]');
+            if (!link) return;
+            let badge = link.querySelector('.settings-nav-dirty');
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'settings-nav-dirty d-none';
+                badge.setAttribute('aria-label', '未保存的设置数量');
+                link.insertBefore(badge, link.querySelector('.settings-nav-state'));
+            }
+            badge.textContent = String(dirtyCount);
+            badge.classList.toggle('d-none', dirtyCount === 0);
+            link.classList.toggle('has-unsaved', dirtyCount > 0);
+        });
+
+        const activePane = document.querySelector('#settings-tabContent > .tab-pane.active');
+        const activeDirty = settingsPaneDirtyCount(activePane);
+        if (saveContextText) {
+            saveContextText.textContent = activeDirty
+                ? (settingsGroupName(activePane) + '有 ' + activeDirty + ' 项修改尚未保存')
+                : (settingsGroupName(activePane) + '没有未保存修改');
+        }
+        if (unsavedTotalBadge) {
+            unsavedTotalBadge.textContent = totalDirty + ' 项未保存';
+            unsavedTotalBadge.classList.toggle('d-none', totalDirty === 0);
+        }
+        if (saveSettingsBtn && !saveSettingsBtn.dataset.busy) {
+            saveSettingsBtn.disabled = activeDirty === 0;
+        }
+        return {activePane: activePane, activeDirty: activeDirty, totalDirty: totalDirty};
+    };
+
+    const captureSettingsPaneBaseline = function (pane) {
+        if (!pane) return;
+        settingsPaneControls(pane).forEach(function (control) {
+            control.setAttribute('data-settings-initial-value', settingsControlValue(control));
+        });
+        settingsPaneBaselines.set(pane.id, settingsPaneSignature(pane));
+    };
+
+    const buildScopedSettingsFormData = function (pane) {
+        const formData = new FormData();
+        const fieldNames = new Set();
+        settingsPaneControls(pane).forEach(function (control) {
+            fieldNames.add(control.name);
+            if (control.type === 'file') {
+                Array.from(control.files || []).forEach(function (file) {
+                    formData.append(control.name, file, file.name);
+                });
+                return;
+            }
+            if ((control.type === 'checkbox' || control.type === 'radio') && !control.checked) {
+                return;
+            }
+            if (control.tagName === 'SELECT' && control.multiple) {
+                Array.from(control.selectedOptions).forEach(function (option) {
+                    formData.append(control.name, option.value);
+                });
+                return;
+            }
+            formData.append(control.name, control.value);
+        });
+        formData.set('settings_scope', pane.id);
+        formData.set('settings_scope_fields', Array.from(fieldNames).join(','));
+        return formData;
+    };
+
+    Array.from(document.querySelectorAll('#settings-tabContent > .tab-pane')).forEach(function (pane) {
+        captureSettingsPaneBaseline(pane);
+    });
+    if (settingsForm) {
+        settingsForm.addEventListener('input', refreshSettingsDirtyUi);
+        settingsForm.addEventListener('change', refreshSettingsDirtyUi);
+    }
+    navLinks.forEach(function (link) {
+        link.addEventListener('shown.bs.tab', refreshSettingsDirtyUi);
+    });
+    window.addEventListener('beforeunload', function (event) {
+        if (!allowSettingsNavigation && refreshSettingsDirtyUi().totalDirty > 0) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    });
+    refreshSettingsDirtyUi();
 
     const formatProgressBytes = function (bytes) {
         const value = Number(bytes);
@@ -2822,6 +2972,14 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             button.disabled = !!isBusy;
         });
+        if (saveSettingsBtn) {
+            if (isBusy) {
+                saveSettingsBtn.dataset.busy = 'true';
+            } else {
+                delete saveSettingsBtn.dataset.busy;
+                refreshSettingsDirtyUi();
+            }
+        }
     };
 
     const stopSettingsSavePolling = function () {
@@ -2942,6 +3100,11 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         const level = data && data.level ? data.level : 'info';
+        if (activeSavePaneId && data && data.success !== false && level !== 'error') {
+            captureSettingsPaneBaseline(document.getElementById(activeSavePaneId));
+            refreshSettingsDirtyUi();
+        }
+        activeSavePaneId = '';
         if (level === 'success') {
             window.setTimeout(function () {
                 forceHideSettingsSaveModal();
@@ -2998,9 +3161,15 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
 
-            const passwordProtectionCheckbox = document.getElementById('password_protection_enabled');
-            const newPasswordField = document.getElementById('new_password');
-            const confirmPasswordField = document.getElementById('confirm_password');
+            const activePane = document.querySelector('#settings-tabContent > .tab-pane.active');
+            if (!activePane) {
+                event.preventDefault();
+                showSettingsToast('error', '无法确定当前设置分组，请刷新页面后重试。');
+                return;
+            }
+            const passwordProtectionCheckbox = activePane.querySelector('#password_protection_enabled');
+            const newPasswordField = activePane.querySelector('#new_password');
+            const confirmPasswordField = activePane.querySelector('#confirm_password');
             if (
                 passwordProtectionCheckbox
                 && passwordProtectionCheckbox.checked
@@ -3025,8 +3194,9 @@ document.addEventListener('DOMContentLoaded', function () {
             const operationId = (window.crypto && typeof window.crypto.randomUUID === 'function')
                 ? window.crypto.randomUUID()
                 : ('settings-save-' + Date.now());
-            const formData = new FormData(settingsForm);
+            const formData = buildScopedSettingsFormData(activePane);
             formData.set('save_operation_id', operationId);
+            activeSavePaneId = activePane.id;
 
             stopSettingsSavePolling();
             toggleSettingsSaveBusy(true);
@@ -3035,7 +3205,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 done: false,
                 level: 'info',
                 message: '正在提交保存请求',
-                detail: '如果缺少 FFmpeg，这里会显示下载进度。',
+                detail: '仅保存“' + settingsGroupName(activePane) + '”中的修改。',
                 percent: null
             });
             saveProgressModal.show();
@@ -3380,6 +3550,7 @@ document.addEventListener('DOMContentLoaded', function () {
         selectButton.addEventListener('click', function () {
             if (!currentPath) return;
             pathInput.value = currentPath;
+            pathInput.dispatchEvent(new Event('change', {bubbles: true}));
             const preview = document.querySelector('.storage-path-preview code');
             if (preview) {
                 preview.textContent = currentPath;

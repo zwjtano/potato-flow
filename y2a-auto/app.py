@@ -7,6 +7,7 @@ import logging
 import mimetypes
 import re
 import shutil
+import secrets
 import time
 import uuid
 import threading
@@ -17,7 +18,7 @@ from logging.handlers import RotatingFileHandler
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, session, Response, stream_with_context
 from functools import wraps
 from PIL import Image, UnidentifiedImageError
-from werkzeug.security import safe_join
+from werkzeug.security import check_password_hash, generate_password_hash, safe_join
 from modules.youtube_handler import extract_video_urls_from_playlist
 from modules.utils import get_app_subdir
 from modules.config_manager import load_config, update_config, reset_specific_config
@@ -27,7 +28,11 @@ from modules.biliup_line_manager import (
     select_upload_line as select_biliup_upload_line,
 )
 from modules.whisper_languages import WHISPER_LANGUAGE_LIST
-from modules.task_manager import add_task, start_task, get_task, get_tasks_paginated, get_tasks_by_status, update_task, delete_task, force_upload_task, TASK_STATES, clear_all_tasks, retry_failed_tasks, register_task_updates_listener, unregister_task_updates_listener, resolve_cookie_file_path
+from modules.task_manager import add_task, start_task, pause_task, abandon_task, get_task, get_tasks_paginated, get_tasks_by_status, get_all_tasks, update_task, delete_task, force_upload_task, TASK_STATES, clear_all_tasks, retry_failed_tasks, register_task_updates_listener, unregister_task_updates_listener, resolve_cookie_file_path
+from modules.task_lifecycle import (
+    can_automatically_cleanup_youtube_download,
+    youtube_task_capabilities,
+)
 from modules.bilibili_auth import BilibiliQrLoginSession
 from queue import Empty
 from modules.youtube_monitor import youtube_monitor
@@ -69,9 +74,43 @@ from modules.telegram_control import (
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 from version import __author__, __version__
+from modules.runtime_info import build_runtime_info
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # 用于flash消息
+
+_CSRF_SESSION_KEY = '_potatoflow_csrf_token'
+_SECRET_FORM_SENTINEL = '__POTATOFLOW_SECRET_PRESENT__'
+_SENSITIVE_SETTING_FIELDS = {
+    'ALIYUN_ACCESS_KEY_ID',
+    'ALIYUN_ACCESS_KEY_SECRET',
+    'COOKIECLOUD_PASSWORD',
+    'NETWORK_PROXY_PASSWORD',
+    'NOTIFY_MESSAGE_PUSHER_TOKEN',
+    'NOTIFY_SERVERCHAN_SENDKEY',
+    'NOTIFY_TELEGRAM_BOT_TOKEN',
+    'NOTIFY_WECOM_WEBHOOK_URL',
+    'OPENAI_API_KEY',
+    'OPENAI_IMAGE_API_KEY',
+    'SUBTITLE_OPENAI_API_KEY',
+    'SUBTITLE_QC_API_KEY',
+    'WHISPER_API_KEY',
+    'VOXTRAL_API_KEY',
+    'AI_SEGMENTATION_API_KEY',
+    'YOUTUBE_API_KEY',
+}
+
+
+def _get_csrf_token() -> str:
+    token = str(session.get(_CSRF_SESSION_KEY) or '')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session[_CSRF_SESSION_KEY] = token
+    return token
+
+
+def _secret_form_value(config: dict, key: str) -> str:
+    return _SECRET_FORM_SENTINEL if str(config.get(key) or '').strip() else ''
 
 
 @app.context_processor
@@ -79,21 +118,59 @@ def inject_app_settings():
     app_settings = app.config.get('Y2A_SETTINGS', {})
     if not isinstance(app_settings, dict):
         app_settings = {}
+    runtime_info = build_runtime_info(
+        __version__,
+        Path(__file__).resolve().with_name('version.py'),
+    )
     return {
         'now': datetime.now(),  # 每次请求动态获取当前时间
         'app_settings': app_settings,
         'app_version': __version__,
         'app_author': __author__,
+        'app_runtime': runtime_info,
+        'csrf_token': _get_csrf_token(),
+        'secret_field_value': lambda key: _secret_form_value(app_settings, str(key)),
         'show_logout_in_nav': bool(
             app_settings.get('password_protection_enabled') and session.get('logged_in')
         ),
     }
 
 
+@app.before_request
+def protect_state_changing_requests():
+    if request.method in {'GET', 'HEAD', 'OPTIONS', 'TRACE'}:
+        return None
+    config = load_config()
+    if not config.get('password_protection_enabled'):
+        return None
+    expected = str(session.get(_CSRF_SESSION_KEY) or '')
+    supplied = str(
+        request.headers.get('X-CSRF-Token')
+        or request.form.get('_csrf_token')
+        or ''
+    )
+    if expected and supplied and secrets.compare_digest(expected, supplied):
+        return None
+    if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({
+            'success': False,
+            'error': '安全令牌无效或已过期，请刷新页面后重试。',
+        }), 400
+    flash('安全令牌无效或已过期，请刷新页面后重试。', 'danger')
+    return redirect(request.referrer or url_for('login'))
+
+
 @app.after_request
 def attach_app_version(response):
     """Expose one authoritative version and prevent stale rendered pages."""
     response.headers['X-PotatoFlow-Version'] = __version__
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    response.headers.setdefault('Referrer-Policy', 'same-origin')
+    response.headers.setdefault(
+        'Permissions-Policy',
+        'camera=(), geolocation=(), microphone=()',
+    )
     if response.mimetype == 'text/html':
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
     return response
@@ -101,10 +178,24 @@ def attach_app_version(response):
 
 @app.route('/api/version')
 def app_version():
+    runtime = build_runtime_info(
+        __version__,
+        Path(__file__).resolve().with_name('version.py'),
+    )
     return jsonify({
         'name': 'PotatoFlow',
         'version': __version__,
         'author': __author__,
+        'runtime': runtime,
+    })
+
+
+@app.route('/healthz')
+def healthz():
+    """Public liveness probe without filesystem, credential, or task details."""
+    return jsonify({
+        'status': 'ok',
+        'version': __version__,
     })
 
 
@@ -244,6 +335,7 @@ def _coerce_checkbox_value(value) -> bool:
 def _merge_cookiecloud_runtime_settings(payload: dict | None, base_config: dict | None = None) -> dict:
     effective_config = dict(base_config or load_config())
     incoming = dict(payload) if isinstance(payload, dict) else {}
+    secret_form_sentinel = '__POTATOFLOW_SECRET_PRESENT__'
 
     bool_fields = {'COOKIECLOUD_ENABLED', 'COOKIECLOUD_ALLOW_PLAINTEXT_EXPORT'}
     text_fields = {
@@ -261,6 +353,8 @@ def _merge_cookiecloud_runtime_settings(payload: dict | None, base_config: dict 
     for key in text_fields:
         if key in incoming:
             value = str(incoming.get(key) or '').strip()
+            if key == 'COOKIECLOUD_PASSWORD' and value == secret_form_sentinel:
+                continue
             if key == 'COOKIECLOUD_PASSWORD' and not value:
                 continue
             effective_config[key] = value
@@ -754,11 +848,35 @@ def _build_settings_progress_reporter(operation_id: str | None):
     return _report
 
 
+def _apply_missing_checkbox_defaults(
+    form_data: dict,
+    checkbox_names,
+    scoped_fields=None,
+) -> None:
+    """Only clear unchecked boxes that belong to the submitted settings scope."""
+    submitted_scope = set(scoped_fields or ())
+    is_scoped = scoped_fields is not None
+    for checkbox in checkbox_names:
+        if checkbox in form_data:
+            continue
+        if is_scoped and checkbox not in submitted_scope:
+            continue
+        form_data[checkbox] = 'off'
+
+
 def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | None = None) -> dict:
     form_data = dict(form_data or {})
     uploads = uploads or {}
     messages = []
-    previous_recordings_path = str(load_config().get('RECORDINGS_PATH') or 'docker-data/recordings').strip()
+    settings_scope = str(form_data.pop('settings_scope', '') or '').strip()
+    raw_scope_fields = str(form_data.pop('settings_scope_fields', '') or '')
+    scoped_fields = {
+        field.strip()
+        for field in raw_scope_fields.split(',')
+        if field.strip()
+    }
+    current_config = load_config()
+    previous_recordings_path = str(current_config.get('RECORDINGS_PATH') or 'docker-data/recordings').strip()
     progress_reporter = _build_settings_progress_reporter(operation_id)
 
     def report(stage: str, message: str, detail: str = '', percent=None, level: str = 'info', downloaded_bytes=None, total_bytes=None):
@@ -782,12 +900,15 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
         confirm_password = form_data.get('confirm_password')
         if new_password:
             if new_password == confirm_password:
-                form_data['password'] = new_password
+                form_data['password'] = generate_password_hash(new_password)
             else:
                 _append_settings_message(messages, 'danger', '新密码两次输入不一致，密码未更新。')
 
         form_data.pop('new_password', None)
         form_data.pop('confirm_password', None)
+        for field in _SENSITIVE_SETTING_FIELDS:
+            if form_data.get(field) == _SECRET_FORM_SENTINEL:
+                form_data.pop(field, None)
 
         checkboxes = [
             'AUTO_MODE_ENABLED', 'TRANSLATE_TITLE', 'TRANSLATE_DESCRIPTION',
@@ -831,9 +952,11 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
         for checkbox in SPEECH_PIPELINE_CHECKBOXES:
             if checkbox not in checkboxes:
                 checkboxes.append(checkbox)
-        for checkbox in checkboxes:
-            if checkbox not in form_data:
-                form_data[checkbox] = 'off'
+        _apply_missing_checkbox_defaults(
+            form_data,
+            checkboxes,
+            scoped_fields if settings_scope else None,
+        )
 
         numeric_fields = [
             'MAX_CONCURRENT_TASKS', 'MAX_CONCURRENT_UPLOADS', 'LOG_CLEANUP_HOURS',
@@ -1104,6 +1227,20 @@ def login_required(f):
                 return redirect(url_for('login', next=request.full_path))
         return f(*args, **kwargs)
     return decorated_function
+
+
+def _verify_login_password(stored_password: str, submitted_password: str) -> tuple[bool, bool]:
+    """Return (matched, legacy_plaintext) without leaking comparison timing."""
+    stored = str(stored_password or '')
+    submitted = str(submitted_password or '')
+    if not stored or not submitted:
+        return False, False
+    if stored.startswith(('scrypt:', 'pbkdf2:')):
+        try:
+            return check_password_hash(stored, submitted), False
+        except (TypeError, ValueError):
+            return False, False
+    return secrets.compare_digest(stored, submitted), True
 
 
 @app.route('/live-recording')
@@ -1607,6 +1744,7 @@ def task_status_display(status):
         TASK_STATES['AWAITING_REVIEW']: '等待人工审核',
         TASK_STATES['READY_FOR_UPLOAD']: '准备上传',
         TASK_STATES['UPLOADING']: '上传中',
+        TASK_STATES['PAUSED']: '已暂停',
         TASK_STATES['COMPLETED']: '已完成',
         TASK_STATES['FAILED']: '失败',
         'fetching_info': '采集信息中',
@@ -1630,10 +1768,16 @@ def task_status_color(status):
         TASK_STATES['AWAITING_REVIEW']: 'warning',
         TASK_STATES['READY_FOR_UPLOAD']: 'primary',
         TASK_STATES['UPLOADING']: 'primary',
+        TASK_STATES['PAUSED']: 'secondary',
         TASK_STATES['COMPLETED']: 'success',
         TASK_STATES['FAILED']: 'danger'
     }
     return color_map.get(status, 'secondary')
+
+
+@app.context_processor
+def inject_task_lifecycle_helpers():
+    return {'task_capabilities': youtube_task_capabilities}
 
 def _get_bilibili_zone_data():
     from modules.bilibili_zones import get_zone_list_sub
@@ -1798,7 +1942,14 @@ def login():
             flash('系统尚未设置密码，无法登录。请在禁用密码保护的情况下，进入设置页面设置密码。', 'danger')
             return render_template('login.html')
 
-        if password and password == stored_password:
+        password_matches, legacy_plaintext = _verify_login_password(stored_password, password)
+        if password_matches:
+            if legacy_plaintext:
+                try:
+                    update_config({'password': generate_password_hash(str(password))})
+                    logger.info('登录密码已自动迁移为安全哈希')
+                except Exception:
+                    logger.exception('迁移旧版登录密码失败')
             session['logged_in'] = True
             session.permanent = True  # session持久化
             # 登录成功，重置失败计数与锁定
@@ -1846,6 +1997,125 @@ def logout():
     flash('您已成功退出。', 'info')
     return redirect(url_for('login'))
 
+
+def _build_home_readiness(config, recording_summary, stats):
+    """Build a cheap, local-only readiness summary for the home dashboard."""
+    config = config if isinstance(config, dict) else {}
+    room_total = int(recording_summary.get('room_total') or 0)
+    engine_running = bool(recording_summary.get('engine_running'))
+
+    if engine_running:
+        recorder_state = ('ready', '引擎运行中', '正在监控直播状态')
+    elif room_total:
+        recorder_state = ('attention', '引擎待启动', f'{room_total} 个直播间不会自动检测')
+    else:
+        recorder_state = ('neutral', '尚未配置', '添加直播间后开始监控')
+
+    bili_path = resolve_cookie_file_path(
+        config.get('BILIBILI_COOKIES_PATH'),
+        'cookies/bili_cookies.json',
+        allow_json_txt_fallback=True,
+    )
+    bili_ready = bool(
+        bili_path
+        and os.path.isfile(bili_path)
+        and os.access(bili_path, os.R_OK)
+    )
+    bili_state = (
+        ('ready', '凭证文件已就绪', '可用于录制和投稿')
+        if bili_ready
+        else ('attention', '账号待登录', '投稿前需要 B站凭证')
+    )
+
+    ai_ready = bool(
+        str(config.get('OPENAI_API_KEY') or '').strip()
+        and str(config.get('OPENAI_MODEL_NAME') or '').strip()
+    )
+    ai_state = (
+        ('ready', '文本模型已配置', '标题、简介和标签可自动生成')
+        if ai_ready
+        else ('attention', 'AI 服务待配置', '将无法自动生成投稿信息')
+    )
+
+    try:
+        recording_path = recordings_dir(config.get('RECORDINGS_PATH'))
+        storage_ready = (
+            recording_path.is_dir()
+            and os.access(recording_path, os.R_OK | os.W_OK)
+        )
+    except (OSError, RecorderConfigError, TypeError, ValueError):
+        storage_ready = False
+    storage_state = (
+        ('ready', '录播目录可写', '文件可以安全保存')
+        if storage_ready
+        else ('error', '录播目录不可用', '请检查目录挂载和权限')
+    )
+
+    items = [
+        {
+            'key': 'recorder',
+            'label': '录制引擎',
+            'icon': 'bi-broadcast',
+            'url': url_for('live_recording'),
+            'state': recorder_state[0],
+            'value': recorder_state[1],
+            'detail': recorder_state[2],
+        },
+        {
+            'key': 'bilibili',
+            'label': 'B站账号',
+            'icon': 'bi-person-check',
+            'url': url_for('settings') + '#vtab-accounts',
+            'state': bili_state[0],
+            'value': bili_state[1],
+            'detail': bili_state[2],
+        },
+        {
+            'key': 'ai',
+            'label': 'AI 服务',
+            'icon': 'bi-stars',
+            'url': url_for('settings') + '#vtab-ai-models',
+            'state': ai_state[0],
+            'value': ai_state[1],
+            'detail': ai_state[2],
+        },
+        {
+            'key': 'storage',
+            'label': '文件存储',
+            'icon': 'bi-device-ssd',
+            'url': url_for('settings') + '#vtab-system',
+            'state': storage_state[0],
+            'value': storage_state[1],
+            'detail': storage_state[2],
+        },
+    ]
+    error_count = sum(item['state'] == 'error' for item in items)
+    attention_count = sum(item['state'] in {'attention', 'neutral'} for item in items)
+    review_count = int(stats.get('awaiting_review') or 0)
+    if review_count or error_count:
+        state = 'error'
+        title = '有项目需要处理'
+        detail = (
+            f'{review_count} 个任务等待人工处理'
+            if review_count
+            else '关键运行条件异常'
+        )
+    elif attention_count:
+        state = 'attention'
+        title = '系统尚未完全就绪'
+        detail = f'还有 {attention_count} 项需要配置或启动'
+    else:
+        state = 'ready'
+        title = '系统已就绪'
+        detail = '录制、AI 处理与投稿条件均已满足'
+    return {
+        'state': state,
+        'title': title,
+        'detail': detail,
+        'items': items,
+    }
+
+
 @app.route('/')
 @login_required
 def index():
@@ -1854,6 +2124,7 @@ def index():
     # 统计信息用于仪表盘
     try:
         from modules.task_manager import get_db_connection
+        config = load_config()
         conn = get_db_connection()
         cur = conn.cursor()
 
@@ -2076,6 +2347,18 @@ def index():
             'failed': 0,
             'completed_today': 0,
         }
+        config = load_config()
+
+    try:
+        system_readiness = _build_home_readiness(config, recording_summary, stats)
+    except Exception as exc:
+        logger.warning("首页就绪度计算失败: %s", exc)
+        system_readiness = {
+            'state': 'error',
+            'title': '暂时无法检查系统状态',
+            'detail': '请进入系统设置查看详细诊断',
+            'items': [],
+        }
 
     return render_template(
         'index.html',
@@ -2083,6 +2366,7 @@ def index():
         recent_tasks=recent_tasks,
         youtube_summary=youtube_summary,
         recording_summary=recording_summary,
+        system_readiness=system_readiness,
     )
 
 @app.route('/tasks')
@@ -2449,7 +2733,11 @@ def start_task_route(task_id):
         flash('任务不存在', 'danger')
         return redirect(url_for('tasks'))
     
-    if task['status'] not in [TASK_STATES['PENDING'], TASK_STATES['FAILED']]:
+    if task['status'] not in [
+        TASK_STATES['PENDING'],
+        TASK_STATES['FAILED'],
+        TASK_STATES['PAUSED'],
+    ]:
         flash(f'当前任务状态为 {task_status_display(task["status"])}，不能启动', 'warning')
         return redirect(url_for('tasks'))
     
@@ -2472,6 +2760,27 @@ def start_task_route(task_id):
     
     return redirect(url_for('tasks'))
 
+
+@app.route('/tasks/<task_id>/pause', methods=['POST'])
+@login_required
+def pause_task_route(task_id):
+    """Cooperatively pause a task without deleting its files."""
+    task = get_task(task_id)
+    if not task:
+        flash('任务不存在', 'danger')
+        return redirect(url_for('tasks'))
+
+    if pause_task(task_id):
+        flash('任务已暂停，文件已保留，可稍后继续', 'success')
+    else:
+        latest = get_task(task_id)
+        if latest and latest.get('status') == TASK_STATES['PAUSED']:
+            flash('任务正在停止，请稍后刷新确认', 'warning')
+        else:
+            flash(f'当前任务状态为 {task_status_display(task["status"])}，不能暂停', 'warning')
+    return redirect(url_for('tasks'))
+
+
 @app.route('/tasks/<task_id>/delete', methods=['POST'])
 @login_required
 def delete_task_route(task_id):
@@ -2483,7 +2792,7 @@ def delete_task_route(task_id):
     if success:
         flash('任务已删除', 'success')
     else:
-        flash('删除任务失败', 'danger')
+        flash('任务尚未安全停止，未删除记录或文件，请稍后重试', 'warning')
     
     return redirect(url_for('tasks'))
 
@@ -2572,16 +2881,11 @@ def reset_stuck_tasks_route():
 def abandon_task_route(task_id):
     """放弃任务"""
     delete_files = request.form.get('delete_files', 'true').lower() in ('true', 'yes', '1', 'on')
-    
-    # 更新任务状态为失败
-    update_task(task_id, status=TASK_STATES['FAILED'], error_message="用户主动放弃任务")
-    
-    if delete_files:
-        # 删除任务文件
-        from modules.task_manager import delete_task_files
-        delete_task_files(task_id)
-    
-    flash('任务已废弃', 'success')
+
+    if abandon_task(task_id, delete_files=delete_files):
+        flash('任务已废弃' + ('，相关文件已删除' if delete_files else '，文件已保留'), 'success')
+    else:
+        flash('任务尚未安全停止，未废弃也未删除文件，请稍后重试', 'warning')
     return redirect(url_for('tasks'))
 
 # 系统健康检查辅助函数
@@ -2744,6 +3048,7 @@ def get_path_debug_info(file_path):
         return {'error': _public_health_check_error_message('路径')}
 
 @app.route('/system_health')
+@login_required
 def system_health():
     """系统健康检查 - 增强Docker环境兼容性"""
     from modules.task_manager import get_db_connection, validate_cookies, resolve_cookie_file_path
@@ -2756,6 +3061,10 @@ def system_health():
     is_docker = os.path.exists('/.dockerenv') or os.environ.get('CONTAINER') == 'docker'
     
     health_status = {
+        'runtime': build_runtime_info(
+            __version__,
+            Path(__file__).resolve().with_name('version.py'),
+        ),
         'environment': {
             'platform': platform.system(),
             'python_version': sys.version.split()[0],
@@ -3412,7 +3721,9 @@ def cleanup_downloads_route():
     result = cleanup_downloads(hours)
     
     if result.get('success'):
-        flash(f"下载内容清理成功，删除了{result['dirs_removed']}个目录、{result['files_removed']}个文件，释放了{result['bytes_freed_readable']}空间", 'success')
+        protected = int(result.get('skipped_protected', 0) or 0)
+        protected_text = f"，保留了 {protected} 个未完成或可重试任务目录" if protected else ""
+        flash(f"下载内容清理成功，删除了{result['dirs_removed']}个目录、{result['files_removed']}个文件，释放了{result['bytes_freed_readable']}空间{protected_text}", 'success')
     else:
         flash(f"下载内容清理失败: {result.get('error', '未知错误')}", 'danger')
     
@@ -3519,10 +3830,21 @@ def cleanup_downloads(hours: int):
         files_removed = 0
         bytes_freed = 0
 
+        tasks_by_id = {
+            str(task.get('id')): task
+            for task in get_all_tasks()
+            if task.get('id')
+        }
+        skipped_protected = 0
+
         for entry in os.listdir(downloads_dir):
             path = os.path.join(downloads_dir, entry)
             try:
                 if os.path.isdir(path):
+                    task = tasks_by_id.get(str(entry))
+                    if task is not None and not can_automatically_cleanup_youtube_download(task):
+                        skipped_protected += 1
+                        continue
                     # check last modification
                     mtime = os.path.getmtime(path)
                     if mtime < cutoff:
@@ -3538,7 +3860,14 @@ def cleanup_downloads(hours: int):
             except Exception:
                 continue
 
-        return {'success': True, 'dirs_removed': dirs_removed, 'files_removed': files_removed, 'bytes_freed': bytes_freed, 'bytes_freed_readable': _human_readable_size(bytes_freed)}
+        return {
+            'success': True,
+            'dirs_removed': dirs_removed,
+            'files_removed': files_removed,
+            'skipped_protected': skipped_protected,
+            'bytes_freed': bytes_freed,
+            'bytes_freed_readable': _human_readable_size(bytes_freed),
+        }
     except Exception as e:
         logger.warning(f"下载内容清理失败: {e}")
         return {'success': False, 'error': str(e)}
@@ -3582,6 +3911,11 @@ def configure_app(app, config):
                 timeout_minutes = 30
         app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=max(1, timeout_minutes))
         app.config['SESSION_REFRESH_EACH_REQUEST'] = True
+        app.config['SESSION_COOKIE_HTTPONLY'] = True
+        app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+        app.config['SESSION_COOKIE_SECURE'] = str(
+            os.environ.get('POTATO_FLOW_HTTPS', '')
+        ).strip().lower() in {'1', 'true', 'yes', 'on'}
 
         # 允许覆盖的内容
         app.config['Y2A_SETTINGS'] = config
@@ -3653,13 +3987,84 @@ def schedule_download_cleanup():
 
 
 # YouTube监控系统路由
+def _build_youtube_monitor_readiness(config):
+    """Summarize prerequisites without exposing credentials or proxy details."""
+    config = dict(config or {})
+    api_key_configured = bool(str(config.get('YOUTUBE_API_KEY') or '').strip())
+    api_client_ready = bool(getattr(youtube_monitor, 'youtube', None))
+    api_error = str(getattr(youtube_monitor, '_last_api_init_error', '') or '')
+    if api_client_ready:
+        api_state, api_value, api_detail = 'ready', 'API 已连接', '可以执行频道与关键词监控'
+    elif not api_key_configured or api_error == 'missing_api_key':
+        api_state, api_value, api_detail = 'attention', 'API Key 未配置', '监控发现功能暂不可用'
+    else:
+        api_state, api_value, api_detail = 'error', 'API 初始化失败', '请检查密钥、代理与网络连通性'
+
+    cookie_path = resolve_cookie_file_path(
+        config.get('YOUTUBE_COOKIES_PATH'),
+        'cookies/yt_cookies.txt',
+        service_name='YouTube',
+        logger_obj=logger,
+    )
+    cookie_ready = bool(cookie_path and os.path.isfile(cookie_path))
+    proxy_enabled = _coerce_checkbox_value(config.get('YOUTUBE_API_PROXY_ENABLED', False))
+    proxy_url_ready = bool(str(config.get('NETWORK_PROXY_URL') or '').strip())
+    if proxy_enabled and proxy_url_ready:
+        proxy_state, proxy_value, proxy_detail = 'ready', '代理模式', '监控 API 将使用通用网络代理'
+    elif proxy_enabled:
+        proxy_state, proxy_value, proxy_detail = 'error', '代理地址缺失', '已启用代理但尚未配置通用代理地址'
+    else:
+        proxy_state, proxy_value, proxy_detail = 'ready', '直连模式', '服务器需能直接访问 YouTube Data API'
+
+    items = [
+        {
+            'key': 'api',
+            'label': 'YouTube Data API',
+            'icon': 'bi-key',
+            'state': api_state,
+            'value': api_value,
+            'detail': api_detail,
+            'url': url_for('settings') + '#vtab-ops',
+        },
+        {
+            'key': 'cookies',
+            'label': 'YouTube Cookies',
+            'icon': 'bi-cookie',
+            'state': 'ready' if cookie_ready else 'attention',
+            'value': '下载登录态可用' if cookie_ready else 'Cookies 文件缺失',
+            'detail': '发现视频后可稳定下载受限内容' if cookie_ready else '公开内容仍可能可用，建议先补齐',
+            'url': url_for('settings') + '#vtab-accounts',
+        },
+        {
+            'key': 'network',
+            'label': '网络方式',
+            'icon': 'bi-globe2',
+            'state': proxy_state,
+            'value': proxy_value,
+            'detail': proxy_detail,
+            'url': url_for('settings') + '#vtab-accounts',
+        },
+    ]
+    return {
+        'ready': all(item['state'] == 'ready' for item in items),
+        'blocking': any(item['state'] == 'error' for item in items),
+        'items': items,
+    }
+
+
 @app.route('/youtube_monitor')
 @login_required
 def youtube_monitor_index():
     """YouTube监控主页"""
     configs = youtube_monitor.get_monitor_configs()
     history = youtube_monitor.get_monitor_history(limit=50)
-    return render_template('youtube_monitor.html', configs=configs, history=history)
+    readiness = _build_youtube_monitor_readiness(load_config())
+    return render_template(
+        'youtube_monitor.html',
+        configs=configs,
+        history=history,
+        readiness=readiness,
+    )
 
 @app.route('/youtube_monitor/config', methods=['GET', 'POST'])
 @login_required

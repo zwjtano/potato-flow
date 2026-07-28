@@ -28,7 +28,7 @@ class AppLoggingHelperTests(unittest.TestCase):
         )
         self.assertEqual(
             describe_status("proxy_ready"),
-            "YouTube API 初始化成功，独立代理已启用"
+            "YouTube API 初始化成功，通用代理已启用"
         )
         self.assertEqual(
             describe_status("init_failed"),

@@ -11,6 +11,34 @@
     </div>
 </section>
 
+<section class="home-readiness is-{{ system_readiness.state }}" aria-labelledby="home-readiness-title">
+    <header>
+        <span class="home-readiness-mark" aria-hidden="true">
+            <i class="bi {{ 'bi-check2-circle' if system_readiness.state == 'ready' else ('bi-exclamation-triangle' if system_readiness.state == 'error' else 'bi-info-circle') }}"></i>
+        </span>
+        <div>
+            <h2 id="home-readiness-title">{{ system_readiness.title }}</h2>
+            <p>{{ system_readiness.detail }}</p>
+        </div>
+        <a href="{{ url_for('settings') }}" class="home-readiness-action">查看设置 <i class="bi bi-arrow-right"></i></a>
+    </header>
+    {% if system_readiness['items'] %}
+    <div class="home-readiness-grid">
+        {% for item in system_readiness['items'] %}
+        <a href="{{ item.url }}" class="home-readiness-item is-{{ item.state }}">
+            <span class="home-readiness-icon" aria-hidden="true"><i class="bi {{ item.icon }}"></i></span>
+            <span>
+                <small>{{ item.label }}</small>
+                <strong>{{ item.value }}</strong>
+                <em>{{ item.detail }}</em>
+            </span>
+            <i class="bi bi-chevron-right" aria-hidden="true"></i>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+
 <section class="home-choice-grid" aria-label="核心功能">
     <article class="home-product-card youtube">
         <header>
@@ -49,8 +77,12 @@
 
         {% if youtube_summary.review %}
         <a class="home-product-alert" href="{{ url_for('manual_review') }}"><i class="bi bi-exclamation-circle"></i>{{ youtube_summary.review }} 个 YouTube 任务等待处理<i class="bi bi-arrow-right"></i></a>
+        {% elif not youtube_summary.monitor_total %}
+        <a class="home-product-notice" href="{{ url_for('youtube_monitor_config') }}"><i class="bi bi-gear"></i>创建监控后自动发现新视频<i class="bi bi-arrow-right"></i></a>
+        {% elif not youtube_summary.monitor_enabled %}
+        <a class="home-product-notice is-attention" href="{{ url_for('youtube_monitor_index') }}"><i class="bi bi-pause-circle"></i>所有监控均已暂停<i class="bi bi-arrow-right"></i></a>
         {% else %}
-        <div class="home-product-clear"><i class="bi bi-check-circle"></i>当前没有待处理异常</div>
+        <div class="home-product-clear"><i class="bi bi-check-circle"></i>监控运行正常，当前没有待处理异常</div>
         {% endif %}
 
         <footer>
@@ -98,8 +130,12 @@
 
         {% if recording_summary.review %}
         <a class="home-product-alert" href="{{ url_for('manual_review') }}"><i class="bi bi-exclamation-circle"></i>{{ recording_summary.review }} 个录播任务等待处理<i class="bi bi-arrow-right"></i></a>
+        {% elif not recording_summary.room_total %}
+        <a class="home-product-notice" href="{{ url_for('live_recording', add_room=1) }}"><i class="bi bi-plus-circle"></i>添加直播间后开始自动监控<i class="bi bi-arrow-right"></i></a>
+        {% elif not recording_summary.engine_running %}
+        <a class="home-product-notice is-attention" href="{{ url_for('live_recording') }}"><i class="bi bi-play-circle"></i>录制引擎未启动，直播间不会自动检测<i class="bi bi-arrow-right"></i></a>
         {% else %}
-        <div class="home-product-clear"><i class="bi bi-check-circle"></i>当前没有待处理异常</div>
+        <div class="home-product-clear"><i class="bi bi-check-circle"></i>录制引擎运行正常，当前没有待处理异常</div>
         {% endif %}
 
         <footer>

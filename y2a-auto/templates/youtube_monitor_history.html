@@ -183,13 +183,13 @@
                 <td>
                     <div class="btn-group" role="group">
                         <a href="https://www.youtube.com/watch?v={{ record.video_id }}" 
-                           target="_blank" rel="noopener" class="btn btn-outline-danger btn-sm" title="在YouTube中查看">
+                           target="_blank" rel="noopener" class="btn btn-outline-danger btn-sm" title="在YouTube中查看" aria-label="在 YouTube 查看 {{ record.video_title }}">
                             <i class="bi bi-youtube"></i>
                         </a>
                         {% if not record.added_to_tasks %}
                         <button type="button" class="btn btn-outline-success btn-sm" 
                                 onclick="addToTasks('{{ record.video_id }}', '{{ config.id }}')" 
-                                title="添加到任务队列">
+                                title="添加到任务队列" aria-label="将 {{ record.video_title }} 添加到任务队列">
                             <i class="bi bi-plus-circle"></i>
                         </button>
                         {% endif %}

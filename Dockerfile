@@ -27,14 +27,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY y2a-auto/requirements.txt ./requirements.txt
+COPY y2a-auto/requirements.lock ./requirements.lock
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
     && (/opt/venv/bin/pip install \
           "torch==2.6.0" "torchaudio==2.6.0" \
           --index-url https://download.pytorch.org/whl/cpu \
         || /opt/venv/bin/pip install "torch==2.6.0" "torchaudio==2.6.0") \
-    && /opt/venv/bin/pip install -r requirements.txt \
+    && /opt/venv/bin/pip install -r requirements.lock \
     && /opt/venv/bin/pip uninstall -y pip setuptools wheel \
     && find /opt/venv -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
@@ -93,7 +93,7 @@ EXPOSE 5001
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/', timeout=5)" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/healthz', timeout=5)" || exit 1
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["python", "/app/run.py"]

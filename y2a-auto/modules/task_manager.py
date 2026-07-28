@@ -34,6 +34,10 @@ from .notifications import (
 import subprocess
 from typing import Any, Dict
 from werkzeug.security import safe_join
+from .task_lifecycle import (
+    YOUTUBE_PAUSABLE_STATUSES,
+)
+from .task_runtime import TaskLeaseStore
 
 def _get_memory_usage_percent():
     """获取系统内存使用百分比，用于内存感知处理"""
@@ -67,6 +71,9 @@ DB_CONNECT_TIMEOUT_SECONDS = 10
 DB_BUSY_TIMEOUT_MS = 30000
 DB_WRITE_RETRY_TIMES = 5
 DB_WRITE_RETRY_SLEEP_SECONDS = 0.2
+TASK_LEASE_SECONDS = 90
+TASK_LEASE_HEARTBEAT_SECONDS = 20
+_TASK_LEASE_STORE = TaskLeaseStore(DB_PATH, lease_seconds=TASK_LEASE_SECONDS)
 
 
 def _convert_vtt_text_to_srt_text(vtt_content: str) -> str:
@@ -337,6 +344,7 @@ TASK_STATES = {
     'AWAITING_REVIEW': 'awaiting_manual_review',  # 等待人工审核
     'READY_FOR_UPLOAD': 'ready_for_upload',      # 准备上传
     'UPLOADING': 'uploading',             # 正在上传
+    'PAUSED': 'paused',                    # 已暂停，可从断点恢复
     'COMPLETED': 'completed',             # 任务完成
     'FAILED': 'failed'                    # 任务失败
 }
@@ -746,7 +754,7 @@ def _mark_stage_done(task_id, completed_stages, stage):
 
 
 def recover_interrupted_tasks_to_pending():
-    """将进程意外退出后卡在“处理中状态”的任务恢复为 pending，以便重启后自动续跑。"""
+    """仅在原 worker 租约失效后恢复处理中任务。"""
     processing_states = PROCESSING_STATES
 
     conn = get_db_connection()
@@ -766,6 +774,9 @@ def recover_interrupted_tasks_to_pending():
         for row in rows:
             task_id = row['id']
             status = row['status']
+            if _TASK_LEASE_STORE.is_live(task_id):
+                logger.info("断点续跑：任务 %s 仍由有效 worker 租约持有，跳过", task_id)
+                continue
             has_bilibili_resp = bool(row['bilibili_upload_response'])
             has_upload_resp = has_bilibili_resp
             # 若上传响应已存在，直接标记为 completed（避免重复上传）
@@ -1021,6 +1032,7 @@ def init_db():
         applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
+    _TASK_LEASE_STORE.ensure_schema(conn)
     
     # 检查并添加新字段（用于数据库升级）
     try:
@@ -1554,8 +1566,11 @@ def delete_task(task_id, delete_files=True):
         logger.warning(f"任务 {task_id} 不存在，无法删除")
         return False
     
-    # 标记任务取消，尽快中断运行中的任务
+    # 先停止活动 worker。绝不能在 worker 仍读写目录时删除记录或文件。
     request_task_cancel(task_id)
+    if not _wait_for_task_inactive(task_id):
+        logger.warning(f"任务 {task_id} 仍在停止中，本次不删除")
+        return False
 
     # 删除任务文件
     if delete_files:
@@ -1590,6 +1605,15 @@ def clear_all_tasks(delete_files=True):
     for task in tasks:
         request_task_cancel(task['id'])
 
+    active_ids = [
+        task['id']
+        for task in tasks
+        if not _wait_for_task_inactive(task['id'])
+    ]
+    if active_ids:
+        logger.warning("仍有任务尚未安全停止，取消清空: %s", active_ids)
+        return False
+
     if delete_files:
         for task in tasks:
             delete_task_files(task['id'])
@@ -1607,6 +1631,53 @@ def clear_all_tasks(delete_files=True):
         return False
     finally:
         conn.close()
+
+
+def _wait_for_task_inactive(task_id, timeout=PROCESS_TERMINATE_WAIT_SECONDS):
+    """Wait briefly for a cooperative worker cancellation to finish."""
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while _is_task_active(task_id) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not _is_task_active(task_id)
+
+
+def pause_task(task_id):
+    """Pause a task at its next cancellation checkpoint and preserve all files."""
+    task = get_task(task_id)
+    if not task:
+        return False
+    if str(task.get('status') or '') not in YOUTUBE_PAUSABLE_STATUSES:
+        return False
+
+    request_task_cancel(task_id)
+    update_task(
+        task_id,
+        status=TASK_STATES['PAUSED'],
+        error_message=None,
+        upload_progress=None,
+    )
+    return _wait_for_task_inactive(task_id)
+
+
+def abandon_task(task_id, delete_files=False):
+    """Stop a task, mark it failed by user choice and optionally remove files."""
+    task = get_task(task_id)
+    if not task:
+        return False
+
+    request_task_cancel(task_id)
+    if not _wait_for_task_inactive(task_id):
+        return False
+    if not update_task(
+        task_id,
+        status=TASK_STATES['FAILED'],
+        error_message="用户主动放弃任务",
+        upload_progress=None,
+    ):
+        return False
+    if delete_files:
+        return delete_task_files(task_id)
+    return True
 
 
 def _get_task_download_dir_real(task_id):
@@ -1816,7 +1887,9 @@ def reset_stuck_tasks(skip_active=False, cancel_active=False):
                 old_status = task[1]
                 updated_at = task[2]
 
-                if skip_active and _is_task_active(task_id):
+                if skip_active and (
+                    _is_task_active(task_id) or _TASK_LEASE_STORE.is_live(task_id)
+                ):
                     if cancel_active:
                         request_task_cancel(task_id)
                     logger.warning(
@@ -1903,6 +1976,7 @@ class TaskProcessor:
         self._current_max_concurrent_uploads = _as_int(self.config.get('MAX_CONCURRENT_UPLOADS', 1), 1, minimum=1)
         self._runtime_limit_refresh_pending = False
         self._last_deferred_limit_signature = None
+        self._shutting_down = False
         
         # 初始化上传信号量
         init_upload_semaphore(self._current_max_concurrent_uploads)
@@ -1966,6 +2040,30 @@ class TaskProcessor:
         except Exception as e:
             logger.warning(f"注册卡住任务扫描失败（不影响主流程）：{e}")
 
+        try:
+            self.scheduler.add_job(
+                self._heartbeat_active_tasks,
+                'interval',
+                seconds=TASK_LEASE_HEARTBEAT_SECONDS,
+                id='task_lease_heartbeat',
+                replace_existing=True,
+            )
+        except Exception as e:
+            logger.warning(f"注册任务租约心跳失败（不影响主流程）：{e}")
+
+    def _heartbeat_active_tasks(self):
+        """续租当前进程中仍然活跃的普通任务。"""
+        active_ids = _get_active_task_ids()
+        if not active_ids:
+            return
+        renewed = _TASK_LEASE_STORE.heartbeat(active_ids)
+        if renewed != len(active_ids):
+            logger.warning(
+                "任务租约心跳数量异常：活动=%s，续租=%s",
+                len(active_ids),
+                renewed,
+            )
+
     def _refresh_runtime_limits(self, force=False):
         """按当前配置刷新并发上限；运行中有活动任务时延后生效。"""
         desired_tasks = _as_int(self.config.get('MAX_CONCURRENT_TASKS', 2), 2, minimum=1)
@@ -2025,6 +2123,7 @@ class TaskProcessor:
     def _recover_stuck_tasks(self):
         """周期性清理非活动的卡住任务，并对活动卡住任务发送取消请求。"""
         try:
+            recover_interrupted_tasks_to_pending()
             reset_count = reset_stuck_tasks(skip_active=True, cancel_active=True)
             if reset_count > 0:
                 logger.warning(f"自动恢复了 {reset_count} 个卡住任务，准备继续调度 pending 队列")
@@ -2033,7 +2132,8 @@ class TaskProcessor:
             logger.warning(f"自动恢复卡住任务失败（忽略）：{e}")
     
     def shutdown(self):
-        """安全关闭调度器"""
+        """Stop scheduling and give active workers a bounded graceful exit."""
+        self._shutting_down = True
         try:
             if self.scheduler:
                 # 防止对未运行的调度器调用shutdown引发异常
@@ -2044,6 +2144,30 @@ class TaskProcessor:
         except Exception as e:
             logger.warning(f"关闭任务处理器时发生异常: {e}")
         finally:
+            active_ids = _get_active_task_ids()
+            for task_id in active_ids:
+                request_task_cancel(task_id)
+
+            grace_seconds = _as_int(
+                self.config.get('TASK_SHUTDOWN_GRACE_SECONDS', 15),
+                15,
+                minimum=1,
+            )
+            deadline = time.monotonic() + grace_seconds
+            while _get_active_task_ids() and time.monotonic() < deadline:
+                time.sleep(0.1)
+
+            remaining = _get_active_task_ids()
+            if remaining:
+                logger.warning(
+                    "关闭宽限期结束，仍有 %s 个任务未退出；保留租约直至自然过期",
+                    len(remaining),
+                )
+            else:
+                try:
+                    _TASK_LEASE_STORE.release_owner()
+                except Exception as e:
+                    logger.warning(f"释放当前 worker 的任务租约失败: {e}")
             logger.info("任务处理器已关闭")
     
     def schedule_task(self, task_id):
@@ -2056,6 +2180,9 @@ class TaskProcessor:
         Returns:
             job_id: 调度作业ID
         """
+        if self._shutting_down:
+            logger.info("任务处理器正在关闭，拒绝调度任务 %s", task_id)
+            return None
         try:
             with _TASK_SCHEDULING_LOCK:
                 self._refresh_runtime_limits(force=False)
@@ -2095,6 +2222,11 @@ class TaskProcessor:
                     )
                     return queued_job_id
 
+                if not _TASK_LEASE_STORE.acquire(task_id):
+                    local_task_semaphore.release()
+                    logger.info("任务 %s 已由另一个 worker 持有，跳过本次调度", task_id)
+                    return f"leased_{task_id}"
+
                 import threading
                 release_slot_on_failure = True
                 task_marked_active = False
@@ -2114,10 +2246,12 @@ class TaskProcessor:
                         update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"执行出错: {str(e)}")
                     finally:
                         _mark_task_inactive(task_id)
+                        _TASK_LEASE_STORE.release(task_id)
 
                 try:
                     if not _mark_task_active(task_id):
                         logger.warning(f"任务 {task_id} 在线程启动前检测到重复调度，已跳过")
+                        _TASK_LEASE_STORE.release(task_id)
                         return f"thread_{task_id}"
                     task_marked_active = True
 
@@ -2134,6 +2268,7 @@ class TaskProcessor:
                     if release_slot_on_failure:
                         if task_marked_active:
                             _mark_task_inactive(task_id)
+                        _TASK_LEASE_STORE.release(task_id)
                         local_task_semaphore.release()
 
                 logger.info(f"任务 {task_id} 已在后台线程启动")
@@ -2189,7 +2324,9 @@ class TaskProcessor:
                     task_logger.info("获得任务并发配额，开始执行任务")
                 except TaskCancelledError:
                     task_logger.info("任务在等待并发配额时已取消")
-                    update_task(task_id, status=TASK_STATES['FAILED'], error_message="任务已取消")
+                    current_task = get_task(task_id)
+                    if not current_task or current_task.get('status') != TASK_STATES['PAUSED']:
+                        update_task(task_id, status=TASK_STATES['FAILED'], error_message="任务已取消")
                     return
                 except Exception as _e:
                     task_logger.error(f"获取任务并发配额失败: {_e}")
@@ -2370,7 +2507,11 @@ class TaskProcessor:
                 task_logger.info("任务处理完成，标记为准备上传")
         except TaskCancelledError:
             task_logger.info("任务已取消，停止后续处理")
-            update_task(task_id, status=TASK_STATES['FAILED'], error_message="任务已取消")
+            current_task = get_task(task_id)
+            if current_task and current_task.get('status') == TASK_STATES['PAUSED']:
+                task_logger.info("任务保留为已暂停状态，可稍后从断点恢复")
+            else:
+                update_task(task_id, status=TASK_STATES['FAILED'], error_message="任务已取消")
         except Exception as e:
             task_logger.error(f"任务处理过程中发生错误: {str(e)}")
             import traceback
@@ -7695,9 +7836,28 @@ def start_task(task_id, config=None):
         return False
     
     # 任务已经在处理中或已完成
-    if task['status'] not in [TASK_STATES['PENDING'], TASK_STATES['AWAITING_REVIEW'], TASK_STATES['FAILED']]:
+    if task['status'] not in [
+        TASK_STATES['PENDING'],
+        TASK_STATES['AWAITING_REVIEW'],
+        TASK_STATES['FAILED'],
+        TASK_STATES['PAUSED'],
+    ]:
         logger.warning(f"任务 {task_id} 状态为 {task['status']}，不能启动")
         return False
+
+    if task['status'] == TASK_STATES['PAUSED']:
+        if _is_task_active(task_id):
+            logger.warning(f"任务 {task_id} 的旧 worker 尚未退出，暂不能恢复")
+            return False
+        clear_task_cancel(task_id, clear_flag=True)
+        if not update_task(
+            task_id,
+            silent=True,
+            status=TASK_STATES['PENDING'],
+            error_message=None,
+            upload_progress=None,
+        ):
+            return False
     
     # 如果没有提供配置，尝试从Flask app获取
     if not config:
@@ -7755,6 +7915,15 @@ def force_upload_task(task_id, config=None):
     # 使用全局任务处理器，确保并发控制生效
     processor = get_global_task_processor(config)
     
+    if not _TASK_LEASE_STORE.acquire(task_id):
+        logger.warning(f"任务 {task_id} 已由另一个 worker 持有，不能重复强制上传")
+        return False
+
+    if not _mark_task_active(task_id):
+        _TASK_LEASE_STORE.release(task_id)
+        logger.warning(f"任务 {task_id} 已有活动 worker，不能重复强制上传")
+        return False
+
     # 创建任务日志记录器
     task_logger = setup_task_logger(task_id)
     
@@ -7779,8 +7948,14 @@ def force_upload_task(task_id, config=None):
         task_logger.error(f"强制上传任务 {task_id} 失败: {str(e)}")
         import traceback
         task_logger.error(traceback.format_exc())
-        update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"强制上传失败: {str(e)}")
+        current_task = get_task(task_id)
+        if not current_task or current_task.get('status') != TASK_STATES['PAUSED']:
+            update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"强制上传失败: {str(e)}")
         return False
+    finally:
+        _mark_task_inactive(task_id)
+        _TASK_LEASE_STORE.release(task_id)
+        clear_task_cancel(task_id, clear_flag=True)
 
 # 全局任务处理器实例
 _global_task_processor = None

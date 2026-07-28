@@ -152,7 +152,8 @@ class BilibiliSdkChunkRetryTests(unittest.TestCase):
 class BilibiliProgressTests(unittest.TestCase):
     def test_progress_counts_unique_chunks_in_completion_order(self):
         tracker = _BilibiliChunkProgress()
-        page = object()
+        page = Mock()
+        page.get_size.return_value = 23
 
         first = tracker.record(
             {"page": page, "chunk_number": 0, "total_chunk_count": 23}
@@ -164,9 +165,9 @@ class BilibiliProgressTests(unittest.TestCase):
             {"page": page, "chunk_number": 22, "total_chunk_count": 23}
         )
 
-        self.assertAlmostEqual(first, 95 / 23)
+        self.assertAlmostEqual(first["percent"], 95 / 23)
         self.assertEqual(duplicate, first)
-        self.assertAlmostEqual(out_of_order, 2 * 95 / 23)
+        self.assertAlmostEqual(out_of_order["percent"], 2 * 95 / 23)
 
         final = out_of_order
         for chunk_number in range(1, 22):
@@ -177,7 +178,7 @@ class BilibiliProgressTests(unittest.TestCase):
                     "total_chunk_count": 23,
                 }
             )
-        self.assertEqual(final, 95.0)
+        self.assertEqual(final["percent"], 95.0)
 
     def test_upload_video_emits_stage_progress_and_retry_log(self):
         progress = []
@@ -241,6 +242,9 @@ class BilibiliProgressTests(unittest.TestCase):
 
             with patch(
                 "modules.bilibili_uploader.setup_task_logger", return_value=logger
+            ), patch(
+                "modules.bilibili_uploader.load_config",
+                return_value={"BILIBILI_UPLOAD_ENGINE": "internal"},
             ), patch(
                 "modules.bilibili_uploader.configure_bilibili_runtime"
             ), patch(
@@ -317,6 +321,9 @@ class BilibiliProgressTests(unittest.TestCase):
 
             with patch(
                 "modules.bilibili_uploader.setup_task_logger", return_value=Mock()
+            ), patch(
+                "modules.bilibili_uploader.load_config",
+                return_value={"BILIBILI_UPLOAD_ENGINE": "internal"},
             ), patch(
                 "modules.bilibili_uploader.configure_bilibili_runtime"
             ), patch(

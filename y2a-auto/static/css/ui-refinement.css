@@ -14,7 +14,7 @@
     --pf-surface-muted: #eef4f9;
     --pf-ink: #182638;
     --pf-copy: #52657a;
-    --pf-muted: #8494a6;
+    --pf-muted: #687a8d;
     --pf-line: #d9e5ef;
     --pf-line-strong: #c8d8e6;
     --pf-signal: #00aee6;
@@ -461,8 +461,8 @@ textarea.form-control {
     border-radius: var(--pf-radius-md);
 }
 
-*:focus-visible {
-    outline-color: var(--pf-signal);
+:is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 3px solid var(--pf-signal) !important;
     outline-offset: 2px;
 }
 
@@ -473,7 +473,7 @@ html[data-theme="dark"] {
     --pf-surface-muted: #1b2936;
     --pf-ink: #e7eef7;
     --pf-copy: #a9bacb;
-    --pf-muted: #7f93a8;
+    --pf-muted: #9aacc0;
     --pf-line: #293b4c;
     --pf-line-strong: #344a5e;
     --pf-signal: #27c3ed;
@@ -486,6 +486,19 @@ html[data-theme="dark"] {
 html[data-theme="dark"] body {
     color: var(--pf-ink);
     background: var(--pf-canvas);
+}
+
+/*
+ * Auxiliary copy remains readable at narrow widths and browser zoom. Badges
+ * and decorative labels keep their compact scale; explanatory text does not.
+ */
+.app-shell-body :is(small, .small, .form-text, .help-text, .app-release-meta) {
+    font-size: max(12px, .75rem);
+    line-height: 1.45;
+}
+
+html[data-theme="dark"] :is(.app-release-meta, .form-text, .help-text, .text-muted) {
+    color: var(--pf-muted) !important;
 }
 
 html[data-theme="dark"] ::selection {

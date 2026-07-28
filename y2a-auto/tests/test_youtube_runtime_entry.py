@@ -87,6 +87,10 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         self.assertEqual(error, youtube_handler._YT_DLP_UNAVAILABLE_MESSAGE)
         self.assertNotIn("视频不可用", error)
 
+    @unittest.skipUnless(
+        (pathlib.Path(__file__).resolve().parents[1] / "build-tools" / "setup_app.py").exists(),
+        "Linux-only release does not ship the legacy Windows portable build tools",
+    )
     def test_internal_dispatch_only_handles_reserved_flag(self):
         setup_path = pathlib.Path(__file__).resolve().parents[1] / "build-tools" / "setup_app.py"
         spec = importlib.util.spec_from_file_location("y2a_setup_app_test", setup_path)
@@ -105,6 +109,10 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         fake_yt_dlp.main.assert_called_once_with(["--version"])
 
+    @unittest.skipUnless(
+        (pathlib.Path(__file__).resolve().parents[1] / "build-tools" / "build_exe.py").exists(),
+        "Linux-only release does not ship the legacy Windows portable build tools",
+    )
     def test_pyinstaller_spec_generator_collects_all_yt_dlp_submodules(self):
         root = pathlib.Path(__file__).resolve().parents[1]
         generator = (root / "build-tools" / "build_exe.py").read_text(encoding="utf-8")

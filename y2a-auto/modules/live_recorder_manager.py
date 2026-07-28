@@ -26,6 +26,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from .task_lifecycle import recording_task_capabilities
+
 APP_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = APP_ROOT.parent
 CONFIG_DIR = APP_ROOT / "config"
@@ -2853,6 +2855,7 @@ class LiveRecorderManager:
                         f"当前速度：{speed / 1024 / 1024:.1f}MB/s　"
                         f"剩余时间：{float(eta):.1f}秒"
                     )
+            capabilities = recording_task_capabilities(job_status)
             jobs.append({
                 "id": row["fingerprint"],
                 "display_id": display_ids.get(row["fingerprint"], row["fingerprint"][:12]),
@@ -2908,9 +2911,7 @@ class LiveRecorderManager:
                     and failed_stage == "upload"
                     and automatic_retries_used >= AUTO_UPLOAD_RETRY_MAX_RETRIES
                 ),
-                "retryable": job_status in {"failed", "dry_run", "paused"},
-                "pausable": job_status in {"processing", "video_uploaded"},
-                "paused": job_status == "paused",
+                **capabilities,
                 "stages": stages,
             })
         return jobs
@@ -3420,7 +3421,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        if job.get("status") not in {"processing", "video_uploaded"}:
+        if not recording_task_capabilities(job.get("status")).get("pausable"):
             raise RecorderConfigError("只有正在处理的任务可以暂停")
 
         self._terminate_pipeline_worker(job)
@@ -3679,7 +3680,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        if job["status"] not in {"failed", "dry_run", "paused"}:
+        if not recording_task_capabilities(job.get("status")).get("retryable"):
             raise RecorderConfigError("只有失败、试运行或已暂停任务可以重试")
         video = Path(job["video_path"])
         if not video.is_file():

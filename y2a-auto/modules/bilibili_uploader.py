@@ -227,7 +227,11 @@ class _BilibiliChunkProgress:
         if chunk_number not in completed_chunks:
             chunk_size = payload.get("chunk_size")
             if not isinstance(chunk_size, int) or chunk_size < 0:
-                page_size = int(payload.get("page_size") or page.get_size() or 0)
+                page_size_value = payload.get("page_size")
+                if not page_size_value:
+                    get_size = getattr(page, "get_size", None)
+                    page_size_value = get_size() if callable(get_size) else 0
+                page_size = int(page_size_value or 0)
                 offset = max(0, int(payload.get("offset") or 0))
                 chunk_size = max(0, min(page_size - offset, (page_size + total_chunk_count - 1) // total_chunk_count))
             completed_chunks[chunk_number] = chunk_size

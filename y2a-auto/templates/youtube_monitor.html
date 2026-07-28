@@ -17,6 +17,33 @@
     </div>
 </div>
 
+<section class="monitor-readiness" aria-labelledby="monitor-readiness-title">
+    <header>
+        <div>
+            <span class="page-eyebrow">BEFORE YOU START</span>
+            <h2 id="monitor-readiness-title">监控前置检查</h2>
+            <p>{{ '已具备自动监控条件' if readiness.ready else ('存在阻塞项，请先修复' if readiness.blocking else '还有建议配置项未完成') }}</p>
+        </div>
+        <span class="monitor-readiness-state {{ 'is-ready' if readiness.ready else ('is-error' if readiness.blocking else 'is-attention') }}">
+            <i class="bi {{ 'bi-check-circle' if readiness.ready else ('bi-x-circle' if readiness.blocking else 'bi-exclamation-circle') }}"></i>
+            {{ '可以开始' if readiness.ready else ('需要修复' if readiness.blocking else '建议完善') }}
+        </span>
+    </header>
+    <div class="monitor-readiness-grid">
+        {% for item in readiness['items'] %}
+        <a class="monitor-readiness-item is-{{ item.state }}" href="{{ item.url }}">
+            <span class="monitor-readiness-icon"><i class="bi {{ item.icon }}"></i></span>
+            <span>
+                <small>{{ item.label }}</small>
+                <strong>{{ item.value }}</strong>
+                <em>{{ item.detail }}</em>
+            </span>
+            <i class="bi bi-arrow-right" aria-hidden="true"></i>
+        </a>
+        {% endfor %}
+    </div>
+</section>
+
 <!-- 监控配置列表 -->
 <div class="row mb-5">
     <div class="col-12">
@@ -119,18 +146,18 @@
                         <td data-label="操作">
                             <div class="btn-group btn-group-sm" role="group">
                                 <form method="POST" action="{{ url_for('youtube_monitor_run', config_id=config.id) }}" class="d-inline monitor-run-form">
-                                    <button type="submit" class="btn btn-outline-success btn-icon" title="立即运行">
+                                    <button type="submit" class="btn btn-outline-success btn-icon" title="立即运行" aria-label="立即运行监控 {{ config.name }}">
                                         <i class="bi bi-play-fill"></i>
                                     </button>
                                 </form>
-                                <a href="{{ url_for('youtube_monitor_history', config_id=config.id) }}" class="btn btn-outline-info btn-icon" title="查看历史">
+                                <a href="{{ url_for('youtube_monitor_history', config_id=config.id) }}" class="btn btn-outline-info btn-icon" title="查看历史" aria-label="查看监控 {{ config.name }} 的历史">
                                     <i class="bi bi-clock-history"></i>
                                 </a>
-                                <a href="{{ url_for('youtube_monitor_config_edit', config_id=config.id) }}" class="btn btn-outline-warning btn-icon" title="编辑">
+                                <a href="{{ url_for('youtube_monitor_config_edit', config_id=config.id) }}" class="btn btn-outline-warning btn-icon" title="编辑" aria-label="编辑监控 {{ config.name }}">
                                     <i class="bi bi-pencil"></i>
                                 </a>
                                 <form method="POST" action="{{ url_for('youtube_monitor_config_delete', config_id=config.id) }}" class="d-inline" data-confirm="删除后将停止这项监控配置。" data-confirm-title="删除“{{ config.name }}”？" data-confirm-button="确认删除" data-confirm-danger="true">
-                                    <button type="submit" class="btn btn-outline-danger btn-icon" title="删除">
+                                    <button type="submit" class="btn btn-outline-danger btn-icon" title="删除" aria-label="删除监控 {{ config.name }}">
                                         <i class="bi bi-trash"></i>
                                     </button>
                                 </form>
@@ -209,13 +236,13 @@
                         <td data-label="操作">
                             <div class="btn-group" role="group">
                                 <a href="https://www.youtube.com/watch?v={{ record.video_id }}" 
-                                   target="_blank" rel="noopener" class="btn btn-outline-danger btn-icon" title="在YouTube中查看">
+                                   target="_blank" rel="noopener" class="btn btn-outline-danger btn-icon" title="在YouTube中查看" aria-label="在 YouTube 查看 {{ record.video_title }}">
                                 <i class="bi bi-youtube"></i>
                             </a>
                                 {% if not record.added_to_tasks %}
                                 <button type="button" class="btn btn-outline-success btn-icon" 
                                         onclick="addToTasks('{{ record.video_id }}', '{{ record.config_id }}')" 
-                                        title="添加到任务队列">
+                                        title="添加到任务队列" aria-label="将 {{ record.video_title }} 添加到任务队列">
                                     <i class="bi bi-plus-circle"></i>
                                 </button>
                                 {% endif %}
@@ -238,6 +265,40 @@
 
 {% block extra_css %}
 <style>
+.monitor-readiness { margin-bottom: 28px; overflow: hidden; border: 1px solid var(--studio-border); border-radius: 14px; background: var(--studio-surface); }
+.monitor-readiness > header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border-bottom: 1px solid var(--studio-border); }
+.monitor-readiness h2 { margin: 2px 0; font-size: 17px; }
+.monitor-readiness header p { margin: 0; color: var(--studio-muted); }
+.monitor-readiness-state { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 7px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.monitor-readiness-state.is-ready { color: #167a4c; background: #e9f8f0; }
+.monitor-readiness-state.is-attention { color: #8a5b0a; background: #fff5db; }
+.monitor-readiness-state.is-error { color: #b82d42; background: #fff0f2; }
+.monitor-readiness-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.monitor-readiness-item { display: grid; min-width: 0; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 17px 18px; color: inherit; border-right: 1px solid var(--studio-border); text-decoration: none; }
+.monitor-readiness-item:last-child { border-right: 0; }
+.monitor-readiness-item:hover { background: var(--studio-surface-soft); }
+.monitor-readiness-icon { display: grid; width: 38px; height: 38px; place-items: center; color: #168653; border-radius: 10px; background: #eaf8f0; }
+.monitor-readiness-item.is-attention .monitor-readiness-icon { color: #98640a; background: #fff5db; }
+.monitor-readiness-item.is-error .monitor-readiness-icon { color: #c83348; background: #fff0f2; }
+.monitor-readiness-item small, .monitor-readiness-item strong, .monitor-readiness-item em { display: block; }
+.monitor-readiness-item strong { margin: 2px 0; }
+.monitor-readiness-item em { color: var(--studio-muted); font-size: 12px; font-style: normal; line-height: 1.4; }
+.monitor-readiness-item > .bi-arrow-right { color: var(--studio-muted); }
+html[data-theme="dark"] .monitor-readiness-state.is-ready,
+html[data-theme="dark"] .monitor-readiness-icon { color: #6ee7ad; background: #123426; }
+html[data-theme="dark"] .monitor-readiness-state.is-attention,
+html[data-theme="dark"] .monitor-readiness-item.is-attention .monitor-readiness-icon { color: #ffd36a; background: #3a2e13; }
+html[data-theme="dark"] .monitor-readiness-state.is-error,
+html[data-theme="dark"] .monitor-readiness-item.is-error .monitor-readiness-icon { color: #ff8292; background: #3b1f27; }
+@media (max-width: 900px) {
+    .monitor-readiness-grid { grid-template-columns: 1fr; }
+    .monitor-readiness-item { border-right: 0; border-bottom: 1px solid var(--studio-border); }
+    .monitor-readiness-item:last-child { border-bottom: 0; }
+}
+@media (max-width: 575.98px) {
+    .monitor-readiness > header { align-items: flex-start; flex-direction: column; }
+    .monitor-readiness-state { align-self: flex-start; }
+}
 .table th {
     border-top: none;
     font-weight: 600;

@@ -1,4 +1,46 @@
 // 主JavaScript文件
+(function installCsrfProtection() {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    if (!token) return;
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+        const options = Object.assign({}, init || {});
+        const requestMethod = input instanceof Request ? input.method : 'GET';
+        const method = String(options.method || requestMethod || 'GET').toUpperCase();
+        const requestUrl = new URL(
+            typeof input === 'string' ? input : input.url,
+            window.location.href
+        );
+        if (
+            requestUrl.origin === window.location.origin
+            && !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method)
+        ) {
+            const headers = new Headers(options.headers || {});
+            if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', token);
+            options.headers = headers;
+        }
+        return originalFetch(input, options);
+    };
+
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('form').forEach(function(form) {
+            const method = String(form.method || 'get').toLowerCase();
+            const action = new URL(form.action || window.location.href, window.location.href);
+            if (
+                method === 'get'
+                || action.origin !== window.location.origin
+                || form.querySelector('input[name="_csrf_token"]')
+            ) return;
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = '_csrf_token';
+            input.value = token;
+            form.appendChild(input);
+        });
+    });
+}());
+
 document.addEventListener('DOMContentLoaded', function() {
     console.log('PotatoFlow 已加载');
 

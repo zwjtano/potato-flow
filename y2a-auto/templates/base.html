@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% block title %}PotatoFlow · 土豆录播姬{% endblock %}</title>
     <script>
     (function () {
@@ -26,11 +27,11 @@
     <!-- 使用本地Bootstrap Icons -->
     <link rel="stylesheet" href="{{ url_for('static', filename='lib/icons/bootstrap-icons.css') }}">
     <!-- 自定义样式 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ app_version }}-7">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ app_version }}-9">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
     {% block extra_css %}{% endblock %}
     <!-- 全局界面精修层：放在页面样式之后，统一跨页面视觉语言 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/ui-refinement.css') }}?v={{ app_version }}-1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/ui-refinement.css') }}?v={{ app_version }}-2">
 </head>
 <body class="app-shell-body {% block body_class %}{% endblock %}" data-app-version="{{ app_version }}">
     <aside class="app-sidebar" id="appSidebar">
@@ -60,6 +61,12 @@
                    aria-label="Potato Flow v{{ app_version }} GitHub 项目页">
                     <i class="bi bi-github" aria-hidden="true"></i><span>Potato Flow v{{ app_version }}</span>
                 </a>
+                {% if app_runtime.restart_required %}
+                <span class="app-restart-required" role="status"
+                      title="磁盘源码版本 {{ app_runtime.source_version }} 与当前进程版本 {{ app_runtime.loaded_version }} 不一致">
+                    <i class="bi bi-arrow-repeat" aria-hidden="true"></i>需重启
+                </span>
+                {% endif %}
                 <div class="app-author-meta">
                     <span>by</span>
                     <img src="https://avatars.githubusercontent.com/u/64340982?v=4" alt="" referrerpolicy="no-referrer">
@@ -84,7 +91,7 @@
         {% elif request.path.startswith('/settings') %}{% set shell_section = '系统设置' %}{% set shell_icon = 'bi-sliders2' %}{% endif %}
         <header class="app-topbar">
             <div class="app-breadcrumb"><span>PotatoFlow</span><i class="bi bi-chevron-right"></i><strong><i class="bi {{ shell_icon }}"></i>{{ shell_section }}</strong></div>
-            <div class="app-topbar-status"><button class="app-theme-toggle" type="button" data-theme-toggle aria-label="切换为暗黑模式" title="切换为暗黑模式"><i class="bi bi-moon-stars"></i></button><time id="appClock"></time>{% if show_logout_in_nav %}<a href="{{ url_for('logout') }}" title="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}</div>
+            <div class="app-topbar-status"><button class="app-theme-toggle" type="button" data-theme-toggle aria-label="切换为暗黑模式" title="切换为暗黑模式"><i class="bi bi-moon-stars"></i></button><time id="appClock"></time>{% if show_logout_in_nav %}<a href="{{ url_for('logout') }}" title="退出登录" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}</div>
         </header>
         <main class="app-main {% block main_class %}{% endblock %}">
         {% with messages = get_flashed_messages(with_categories=true) %}
