@@ -736,8 +736,8 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
     width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
     border-radius: 10px; font-size: 1rem;
 }
-.task-source-icon.recording { color: #dc3545; background: rgba(220,53,69,.1); }
-.task-source-icon.youtube { color: #dc3545; background: rgba(220,53,69,.1); }
+.task-source-icon.recording { color: #087cc1; border: 1px solid #b9ddf5; background: #eaf6ff; }
+.task-source-icon.youtube { color: #d93d52; border: 1px solid #f0c8ce; background: #fff0f2; }
 .recording-task-list { padding: .25rem 0; }
 .recording-tasks-table th { font-size: .78rem; color: #778195; font-weight: 600; }
 .recording-tasks-table td { padding: .8rem .65rem; }
@@ -772,6 +772,8 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-cover-trigger.cover-missing .recording-task-cover { display: none; }
 .recording-cover-trigger.cover-missing .recording-task-cover-fallback { display: flex; }
 html[data-theme="dark"] .recording-task-cover-fallback { color: #8fa1b4; border-color: #304254; background: #1c2835; }
+html[data-theme="dark"] .task-source-icon.recording { color: #63b9ff; border-color: #28506c; background: #132b3b; }
+html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color: #65303a; background: #392029; }
 .recording-cover-preview-content { overflow: hidden; border: 0; border-radius: 16px; }
 .recording-cover-preview-content .modal-body { padding: 0; background: #11151b; }
 .recording-cover-preview-image { display: block; width: 100%; max-height: 72vh; object-fit: contain; }

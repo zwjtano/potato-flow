@@ -122,10 +122,10 @@ class OverviewDashboardTests(unittest.TestCase):
 
     def test_sidebar_icons_use_one_consistent_line_icon_set(self):
         for icon in (
-            "bi-house-door",
-            "bi-broadcast",
+            "bi-grid-1x2",
+            "bi-record-circle",
             "bi-youtube",
-            "bi-cloud-upload",
+            "bi-cloud-arrow-up",
             "bi-shield-check",
             "bi-sliders2",
         ):
