@@ -293,10 +293,10 @@
 
 <div class="modal fade" id="addRoomModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content"><form id="addRoomForm" method="post" action="{{ url_for('live_recording_save_room') }}"><div class="modal-header"><div><h5 class="modal-title">新增直播间</h5><small class="text-muted">输入链接或主播名字，确认直播间后同时设置录制方式</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div><div class="modal-body add-room-modal-body">
     <section class="add-room-section">
-    <div class="add-room-section-heading"><span>1</span><div><strong>找到直播间</strong><small>支持直接识别 B站、斗鱼和抖音链接；B站、斗鱼也可按主播昵称搜索</small></div></div>
-    <label class="form-label">直播间链接或主播昵称</label>
-    <div class="room-resolve-input"><i class="bi bi-search"></i><input class="form-control" name="url" type="text" data-role="room-url" placeholder="例如：yyfyyf 或 https://www.douyu.com/9999" autocomplete="off" required><span class="spinner-border spinner-border-sm d-none" data-role="room-resolve-spinner"></span></div>
-    <div class="form-text">直播间链接支持 B站、斗鱼和抖音；主播昵称搜索仅支持 B站和斗鱼，抖音请直接粘贴直播间链接。</div>
+    <div class="add-room-section-heading"><span>1</span><div><strong>找到直播间</strong><small>支持直接粘贴 B站、斗鱼和抖音链接或整段分享文案；B站、斗鱼也可按主播昵称搜索</small></div></div>
+    <label class="form-label">直播间链接、分享文案或主播昵称</label>
+    <div class="room-resolve-input"><i class="bi bi-search"></i><input class="form-control" name="url" type="text" data-role="room-url" maxlength="2000" placeholder="粘贴直播间链接、整段分享文案，或输入主播昵称" autocomplete="off" required><span class="spinner-border spinner-border-sm d-none" data-role="room-resolve-spinner"></span></div>
+    <div class="form-text">抖音可直接粘贴 App 生成的整段直播分享文案；主播昵称搜索目前仅支持 B站和斗鱼。</div>
     <div class="room-resolve-error d-none" data-role="room-resolve-error"></div>
     <div class="room-search-results d-none" data-role="room-search-results"></div>
     <div class="room-resolve-preview d-none" data-role="room-resolve-preview">
@@ -502,7 +502,9 @@ document.addEventListener('DOMContentLoaded', function () {
         roomSearchResults.innerHTML = '';
     }
     function isRoomUrl(value) {
-        return /^https?:\/\//i.test(String(value || '').trim());
+        return /https?:\/\/[^\s<>"']*(?:b23\.tv|(?:[\w-]+\.)?(?:bilibili|douyu|douyin)\.com)[^\s<>"']*/i.test(
+            String(value || '').trim()
+        );
     }
     function renderRoomSearchResults(rooms, platforms = []) {
         const diagnostics = platforms.length ? `

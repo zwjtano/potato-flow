@@ -250,6 +250,49 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["avatar_url"], "https://example.com/avatar.jpg")
         self.assertEqual(room["url"], "https://live.douyin.com/778899")
 
+    def test_resolves_douyin_url_from_full_share_message(self):
+        manager = LiveRecorderManager()
+        page = b"""
+        <script id="RENDER_DATA" type="application/json">
+        %7B%22web_rid%22%3A%22778899%22%2C%22id_str%22%3A%221234567%22%2C
+        %22nickname%22%3A%22DouyinHost%22%2C
+        %22avatarUrl%22%3A%22https%3A%2F%2Fexample.com%2Favatar.jpg%22%7D
+        </script>
+        """
+        share_message = (
+            "3- #在抖音，记录美好生活#【天才青争】正在直播，来和我一起支持Ta吧。"
+            "复制下方链接，打开【抖音】，直接观看直播！ "
+            "https://v.douyin.com/kG8lGVITcRI/ 9@9.com :7pm"
+        )
+        redirect_url = (
+            "https://webcast.amemv.com/douyin/webcast/reflow/1234567"
+            "?sec_user_id=sec-user-id"
+        )
+        with mock.patch.object(
+            recorder_module,
+            "_resolve_redirect_url",
+            return_value=redirect_url,
+        ), mock.patch.object(
+            recorder_module,
+            "_open_url",
+            return_value=(page, "https://www.douyin.com/user/sec-user-id"),
+        ) as open_url, mock.patch.object(
+            recorder_module,
+            "_douyin_cookie_header",
+            return_value="",
+        ):
+            room = manager.resolve_room(share_message)
+
+        self.assertEqual(
+            open_url.call_args.args[0],
+            "https://www.douyin.com/user/sec-user-id",
+        )
+        self.assertEqual(room["platform"], "douyin")
+        self.assertEqual(room["room_id"], "1234567")
+        self.assertEqual(room["sec_uid"], "sec-user-id")
+        self.assertEqual(room["avatar_url"], "https://example.com/avatar.jpg")
+        self.assertEqual(room["url"], "https://live.douyin.com/778899")
+
     def test_resolves_numeric_douyu_vanity_room_id(self):
         manager = LiveRecorderManager()
         response = {
@@ -1662,7 +1705,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertNotIn('name="name"', source)
-        self.assertIn("直播间链接或主播昵称", source)
+        self.assertIn("直播间链接、分享文案或主播昵称", source)
+        self.assertIn('data-role="room-url" maxlength="2000"', source)
+        self.assertIn("抖音可直接粘贴 App 生成的整段直播分享文案", source)
+        self.assertIn("(?:bilibili|douyu|douyin)", source)
         self.assertIn("/live-recording/rooms/resolve", source)
         self.assertIn("/live-recording/rooms/search", source)
         self.assertIn('data-role="room-search-results"', source)

@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -191,6 +191,29 @@ def detect_platform(url: str) -> str:
     raise RecorderConfigError("只支持哔哩哔哩、斗鱼和抖音直播间 URL")
 
 
+def extract_supported_room_url(value: str) -> str:
+    """Extract the first supported live-room URL from a URL or share message."""
+    text = str(value or "").strip()
+    if not text:
+        raise RecorderConfigError("请输入直播间链接或平台分享文案")
+
+    candidates = [text]
+    candidates.extend(
+        match.group(0).rstrip("，。！？；：、,.!?;:)]}）】》>\"'")
+        for match in re.finditer(r"https?://[^\s<>\"']+", text, flags=re.IGNORECASE)
+    )
+    for candidate in candidates:
+        try:
+            detect_platform(candidate)
+        except RecorderConfigError:
+            continue
+        return candidate
+    raise RecorderConfigError(
+        "分享文案中没有找到支持的直播间链接；"
+        "请粘贴哔哩哔哩、斗鱼或抖音直播间链接"
+    )
+
+
 def _open_url(
     url: str,
     *,
@@ -213,6 +236,42 @@ def _open_url(
             return response.read(), response.geturl()
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise RecorderConfigError(f"读取直播间信息失败：{exc}") from exc
+
+
+def _resolve_redirect_url(
+    url: str,
+    *,
+    referer: str = "",
+    cookie: str = "",
+    timeout: int = 15,
+) -> str:
+    """Follow a short URL without downloading the final response body."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        ),
+    }
+    if referer:
+        headers["Referer"] = referer
+    if cookie:
+        headers["Cookie"] = cookie
+    last_error: Exception | None = None
+    for method in ("HEAD", "GET"):
+        try:
+            with urlopen(
+                Request(url, headers=headers, method=method),
+                timeout=timeout,
+            ) as response:
+                return response.geturl()
+        except HTTPError as exc:
+            final_url = exc.geturl()
+            if final_url and final_url != url:
+                return final_url
+            last_error = exc
+        except (URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+    raise RecorderConfigError(f"解析直播间短链接失败：{last_error}")
 
 
 def _response_json(
@@ -393,6 +452,30 @@ def _first_json_text(text: str, keys: tuple[str, ...]) -> str:
 def _resolve_douyin_metadata(url: str) -> dict[str, str]:
     """Resolve direct/short Douyin live URLs from the official room HTML."""
     cookie = _douyin_cookie_header()
+    redirect_room_id = ""
+    sec_uid = ""
+    parsed_source = urlparse(url)
+    if (parsed_source.hostname or "").lower() == "v.douyin.com":
+        redirect_url = _resolve_redirect_url(
+            url,
+            referer="https://www.douyin.com/",
+            cookie=cookie,
+        )
+        parsed_redirect = urlparse(redirect_url)
+        redirect_host = (parsed_redirect.hostname or "").lower()
+        if redirect_host == "webcast.amemv.com":
+            room_match = re.search(r"/reflow/(\d+)", parsed_redirect.path)
+            redirect_room_id = room_match.group(1) if room_match else ""
+            redirect_query = parse_qs(parsed_redirect.query)
+            sec_uid = str(
+                (redirect_query.get("sec_user_id") or [""])[0]
+            ).strip()
+            if not sec_uid:
+                raise RecorderConfigError("抖音分享链接中没有有效的用户 ID")
+            url = f"https://www.douyin.com/user/{quote(sec_uid, safe='')}"
+        else:
+            url = redirect_url
+
     body, final_url = _open_url(
         url,
         referer="https://live.douyin.com/",
@@ -403,7 +486,10 @@ def _resolve_douyin_metadata(url: str) -> dict[str, str]:
     if final_platform != "douyin":
         raise RecorderConfigError("抖音短链接没有指向抖音直播间")
     parsed = urlparse(final_url)
-    room_ref = parsed.path.strip("/").split("/", 1)[0]
+    room_ref = (
+        redirect_room_id
+        or parsed.path.strip("/").split("/", 1)[0]
+    )
     text = html.unescape(body.decode("utf-8", errors="replace"))
     render_match = re.search(
         r'<script[^>]+id=["\']RENDER_DATA["\'][^>]*>(.*?)</script>',
@@ -411,12 +497,18 @@ def _resolve_douyin_metadata(url: str) -> dict[str, str]:
         flags=re.DOTALL | re.IGNORECASE,
     )
     if render_match:
-        from urllib.parse import unquote
-
         text = f"{text}\n{unquote(render_match.group(1))}"
 
     web_rid = _first_json_text(text, ("web_rid", "webRid")) or room_ref
-    room_id = _first_json_text(text, ("roomId", "room_id", "id_str")) or web_rid
+    room_id = (
+        redirect_room_id
+        or _first_json_text(text, ("roomId", "room_id", "id_str"))
+        or web_rid
+    )
+    sec_uid = sec_uid or _first_json_text(
+        text,
+        ("sec_uid", "secUid", "sec_user_id"),
+    )
     name = _first_json_text(text, ("nickname", "nick_name", "user_name"))
     title = _first_json_text(text, ("title", "room_title"))
     avatar_url = ""
@@ -445,6 +537,7 @@ def _resolve_douyin_metadata(url: str) -> dict[str, str]:
     return {
         "room_id": room_id,
         "web_rid": web_rid,
+        "sec_uid": sec_uid,
         "name": name,
         "avatar_url": avatar_url,
         "live_title": title,
@@ -911,7 +1004,7 @@ class LiveRecorderManager:
 
     def resolve_room(self, url: str) -> dict[str, Any]:
         """Resolve a supported room URL into canonical streamer metadata."""
-        url = url.strip()
+        url = extract_supported_room_url(url)
         platform = detect_platform(url)
         if platform == "bilibili":
             parsed = urlparse(url)
@@ -1296,6 +1389,11 @@ class LiveRecorderManager:
                 "url": resolved["url"],
                 "platform": resolved["platform"],
                 "platform_room_id": resolved["room_id"],
+                "platform_user_id": str(
+                    resolved.get("sec_uid")
+                    or existing.get("platform_user_id")
+                    or ""
+                ),
                 "avatar_url": resolved["avatar_url"],
                 **recording_settings,
             })
