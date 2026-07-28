@@ -39,6 +39,37 @@
         </div>
     </div>
 
+    <section class="settings-workbench" aria-labelledby="settingsWorkbenchTitle">
+        <div class="settings-workbench-copy">
+            <span class="settings-workbench-icon"><i class="bi bi-compass" aria-hidden="true"></i></span>
+            <div>
+                <h2 id="settingsWorkbenchTitle">配置工作台</h2>
+                <p>一次只编辑一个分组；常用模式隐藏低频参数，搜索时仍会查找全部设置。</p>
+            </div>
+        </div>
+        <div class="settings-workbench-controls">
+            <div class="settings-density-toggle" role="group" aria-label="设置显示范围">
+                <button type="button" class="active" data-settings-mode="essential" aria-pressed="true">
+                    <i class="bi bi-stars" aria-hidden="true"></i> 常用
+                </button>
+                <button type="button" data-settings-mode="all" aria-pressed="false">
+                    <i class="bi bi-sliders2" aria-hidden="true"></i> 全部
+                </button>
+            </div>
+            <label class="settings-mobile-selector" for="settings-mobile-section">
+                <span>当前分组</span>
+                <select id="settings-mobile-section" class="form-select form-select-sm" aria-label="选择设置分组">
+                    <option value="#vtab-general">常规与投稿</option>
+                    <option value="#vtab-accounts">账号与网络</option>
+                    <option value="#vtab-ai-models">AI 模型</option>
+                    <option value="#vtab-subtitle-voice">字幕与语音</option>
+                    <option value="#vtab-notifications">消息推送</option>
+                    <option value="#vtab-ops">运维与安全</option>
+                </select>
+            </label>
+        </div>
+    </section>
+
     <div class="settings-layout">
         <aside class="settings-navigation-panel">
             <div class="settings-nav-heading">
@@ -53,29 +84,35 @@
                     <span class="settings-nav-icon"><i class="bi bi-sliders"></i></span>
                     <span class="settings-nav-copy"><strong>常规与投稿</strong><small>自动化、投稿、转码</small></span>
                     <span class="settings-nav-state {{ 'is-ready' if config.AUTO_MODE_ENABLED else '' }}">{{ '已启用' if config.AUTO_MODE_ENABLED else '手动' }}</span>
+                    <span class="settings-nav-fields" aria-label="设置项数量"></span>
                 </a>
                 <a class="nav-link" id="vtab-accounts-tab" data-bs-toggle="pill" href="#vtab-accounts" role="tab" aria-controls="vtab-accounts" aria-selected="false">
                     <span class="settings-nav-icon"><i class="bi bi-person-circle"></i></span>
                     <span class="settings-nav-copy"><strong>账号与网络</strong><small>登录、Cookies、代理</small></span>
                     <span class="settings-nav-state {{ 'is-ready' if account_ready_count else 'is-attention' }}">{{ account_ready_count }}/2</span>
+                    <span class="settings-nav-fields" aria-label="设置项数量"></span>
                 </a>
                 <a class="nav-link" id="vtab-ai-models-tab" data-bs-toggle="pill" href="#vtab-ai-models" role="tab" aria-controls="vtab-ai-models" aria-selected="false">
                     <span class="settings-nav-icon"><i class="bi bi-robot"></i></span>
                     <span class="settings-nav-copy"><strong>AI 模型</strong><small>模型服务与专项能力</small></span>
                     <span class="settings-nav-state {{ 'is-ready' if ai_ready else 'is-attention' }}">{{ '可用' if ai_ready else '待配置' }}</span>
+                    <span class="settings-nav-fields" aria-label="设置项数量"></span>
                 </a>
                 <a class="nav-link" id="vtab-subtitle-voice-tab" data-bs-toggle="pill" href="#vtab-subtitle-voice" role="tab" aria-controls="vtab-subtitle-voice" aria-selected="false">
                     <span class="settings-nav-icon"><i class="bi bi-badge-cc"></i></span>
                     <span class="settings-nav-copy"><strong>字幕与语音</strong><small>识别、翻译、提示词</small></span>
+                    <span class="settings-nav-fields" aria-label="设置项数量"></span>
                 </a>
                 <a class="nav-link" id="vtab-notifications-tab" data-bs-toggle="pill" href="#vtab-notifications" role="tab" aria-controls="vtab-notifications" aria-selected="false">
                     <span class="settings-nav-icon"><i class="bi bi-bell"></i></span>
                     <span class="settings-nav-copy"><strong>消息推送</strong><small>企业微信、Telegram</small></span>
                     <span class="settings-nav-state {{ 'is-ready' if config.get('NOTIFY_ENABLED', False) else '' }}">{{ '已启用' if config.get('NOTIFY_ENABLED', False) else '关闭' }}</span>
+                    <span class="settings-nav-fields" aria-label="设置项数量"></span>
                 </a>
                 <a class="nav-link" id="vtab-ops-tab" data-bs-toggle="pill" href="#vtab-ops" role="tab" aria-controls="vtab-ops" aria-selected="false">
                     <span class="settings-nav-icon"><i class="bi bi-shield-lock"></i></span>
                     <span class="settings-nav-copy"><strong>运维与安全</strong><small>并发、清理、访问控制</small></span>
+                    <span class="settings-nav-fields" aria-label="设置项数量"></span>
                 </a>
             </div>
         </aside>
@@ -253,7 +290,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">转码策略</span>
@@ -294,7 +331,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">审核服务</span>
@@ -419,7 +456,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card" id="biliup-line-card">
+                                        <article class="settings-card" id="biliup-line-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">BILIBILI UPLOAD</span>
@@ -472,7 +509,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">统一网络出口</span>
@@ -506,7 +543,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">下载与代理</span>
@@ -576,7 +613,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">可选同步</span>
@@ -1125,7 +1162,7 @@
                                     </div>
 
                                     <div class="col-12" id="shared-vad-config">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">共享控制</span>
@@ -1485,7 +1522,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">字幕翻译</span>
@@ -1533,7 +1570,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">字幕翻译 · 高级</span>
@@ -1583,7 +1620,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">标题/简介翻译</span>
@@ -1631,7 +1668,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">标题/简介翻译 · 高级</span>
@@ -2014,7 +2051,7 @@
                                         </article>
                                     </div>
                                     <div class="col-md-6">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">运行控制</span>
@@ -2035,7 +2072,7 @@
                                     </div>
 
                                     <div class="col-md-6">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">日志管理</span>
@@ -2086,7 +2123,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">文件维护</span>
@@ -2123,7 +2160,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">运行环境</span>
@@ -2144,7 +2181,7 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
+                                        <article class="settings-card" data-settings-level="advanced">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">监控接入</span>
@@ -2334,9 +2371,43 @@
 document.addEventListener('DOMContentLoaded', function () {
     const navLinks = document.querySelectorAll('.settings-nav .nav-link[data-bs-toggle="pill"]');
     const summaryCards = document.querySelectorAll('[data-settings-target]');
+    const settingsContainer = document.querySelector('.settings-container');
+    const settingsModeButtons = document.querySelectorAll('[data-settings-mode]');
+    const settingsMobileSection = document.getElementById('settings-mobile-section');
     const youtubeQualityModeSelect = document.getElementById('youtube-download-quality-mode');
     const youtubeQualityMaxHeightGroup = document.getElementById('youtube-download-max-height-group');
     let allowSettingsNavigation = false;
+
+    const applySettingsMode = function (mode, persist) {
+        const normalized = mode === 'all' ? 'all' : 'essential';
+        if (settingsContainer) settingsContainer.dataset.settingsMode = normalized;
+        settingsModeButtons.forEach(function (button) {
+            const active = button.dataset.settingsMode === normalized;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        if (persist) localStorage.setItem('potatoflow-settings-mode', normalized);
+    };
+
+    settingsModeButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+            applySettingsMode(button.dataset.settingsMode, true);
+        });
+    });
+    applySettingsMode(localStorage.getItem('potatoflow-settings-mode') || 'essential', false);
+
+    navLinks.forEach(function (link) {
+        const paneId = String(link.getAttribute('href') || '').replace(/^#/, '');
+        const pane = paneId ? document.getElementById(paneId) : null;
+        const badge = link.querySelector('.settings-nav-fields');
+        if (!pane || !badge) return;
+        const fieldNames = new Set(
+            Array.from(pane.querySelectorAll('input[name], select[name], textarea[name]'))
+                .map(function (control) { return control.name; })
+                .filter(Boolean)
+        );
+        badge.textContent = fieldNames.size + ' 项';
+    });
 
     const showTabBySelector = function (selector) {
         if (!selector || !selector.startsWith('#')) {
@@ -2347,6 +2418,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return false;
         }
         bootstrap.Tab.getOrCreateInstance(link).show();
+        if (settingsMobileSection) settingsMobileSection.value = selector;
         return true;
     };
 
@@ -2370,9 +2442,16 @@ document.addEventListener('DOMContentLoaded', function () {
             const href = event && event.target ? event.target.getAttribute('href') : null;
             if (href && href.startsWith('#')) {
                 window.location.hash = href;
+                if (settingsMobileSection) settingsMobileSection.value = href;
             }
         });
     });
+
+    if (settingsMobileSection) {
+        settingsMobileSection.addEventListener('change', function () {
+            showTabBySelector(settingsMobileSection.value);
+        });
+    }
 
     summaryCards.forEach(function (card) {
         card.addEventListener('click', function () {
@@ -3390,6 +3469,10 @@ document.addEventListener('DOMContentLoaded', function () {
         var debounceTimer = null;
         function runSearch(q) {
             clearHighlights();
+            var settingsContainer = document.querySelector('.settings-container');
+            if (settingsContainer) {
+                settingsContainer.classList.toggle('is-settings-searching', !!q);
+            }
             if (!q) {
                 searchHint.classList.add('d-none');
                 searchHint.textContent = '';

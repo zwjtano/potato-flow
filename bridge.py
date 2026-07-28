@@ -906,7 +906,17 @@ def download_recording_avatar_reference(url: str, cfg: dict[str, Any]) -> Path:
     avatar_url = str(url or "").strip()
     if not re.match(r"^https?://", avatar_url, re.IGNORECASE):
         raise ValueError("直播间头像地址无效")
-    cache_root = resolve_path(".avatar-cache", cfg)
+    configured_cache = str(cfg.get("avatar_cache_dir") or "").strip()
+    if configured_cache:
+        cache_root = resolve_path(configured_cache, cfg)
+    else:
+        # The bridge state directory is writable and persistent in native and
+        # Docker deployments. This avoids the old /data/.avatar-cache owner.
+        state_path = resolve_path(
+            str(cfg.get("state_db") or ".bridge/state.sqlite3"),
+            cfg,
+        )
+        cache_root = state_path.parent / "avatar-cache"
     cache_root.mkdir(parents=True, exist_ok=True)
     destination = cache_root / f"{hashlib.sha256(avatar_url.encode()).hexdigest()[:24]}.jpg"
     if destination.is_file() and destination.stat().st_size > 0:

@@ -1286,6 +1286,20 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("generated-files-card", source)
         self.assertIn("显示该直播间最近生成的视频、XML 弹幕和 ASS", source)
 
+    def test_recording_dark_mode_covers_stop_modal_and_mobile_progress(self):
+        stylesheet = (Y2A_ROOT / "static" / "css" / "style.css").read_text(encoding="utf-8")
+        tasks = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'html[data-theme="dark"] .stop-recording-modal .modal-content',
+            stylesheet,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] .recording-task-card .recording-progress-trigger',
+            tasks,
+        )
+        self.assertIn("{{ job.progress_label }}", tasks)
+
     def test_pipeline_jobs_expose_unified_task_metadata(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1352,6 +1366,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(jobs[0]["cover_route_available"])
         self.assertFalse(jobs[0]["local_cover_available"])
         self.assertEqual(jobs[0]["completed_stages"], 5)
+        self.assertEqual(jobs[0]["progress_label"], "全部处理完成")
         self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
         self.assertEqual(persisted_display_id, "BL-ALICE-0723-001")
 
@@ -1557,6 +1572,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 }
                 self.assertEqual(positions[first_id], 1)
                 self.assertEqual(positions[second_id], 2)
+                labels = {job["id"]: job["progress_label"] for job in jobs}
+                self.assertEqual(labels[first_id], "等待投稿队列（第 1 位）")
+                self.assertEqual(labels[second_id], "等待投稿队列（第 2 位）")
                 self.assertTrue(manager.pause_pipeline_job(first_id))
                 paused = manager.pipeline_job(first_id)
                 self.assertTrue(paused["paused"])

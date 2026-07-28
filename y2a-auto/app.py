@@ -75,6 +75,15 @@ from modules.telegram_control import (
 from apscheduler.schedulers.background import BackgroundScheduler
 from version import __author__, __version__
 from modules.runtime_info import build_runtime_info
+from modules.task_queue_view import (
+    build_queue_summary,
+    filter_queue_items,
+    normalize_queue_filter,
+    normalize_source_filter,
+    paginate_items,
+    recording_queue_bucket,
+    youtube_queue_bucket,
+)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # 用于flash消息
@@ -2378,17 +2387,34 @@ def tasks():
     # 获取分页参数
     page = request.args.get('page', 1, type=int)
     per_page = 20  # 每页显示20条记录
-    
-    # 获取分页数据
-    pagination_data = get_tasks_paginated(page=page, per_page=per_page)
-    recording_jobs = live_recorder_manager.pipeline_jobs(50)
+    queue_filter = normalize_queue_filter(request.args.get('status'))
+    source_filter = normalize_source_filter(request.args.get('source'))
+
+    all_youtube_tasks = get_all_tasks()
+    all_recording_jobs = live_recorder_manager.pipeline_jobs(500)
+    queue_summary = build_queue_summary(all_youtube_tasks, all_recording_jobs)
+
+    youtube_tasks = (
+        filter_queue_items(all_youtube_tasks, queue_filter, youtube_queue_bucket)
+        if source_filter in {'all', 'youtube'}
+        else []
+    )
+    recording_jobs = (
+        filter_queue_items(all_recording_jobs, queue_filter, recording_queue_bucket)
+        if source_filter in {'all', 'recording'}
+        else []
+    )
+    pagination_data = paginate_items(youtube_tasks, page=page, per_page=per_page)
     config = load_config()
     
     return render_template('tasks.html', 
                          tasks=pagination_data['tasks'],
                          recording_jobs=recording_jobs,
                          pagination=pagination_data,
-                         config=config)
+                         config=config,
+                         queue_summary=queue_summary,
+                         queue_filter=queue_filter,
+                         source_filter=source_filter)
 
 
 def _render_task_fragments(task: dict, config: dict | None = None) -> dict:

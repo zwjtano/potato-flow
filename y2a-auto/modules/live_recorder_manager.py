@@ -64,6 +64,17 @@ DEFAULT_RECORDING_SEGMENT_MINUTES = 60
 AUTO_UPLOAD_RETRY_DELAY_SECONDS = 5 * 60
 AUTO_UPLOAD_RETRY_MAX_RETRIES = 3
 RECORDING_NOTIFICATION_POLL_SECONDS = 2
+RECORDING_STAGE_LABELS = {
+    "detect": "直播检测",
+    "record": "录制安全收尾",
+    "ass": "生成 ASS",
+    "ai": "生成 AI 简介",
+    "cover": "生成两张 AI 封面",
+    "remux": "FLV 转 MP4",
+    "verify": "验证内嵌封面",
+    "cleanup": "清理原 FLV",
+    "upload": "投稿 B站",
+}
 
 logger = logging.getLogger("live_recorder_manager")
 
@@ -2803,6 +2814,25 @@ class LiveRecorderManager:
                 None,
             )
             upload_queued = upload_stage.get("status") == "queued"
+            stage_label = RECORDING_STAGE_LABELS.get(
+                str(failed_stage or active_stage or ""),
+                str(failed_stage or active_stage or "处理任务"),
+            )
+            if failed_stage:
+                progress_label = f"{stage_label}失败"
+            elif upload_queued:
+                progress_label = (
+                    f"等待投稿队列（第 "
+                    f"{queued_upload_positions.get(row['fingerprint'], 1)} 位）"
+                )
+            elif active_stage:
+                progress_label = f"正在{stage_label}"
+            elif job_status == "paused":
+                progress_label = "投稿已暂停"
+            elif job_status == "completed":
+                progress_label = "全部处理完成"
+            else:
+                progress_label = "正在处理任务"
             attempts = int(row["attempts"] or 0)
             automatic_retries_used = max(0, attempts - 1)
             auto_retry_scheduled = bool(
@@ -2894,6 +2924,7 @@ class LiveRecorderManager:
                 ),
                 "completed_stages": completed_stages,
                 "total_stages": len(stages) or len(order),
+                "progress_label": progress_label,
                 "failed_stage": failed_stage,
                 "active_stage": active_stage,
                 "upload_queued": upload_queued,

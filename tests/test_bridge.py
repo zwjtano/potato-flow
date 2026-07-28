@@ -14,6 +14,28 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_avatar_reference_cache_defaults_to_writable_bridge_state_dir(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            response = Mock()
+            response.read.return_value = b"avatar-bytes"
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=False)
+            with patch.object(bridge.urllib.request, "urlopen", return_value=response):
+                avatar = bridge.download_recording_avatar_reference(
+                    "https://example.com/avatar.jpg",
+                    {
+                        "_config_dir": str(root),
+                        "state_db": ".bridge/state.sqlite3",
+                    },
+                )
+
+            self.assertEqual(
+                avatar.parent,
+                (root / ".bridge" / "avatar-cache").resolve(),
+            )
+            self.assertEqual(avatar.read_bytes(), b"avatar-bytes")
+
     def test_default_recording_description_requests_clickable_timeline(self):
         prompt = bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
         self.assertIn("内容充实", prompt)

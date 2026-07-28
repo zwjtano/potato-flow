@@ -21,13 +21,13 @@
             <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal">
                 <i class="bi bi-plus-circle"></i> 新建任务
             </button>
-            {% if failed_tasks %}
+            {% if queue_summary.failed %}
             <button type="button" class="btn btn-outline-danger" id="retryFailedTasksBtn" onclick="confirmRetryFailed()">
                 <i class="bi bi-arrow-repeat"></i> 重试失败任务
-                <span class="badge bg-danger ms-1">{{ failed_tasks|length }}</span>
+                <span class="badge bg-danger ms-1">{{ queue_summary.failed }}</span>
             </button>
             {% endif %}
-            {% if tasks %}
+            {% if queue_summary.all %}
             <button type="button" class="btn btn-danger" onclick="confirmClearAll()">
                 <i class="bi bi-trash"></i> 清除所有任务
             </button>
@@ -36,6 +36,55 @@
     </div>
 
     <div id="tasksContent">
+    {% set queue_labels = {
+        'all': ('全部任务', 'bi-collection'),
+        'active': ('处理中', 'bi-arrow-repeat'),
+        'queued': ('等待中', 'bi-hourglass-split'),
+        'review': ('待审核', 'bi-person-check'),
+        'failed': ('失败', 'bi-exclamation-triangle'),
+        'paused': ('已暂停', 'bi-pause-circle'),
+        'completed': ('已完成', 'bi-check2-circle')
+    } %}
+    <section class="task-queue-overview" aria-labelledby="taskQueueOverviewTitle">
+        <div class="task-queue-overview-heading">
+            <div>
+                <div class="page-eyebrow">UNIFIED QUEUE</div>
+                <h2 id="taskQueueOverviewTitle">统一队列</h2>
+                <p>跨直播录播与 YouTube / 手动任务查看当前处理压力。</p>
+            </div>
+            <form method="get" action="{{ url_for('tasks') }}" class="task-source-filter" aria-label="按任务来源筛选">
+                <label for="taskSourceFilter">任务来源</label>
+                <input type="hidden" name="status" value="{{ queue_filter }}">
+                <select class="form-select form-select-sm" id="taskSourceFilter" name="source" onchange="this.form.submit()">
+                    <option value="all" {% if source_filter == 'all' %}selected{% endif %}>全部来源</option>
+                    <option value="recording" {% if source_filter == 'recording' %}selected{% endif %}>直播录播</option>
+                    <option value="youtube" {% if source_filter == 'youtube' %}selected{% endif %}>YouTube / 手动</option>
+                </select>
+            </form>
+        </div>
+        <nav class="task-queue-summary" aria-label="按任务状态筛选">
+            {% for filter_key in ['all', 'active', 'queued', 'review', 'failed', 'paused', 'completed'] %}
+            {% set filter_meta = queue_labels[filter_key] %}
+            <a class="task-queue-summary-item is-{{ filter_key }}{% if queue_filter == filter_key %} active{% endif %}"
+               href="{{ url_for('tasks', status=filter_key, source=source_filter) }}"
+               {% if queue_filter == filter_key %}aria-current="page"{% endif %}>
+                <span class="task-queue-summary-icon"><i class="bi {{ filter_meta[1] }}" aria-hidden="true"></i></span>
+                <span class="task-queue-summary-copy"><small>{{ filter_meta[0] }}</small><strong>{{ queue_summary[filter_key] }}</strong></span>
+            </a>
+            {% endfor %}
+        </nav>
+        {% if queue_filter != 'all' or source_filter != 'all' %}
+        <div class="task-filter-result">
+            <span><i class="bi bi-funnel" aria-hidden="true"></i>
+                当前显示：{{ queue_labels[queue_filter][0] }} ·
+                {{ {'all':'全部来源', 'recording':'直播录播', 'youtube':'YouTube / 手动'}[source_filter] }}
+            </span>
+            <a href="{{ url_for('tasks') }}">清除筛选</a>
+        </div>
+        {% endif %}
+    </section>
+
+    {% if source_filter != 'youtube' %}
     <section class="recording-task-section mb-4" aria-labelledby="recordingTasksTitle">
         <div class="task-section-heading">
             <div>
@@ -123,14 +172,7 @@
                             <td>
                                 <button type="button" class="recording-progress-trigger" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
                                 <div class="d-flex justify-content-between gap-2 small mb-1">
-                                    <span>
-                                        {% if job.failed_stage %}{{ {'detect':'直播检测','record':'录制安全收尾','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','remux':'FLV 转 MP4','verify':'验证内嵌封面','cleanup':'清理原 FLV','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage) }}失败
-                                        {% elif job.upload_queued %}等待投稿队列（第 {{ job.upload_queue_position }} 位）
-                                        {% elif job.active_stage %}正在{{ {'detect':'直播检测','record':'录制安全收尾','ass':'生成 ASS','ai':'生成 AI 简介','cover':'AI 封面','remux':'FLV 转 MP4','verify':'验证内嵌封面','cleanup':'清理原 FLV','upload':'投稿 B站'}.get(job.active_stage, job.active_stage) }}
-                                        {% elif job.paused %}投稿已暂停
-                                        {% elif job.status == 'completed' %}全部完成
-                                        {% else %}{{ job.completed_stages }}/{{ job.total_stages }} 步{% endif %}
-                                    </span>
+                                    <span class="recording-progress-current">{{ job.progress_label }}</span>
                                     <span class="text-muted">{{ progress }}%</span>
                                 </div>
                                 <div class="progress progress-thin" role="progressbar" aria-label="录播处理进度" aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
@@ -224,7 +266,11 @@
                         {% else %}<span class="badge rounded-pill text-bg-primary">处理中</span>{% endif %}
                     </div>
                     <button type="button" class="recording-progress-trigger mt-3" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
-                        <div class="d-flex justify-content-between small mb-1"><span>{{ job.completed_stages }}/{{ job.total_stages }} 步</span><span>{{ progress }}%</span></div>
+                        <div class="recording-progress-mobile-head">
+                            <span class="recording-progress-current">{{ job.progress_label }}</span>
+                            <span class="recording-progress-count">{{ job.completed_stages }}/{{ job.total_stages }} 步</span>
+                            <span class="recording-progress-percent">{{ progress }}%</span>
+                        </div>
                         <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
                         <span class="recording-upload-live{% if not job.upload_progress_text %} d-none{% endif %}"
                               data-recording-upload-live data-job-id="{{ job.id }}">{{ job.upload_progress_text }}</span>
@@ -252,10 +298,12 @@
             </div>
         </div>
         {% else %}
-        <div class="task-section-empty"><i class="bi bi-camera-video"></i><span>暂无录播视频任务。直播结束并生成文件后会自动出现在这里。</span></div>
+        <div class="task-section-empty"><i class="bi bi-camera-video"></i><span>当前筛选条件下没有直播录播任务。</span></div>
         {% endif %}
     </section>
+    {% endif %}
 
+    {% if source_filter != 'recording' %}
     <div class="task-section-heading standard-task-heading">
         <div>
             <div class="d-flex align-items-center gap-2">
@@ -314,7 +362,7 @@
     </div>
     {% else %}
     <div class="task-section-empty">
-        <i class="bi bi-cloud-arrow-up"></i><span>暂无 YouTube / 手动上传任务。</span><button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal"><i class="bi bi-plus-lg"></i> 新建任务</button>
+        <i class="bi bi-cloud-arrow-up"></i><span>当前筛选条件下没有 YouTube / 手动上传任务。</span>{% if queue_filter == 'all' %}<button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal"><i class="bi bi-plus-lg"></i> 新建任务</button>{% endif %}
     </div>
     {% endif %}
     
@@ -330,13 +378,13 @@
             {%- set end_page = pagination.page + 2 if pagination.page + 2 < pagination.total_pages else pagination.total_pages -%}
             <div class="pagination pagination-sm mb-0" role="list">{{- '' -}}
             {%- if pagination.has_prev -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.prev_page) }}" aria-label="上一页"><span aria-hidden="true">&laquo;</span></a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.prev_page, status=queue_filter, source=source_filter) }}" aria-label="上一页"><span aria-hidden="true">&laquo;</span></a></div>{{- '' -}}
             {%- else -%}
                 <div class="page-item disabled" role="listitem"><span class="page-link" aria-label="上一页"><span aria-hidden="true">&laquo;</span></span></div>{{- '' -}}
             {%- endif -%}
 
             {%- if start_page > 1 -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=1) }}">1</a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=1, status=queue_filter, source=source_filter) }}">1</a></div>{{- '' -}}
                 {%- if start_page > 2 -%}
                     <div class="page-item disabled" role="listitem"><span class="page-link">...</span></div>{{- '' -}}
                 {%- endif -%}
@@ -346,7 +394,7 @@
                 {%- if page_num == pagination.page -%}
                     <div class="page-item active" role="listitem" aria-current="page"><span class="page-link">{{ page_num }}</span></div>{{- '' -}}
                 {%- else -%}
-                    <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=page_num) }}">{{ page_num }}</a></div>{{- '' -}}
+                    <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=page_num, status=queue_filter, source=source_filter) }}">{{ page_num }}</a></div>{{- '' -}}
                 {%- endif -%}
             {%- endfor -%}
 
@@ -354,17 +402,18 @@
                 {%- if end_page < pagination.total_pages - 1 -%}
                     <div class="page-item disabled" role="listitem"><span class="page-link">...</span></div>{{- '' -}}
                 {%- endif -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.total_pages) }}">{{ pagination.total_pages }}</a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.total_pages, status=queue_filter, source=source_filter) }}">{{ pagination.total_pages }}</a></div>{{- '' -}}
             {%- endif -%}
 
             {%- if pagination.has_next -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.next_page) }}" aria-label="下一页"><span aria-hidden="true">&raquo;</span></a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.next_page, status=queue_filter, source=source_filter) }}" aria-label="下一页"><span aria-hidden="true">&raquo;</span></a></div>{{- '' -}}
             {%- else -%}
                 <div class="page-item disabled" role="listitem"><span class="page-link" aria-label="下一页"><span aria-hidden="true">&raquo;</span></span></div>{{- '' -}}
             {%- endif -%}
             {{- '' -}}
             </div>
-            {% endif %}
+    {% endif %}
+    {% endif %}
         </div>
     </nav>
     {% endif %}
@@ -485,7 +534,7 @@
             </div>
             <div class="modal-body">
                 <p>确定要重新调度所有失败的任务吗？</p>
-                <p class="mb-0 text-muted">当前共有 <span class="badge bg-danger">{{ failed_tasks|length }}</span> 个失败任务。</p>
+                <p class="mb-0 text-muted">当前共有 <span class="badge bg-danger">{{ queue_summary.failed }}</span> 个失败任务。</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
@@ -722,6 +771,115 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .modern-table .table { background: transparent; }
 .table-borderless>:not(caption)>*>* { border-bottom-width: 0; }
 
+.task-queue-overview {
+    margin-bottom: 1.5rem;
+    padding: 1.1rem;
+    border: 1px solid #dce5ef;
+    border-radius: 18px;
+    background: linear-gradient(145deg, #ffffff 0%, #f7fbff 100%);
+}
+.task-queue-overview-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.task-queue-overview-heading h2 { margin: 0; font-size: 1.1rem; font-weight: 750; }
+.task-queue-overview-heading p { margin: .3rem 0 0; color: #778599; font-size: .82rem; }
+.task-source-filter { display: flex; align-items: center; gap: .55rem; }
+.task-source-filter label { color: #66758a; font-size: .78rem; font-weight: 700; white-space: nowrap; }
+.task-source-filter .form-select { min-width: 150px; }
+.task-queue-summary {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: .55rem;
+}
+.task-queue-summary-item {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    min-width: 0;
+    padding: .72rem;
+    color: #65748a;
+    text-decoration: none;
+    border: 1px solid #e0e7ef;
+    border-radius: 13px;
+    background: rgba(255,255,255,.82);
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.task-queue-summary-item:hover {
+    color: #243246;
+    border-color: #9dd9f4;
+    box-shadow: 0 6px 18px rgba(43, 93, 130, .09);
+    transform: translateY(-1px);
+}
+.task-queue-summary-item.active {
+    color: #006d9f;
+    border-color: #50c7ef;
+    background: #eaf9ff;
+    box-shadow: inset 0 0 0 1px rgba(15, 174, 225, .18);
+}
+.task-queue-summary-icon {
+    display: grid;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    color: #718096;
+    border-radius: 9px;
+    background: #edf2f7;
+}
+.task-queue-summary-copy { display: flex; min-width: 0; flex-direction: column; }
+.task-queue-summary-copy small { overflow: hidden; font-size: .7rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.task-queue-summary-copy strong { color: #213047; font-size: 1.22rem; line-height: 1.05; }
+.task-queue-summary-item.is-active .task-queue-summary-icon,
+.task-queue-summary-item.is-active strong { color: #0788c9; }
+.task-queue-summary-item.is-queued .task-queue-summary-icon,
+.task-queue-summary-item.is-queued strong { color: #9a6700; }
+.task-queue-summary-item.is-review .task-queue-summary-icon,
+.task-queue-summary-item.is-review strong { color: #7c3aed; }
+.task-queue-summary-item.is-failed .task-queue-summary-icon,
+.task-queue-summary-item.is-failed strong { color: #d92d45; }
+.task-queue-summary-item.is-paused .task-queue-summary-icon,
+.task-queue-summary-item.is-paused strong { color: #64748b; }
+.task-queue-summary-item.is-completed .task-queue-summary-icon,
+.task-queue-summary-item.is-completed strong { color: #15905c; }
+.task-filter-result {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: .8rem;
+    padding-top: .8rem;
+    color: #65748a;
+    font-size: .78rem;
+    border-top: 1px dashed #d8e1eb;
+}
+.task-filter-result a { font-weight: 700; text-decoration: none; }
+html[data-theme="dark"] .task-queue-overview {
+    border-color: #2b3d50;
+    background: linear-gradient(145deg, #162230 0%, #111b26 100%);
+}
+html[data-theme="dark"] .task-queue-summary-item { color: #9aabbe; border-color: #2c3e50; background: rgba(20,31,43,.9); }
+html[data-theme="dark"] .task-queue-summary-item:hover { color: #d9e6f2; border-color: #3f718e; }
+html[data-theme="dark"] .task-queue-summary-item.active { color: #7ddcff; border-color: #269dca; background: #123447; }
+html[data-theme="dark"] .task-queue-summary-icon { background: #223244; }
+html[data-theme="dark"] .task-queue-summary-copy strong { color: #e5eef7; }
+html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: #314357; }
+@media (max-width: 1199.98px) {
+    .task-queue-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 767.98px) {
+    .task-queue-overview { padding: .9rem; border-radius: 15px; }
+    .task-queue-overview-heading { align-items: stretch; flex-direction: column; }
+    .task-source-filter { justify-content: space-between; }
+    .task-source-filter .form-select { min-width: 0; flex: 1; }
+    .task-queue-summary { display: flex; margin: 0 -.15rem; padding: .15rem; gap: .45rem; overflow-x: auto; scroll-snap-type: x proximity; }
+    .task-queue-summary-item { flex: 0 0 112px; scroll-snap-align: start; }
+    .task-filter-result { align-items: flex-start; flex-direction: column; gap: .35rem; }
+}
+
 .task-section-heading {
     display: flex;
     align-items: center;
@@ -772,6 +930,11 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
 .recording-cover-trigger.cover-missing .recording-task-cover { display: none; }
 .recording-cover-trigger.cover-missing .recording-task-cover-fallback { display: flex; }
 html[data-theme="dark"] .recording-task-cover-fallback { color: #8fa1b4; border-color: #304254; background: #1c2835; }
+html[data-theme="dark"] .recording-progress-current { color: #e1ebf5; }
+html[data-theme="dark"] .recording-progress-count,
+html[data-theme="dark"] .recording-progress-percent { color: #9eb0c3; }
+html[data-theme="dark"] .recording-progress-trigger:hover,
+html[data-theme="dark"] .recording-progress-trigger:focus-visible { border-color: #315a75; background: #162838; }
 html[data-theme="dark"] .task-source-icon.recording { color: #63b9ff; border-color: #28506c; background: #132b3b; }
 html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color: #65303a; background: #392029; }
 .recording-cover-preview-content { overflow: hidden; border: 0; border-radius: 16px; }
@@ -782,6 +945,11 @@ html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color
 .recording-task-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: .4rem; }
 .recording-progress-trigger { display: block; width: 100%; padding: .35rem .45rem; color: inherit; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; transition: border-color .15s ease, background .15s ease; }
 .recording-progress-trigger:hover, .recording-progress-trigger:focus-visible { border-color: #b8d5fb; outline: none; background: #f4f8ff; }
+.recording-progress-current { min-width: 0; color: #344054; font-weight: 700; line-height: 1.35; }
+.recording-progress-mobile-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .2rem .75rem; margin-bottom: .4rem; }
+.recording-progress-mobile-head .recording-progress-current { grid-column: 1 / -1; }
+.recording-progress-count, .recording-progress-percent { color: #778195; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.recording-progress-percent { text-align: right; }
 .recording-progress-hint { display: block; margin-top: .35rem; color: #8a94a6; font-size: .68rem; }
 .recording-progress-trigger:hover .recording-progress-hint, .recording-progress-trigger:focus-visible .recording-progress-hint { color: #0d6efd; }
 .recording-upload-live { display: block; margin-top: .45rem; color: #7b8493; font-size: .78rem; line-height: 1.45; font-variant-numeric: tabular-nums; white-space: normal; }
@@ -797,6 +965,33 @@ html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color
     background: linear-gradient(135deg, rgba(220, 53, 69, .07), #fff 58%);
     box-shadow: inset 4px 0 0 #dc3545;
 }
+html[data-theme="dark"] .recording-task-card {
+    color: #dce7f2;
+    border-color: #304254;
+    background: #172532;
+}
+html[data-theme="dark"] .recording-task-card.status-failed {
+    border-color: #713340;
+    background: #2b1b22;
+    box-shadow: inset 4px 0 0 #ff5f73;
+}
+html[data-theme="dark"] .recording-task-card .recording-progress-trigger {
+    color: #dce7f2;
+    border-color: #2d4255;
+    background: #121d27;
+}
+html[data-theme="dark"] .recording-task-card .recording-progress-trigger:hover,
+html[data-theme="dark"] .recording-task-card .recording-progress-trigger:focus-visible {
+    border-color: #3c718e;
+    background: #162b3a;
+}
+html[data-theme="dark"] .recording-task-card .progress {
+    border: 1px solid #3a5064;
+    background: #0c151e;
+}
+html[data-theme="dark"] .recording-task-card .recording-progress-hint { color: #9eb0c3; }
+html[data-theme="dark"] .recording-task-card .recording-progress-trigger:hover .recording-progress-hint,
+html[data-theme="dark"] .recording-task-card .recording-progress-trigger:focus-visible .recording-progress-hint { color: #5bc8ff; }
 .recording-detail-loading { display: flex; min-height: 220px; align-items: center; justify-content: center; gap: .65rem; color: #7d8798; }
 .recording-detail-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding: 1rem; border: 1px solid #e6ebf2; border-radius: 12px; background: #f8fafc; }
 .recording-detail-summary strong { display: block; margin-bottom: .25rem; }
@@ -1281,7 +1476,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         const referenceWarning = referenceErrors.length ? `
             <div class="recording-cover-warning">
                 <i class="bi bi-exclamation-triangle"></i>
-                <div><strong>人物参考图未载入</strong><br>头像缓存目录没有写入权限，本次两张封面仍已独立生成并投稿，但没有使用主播头像作为人物参考。</div>
+                <div><strong>人物参考图未载入</strong><br>本次两张封面仍已独立生成，但未使用主播头像。原因：${escapeRecordingDetail(referenceErrors.join('；'))}</div>
             </div>` : '';
         const technicalFields = renderRecordingDetailFields(details);
         const card = ({variant, ratio, title, field, available, statusText, size, requested, model}) => `
