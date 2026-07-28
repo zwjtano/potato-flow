@@ -13,7 +13,10 @@
 1. 在其他可信环境获取自己的抖音 Cookie。
 2. 进入 **系统设置 → 账号与网络 → 平台账号**。
 3. 上传 JSON 或纯文本 Cookie 文件。
-4. 保存后，系统会写入 biliup 配置的 `user.douyin_cookie`。
+4. 保存后，系统仅提取 biliup 要求的 `__ac_nonce`、`__ac_signature`
+   和 `sessionid`，再写入 biliup 配置的 `user.douyin_cookie`。
+
+浏览器导出的其他 Cookie 不会保存。缺少上述任一字段时，系统会拒绝导入并提示重新导出。
 
 默认保存路径：
 
@@ -28,4 +31,3 @@ y2a-auto/cookies/douyin_cookies.json
 
 - 抖音：直播检测、视频录制、XML 弹幕
 - 哔哩哔哩：最终投稿
-

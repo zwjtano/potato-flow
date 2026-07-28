@@ -715,13 +715,18 @@ def _persist_settings_uploads(form_data: dict, uploads: dict):
         target_path = os.path.join(cookies_dir, save_name)
         content = payload.get('content') or b''
         if field_name == 'douyin_cookies_file':
-            from modules.douyin_auth import normalize_douyin_cookie
+            from modules.douyin_auth import (
+                missing_douyin_cookie_names,
+                normalize_douyin_cookie,
+            )
 
             normalized_cookie = normalize_douyin_cookie(content)
-            if not normalized_cookie:
+            missing_cookie_names = missing_douyin_cookie_names(content)
+            if missing_cookie_names:
                 raise ValueError(
-                    '抖音 Cookie 文件没有可用内容，请使用 Get cookies.txt LOCALLY '
-                    '在 douyin.com 登录后重新导出。'
+                    '抖音 Cookie 缺少 biliup 要求的字段：'
+                    f"{', '.join(missing_cookie_names)}。"
+                    '请使用 Get cookies.txt LOCALLY 在 douyin.com 登录后重新导出。'
                 )
             content = (normalized_cookie + '\n').encode('utf-8')
         with open(target_path, 'wb') as target_file:

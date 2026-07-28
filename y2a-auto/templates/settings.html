@@ -412,7 +412,7 @@
                                                 <div class="form-group">
                                                     <label for="douyin-cookies-file" class="form-label">手动上传 Cookie 文件</label>
                                                     <input type="file" id="douyin-cookies-file" name="douyin_cookies_file" class="form-control" accept=".json,.txt">
-                                                    <p class="help-text mb-0">推荐使用 Get cookies.txt LOCALLY 导出的 <code>cookies.txt</code>。上传后会自动转换并写入 biliup 的 <code>user.douyin_cookie</code>，无需手动修改文件。</p>
+                                                    <p class="help-text mb-0">推荐使用 Get cookies.txt LOCALLY 导出的 <code>cookies.txt</code>。上传后仅保留 biliup 要求的 <code>__ac_nonce</code>、<code>__ac_signature</code> 和 <code>sessionid</code>，其他 Cookie 不会保存。</p>
                                                 </div>
                                             </div>
                                         </article>
