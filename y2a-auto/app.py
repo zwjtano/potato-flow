@@ -2048,124 +2048,6 @@ def logout():
     return redirect(url_for('login'))
 
 
-def _build_home_readiness(config, recording_summary, stats):
-    """Build a cheap, local-only readiness summary for the home dashboard."""
-    config = config if isinstance(config, dict) else {}
-    room_total = int(recording_summary.get('room_total') or 0)
-    engine_running = bool(recording_summary.get('engine_running'))
-
-    if engine_running:
-        recorder_state = ('ready', '引擎运行中', '正在监控直播状态')
-    elif room_total:
-        recorder_state = ('attention', '引擎待启动', f'{room_total} 个直播间不会自动检测')
-    else:
-        recorder_state = ('neutral', '尚未配置', '添加直播间后开始监控')
-
-    bili_path = resolve_cookie_file_path(
-        config.get('BILIBILI_COOKIES_PATH'),
-        'cookies/bili_cookies.json',
-        allow_json_txt_fallback=True,
-    )
-    bili_ready = bool(
-        bili_path
-        and os.path.isfile(bili_path)
-        and os.access(bili_path, os.R_OK)
-    )
-    bili_state = (
-        ('ready', '凭证文件已就绪', '可用于录制和投稿')
-        if bili_ready
-        else ('attention', '账号待登录', '投稿前需要 B站凭证')
-    )
-
-    ai_ready = bool(
-        str(config.get('OPENAI_API_KEY') or '').strip()
-        and str(config.get('OPENAI_MODEL_NAME') or '').strip()
-    )
-    ai_state = (
-        ('ready', '文本模型已配置', '标题、简介和标签可自动生成')
-        if ai_ready
-        else ('attention', 'AI 服务待配置', '将无法自动生成投稿信息')
-    )
-
-    try:
-        recording_path = recordings_dir(config.get('RECORDINGS_PATH'))
-        storage_ready = (
-            recording_path.is_dir()
-            and os.access(recording_path, os.R_OK | os.W_OK)
-        )
-    except (OSError, RecorderConfigError, TypeError, ValueError):
-        storage_ready = False
-    storage_state = (
-        ('ready', '录播目录可写', '文件可以安全保存')
-        if storage_ready
-        else ('error', '录播目录不可用', '请检查目录挂载和权限')
-    )
-
-    items = [
-        {
-            'key': 'recorder',
-            'label': '录制引擎',
-            'icon': 'bi-broadcast',
-            'url': url_for('live_recording'),
-            'state': recorder_state[0],
-            'value': recorder_state[1],
-            'detail': recorder_state[2],
-        },
-        {
-            'key': 'bilibili',
-            'label': 'B站账号',
-            'icon': 'bi-person-check',
-            'url': url_for('settings') + '#vtab-accounts',
-            'state': bili_state[0],
-            'value': bili_state[1],
-            'detail': bili_state[2],
-        },
-        {
-            'key': 'ai',
-            'label': 'AI 服务',
-            'icon': 'bi-stars',
-            'url': url_for('settings') + '#vtab-ai-models',
-            'state': ai_state[0],
-            'value': ai_state[1],
-            'detail': ai_state[2],
-        },
-        {
-            'key': 'storage',
-            'label': '文件存储',
-            'icon': 'bi-device-ssd',
-            'url': url_for('settings') + '#vtab-system',
-            'state': storage_state[0],
-            'value': storage_state[1],
-            'detail': storage_state[2],
-        },
-    ]
-    error_count = sum(item['state'] == 'error' for item in items)
-    attention_count = sum(item['state'] in {'attention', 'neutral'} for item in items)
-    review_count = int(stats.get('awaiting_review') or 0)
-    if review_count or error_count:
-        state = 'error'
-        title = '有项目需要处理'
-        detail = (
-            f'{review_count} 个任务等待人工处理'
-            if review_count
-            else '关键运行条件异常'
-        )
-    elif attention_count:
-        state = 'attention'
-        title = '系统尚未完全就绪'
-        detail = f'还有 {attention_count} 项需要配置或启动'
-    else:
-        state = 'ready'
-        title = '系统已就绪'
-        detail = '录制、AI 处理与投稿条件均已满足'
-    return {
-        'state': state,
-        'title': title,
-        'detail': detail,
-        'items': items,
-    }
-
-
 @app.route('/')
 @login_required
 def index():
@@ -2399,24 +2281,12 @@ def index():
         }
         config = load_config()
 
-    try:
-        system_readiness = _build_home_readiness(config, recording_summary, stats)
-    except Exception as exc:
-        logger.warning("首页就绪度计算失败: %s", exc)
-        system_readiness = {
-            'state': 'error',
-            'title': '暂时无法检查系统状态',
-            'detail': '请进入系统设置查看详细诊断',
-            'items': [],
-        }
-
     return render_template(
         'index.html',
         stats=stats,
         recent_tasks=recent_tasks,
         youtube_summary=youtube_summary,
         recording_summary=recording_summary,
-        system_readiness=system_readiness,
     )
 
 @app.route('/tasks')
