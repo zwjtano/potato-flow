@@ -508,6 +508,16 @@ html[data-theme="dark"] .stop-recording-modal .btn-light:hover {
 .delete-room-modal .modal-footer .btn { min-width: 98px; min-height: 38px; margin: 0; border-radius: 8px; font-size: 11px; font-weight: 700; }
 .delete-room-modal .btn-danger { border-color: #df4056; background: #df4056; }
 .delete-room-modal .btn-danger:hover { border-color: #c93449; background: #c93449; }
+html[data-theme="dark"] .delete-room-modal .modal-content { color: #d9e5ee; background: #121e28; }
+html[data-theme="dark"] .delete-room-icon { color: #ff6378; border-color: #70404b; background: #39232b; }
+html[data-theme="dark"] .delete-room-copy h5,
+html[data-theme="dark"] .delete-room-copy > p strong { color: #edf5fb; }
+html[data-theme="dark"] .delete-room-copy > p { color: #aebfcd; }
+html[data-theme="dark"] .delete-room-note { color: #bdcad5; border-color: #344b5e; background: #172736; }
+html[data-theme="dark"] .delete-room-note i { color: #59d69a; }
+html[data-theme="dark"] .delete-room-modal .modal-footer { background: #121e28; }
+html[data-theme="dark"] .delete-room-modal .btn-light { color: #d5e0ea; border-color: #496174 !important; background: #182735; }
+html[data-theme="dark"] .delete-room-modal .btn-light:hover { color: #fff; border-color: #638097 !important; background: #213445; }
 .app-confirm-modal { z-index: 1080; }
 .modal-backdrop.app-confirm-backdrop { z-index: 1070; }
 .app-confirm-modal .modal-dialog { max-width: 520px; }

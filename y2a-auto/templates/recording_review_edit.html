@@ -128,6 +128,9 @@
                                 <button type="submit" name="action" value="regenerate_description" class="btn btn-sm btn-outline-primary ai-generate-btn">
                                     重新生成简介
                                 </button>
+                                <button type="submit" name="action" value="regenerate_tags" class="btn btn-sm btn-outline-primary ai-generate-btn">
+                                    重新生成六个标签
+                                </button>
                                 <button type="submit" name="action" value="regenerate_cover" class="btn btn-sm btn-outline-primary ai-generate-btn">
                                     重新生成两种封面
                                 </button>
@@ -248,10 +251,11 @@
                 <div class="published-update-copy">
                     <div class="page-eyebrow">CONFIRM UPDATE</div>
                     <h5 id="publishedUpdateConfirmTitle">确认更新 B站稿件？</h5>
-                    <p>当前预览中的标题、简介和两种封面将同步到 <strong>{{ job.bvid }}</strong>。</p>
+                    <p>当前预览中的标题、简介、标签、分区和两种封面将同步到 <strong>{{ job.bvid }}</strong>。</p>
                     <div class="published-update-items">
                         <span><i class="bi bi-type"></i> 标题</span>
                         <span><i class="bi bi-card-text"></i> 简介</span>
+                        <span><i class="bi bi-tags"></i> 标签 / 分区</span>
                         <span><i class="bi bi-image"></i> 16:9 / 4:3 封面</span>
                     </div>
                     <div class="published-update-note">
@@ -354,6 +358,8 @@ document.addEventListener('DOMContentLoaded', function () {
 .cover-placeholder i { font-size: 2rem; }
 .review-cover.cover-missing .cover-placeholder { display: flex; }
 .ai-regenerate-panel { padding: 1rem; border: 1px solid #cfe2ff; border-radius: 12px; background: #f4f8ff; }
+html[data-theme="dark"] .ai-regenerate-panel { color: #dbe8f3; border-color: #34526b; background: #172736; }
+html[data-theme="dark"] .ai-regenerate-panel .text-muted { color: #9eb1c2 !important; }
 .published-update-modal .modal-content { overflow: hidden; border: 0; border-radius: 20px; box-shadow: 0 24px 70px rgba(15, 23, 42, .28); }
 .published-update-modal .modal-body { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 18px; padding: 28px 28px 22px; }
 .published-update-icon { display: grid; width: 54px; height: 54px; place-items: center; color: #fff; border-radius: 16px; background: linear-gradient(145deg, #279566, #176b4b); box-shadow: 0 10px 24px rgba(30, 132, 89, .25); font-size: 1.45rem; }
@@ -365,6 +371,11 @@ document.addEventListener('DOMContentLoaded', function () {
 .published-update-note { display: flex; align-items: flex-start; gap: 9px; margin-top: 16px; padding: 11px 12px; color: #4b5563; border-radius: 10px; background: #edf8f3; font-size: .84rem; line-height: 1.55; }
 .published-update-note i { margin-top: 2px; color: #23845c; }
 .published-update-modal .modal-footer { padding: 16px 28px 22px; border-top: 1px solid #eef0f3; background: #fbfcfd; }
+html[data-theme="dark"] .published-update-copy h5 { color: #edf5fb; }
+html[data-theme="dark"] .published-update-copy > p { color: #afc0ce; }
+html[data-theme="dark"] .published-update-items span { color: #cfdae4; border-color: #385064; background: #172736; }
+html[data-theme="dark"] .published-update-note { color: #b9c9d5; background: #173127; }
+html[data-theme="dark"] .published-update-modal .modal-footer { border-color: #2b4153; background: #121e28; }
 .review-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; }
 @media (max-width: 575.98px) {
     .published-update-modal .modal-body { grid-template-columns: 1fr; padding: 22px 20px 18px; }

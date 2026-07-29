@@ -67,6 +67,7 @@ class ManualReviewTests(unittest.TestCase):
         for action in (
             "regenerate_title",
             "regenerate_description",
+            "regenerate_tags",
             "regenerate_cover",
             "regenerate_all",
             "apply_to_bilibili",
@@ -75,11 +76,14 @@ class ManualReviewTests(unittest.TestCase):
             self.assertIn(action, app_source)
         self.assertIn("def regenerate_published_metadata(", manager_source)
         self.assertIn("def update_published_metadata(", manager_source)
+        self.assertIn("resolve_account, resolve_cookie_path", manager_source)
+        self.assertIn("recording_dir=video_path.parent", manager_source)
         self.assertIn("pending_published_update", manager_source)
         self.assertIn("视频内容和原有分P不会改变", editor_template)
         self.assertIn("publishedUpdateConfirmModal", editor_template)
         self.assertIn("form.requestSubmit(applyPublishedUpdateButton)", editor_template)
         self.assertNotIn("window.confirm(", editor_template)
+        self.assertIn('html[data-theme="dark"] .ai-regenerate-panel', editor_template)
 
     def test_ai_regenerate_action_is_serialized_before_button_is_disabled(self):
         editor_template = (
