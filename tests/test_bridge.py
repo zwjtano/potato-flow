@@ -1020,6 +1020,7 @@ class BridgeTests(unittest.TestCase):
             "拒绝者": "Paparazi",
             "龙神": "LongDD",
             "军体拳": "Sccc",
+            "叫我老陈就好了": "川神",
         }
         for alias, expected in cases.items():
             with self.subTest(alias=alias):

@@ -2974,6 +2974,7 @@ class LiveRecorderManager:
                 "bilibili_account_id": selected_account["id"],
                 "bilibili_account_name": selected_account["name"],
                 "bilibili_account_uid": selected_account.get("bilibili_uid", ""),
+                "bilibili_account_avatar_url": selected_account.get("avatar_url", ""),
                 "source": "recording",
                 "bvid": bvid,
                 "bilibili_url": str(bilibili_result.get("url") or ""),

@@ -11,34 +11,6 @@
     </div>
 </section>
 
-<section class="home-readiness is-{{ system_readiness.state }}" aria-labelledby="home-readiness-title">
-    <header>
-        <span class="home-readiness-mark" aria-hidden="true">
-            <i class="bi {{ 'bi-check2-circle' if system_readiness.state == 'ready' else ('bi-exclamation-triangle' if system_readiness.state == 'error' else 'bi-info-circle') }}"></i>
-        </span>
-        <div>
-            <h2 id="home-readiness-title">{{ system_readiness.title }}</h2>
-            <p>{{ system_readiness.detail }}</p>
-        </div>
-        <a href="{{ url_for('settings') }}" class="home-readiness-action">查看设置 <i class="bi bi-arrow-right"></i></a>
-    </header>
-    {% if system_readiness['items'] %}
-    <div class="home-readiness-grid">
-        {% for item in system_readiness['items'] %}
-        <a href="{{ item.url }}" class="home-readiness-item is-{{ item.state }}">
-            <span class="home-readiness-icon" aria-hidden="true"><i class="bi {{ item.icon }}"></i></span>
-            <span>
-                <small>{{ item.label }}</small>
-                <strong>{{ item.value }}</strong>
-                <em>{{ item.detail }}</em>
-            </span>
-            <i class="bi bi-chevron-right" aria-hidden="true"></i>
-        </a>
-        {% endfor %}
-    </div>
-    {% endif %}
-</section>
-
 <section class="home-choice-grid" aria-label="核心功能">
     <article class="home-product-card youtube">
         <header>

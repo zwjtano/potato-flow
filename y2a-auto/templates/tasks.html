@@ -104,13 +104,23 @@
         <div class="modern-list recording-task-list">
             <div class="table-responsive modern-table d-none d-md-block">
                 <table class="table table-hover table-borderless align-middle mb-0 recording-tasks-table">
+                    <colgroup>
+                        <col class="recording-col-video">
+                        <col class="recording-col-room">
+                        <col class="recording-col-account">
+                        <col class="recording-col-status">
+                        <col class="recording-col-progress">
+                        <col class="recording-col-updated">
+                        <col class="recording-col-actions">
+                    </colgroup>
                     <thead class="table-light">
                         <tr>
                             <th>录播视频</th>
                             <th>直播间</th>
+                            <th>投稿账号</th>
                             <th class="text-center">状态</th>
                             <th>处理进度</th>
-                            <th class="text-center">更新时间</th>
+                            <th class="text-center recording-updated-heading">更新时间</th>
                             <th class="text-end">结果与操作</th>
                         </tr>
                     </thead>
@@ -153,9 +163,22 @@
                                     {% endif %}
                                     <span>
                                         <span class="small d-block">{{ job.room_name }}</span>
-                                        <small class="text-muted">{{ job.bilibili_account_name }} · {{ 'UID ' ~ job.bilibili_account_uid if job.bilibili_account_uid else 'UID 未识别' }}</small>
                                     </span>
                                 </div>
+                            </td>
+                            <td>
+                                {% if job.record_only %}
+                                <span class="recording-no-upload"><i class="bi bi-hdd"></i> 无需投稿</span>
+                                {% else %}
+                                <div class="recording-account-identity">
+                                    {% if job.bilibili_account_avatar_url %}
+                                    <img src="{{ job.bilibili_account_avatar_url }}" alt="" class="recording-account-avatar" referrerpolicy="no-referrer">
+                                    {% else %}
+                                    <span class="recording-account-avatar fallback"><i class="bi bi-person-fill"></i></span>
+                                    {% endif %}
+                                    <span>{{ job.bilibili_account_name }}</span>
+                                </div>
+                                {% endif %}
                             </td>
                             <td class="text-center">
                                 {% if job.status == 'completed' %}
@@ -198,7 +221,7 @@
                             <td class="text-end">
                                 <div class="recording-task-actions">
                                     {% if job.bvid %}
-                                    <a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="badge text-bg-success text-decoration-none">{{ job.bvid }}</a>
+                                    <a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="recording-bvid-link"><span>BV号</span>{{ job.bvid }}</a>
                                     {% endif %}
                                     {% if job.error %}
                                     <button type="button" class="btn btn-sm btn-outline-danger error-message-trigger"
@@ -259,7 +282,15 @@
                                     {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
                                 </div>
                                 <div class="small text-muted mt-1">{{ job.room_name }}</div>
-                                <div class="small text-muted">{{ job.bilibili_account_name }} · {{ 'UID ' ~ job.bilibili_account_uid if job.bilibili_account_uid else 'UID 未识别' }}</div>
+                                {% if job.record_only %}
+                                <div class="recording-no-upload mt-1"><i class="bi bi-hdd"></i> 无需投稿</div>
+                                {% else %}
+                                <div class="recording-account-identity mobile mt-1">
+                                    {% if job.bilibili_account_avatar_url %}<img src="{{ job.bilibili_account_avatar_url }}" alt="" class="recording-account-avatar" referrerpolicy="no-referrer">
+                                    {% else %}<span class="recording-account-avatar fallback"><i class="bi bi-person-fill"></i></span>{% endif %}
+                                    <span>{{ job.bilibili_account_name }}</span>
+                                </div>
+                                {% endif %}
                             </div>
                         </div>
                         {% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
@@ -290,7 +321,7 @@
                         {% if job.status == 'completed' and job.bvid %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-stars"></i> AI 编辑稿件</a>{% endif %}
                         {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> {{ '恢复' if job.paused else '重试' }}</button>{% endif %}
                         {% if job.pausable %}<button type="button" class="btn btn-sm btn-outline-secondary recording-pause-btn" data-job-id="{{ job.id }}"><i class="bi bi-pause-fill"></i> 暂停</button>{% endif %}
-                        {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success">{{ job.bvid }}</a>{% endif %}
+                        {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="recording-bvid-link"><span>BV号</span>{{ job.bvid }}</a>{% endif %}
                         <button type="button" class="btn btn-sm btn-outline-danger"
                                 data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}"
                                 onclick="confirmDelete(this.dataset.taskId, this.dataset.taskTitle, 'recording')">
@@ -912,7 +943,16 @@ html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: 
 .task-source-icon.recording { color: #087cc1; border: 1px solid #b9ddf5; background: #eaf6ff; }
 .task-source-icon.youtube { color: #d93d52; border: 1px solid #f0c8ce; background: #fff0f2; }
 .recording-task-list { padding: .25rem 0; }
-.recording-tasks-table th { font-size: .78rem; color: #778195; font-weight: 600; }
+.recording-tasks-table { width: 100%; min-width: 1180px; table-layout: fixed; }
+.recording-tasks-table .recording-col-video { width: 28%; }
+.recording-tasks-table .recording-col-room { width: 12%; }
+.recording-tasks-table .recording-col-account { width: 11%; }
+.recording-tasks-table .recording-col-status { width: 8%; }
+.recording-tasks-table .recording-col-progress { width: 14%; }
+.recording-tasks-table .recording-col-updated { width: 11%; }
+.recording-tasks-table .recording-col-actions { width: 16%; }
+.recording-tasks-table th { font-size: .78rem; color: #667287; font-weight: 700; }
+.recording-tasks-table th.recording-updated-heading { white-space: nowrap; }
 .recording-tasks-table td { padding: .8rem .65rem; }
 .recording-task-title { font-weight: 650; color: #202736; max-width: 420px; }
 .record-only-badge {
@@ -957,6 +997,14 @@ html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color
 .recording-cover-preview-image { display: block; width: 100%; max-height: 72vh; object-fit: contain; }
 .recording-room-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
 .recording-room-avatar.fallback { display: inline-flex; align-items: center; justify-content: center; color: #738096; background: #eef2f7; }
+.recording-account-identity { display: flex; min-width: 0; align-items: center; gap: .5rem; color: #344054; font-size: .78rem; font-weight: 650; }
+.recording-account-identity > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recording-account-avatar { display: inline-flex; width: 28px; height: 28px; flex: 0 0 auto; align-items: center; justify-content: center; border: 1px solid #d8e2ec; border-radius: 50%; object-fit: cover; background: #eef4f8; }
+.recording-account-identity.mobile .recording-account-avatar { width: 22px; height: 22px; }
+.recording-no-upload { display: inline-flex; align-items: center; gap: .35rem; color: #768397; font-size: .75rem; white-space: nowrap; }
+.recording-bvid-link { display: inline-flex; align-items: center; gap: .35rem; padding: .28rem .55rem; color: #08794d; border: 1px solid #7bd7ad; border-radius: 999px; background: #eafaf3; font-size: .72rem; font-weight: 750; text-decoration: none; white-space: nowrap; }
+.recording-bvid-link span { color: #3f8066; font-size: .65rem; font-weight: 650; }
+.recording-bvid-link:hover { color: #065f3d; border-color: #43bd84; background: #dcf7ea; }
 .recording-task-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: .4rem; }
 .recording-progress-trigger { display: block; width: 100%; padding: .35rem .45rem; color: inherit; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; transition: border-color .15s ease, background .15s ease; }
 .recording-progress-trigger:hover, .recording-progress-trigger:focus-visible { border-color: #b8d5fb; outline: none; background: #f4f8ff; }
@@ -1007,6 +1055,17 @@ html[data-theme="dark"] .recording-task-card .progress {
 html[data-theme="dark"] .recording-task-card .recording-progress-hint { color: #9eb0c3; }
 html[data-theme="dark"] .recording-task-card .recording-progress-trigger:hover .recording-progress-hint,
 html[data-theme="dark"] .recording-task-card .recording-progress-trigger:focus-visible .recording-progress-hint { color: #5bc8ff; }
+html[data-theme="dark"] .recording-tasks-table thead th { color: #9fb0c2; background: #111d28; border-bottom: 1px solid #2b3e50; }
+html[data-theme="dark"] .recording-tasks-table tbody td { border-top: 1px solid #243646; }
+html[data-theme="dark"] .recording-task-file { color: #9fc6e8; background: #111e29; }
+html[data-theme="dark"] .recording-room-avatar { border: 1px solid #40556a; }
+html[data-theme="dark"] .recording-account-identity { color: #d5e2ee; }
+html[data-theme="dark"] .recording-account-avatar { color: #9cc9e7; border-color: #40576b; background: #1b2a37; }
+html[data-theme="dark"] .recording-no-upload { color: #91a4b7; }
+html[data-theme="dark"] .recording-bvid-link { color: #72e0ad; border-color: #276f52; background: #143627; }
+html[data-theme="dark"] .recording-bvid-link span { color: #9acdb5; }
+html[data-theme="dark"] .recording-bvid-link:hover { color: #a2f0ca; border-color: #38976f; background: #194831; }
+html[data-theme="dark"] .task-datetime { color: #d1deea; border-bottom-color: #60778c; }
 .recording-detail-loading { display: flex; min-height: 220px; align-items: center; justify-content: center; gap: .65rem; color: #7d8798; }
 .recording-detail-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding: 1rem; border: 1px solid #e6ebf2; border-radius: 12px; background: #f8fafc; }
 .recording-detail-summary strong { display: block; margin-bottom: .25rem; }
@@ -2255,41 +2314,16 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             if (isNaN(date.getTime())) {
                 return dateTimeString;
             }
-
-            const now = new Date();
-            const diffMs = now - date;
-            const diffMinutes = Math.floor(diffMs / (1000 * 60));
-            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-            if (diffMinutes < 5) {
-                return '刚刚';
-            } else if (diffMinutes < 60) {
-                return diffMinutes + '分钟前';
-            } else if (diffHours < 24 && date.toDateString() === now.toDateString()) {
-                return diffHours + '小时前';
-            } else if (diffDays === 1) {
-                return '昨天 ' + date.toLocaleTimeString('zh-CN', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            } else if (diffDays < 7) {
-                return diffDays + '天前';
-            } else if (date.getFullYear() === now.getFullYear()) {
-                return date.toLocaleDateString('zh-CN', {
-                    month: '2-digit',
-                    day: '2-digit'
-                }) + ' ' + date.toLocaleTimeString('zh-CN', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            }
-
-            return date.toLocaleDateString('zh-CN', {
+            const parts = new Intl.DateTimeFormat('zh-CN', {
                 year: 'numeric',
                 month: '2-digit',
-                day: '2-digit'
-            });
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            }).formatToParts(date);
+            const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+            return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`;
         } catch (error) {
             console.error('时间格式化错误:', error);
             return dateTimeString;

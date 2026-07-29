@@ -1374,6 +1374,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(jobs[0]["source"], "recording")
         self.assertEqual(jobs[0]["display_id"], "BL-ALICE-0723-001")
         self.assertEqual(jobs[0]["room_name"], "Alice")
+        self.assertIn("bilibili_account_avatar_url", jobs[0])
         self.assertEqual(jobs[0]["bvid"], "BV1potato")
         self.assertTrue(jobs[0]["cover_available"])
         self.assertTrue(jobs[0]["cover_route_available"])
@@ -2015,6 +2016,27 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("同一场直播合并为分P", live_source)
         self.assertIn("仅录制，不自动投稿", live_source)
         self.assertIn("live_recording_room_recording_settings", app_source)
+
+    def test_record_only_ui_hides_upload_account_identity(self):
+        live_source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+
+        self.assertIn("{% if not room.record_only %}", live_source)
+        self.assertIn('data-role="bilibili-account-field"', live_source)
+        self.assertIn("accountField?.classList.toggle('d-none', recordOnlyActive)", live_source)
+        self.assertIn("投稿账号", tasks_source)
+        self.assertIn("recording-account-identity", tasks_source)
+        self.assertIn("无需投稿", tasks_source)
+        self.assertNotIn("job.bilibili_account_uid", tasks_source)
+
+    def test_recording_queue_uses_absolute_local_time_and_explicit_bvid_label(self):
+        tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+
+        self.assertIn("formatToParts(date)", tasks_source)
+        self.assertIn("`${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`", tasks_source)
+        self.assertNotIn("return '刚刚'", tasks_source)
+        self.assertIn("<span>BV号</span>{{ job.bvid }}", tasks_source)
+        self.assertIn("recording-updated-heading", tasks_source)
 
     def test_delete_room_button_is_enabled_while_worker_runs(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
