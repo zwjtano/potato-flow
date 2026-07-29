@@ -43,18 +43,16 @@ class DockerPackagingTests(unittest.TestCase):
             encoding="utf-8"
         )
         for directory in (
-            ".bridge",
             "config",
-            "cookies",
-            "db",
+            "credentials/cookies",
+            "credentials/security",
+            "database",
+            "state/pipeline",
+            "state/recording",
             "recordings",
-            "temp",
+            "runtime",
         ):
             self.assertIn(f'"${{DATA_DIR}}/{directory}"', entrypoint)
-        self.assertIn(
-            "for writable_dir in .bridge bridge config cookies db logs security static-covers temp",
-            entrypoint,
-        )
         self.assertIn(
             'link_persistent_path "${DATA_DIR}/recordings" "${APP_DIR}/recordings"',
             entrypoint,
@@ -63,8 +61,12 @@ class DockerPackagingTests(unittest.TestCase):
             'link_persistent_path "${APP_DIR}/recordings" "${Y2A_DIR}/recordings"',
             entrypoint,
         )
-        self.assertIn("chown -R biliup-y2a:biliup-y2a", entrypoint)
-        self.assertIn("exec gosu biliup-y2a", entrypoint)
+        self.assertIn("umask 0027", entrypoint)
+        self.assertIn("-type d -exec chmod 0750", entrypoint)
+        self.assertIn("-type f -exec chmod 0640", entrypoint)
+        self.assertIn("-type d -exec chmod 0700", entrypoint)
+        self.assertIn("-type f -exec chmod 0600", entrypoint)
+        self.assertIn('exec gosu "${APP_USER}"', entrypoint)
 
     def test_potato_flow_branding_and_systemd_service(self):
         base = (ROOT / "y2a-auto" / "templates" / "base.html").read_text(encoding="utf-8")
