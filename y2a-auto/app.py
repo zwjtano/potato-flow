@@ -938,6 +938,8 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'UPLOAD_APPEND_REPOST_NOTICE',
             'GENERATE_TAGS', 'YOUTUBE_UPLOADER_AS_FIRST_TAG', 'RECOMMEND_PARTITION',
             'RECOMMEND_PARTITION_WITH_COVER', 'AI_GENERATE_RECORDING_COVER',
+            'DOUYU_STATS_ENABLED', 'DOUYU_STATS_APPEND_DESCRIPTION',
+            'DOUYU_STATS_COVER_CONTEXT_ENABLED',
             'CONTENT_MODERATION_ENABLED',
             'OPENAI_THINKING_ENABLED', 'SUBTITLE_OPENAI_THINKING_ENABLED', 'SUBTITLE_QC_THINKING_ENABLED',
             'LOG_CLEANUP_ENABLED', 'SUBTITLE_TRANSLATION_ENABLED', 'SUBTITLE_EMBED_IN_VIDEO',
@@ -1104,6 +1106,24 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
                     messages,
                     'warning',
                     f'录播目录已保存，但录制 worker 未能自动重载：{exc}',
+                )
+        douyu_pipeline_settings_changed = any(
+            field in form_data
+            for field in (
+                'DOUYU_STATS_ENABLED',
+                'DOUYU_STATS_APPEND_DESCRIPTION',
+                'DOUYU_STATS_COVER_CONTEXT_ENABLED',
+            )
+        )
+        if douyu_pipeline_settings_changed and not recordings_path_changed:
+            try:
+                live_recorder_manager.refresh_credentials()
+            except RecorderConfigError as exc:
+                logger.warning("斗鱼直播数据设置已保存，但录播配置重载失败: %s", exc)
+                _append_settings_message(
+                    messages,
+                    'warning',
+                    f'斗鱼直播数据设置已保存，但录制配置未能立即重载：{exc}',
                 )
         if (
             'DOUYIN_COOKIES_PATH' in form_data

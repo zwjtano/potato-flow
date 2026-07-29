@@ -459,6 +459,7 @@ def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(0o750)
         self.path = path
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -514,6 +515,10 @@ class StateStore:
                     created_at TEXT NOT NULL
                 )"""
             )
+        try:
+            self.path.chmod(0o640)
+        except OSError:
+            pass
 
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -563,10 +568,13 @@ class StateStore:
                      error=NULL, updated_at=excluded.updated_at""",
                 (key, str(path), platform, now, now),
             )
-            for stage, status in (("detect", "completed"), ("record", "completed"),
-                                  ("ass", "pending"), ("ai", "pending"),
-                                  ("cover", "pending"), ("upload", "pending"),
-                                  ("cleanup", "pending")):
+            for stage, status in (
+                ("detect", "completed"), ("record", "completed"),
+                ("ass", "pending"), ("ai", "pending"),
+                ("xml_identity", "pending"), ("live_stats", "pending"),
+                ("cover_16x9", "pending"), ("cover_4x3", "pending"),
+                ("upload", "pending"), ("cleanup", "pending"),
+            ):
                 db.execute(
                     """INSERT INTO upload_stages
                        (fingerprint, stage, status, updated_at, started_at, finished_at)
@@ -665,7 +673,7 @@ class StateStore:
               error: str | None = None) -> None:
         now = utc_now()
         started_at = now if status == "running" else None
-        finished_at = now if status in {"completed", "failed", "skipped"} else None
+        finished_at = now if status in {"completed", "failed", "skipped", "warning"} else None
         with self.connect() as db:
             db.execute(
                 """INSERT INTO upload_stages
@@ -1181,6 +1189,7 @@ def generate_recording_cover_with_ai(
     work_dir: Path,
     target_size: tuple[int, int] | None = None,
     output_path: Path | None = None,
+    recording_dir: Path | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
     """Generate one independent AI cover for the requested Bilibili aspect ratio."""
     root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
@@ -1256,17 +1265,61 @@ def generate_recording_cover_with_ai(
         ai_topic,
         description,
     )
-    dota2_item_matches = (
-        match_dota2_items(title, ai_topic, description)
-        if recording_cover_has_dota2_context(
-            streamer,
-            title,
-            ai_topic,
-            description,
-        )
-        else []
+    # Prefer tooltip equipment only when XML comments identify the streamer
+    # hero.  There is intentionally no fixed player-slot fallback.
+    tooltip_hero = ""
+    tooltip_items: list[str] = []
+    tooltip_context_enabled = bool(cfg.get("douyu_stats_enabled", True)) and bool(
+        cfg.get("douyu_stats_cover_context_enabled", True)
     )
-    dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
+    details["ai_cover_tooltip_context_enabled"] = tooltip_context_enabled
+    if recording_dir is not None and tooltip_context_enabled:
+        try:
+            from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
+
+            anchor = get_game_for_cover(recording_dir)
+            if anchor:
+                tooltip_hero = str(anchor.get("hero") or "")
+                tooltip_items = [str(item) for item in anchor.get("items", []) if str(item)]
+                if anchor.get("neutral"):
+                    tooltip_items.append(str(anchor["neutral"]))
+                if anchor.get("scepter"):
+                    tooltip_items.append("A杖")
+                if anchor.get("shard"):
+                    tooltip_items.append("魔晶")
+        except Exception as exc:
+            details["ai_cover_tooltip_error"] = str(exc)
+
+    if tooltip_hero or tooltip_items:
+        if tooltip_items:
+            dota2_item_instruction = (
+                f"主播本局实际装备（由录制 XML 识别主播英雄后关联实时数据）："
+                f"{', '.join(tooltip_items)}。"
+            )
+        else:
+            dota2_item_instruction = ""
+        if tooltip_hero:
+            dota2_instruction = (
+                f"主播本局使用的英雄为 {tooltip_hero}（由录制 XML 弹幕识别）。"
+                + dota2_instruction
+            )
+        details["ai_cover_tooltip_hero"] = tooltip_hero
+        details["ai_cover_tooltip_items"] = tooltip_items
+        details["ai_cover_dota2_source"] = "tooltip"
+        dota2_item_matches = match_dota2_items(*tooltip_items)
+    else:
+        dota2_item_matches = (
+            match_dota2_items(title, ai_topic, description)
+            if recording_cover_has_dota2_context(
+                streamer,
+                title,
+                ai_topic,
+                description,
+            )
+            else []
+        )
+        dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
+        details["ai_cover_dota2_source"] = "text_match"
     if dota2_item_matches:
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
@@ -1539,20 +1592,28 @@ def persist_pipeline_cover(
     key: str,
     cover: Path,
     variant: str = "16x9",
+    video: Path | None = None,
 ) -> Path:
-    """Keep the task thumbnail outside its disposable per-run artifact folder."""
+    """Persist the cover next to the recording (or in the artifact dir as fallback)."""
     source = cover.resolve()
     if not source.is_file():
         raise FileNotFoundError(f"投稿封面不存在: {source}")
     suffix = source.suffix.lower()
     if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
         suffix = ".jpg"
-    target_dir = store.path.parent / "artifacts" / "task-covers"
-    target_dir.mkdir(parents=True, exist_ok=True)
     safe_variant = "4x3" if variant == "4x3" else "16x9"
-    target = (target_dir / f"{key}-{safe_variant}{suffix}").resolve()
+    if video is not None and video.parent.is_dir():
+        stem = video.stem
+        name = f"{stem}_4x3{suffix}" if safe_variant == "4x3" else f"{stem}{suffix}"
+        target = (video.parent / name).resolve()
+    else:
+        target_dir = store.path.parent / "artifacts" / "task-covers"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_dir.chmod(0o750)
+        target = (target_dir / f"{key}-{safe_variant}{suffix}").resolve()
     if source != target:
         shutil.copy2(source, target)
+    target.chmod(0o640)
     return target
 
 
@@ -1838,7 +1899,12 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
     prior_result = store.results(key)
     review_override = store.review_override(key)
     prior_ai_stage = store.stage_state(key, "ai") if retry else {}
-    prior_cover_stage = store.stage_state(key, "cover") if retry else {}
+    prior_cover16_stage = store.stage_state(key, "cover_16x9") if retry else {}
+    prior_cover43_stage = store.stage_state(key, "cover_4x3") if retry else {}
+    if retry and not prior_cover16_stage:
+        prior_cover16_stage = store.stage_state(key, "cover")
+    if retry and not prior_cover43_stage:
+        prior_cover43_stage = store.stage_state(key, "cover")
     is_new_task = not store.upload_exists(key)
     if not store.claim(key, video, platform, retry=retry):
         print(f"SKIP 已处理或正在处理: {video}")
@@ -1899,7 +1965,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         if manual_cover_path and Path(manual_cover_path).is_file():
             original_cover = Path(manual_cover_path)
         else:
-            current_stage = "cover"
+            current_stage = "cover_16x9"
             original_cover = find_cover(video, cfg, work_dir)
         cover = original_cover
         cover43: Path | None = (
@@ -2098,6 +2164,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "final_tags": tags,
             "selected_partition_id": partition or None,
         })
+
         if review_override:
             ai_details.update({
                 "manual_review_applied": True,
@@ -2110,15 +2177,125 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             or metadata_automation.get("partition_recommendation_enabled")
             or metadata_automation.get("metadata_automation_error")
         )
-        store.stage(key, "ai", "completed" if ai_was_used else "skipped", ai_details)
+        ai_stage_status = "completed" if ai_was_used else "skipped"
+        store.stage(key, "ai", ai_stage_status, ai_details)
 
-        current_stage = "cover"
+        y2a_root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+        if str(y2a_root) not in sys.path:
+            sys.path.insert(0, str(y2a_root))
+        stats_enabled = bool(cfg.get("douyu_stats_enabled", True))
+        cover_context_enabled = bool(cfg.get("douyu_stats_cover_context_enabled", True))
+
+        current_stage = "xml_identity"
+        if not stats_enabled:
+            store.stage(key, "xml_identity", "skipped", {
+                "reason": "斗鱼直播数据统计已关闭",
+                "outcome": "disabled",
+            })
+        elif not cover_context_enabled:
+            store.stage(key, "xml_identity", "skipped", {
+                "reason": "XML 主播英雄与装备识别已关闭",
+                "outcome": "disabled",
+            })
+        elif not danmaku_xml or not comments:
+            store.stage(key, "xml_identity", "skipped", {
+                "reason": "本次录播没有可用的 XML 弹幕",
+                "outcome": "no_data",
+            })
+        else:
+            store.stage(key, "xml_identity", "running", {
+                "danmaku_xml": str(danmaku_xml),
+                "comment_count": len(comments),
+            })
+            try:
+                from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
+
+                anchor = get_game_for_cover(str(video.parent))
+                if anchor:
+                    store.stage(key, "xml_identity", "completed", {
+                        "danmaku_xml": str(danmaku_xml),
+                        "comment_count": len(comments),
+                        "streamer_hero": str(anchor.get("hero") or ""),
+                        "streamer_items": [
+                            str(item) for item in anchor.get("items", []) if str(item)
+                        ],
+                        "xml_mention_score": int(anchor.get("xml_mention_score") or 0),
+                        "outcome": "matched",
+                    })
+                else:
+                    store.stage(key, "xml_identity", "skipped", {
+                        "danmaku_xml": str(danmaku_xml),
+                        "comment_count": len(comments),
+                        "reason": "XML 未形成唯一可靠的主播英雄证据",
+                        "outcome": "no_data",
+                    })
+            except Exception as exc:
+                store.stage(key, "xml_identity", "warning", {
+                    "reason": "XML 主播识别失败，但不阻断投稿",
+                    "outcome": "failed_non_blocking",
+                }, error=str(exc))
+
+        current_stage = "live_stats"
+        append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
+        if not stats_enabled:
+            store.stage(key, "live_stats", "skipped", {
+                "reason": "斗鱼直播数据统计已关闭",
+                "outcome": "disabled",
+            })
+        elif not append_stats_enabled:
+            store.stage(key, "live_stats", "skipped", {
+                "reason": "直播数据追加到简介已关闭",
+                "outcome": "disabled",
+            })
+        else:
+            store.stage(key, "live_stats", "running", {
+                "description_before_length": len(description),
+            })
+            try:
+                from modules.douyu_stats_formatter import get_stats_for_description  # type: ignore
+
+                stats_text = get_stats_for_description(str(video.parent))
+                if stats_text:
+                    stats_text = stats_text[:1900]
+                    description_budget = max(0, 1900 - len(stats_text) - 1)
+                    description = description[:description_budget].rstrip() + "\n" + stats_text
+                    ai_details["stats_appended"] = True
+                    ai_details["description"] = description
+                    store.stage(key, "live_stats", "completed", {
+                        "stats_appended": True,
+                        "description_length": len(description),
+                        "outcome": "matched",
+                    })
+                    print("[bridge] 简介已追加直播统计数据", file=sys.stderr)
+                else:
+                    store.stage(key, "live_stats", "skipped", {
+                        "reason": "本次录播时间内没有匹配的直播数据",
+                        "outcome": "no_data",
+                    })
+            except Exception as exc:
+                store.stage(key, "live_stats", "warning", {
+                    "reason": "直播数据整理失败，但不阻断投稿",
+                    "outcome": "failed_non_blocking",
+                }, error=str(exc))
+                print(f"[bridge] 直播统计数据追加失败(不影响投稿): {exc}", file=sys.stderr)
+        # Keep the AI stage's persisted description identical to the final
+        # description sent to Bilibili after optional statistics are appended.
+        store.stage(key, "ai", ai_stage_status, ai_details)
+
+        current_stage = "cover_16x9"
         cover_generation: dict[str, Any] = {}
-        cover_stage_status = "skipped"
+        cover16_status = "skipped"
+        cover43_status = "skipped"
         session_cover = str(multipart.get("cover_path") or "").strip() if multipart else ""
-        prior_cover_details = (
-            prior_cover_stage.get("details")
-            if isinstance(prior_cover_stage.get("details"), dict)
+        session_cover43 = str(multipart.get("cover43_path") or "").strip() if multipart else ""
+        prior_cover16_details = (
+            prior_cover16_stage.get("details")
+            if isinstance(prior_cover16_stage.get("details"), dict)
+            else {}
+        )
+        prior_cover43_details = (
+            prior_cover43_stage.get("details")
+            if isinstance(prior_cover43_stage.get("details"), dict)
             else {}
         )
         retry_cover_path = ""
@@ -2127,8 +2304,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             for value in (
                 review_override.get("cover_path"),
                 prior_result.get("cover_path"),
-                prior_cover_details.get("ai_cover_path"),
-                prior_cover_details.get("cover_used_for_upload"),
+                prior_cover16_details.get("ai_cover_path"),
+                prior_cover16_details.get("cover_used_for_upload"),
             ):
                 candidate = str(value or "").strip()
                 if candidate and Path(candidate).is_file():
@@ -2137,8 +2314,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             for value in (
                 review_override.get("cover43_path"),
                 prior_result.get("cover43_path"),
-                prior_cover_details.get("ai_cover_4x3_path"),
-                prior_cover_details.get("cover43_used_for_upload"),
+                prior_cover43_details.get("ai_cover_4x3_path"),
+                prior_cover43_details.get("cover43_used_for_upload"),
             ):
                 candidate = str(value or "").strip()
                 if candidate and Path(candidate).is_file():
@@ -2152,8 +2329,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "cover_used_for_upload": str(cover),
                 "original_cover_path": str(original_cover),
             }
-            cover_stage_status = "completed"
-            store.stage(key, "cover", "completed", cover_generation)
+            cover16_status = "completed"
         elif session_cover and Path(session_cover).is_file():
             cover = Path(session_cover)
             cover_generation = dict(multipart.get("cover_generation") or {})
@@ -2162,11 +2338,10 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "ai_cover_path": str(cover),
                 "original_cover_path": str(original_cover),
             })
-            cover_stage_status = "completed"
-            store.stage(key, "cover", "completed", cover_generation)
+            cover16_status = "completed"
         elif retry_cover_path:
             cover = Path(retry_cover_path)
-            cover_generation = dict(prior_cover_details)
+            cover_generation = dict(prior_cover16_details)
             cover_generation.update({
                 "ai_cover_reused": True,
                 "reused_on_retry": True,
@@ -2174,12 +2349,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "cover_used_for_upload": str(cover),
                 "original_cover_path": str(original_cover),
             })
-            cover_stage_status = str(prior_cover_stage.get("status") or "completed")
-            if cover_stage_status not in {"completed", "skipped"}:
-                cover_stage_status = "completed"
-            store.stage(key, "cover", cover_stage_status, cover_generation)
+            cover16_status = "completed"
         elif not dry_run and not existing_submission:
-            store.stage(key, "cover", "running", {
+            store.stage(key, "cover_16x9", "running", {
                 "title": title,
                 "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
                 "original_cover_path": str(original_cover),
@@ -2194,6 +2366,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     work_dir=work_dir,
                     target_size=(1920, 1080),
                     output_path=work_dir / "ai_cover_16x9.jpg",
+                    recording_dir=video.parent,
                 )
                 if generated_cover:
                     cover = generated_cover
@@ -2206,8 +2379,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     if cover_generation.get("ai_cover_generated")
                     else "skipped"
                 )
-                cover_stage_status = cover_status
-                store.stage(key, "cover", cover_status, cover_generation)
+                cover16_status = cover_status
             except Exception as exc:
                 cover_generation = {
                     "ai_cover_enabled": True,
@@ -2218,8 +2390,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     "original_cover_path": str(original_cover),
                 }
                 cover = original_cover
-                cover_stage_status = "skipped"
-                store.stage(key, "cover", "skipped", cover_generation)
+                cover16_status = "warning"
                 print(f"WARN AI 录播封面生成失败，回退视频截图: {exc}", file=sys.stderr)
         else:
             reason = "试运行" if dry_run else "后续分P沿用当前稿件封面"
@@ -2228,23 +2399,51 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "cover_used_for_upload": str(cover),
                 "original_cover_path": str(original_cover),
             }
-            cover_stage_status = "skipped"
-            store.stage(key, "cover", "skipped", cover_generation)
+            cover16_status = "skipped"
+
+        if not dry_run:
+            cover = persist_pipeline_cover(store, key, cover, "16x9", video=video)
+            cover_generation["cover_used_for_upload"] = str(cover)
+            cover_generation["ai_cover_16x9_path"] = str(cover)
+            if cover_generation.get("ai_cover_generated") or cover_generation.get("ai_cover_path"):
+                cover_generation["ai_cover_path"] = str(cover)
+        store.stage(key, "cover_16x9", cover16_status, cover_generation)
 
         # The homepage 4:3 cover is a second, independent model request. It is
         # optional for upload and is never synthesized from the 16:9 image.
-        if cover43 is None and session_cover:
-            session_cover43 = str(multipart.get("cover43_path") or "").strip()
-            if session_cover43 and Path(session_cover43).is_file():
-                cover43 = Path(session_cover43)
-        if cover43 is None and retry_cover43_path:
+        current_stage = "cover_4x3"
+        cover43_generation: dict[str, Any] = {}
+        if manual_cover43_path and Path(manual_cover43_path).is_file():
+            cover43 = Path(manual_cover43_path)
+            cover43_status = "completed"
+            cover43_generation = {
+                "manual_review_cover43": True,
+                "ai_cover_4x3_path": str(cover43),
+                "cover43_used_for_upload": str(cover43),
+            }
+        elif session_cover43 and Path(session_cover43).is_file():
+            cover43 = Path(session_cover43)
+            cover43_status = "completed"
+            cover43_generation = {
+                "ai_cover_4x3_reused": True,
+                "ai_cover_4x3_path": str(cover43),
+                "cover43_used_for_upload": str(cover43),
+            }
+        elif retry_cover43_path:
             cover43 = Path(retry_cover43_path)
-        if (
-            cover43 is None
-            and not dry_run
-            and not existing_submission
-            and not manual_cover43_path
-        ):
+            cover43_status = "completed"
+            cover43_generation = dict(prior_cover43_details)
+            cover43_generation.update({
+                "ai_cover_4x3_reused": True,
+                "reused_on_retry": True,
+                "ai_cover_4x3_path": str(cover43),
+                "cover43_used_for_upload": str(cover43),
+            })
+        elif not dry_run and not existing_submission:
+            store.stage(key, "cover_4x3", "running", {
+                "title": title,
+                "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+            })
             try:
                 generated_cover43, cover43_details = generate_recording_cover_with_ai(
                     title=title,
@@ -2255,31 +2454,50 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     work_dir=work_dir,
                     target_size=(1600, 1200),
                     output_path=work_dir / "ai_cover_4x3.jpg",
+                    recording_dir=video.parent,
                 )
                 if generated_cover43:
                     cover43 = generated_cover43
-                cover_generation.update({
+                cover43_generation.update({
                     f"ai_cover_4x3_{key_name.removeprefix('ai_cover_')}": value
                     for key_name, value in cover43_details.items()
                 })
+                cover43_status = (
+                    "completed"
+                    if cover43_generation.get("ai_cover_4x3_generated")
+                    else "skipped"
+                )
             except Exception as exc:
-                cover_generation.update({
+                cover43_generation.update({
                     "ai_cover_4x3_generated": False,
                     "ai_cover_4x3_error": str(exc),
+                    "reason": "4:3 首页推荐封面生成失败，但不阻断投稿",
+                    "outcome": "failed_non_blocking",
                 })
+                cover43_status = "warning"
                 print(f"WARN AI 4:3 首页推荐封面生成失败（不影响 16:9 投稿）: {exc}", file=sys.stderr)
+        else:
+            cover43_status = "skipped"
+            cover43_generation = {
+                "reason": "试运行" if dry_run else "后续分P沿用当前稿件封面",
+                "outcome": "skipped",
+            }
 
-        if not dry_run:
-            cover = persist_pipeline_cover(store, key, cover, "16x9")
-            cover_generation["cover_used_for_upload"] = str(cover)
-            cover_generation["ai_cover_16x9_path"] = str(cover)
-            if cover_generation.get("ai_cover_generated") or cover_generation.get("ai_cover_path"):
-                cover_generation["ai_cover_path"] = str(cover)
-            if cover43 is not None and cover43.is_file():
-                cover43 = persist_pipeline_cover(store, key, cover43, "4x3")
-                cover_generation["ai_cover_4x3_path"] = str(cover43)
-                cover_generation["cover43_used_for_upload"] = str(cover43)
-            store.stage(key, "cover", cover_stage_status, cover_generation)
+        if not dry_run and cover43 is not None and cover43.is_file():
+            try:
+                cover43 = persist_pipeline_cover(store, key, cover43, "4x3", video=video)
+                cover43_generation["ai_cover_4x3_path"] = str(cover43)
+                cover43_generation["cover43_used_for_upload"] = str(cover43)
+            except Exception as exc:
+                cover43 = None
+                cover43_status = "warning"
+                cover43_generation.update({
+                    "ai_cover_4x3_error": str(exc),
+                    "reason": "4:3 首页推荐封面保存失败，但不阻断投稿",
+                    "outcome": "failed_non_blocking",
+                })
+        store.stage(key, "cover_4x3", cover43_status, cover43_generation)
+        cover_generation.update(cover43_generation)
 
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
@@ -2568,6 +2786,7 @@ def generate_record_only_cover(video: Path, base_cfg: dict[str, Any]) -> Path:
         work_dir=video.parent / ".potato-cover-artifacts",
         target_size=(width, height),
         output_path=cover,
+        recording_dir=video.parent,
     )
     if not generated or not details.get("ai_cover_generated"):
         raise RuntimeError("录播 AI 封面未启用或图片模型没有生成封面")

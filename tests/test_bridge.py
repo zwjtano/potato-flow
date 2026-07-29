@@ -473,11 +473,41 @@ class BridgeTests(unittest.TestCase):
             stages = {row["stage"]: row for row in rows}
             self.assertEqual(
                 set(stages),
-                {"detect", "record", "ass", "ai", "cover", "upload", "cleanup"},
+                {
+                    "detect", "record", "ass", "ai", "xml_identity", "live_stats",
+                    "cover_16x9", "cover_4x3", "upload", "cleanup",
+                },
             )
             self.assertEqual(stages["record"]["status"], "completed")
             self.assertEqual(stages["ass"]["status"], "completed")
             self.assertEqual(json.loads(stages["ass"]["details_json"])["danmaku_count"], 12)
+
+    def test_recording_upload_exposes_independent_stats_and_cover_stages(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.mp4"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "douyu_stats_enabled": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+
+            with patch.object(bridge, "find_cover", return_value=cover):
+                self.assertTrue(bridge.upload_one(video, cfg, store, dry_run=True))
+
+            key = bridge.fingerprint(video)
+            self.assertEqual(store.stage_state(key, "xml_identity")["status"], "skipped")
+            self.assertEqual(store.stage_state(key, "live_stats")["status"], "skipped")
+            self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "skipped")
+            self.assertEqual(store.stage_state(key, "cover_4x3")["status"], "skipped")
 
     def test_retry_preserves_uploaded_bvid(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -577,7 +607,7 @@ class BridgeTests(unittest.TestCase):
                 "final_tags": ["直播", "DOTA2"],
                 "selected_partition_id": "129",
             })
-            store.stage(key, "cover", "completed", {
+            store.stage(key, "cover_16x9", "completed", {
                 "ai_cover_generated": True,
                 "ai_cover_path": str(persisted_cover),
                 "cover_used_for_upload": str(persisted_cover),
@@ -629,7 +659,8 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(uploads[0]["partition_id"], "129")
             self.assertEqual(Path(uploads[0]["cover_file_path"]).read_bytes(), b"saved-cover")
             self.assertTrue(store.stage_state(key, "ai")["details"]["reused_on_retry"])
-            self.assertTrue(store.stage_state(key, "cover")["details"]["reused_on_retry"])
+            self.assertTrue(store.stage_state(key, "cover_16x9")["details"]["reused_on_retry"])
+            self.assertEqual(store.stage_state(key, "cover_4x3")["status"], "warning")
 
     def test_retry_detaches_unsubmitted_first_part_from_stale_session(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -857,7 +888,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(session["partition_id"], "129")
             self.assertTrue(session["metadata_automation"]["cover_for_partition_ai"])
             session_cover = Path(session["cover_path"])
-            self.assertEqual(session_cover.parent.name, "task-covers")
+            self.assertEqual(session_cover.parent, root.resolve())
             self.assertEqual(session_cover.read_bytes(), cover.read_bytes())
             self.assertEqual(
                 [part["title_topic"] for part in session["parts"]],
@@ -1638,8 +1669,8 @@ class BridgeTests(unittest.TestCase):
                         (key,),
                     )
                 }
-            self.assertEqual(stages["cover"]["status"], "failed")
-            self.assertIn("broken frames", stages["cover"]["error"])
+            self.assertEqual(stages["cover_16x9"]["status"], "failed")
+            self.assertIn("broken frames", stages["cover_16x9"]["error"])
             self.assertEqual(stages["ass"]["status"], "pending")
 
 

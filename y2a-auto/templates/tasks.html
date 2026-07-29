@@ -1022,6 +1022,7 @@ html[data-theme="dark"] .recording-task-card .recording-progress-trigger:focus-v
 .recording-detail-stage.queued .recording-detail-stage-icon { color: #7a4b00; background: #fff0c2; }
 .recording-detail-stage.paused .recording-detail-stage-icon { color: #fff; background: #6c757d; }
 .recording-detail-stage.failed .recording-detail-stage-icon { color: #fff; background: #dc3545; }
+.recording-detail-stage.warning .recording-detail-stage-icon { color: #7a4b00; background: #ffd66b; }
 .recording-detail-stage.skipped .recording-detail-stage-icon { color: #8fa1b4; background: #e7edf4; }
 .recording-detail-stage-title strong, .recording-detail-stage-title small { display: block; }
 .recording-detail-stage-title small { margin-top: .15rem; color: #8a94a6; }
@@ -1033,6 +1034,7 @@ html[data-theme="dark"] .recording-task-card .recording-progress-trigger:focus-v
 .recording-detail-stage-status.queued { color: #7a4b00; background: #fff0c2; }
 .recording-detail-stage-status.paused { color: #536070; background: #e9edf1; }
 .recording-detail-stage-status.failed { color: #b42335; background: #fde8eb; }
+.recording-detail-stage-status.warning { color: #7a4b00; background: #fff0c2; }
 .recording-detail-stage-status.skipped { color: #667487; background: #e8eef4; }
 .recording-detail-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .8rem; margin: 0 0 .75rem; padding: .7rem .9rem; color: #687487; border: 1px solid #e3e8ef; border-radius: 10px; background: #f8fafc; font-size: .75rem; }
 .recording-detail-legend strong { color: #445166; }
@@ -1113,6 +1115,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage-status.
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage-status.running { color: #7cbcff; background: #163a5f; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage-status.queued { color: #ffd77a; background: #473817; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage-status.failed { color: #ffadb7; background: #4b2028; }
+html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage-status.warning { color: #ffd77a; background: #473817; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage-status.skipped { color: #a9bad0; background: #293848; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-legend {
     color: var(--studio-muted);
@@ -1292,11 +1295,15 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     }
 
     const recordingStageMeta = {
-        detect: {name: '发现录播任务', description: '确认录制结束并创建处理任务', icon: 'bi-broadcast-pin'},
-        record: {name: '确认录制文件完整', description: '等待 FLV 与弹幕 XML 写入完成，避免处理中读取半成品', icon: 'bi-record-circle'},
+        detect: {name: '监控开播', description: '监控直播间并在录制结束后创建处理任务', icon: 'bi-broadcast-pin'},
+        record: {name: '自动录制', description: '安全收尾视频与弹幕 XML，避免读取半成品', icon: 'bi-record-circle'},
         ass: {name: '处理弹幕字幕', description: '读取弹幕 XML，并按配置生成 ASS 字幕', icon: 'bi-badge-cc'},
-        ai: {name: '生成投稿信息', description: '生成标题、简介、标签和投稿分区', icon: 'bi-stars'},
-        cover: {name: '生成投稿封面', description: '分别准备个人空间 16:9 与首页推荐 4:3 封面', icon: 'bi-image'},
+        ai: {name: 'AI 简介与投稿信息', description: '生成标题、简介、标签和投稿分区', icon: 'bi-stars'},
+        xml_identity: {name: 'XML 主播识别', description: '用本次录播弹幕识别主播英雄，不按固定位置猜测', icon: 'bi-person-check'},
+        live_stats: {name: '直播数据整理', description: '按本次录播时间整理礼物、在线人数与对局数据', icon: 'bi-bar-chart-line'},
+        cover: {name: '生成录制文件封面', description: '为仅录制文件生成内嵌封面', icon: 'bi-image'},
+        cover_16x9: {name: '16:9 个人空间封面', description: '独立生成并保存 B站个人空间封面', icon: 'bi-aspect-ratio'},
+        cover_4x3: {name: '4:3 首页推荐封面', description: '独立生成 B站首页推荐封面，失败不阻断投稿', icon: 'bi-grid'},
         remux: {name: '无损封装 MP4', description: '使用 -c copy 转封装，不重新编码视频', icon: 'bi-file-earmark-play'},
         verify: {name: '检查 MP4 内嵌封面', description: '确认生成的 MP4 包含可识别的封面流', icon: 'bi-patch-check'},
         cleanup: {name: '清理录播源文件', description: '仅在投稿成功进入终态后删除原始 FLV/XML 和临时文件', icon: 'bi-trash3'},
@@ -1310,6 +1317,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         completed: '已完成',
         failed: '失败',
         skipped: '已跳过',
+        warning: '失败但不阻断',
     };
     const recordingJobStatusNames = {
         processing: '处理中',
@@ -1329,6 +1337,11 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         burn_in: '烧录字幕',
         tag_generation_enabled: 'AI 标签生成',
         comment_count: '分析弹幕',
+        streamer_hero: '识别到的主播英雄',
+        streamer_items: '主播真实装备',
+        xml_mention_score: 'XML 唯一命中次数',
+        stats_appended: '已追加直播数据',
+        outcome: '处理结果',
         title_topic: 'AI 核心主题',
         title: '投稿标题',
         description: '投稿简介',
@@ -1392,7 +1405,11 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     const recordingStageSkipReasons = {
         ass: '没有找到可用的弹幕 XML、弹幕为空，或当前直播间未启用弹幕处理。',
         ai: '当前任务没有启用可用的 AI 投稿信息功能，已采用模板与固定配置。',
+        xml_identity: '斗鱼统计或 XML 主播识别已关闭，或本次 XML 没有形成唯一可靠的主播英雄证据。',
+        live_stats: '斗鱼统计或简介追加已关闭，或本次录播时间内没有匹配数据。',
         cover: 'AI 封面未启用、生成失败后使用视频截图，或该分P沿用已有稿件封面。',
+        cover_16x9: 'AI 封面未启用、生成失败后使用视频截图，或该分P沿用已有封面。',
+        cover_4x3: 'AI 封面未启用、该分P沿用已有封面，或没有可用的 4:3 封面。',
         remux: '当前任务无需转封装 MP4。',
         verify: '没有需要检查的 MP4 内嵌封面。',
         upload: '当前为试运行或仅录制任务，不执行 B站投稿。',
@@ -1450,44 +1467,28 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     }
 
     function renderRecordingCoverDetail(job, stage, details) {
+        const is43 = stage.key === 'cover_4x3';
         const version = encodeURIComponent(stage.updated_at || '');
         const jobId = encodeURIComponent(job.id);
-        const headline = details.ai_cover_headline || details.ai_cover_4x3_headline || '未提供封面主题';
-        const model16 = details.ai_cover_model || '—';
-        const model43 = details.ai_cover_4x3_model || model16;
-        const available16 = Boolean(details.ai_cover_16x9_path || details.ai_cover_path || details.cover_used_for_upload);
-        const available43 = Boolean(details.ai_cover_4x3_path || details.cover43_used_for_upload);
-        const status16 = details.ai_cover_generated
-            ? 'AI 已生成'
-            : details.manual_review_cover
-                ? '人工选择'
-                : details.ai_cover_reused
-                    ? '沿用已有'
-                    : available16
-                        ? '视频截图'
-                        : '未准备';
-        const status43 = details.ai_cover_4x3_generated
-            ? 'AI 已生成'
-            : details.manual_review_cover43
-                ? '人工选择'
-                : details.ai_cover_4x3_reused
-                    ? '沿用已有'
-                    : available43
-                        ? '已准备'
-                        : '未准备';
-        const size16 = details.ai_cover_width && details.ai_cover_height
-            ? `${details.ai_cover_width} × ${details.ai_cover_height}`
-            : '1920 × 1080';
-        const size43 = details.ai_cover_4x3_width && details.ai_cover_4x3_height
-            ? `${details.ai_cover_4x3_width} × ${details.ai_cover_4x3_height}`
-            : '1600 × 1200';
+        const headline = (is43 ? details.ai_cover_4x3_headline : details.ai_cover_headline) || '未提供封面主题';
+        const available = Boolean(is43
+            ? (details.ai_cover_4x3_path || details.cover43_used_for_upload)
+            : (details.ai_cover_16x9_path || details.ai_cover_path || details.cover_used_for_upload));
+        const generated = Boolean(is43 ? details.ai_cover_4x3_generated : details.ai_cover_generated);
+        const manual = Boolean(is43 ? details.manual_review_cover43 : details.manual_review_cover);
+        const reused = Boolean(is43 ? details.ai_cover_4x3_reused : details.ai_cover_reused);
+        const statusText = generated ? 'AI 已生成' : manual ? '人工选择' : reused ? '沿用已有'
+            : available ? (is43 ? '已准备' : '视频截图') : '未准备';
+        const width = is43 ? details.ai_cover_4x3_width : details.ai_cover_width;
+        const height = is43 ? details.ai_cover_4x3_height : details.ai_cover_height;
+        const size = width && height ? `${width} × ${height}` : (is43 ? '1600 × 1200' : '1920 × 1080');
+        const model = (is43 ? details.ai_cover_4x3_model : details.ai_cover_model) || '—';
         const referenceErrors = [...new Set([
-            details.ai_cover_avatar_reference_error,
-            details.ai_cover_4x3_avatar_reference_error,
+            is43 ? details.ai_cover_4x3_avatar_reference_error : details.ai_cover_avatar_reference_error,
         ].filter(Boolean))];
-        const generationSummary = details.ai_cover_generated && details.ai_cover_4x3_generated
-            ? '两种比例分别调用图片模型生成，不是裁切同一张图'
-            : '分别展示个人空间与首页推荐封面的实际来源和投稿状态';
+        const generationSummary = is43
+            ? '独立的 4:3 图片模型请求；失败不会阻断 16:9 封面或投稿'
+            : '独立的 16:9 图片模型请求，用于 B站个人空间封面';
         const referenceWarning = referenceErrors.length ? `
             <div class="recording-cover-warning">
                 <i class="bi bi-exclamation-triangle"></i>
@@ -1511,8 +1512,17 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             <div class="recording-cover-summary">
                 <div class="recording-cover-heading"><strong>封面主题：${escapeRecordingDetail(headline)}</strong><span>${escapeRecordingDetail(generationSummary)}</span></div>
                 <div class="recording-cover-grid">
-                    ${card({variant:'16x9', ratio:'16 / 9', title:'个人空间封面', field:'投稿字段 cover', available:available16, statusText:status16, size:size16, requested:details.ai_cover_requested_size, model:model16})}
-                    ${card({variant:'4x3', ratio:'4 / 3', title:'首页推荐封面', field:'投稿字段 cover43', available:available43, statusText:status43, size:size43, requested:details.ai_cover_4x3_requested_size, model:model43})}
+                    ${card({
+                        variant: is43 ? '4x3' : '16x9',
+                        ratio: is43 ? '4 / 3' : '16 / 9',
+                        title: is43 ? '首页推荐封面' : '个人空间封面',
+                        field: is43 ? '投稿字段 cover43' : '投稿字段 cover',
+                        available,
+                        statusText,
+                        size,
+                        requested: is43 ? details.ai_cover_4x3_requested_size : details.ai_cover_requested_size,
+                        model,
+                    })}
                 </div>
                 ${referenceWarning}
                 <details class="recording-cover-technical">
@@ -1546,14 +1556,17 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                 ? formatRecordingUploadProgress(details.upload_progress)
                 : '';
             const fields = renderRecordingDetailFields(details);
-            const stageContent = key === 'cover'
+            const stageContent = key === 'cover_16x9' || key === 'cover_4x3'
                 ? renderRecordingCoverDetail(job, stage, details)
                 : (fields ? `<dl class="recording-detail-fields">${fields}</dl>` : '<span class="text-muted small">当前步骤暂无更多产物信息。</span>');
             const timing = [
                 stage.started_at ? `开始 ${formatRecordingDetailDate(stage.started_at)}` : '',
                 stage.finished_at ? `完成 ${formatRecordingDetailDate(stage.finished_at)}` : '',
             ].filter(Boolean).join(' · ') || `更新 ${formatRecordingDetailDate(stage.updated_at)}`;
-            const open = status === 'running' || status === 'queued' || status === 'failed';
+            const open = status === 'running' || status === 'queued' || status === 'failed' || status === 'warning';
+            const statusName = details.outcome === 'no_data'
+                ? '无匹配数据'
+                : (recordingStageStatusNames[status] || status);
             return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" ${open ? 'open' : ''}>
                 <summary>
                     <span class="recording-detail-stage-icon"><i class="bi ${escapeRecordingDetail(meta.icon)}"></i></span>
@@ -1562,7 +1575,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                         <small class="recording-detail-stage-description">${escapeRecordingDetail(meta.description || '')}</small>
                         <small class="recording-detail-stage-timing">${escapeRecordingDetail(timing)}</small>
                     </span>
-                    <span class="recording-detail-stage-status ${escapeRecordingDetail(status)}">${escapeRecordingDetail(recordingStageStatusNames[status] || status)}</span>
+                    <span class="recording-detail-stage-status ${escapeRecordingDetail(status)}">${escapeRecordingDetail(statusName)}</span>
                 </summary>
                 <div class="recording-detail-stage-body">
                     ${stage.error ? `<div class="recording-detail-error">${escapeRecordingDetail(stage.error)}</div>` : ''}

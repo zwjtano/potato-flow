@@ -177,6 +177,27 @@
                                                         AI 生成录播封面
                                                     </label>
                                                 </div>
+                                                <hr class="my-3">
+                                                <div class="settings-field mb-2">
+                                                    <div>
+                                                        <strong>斗鱼直播数据</strong>
+                                                        <p class="help-text mb-0">按单次录播 XML 的绝对时间整理礼物、在线人数与 DOTA2 对局数据；关闭总开关后后台停止采集。</p>
+                                                    </div>
+                                                </div>
+                                                <div class="settings-inline-options">
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="DOUYU_STATS_ENABLED" {% if config.get('DOUYU_STATS_ENABLED', True) %}checked{% endif %}>
+                                                        启用斗鱼直播数据统计
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="DOUYU_STATS_APPEND_DESCRIPTION" {% if config.get('DOUYU_STATS_APPEND_DESCRIPTION', True) %}checked{% endif %}>
+                                                        将匹配数据追加到投稿简介
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="DOUYU_STATS_COVER_CONTEXT_ENABLED" {% if config.get('DOUYU_STATS_COVER_CONTEXT_ENABLED', True) %}checked{% endif %}>
+                                                        用 XML 识别主播英雄与真实装备供封面参考
+                                                    </label>
+                                                </div>
                                             </div>
                                         </article>
                                     </div>

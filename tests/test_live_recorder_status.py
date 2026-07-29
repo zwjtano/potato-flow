@@ -422,6 +422,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
+                    mock.patch.object(recorder_module, "RECORDER_RUNTIME_DIR", root / "run" / "engine"), \
                     mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs([room])
@@ -429,10 +430,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
             content = config_path.read_text(encoding="utf-8")
             self.assertIn("file_size: null", content)
             self.assertIn('segment_time: "01:00:00"', content)
-            self.assertIn('filename_prefix: "{streamer}_{title}_%Y-%m-%d_%H-%M"', content)
+            recordings_root = root / "recordings"
             self.assertIn(
-                'filename_prefix: "开播主播/开播主播_{title}_{live_start}/'
-                '开播主播_{title}_%Y-%m-%d_%H-%M"',
+                f'filename_prefix: "{recordings_root}/{{streamer}}_{{title}}_%Y-%m-%d_%H-%M"',
+                content,
+            )
+            self.assertIn(
+                f'filename_prefix: "{recordings_root}/开播主播/'
+                '开播主播_{title}_{live_start}/开播主播_{title}_%Y-%m-%d_%H-%M"',
                 content,
             )
             self.assertNotIn("aaaaaa", content.split("filename_prefix:", 2)[-1].splitlines()[0])
