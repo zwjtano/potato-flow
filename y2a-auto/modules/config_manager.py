@@ -29,7 +29,10 @@ DEFAULT_CONFIG = {
     "YOUTUBE_UPLOADER_AS_FIRST_TAG": False,
     "RECOMMEND_PARTITION": False,
     "RECOMMEND_PARTITION_WITH_COVER": False,
-    "AI_GENERATE_RECORDING_COVER": False,
+    "AI_GENERATE_RECORDING_COVER": True,
+    "DOUYU_STATS_ENABLED": True,
+    "DOUYU_STATS_APPEND_DESCRIPTION": True,
+    "DOUYU_STATS_COVER_CONTEXT_ENABLED": True,
     "CONTENT_MODERATION_ENABLED": False,
     "LOG_CLEANUP_ENABLED": True, # 是否启用日志自动清理
     "LOG_CLEANUP_HOURS": 72, # 保留最近多少小时的日志
@@ -108,7 +111,8 @@ DEFAULT_CONFIG = {
     # 双封面生成分别使用的 Images API 原生尺寸；留空时回退到 OPENAI_IMAGE_SIZE。
     "OPENAI_IMAGE_SIZE_16X9": "1536x1024",
     # 4:3 使用独立请求与构图提示，生成后再单独处理为投稿尺寸。
-    "OPENAI_IMAGE_SIZE_4X3": "1024x1024",
+    # Official Images API sizes are square or 3:2; final output is cropped to 4:3.
+    "OPENAI_IMAGE_SIZE_4X3": "1536x1024",
     "MIN_RECORDING_UPLOAD_DURATION_SECONDS": 60,
     "OPENAI_THINKING_ENABLED": False,
     "OPENAI_TIMEOUT_SECONDS": 600,  # OpenAI API 请求超时秒数；思考模型输出可达64k token，建议不低于300
