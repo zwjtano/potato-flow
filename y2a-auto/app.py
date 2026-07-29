@@ -1434,8 +1434,9 @@ def live_recording_job_review(fingerprint):
             regenerate_fields = {
                 'regenerate_title': {'title'},
                 'regenerate_description': {'description'},
+                'regenerate_tags': {'tags'},
                 'regenerate_cover': {'cover'},
-                'regenerate_all': {'title', 'description', 'cover'},
+                'regenerate_all': {'title', 'description', 'tags', 'cover'},
             }
             if action in regenerate_fields:
                 live_recorder_manager.regenerate_published_metadata(
@@ -1445,17 +1446,18 @@ def live_recording_job_review(fingerprint):
                 field_names = {
                     'title': '标题',
                     'description': '简介',
+                    'tags': '标签',
                     'cover': '封面',
                 }
                 selected_names = '、'.join(
-                    field_names[field] for field in ('title', 'description', 'cover')
+                    field_names[field] for field in ('title', 'description', 'tags', 'cover')
                     if field in regenerate_fields[action]
                 )
                 flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action == 'apply_to_bilibili':
                 live_recorder_manager.update_published_metadata(fingerprint)
-                flash('标题、简介和两种封面已同步到 B站，视频与分P未改动。', 'success')
+                flash('标题、简介、标签、分区和两种封面已同步到 B站，视频与分P未改动。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action == 'save_and_retry':
                 live_recorder_manager.retry_pipeline_job(fingerprint)

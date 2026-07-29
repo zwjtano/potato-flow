@@ -125,6 +125,163 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(diagnostics["last_raw_player_count"], 10)
         self.assertEqual(diagnostics["last_source"], "http")
 
+    def test_final_snapshot_keeps_only_six_main_inventory_slots(self):
+        daemon.dota_hero_map = {str(index): f"英雄{index}" for index in range(1, 11)}
+        daemon.dota_item_map = {str(index): f"装备{index}" for index in range(1, 20)}
+        monitor = daemon.RoomMonitor("74960", "主播", {})
+
+        def snapshot(item_start):
+            return {
+                "top": [
+                    {
+                        "id": index,
+                        "items": list(range(item_start, item_start + 8)) if index == 1 else [],
+                    }
+                    for index in range(1, 11)
+                ],
+            }
+
+        for _ in range(daemon.STABLE_SNAPSHOT_COUNT):
+            monitor.handle_dota2_snapshot(snapshot(1), "http")
+        monitor.handle_dota2_snapshot(snapshot(9), "type_tooltips")
+
+        active = monitor.state["active_game"]
+        self.assertEqual(
+            active["players"][0]["items"],
+            ["装备9", "装备10", "装备11", "装备12", "装备13", "装备14"],
+        )
+
+    def test_gsi_streamer_hero_is_authoritative_and_captures_kda(self):
+        daemon.dota_hero_map = {str(index): f"英雄{index}" for index in range(1, 11)}
+        daemon.dota_item_map = {str(index): f"装备{index}" for index in range(1, 10)}
+        monitor = daemon.RoomMonitor("74960", "主播", {})
+        payload = {
+            "top": [{"id": index, "items": []} for index in range(1, 11)],
+            "hero": {
+                "id": 7,
+                "items": list(range(1, 9)),
+                "kills": 12,
+                "deaths": 3,
+                "assists": 9,
+            },
+        }
+        for _ in range(daemon.STABLE_SNAPSHOT_COUNT):
+            monitor.handle_dota2_snapshot(payload, "http")
+
+        game = monitor.state["active_game"]
+        self.assertEqual(game["anchor_player"]["hero"], "英雄7")
+        self.assertEqual(game["anchor_player"]["items"], [f"装备{i}" for i in range(1, 7)])
+        self.assertEqual(game["anchor_player"]["kda"], 7.0)
+        self.assertEqual(len(game["anchor_history"]), 1)
+
+    def test_item_mapping_accepts_current_douyu_internal_keys(self):
+        daemon.dota_hero_map = {"7": "英雄7"}
+        daemon.dota_item_map = {
+            "item_phase_boots": "相位鞋",
+            "50": "相位鞋",
+            "item_urn_of_shadows": "影之灵龛",
+        }
+        parsed = daemon.RoomMonitor._player_from_raw({
+            "id": 7,
+            "items": ["item_phase_boots", "item_urn_of_shadows"],
+            "neutral": "50",
+        })
+        self.assertEqual(parsed["items"], ["相位鞋", "影之灵龛"])
+        self.assertEqual(parsed["neutral"], "相位鞋")
+
+        daemon.dota_item_map = {"item_poor_mans_shield": "item_poor_mans_shield"}
+        parsed = daemon.RoomMonitor._player_from_raw({
+            "id": 7,
+            "items": ["item_consecrated_wraps"],
+            "neutral": "item_poor_mans_shield",
+        })
+        self.assertEqual(parsed["items"], ["Consecrated Wraps"])
+        self.assertEqual(parsed["neutral"], "Poor Mans Shield")
+
+    def test_gsi_hero_not_in_lineup_is_rejected(self):
+        daemon.dota_hero_map = {str(index): f"英雄{index}" for index in range(1, 12)}
+        monitor = daemon.RoomMonitor("74960", "主播", {})
+        payload = {
+            "top": [{"id": index, "items": []} for index in range(1, 11)],
+            "hero": {"id": 11, "items": []},
+        }
+        for _ in range(daemon.STABLE_SNAPSHOT_COUNT):
+            monitor.handle_dota2_snapshot(payload, "http")
+        self.assertNotIn("anchor_player", monitor.state["active_game"])
+
+    def test_formatter_uses_last_gsi_snapshot_inside_recording(self):
+        game = {
+            "start_unix_ts": 80,
+            "last_seen_unix_ts": 250,
+            "players": [player(11, "影魔"), player(22, "宙斯")],
+            "anchor_history": [
+                {
+                    "start_unix_ts": 90,
+                    "last_seen_unix_ts": 180,
+                    "source": "http",
+                    "player": player(11, "影魔", ["黑皇杖"]),
+                },
+                {
+                    "start_unix_ts": 220,
+                    "last_seen_unix_ts": 250,
+                    "source": "http",
+                    "player": player(22, "宙斯", ["刷新球"]),
+                },
+            ],
+        }
+        anchor = formatter.select_streamer_player(game, [], 100, 200)
+        self.assertEqual(anchor["hero"], "影魔")
+        self.assertEqual(anchor["equipment_snapshot_unix_ts"], 180)
+        self.assertEqual(anchor["identity_source"], "gsi_hero:http")
+
+    def test_formatter_appends_kda_only_when_source_provides_it(self):
+        anchor = player(11, "影魔", ["黑皇杖"])
+        anchor.update({"kills": 12, "deaths": 3, "assists": 9, "kda": 7.0})
+        stats = {"games": [{
+            "start_unix_ts": 100,
+            "end_unix_ts": 200,
+            "anchor_history": [{
+                "start_unix_ts": 100,
+                "last_seen_unix_ts": 200,
+                "source": "http",
+                "player": anchor,
+            }],
+        }]}
+        text = formatter.format_stats(stats, 100, 200, [])
+        self.assertIn("K/D/A 12/3/9 KDA 7.0", text)
+
+        del anchor["kills"], anchor["deaths"], anchor["assists"], anchor["kda"]
+        text = formatter.format_stats(stats, 100, 200, [])
+        self.assertNotIn("K/D/A", text)
+
+    def test_cover_identity_returns_final_equipment_snapshot_time(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session = root / "主播_直播_1970-01-01_00-01"
+            session.mkdir()
+            (session / "recording.xml").write_text(
+                """<?xml version="1.0"?><i>
+                <d p="1,1,25,1,100,0,1,0">影魔六神了</d>
+                <d p="2,1,25,1,150,0,2,0">影魔装备成型</d>
+                </i>""",
+                encoding="utf-8",
+            )
+            metadata = root / ".potato-flow"
+            metadata.mkdir()
+            (metadata / "douyu-stats.json").write_text(
+                json.dumps({"active_game": {
+                    "start_unix_ts": 90,
+                    "last_seen_unix_ts": 160,
+                    "players": [player(11, "影魔", [f"装备{i}" for i in range(1, 9)])],
+                }}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            anchor = formatter.get_game_for_cover(session)
+
+            self.assertEqual(anchor["items"], [f"装备{i}" for i in range(1, 7)])
+            self.assertEqual(anchor["equipment_snapshot_unix_ts"], 160)
+
     def test_formatter_uses_xml_timeframe_and_xml_hero_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -171,7 +328,7 @@ class DouyuStatsTests(unittest.TestCase):
             self.assertNotIn("火箭", text)
             self.assertIn("高能弹幕 ×1 | 300元", text)
             self.assertIn("在线 1000~1500", text)
-            self.assertIn("影魔(黑皇杖)", text)
+            self.assertIn("影魔 最终六格(黑皇杖)", text)
 
             anchor = formatter.get_game_for_cover(session)
             self.assertEqual(anchor["hero"], "影魔")

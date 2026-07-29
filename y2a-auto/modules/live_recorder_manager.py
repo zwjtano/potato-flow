@@ -71,7 +71,7 @@ RECORDING_STAGE_LABELS = {
     "record": "自动录制",
     "ass": "生成 ASS",
     "ai": "生成 AI 简介",
-    "xml_identity": "XML 主播识别",
+    "xml_identity": "主播英雄识别",
     "live_stats": "直播数据整理",
     "cover": "生成录制文件封面",
     "cover_16x9": "生成 16:9 个人空间封面",
@@ -3122,7 +3122,7 @@ class LiveRecorderManager:
         fields: set[str],
     ) -> dict[str, Any]:
         """Generate a preview for an already-uploaded recording archive."""
-        allowed_fields = {"title", "description", "cover"}
+        allowed_fields = {"title", "description", "tags", "cover"}
         selected = {str(field).strip().lower() for field in fields} & allowed_fields
         if not selected:
             raise RecorderConfigError("请选择要重新生成的标题、简介或封面")
@@ -3138,13 +3138,14 @@ class LiveRecorderManager:
             import bridge
             from .ai_enhancer import (
                 _request_json_object,
+                generate_video_tags,
                 get_openai_client,
             )
             from .config_manager import load_config
 
             app_config = load_config()
-            if selected & {"title", "description"} and not app_config.get("OPENAI_API_KEY"):
-                raise RecorderConfigError("未配置全局 AI API Key，无法重新生成标题或简介")
+            if selected & {"title", "description", "tags"} and not app_config.get("OPENAI_API_KEY"):
+                raise RecorderConfigError("未配置全局 AI API Key，无法重新生成标题、简介或标签")
             if (
                 "cover" in selected
                 and not (
@@ -3232,6 +3233,21 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     raise RecorderConfigError("AI 没有返回可用的简介")
                 description = generated_description
 
+            tags = list(job.get("tags") or [])
+            if "tags" in selected:
+                tags = [
+                    str(tag).strip()
+                    for tag in generate_video_tags(
+                        title,
+                        description,
+                        openai_config=app_config,
+                        task_id=None,
+                    )
+                    if str(tag).strip()
+                ][:6]
+                if not tags:
+                    raise RecorderConfigError("AI 没有返回可用的视频标签")
+
             previous = job.get("review_override")
             previous = previous if isinstance(previous, dict) else {}
             cover_path = str(previous.get("cover_path") or "").strip()
@@ -3254,6 +3270,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                                 streamer=str(job.get("room_name") or values.get("streamer") or ""),
                                 cfg=bridge_config,
                                 work_dir=artifact_dir,
+                                recording_dir=video_path.parent,
                                 target_size=target_size,
                                 output_path=output_path,
                             )
@@ -3279,7 +3296,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 **previous,
                 "title": title,
                 "description": description,
-                "tags": list(job.get("tags") or []),
+                "tags": tags,
                 "partition_id": str(job.get("partition_id") or ""),
                 "cover_path": cover_path or None,
                 "cover43_path": cover43_path or None,
@@ -3319,7 +3336,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 sys.path.insert(0, str(APP_ROOT))
             from .bilibili_uploader import BilibiliUploader
 
-            from .bilibili_accounts import resolve_account
+            from .bilibili_accounts import resolve_account, resolve_cookie_path
             from .config_manager import load_config
 
             account = resolve_account(
@@ -3327,15 +3344,23 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 (job.get("result") or {}).get("bilibili_account_id")
                 or job.get("bilibili_account_id"),
             )
-            cookie_file = _workspace_runtime_path(
-                account.get("cookies_path"),
-                "y2a-auto/cookies/bili_cookies.json",
+            cookie_file = str(resolve_cookie_path(account.get("cookies_path")))
+            reviewed_tags = review.get("tags")
+            tags = (
+                [str(tag).strip() for tag in reviewed_tags if str(tag).strip()][:6]
+                if isinstance(reviewed_tags, list)
+                else list(job.get("tags") or [])[:6]
             )
+            partition_id = str(
+                review.get("partition_id") or job.get("partition_id") or ""
+            ).strip()
             uploader = BilibiliUploader(cookie_file=cookie_file)
             ok, updated_result = uploader.update_uploaded_metadata(
                 result=bilibili_result,
                 title=title,
                 description=description,
+                tags=tags,
+                partition_id=partition_id,
                 cover_file_path=cover_path if cover_path and Path(cover_path).is_file() else "",
                 cover43_file_path=(
                     cover43_path if cover43_path and Path(cover43_path).is_file() else ""
@@ -3357,8 +3382,8 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 **review,
                 "title": title,
                 "description": description,
-                "tags": list(job.get("tags") or []),
-                "partition_id": str(job.get("partition_id") or ""),
+                "tags": tags,
+                "partition_id": partition_id,
                 "cover_path": cover_path or None,
                 "cover43_path": cover43_path or None,
                 "pending_published_update": False,

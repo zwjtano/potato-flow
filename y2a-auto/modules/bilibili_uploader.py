@@ -385,6 +385,8 @@ class BilibiliUploader:
         result: dict,
         title: str,
         description: str,
+        tags: list[str] | None = None,
+        partition_id: str = "",
         cover_file_path: str = "",
         cover43_file_path: str = "",
     ) -> Tuple[bool, Union[dict, str]]:
@@ -396,6 +398,19 @@ class BilibiliUploader:
             description or "",
             BILIBILI_DESCRIPTION_LIMIT,
         )
+        safe_tags: list[str] = []
+        seen_tags: set[str] = set()
+        if tags is not None:
+            for raw_tag in tags:
+                tag = _compact_text(str(raw_tag or ""), 20)
+                folded = tag.casefold()
+                if tag and folded not in seen_tags:
+                    safe_tags.append(tag)
+                    seen_tags.add(folded)
+                if len(safe_tags) >= 6:
+                    break
+            if not safe_tags:
+                return False, "视频标签为空，至少保留一个标签"
         if not bvid and not aid:
             return False, "稿件任务缺少 BVID 和 aid，无法更新"
         if not safe_title:
@@ -460,13 +475,13 @@ class BilibiliUploader:
                         page["cid"] = video["cid"]
                     safe_videos.append(page)
 
-                tags = archive.get("tag") or archive.get("tags") or ""
-                if isinstance(tags, list):
-                    tags = ",".join(
+                current_tags = archive.get("tag") or archive.get("tags") or ""
+                if isinstance(current_tags, list):
+                    current_tags = ",".join(
                         str(item.get("tag_name") or item.get("name") or item)
                         if isinstance(item, dict)
                         else str(item)
-                        for item in tags
+                        for item in current_tags
                     )
                 cover_url = str(archive.get("cover") or result.get("cover_url") or "").strip()
                 cover43_url = str(
@@ -508,8 +523,12 @@ class BilibiliUploader:
                         or archive.get("subtitles")
                         or {"open": 0, "lan": ""}
                     ),
-                    "tag": str(tags),
-                    "tid": int(archive.get("tid") or 0),
+                    "tag": ",".join(safe_tags) if tags is not None else str(current_tags),
+                    "tid": (
+                        int(partition_id)
+                        if str(partition_id).isdigit()
+                        else int(archive.get("tid") or 0)
+                    ),
                     "up_close_danmu": bool(
                         archive.get("up_close_danmu", archive.get("up_close_danmaku", False))
                     ),
@@ -564,6 +583,8 @@ class BilibiliUploader:
                 "cover43_url": cover43_url,
                 "part_count": page_count,
                 "metadata_updated": True,
+                "tags": safe_tags if tags is not None else None,
+                "partition_id": str(partition_id or ""),
             })
             self.log(f"Bilibili稿件信息更新成功: {updated.get('bvid') or resolved_aid}")
             return True, updated

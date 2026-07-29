@@ -1304,6 +1304,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
             stylesheet,
         )
         self.assertIn(
+            'html[data-theme="dark"] .delete-room-modal .modal-content',
+            stylesheet,
+        )
+        self.assertIn(
             'html[data-theme="dark"] .recording-task-card .recording-progress-trigger',
             tasks,
         )

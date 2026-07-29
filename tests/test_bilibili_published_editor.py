@@ -175,6 +175,8 @@ class PublishedMetadataEditorTests(unittest.TestCase):
                     result={"aid": 123, "bvid": "BV1test"},
                     title="新标题",
                     description="新简介",
+                    tags=["DOTA2", "帕吉", "直播录播"],
+                    partition_id="171",
                     cover_file_path=str(cover),
                 )
 
@@ -185,6 +187,8 @@ class PublishedMetadataEditorTests(unittest.TestCase):
         self.assertEqual(edit_call.data["title"], "新标题")
         self.assertEqual(edit_call.data["desc"], "新简介")
         self.assertEqual(edit_call.data["cover"], "https://example.com/new.jpg")
+        self.assertEqual(edit_call.data["tag"], "DOTA2,帕吉,直播录播")
+        self.assertEqual(edit_call.data["tid"], 171)
         self.assertEqual(
             [page["filename"] for page in edit_call.data["videos"]],
             ["part-one", "part-two"],

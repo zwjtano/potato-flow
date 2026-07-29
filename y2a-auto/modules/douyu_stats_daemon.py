@@ -140,11 +140,16 @@ def load_dota2_maps() -> None:
             for key, info in heroes.items()
             if str(info.get("ID") or "")
         }
-        dota_item_map = {
-            str(info.get("ID")): str(info.get("Name") or key)
-            for key, info in items.items()
-            if str(info.get("ID") or "")
-        }
+        item_map: dict[str, str] = {}
+        for key, info in items.items():
+            name = str(info.get("Name") or key)
+            item_id = str(info.get("ID") or "")
+            item_key = str(info.get("Key") or key)
+            if item_id:
+                item_map[item_id] = name
+            if item_key:
+                item_map[item_key] = name
+        dota_item_map = item_map
         print(f"[stats] DOTA2 映射: {len(dota_hero_map)} 英雄, {len(dota_item_map)} 装备", flush=True)
     except Exception as exc:
         print(f"[stats] DOTA2 映射加载失败: {exc}", flush=True)
@@ -211,6 +216,8 @@ class RoomMonitor(threading.Thread):
         self._accepted_fingerprint: tuple[str, ...] | None = None
         self._pending_fingerprint: tuple[str, ...] | None = None
         self._pending_players: list[dict] = []
+        self._pending_anchor: dict | None = None
+        self._pending_anchor_source = ""
         self._pending_count = 0
         self._restore_snapshot()
         diagnostics = self.state.setdefault("tooltip_diagnostics", {})
@@ -225,6 +232,8 @@ class RoomMonitor(threading.Thread):
                 "last_nonzero_player_count": 0,
                 "last_seen_unix_ts": None,
                 "last_source": "",
+                "streamer_anchor_snapshots": 0,
+                "streamer_anchor_last_seen_unix_ts": None,
             }.items():
                 diagnostics.setdefault(key, value)
 
@@ -312,29 +321,127 @@ class RoomMonitor(threading.Thread):
         return [player for player in candidates if isinstance(player, dict)]
 
     @classmethod
+    def _item_name(cls, raw_item: object) -> str:
+        item_key = str(raw_item or "")
+        if not item_key or item_key == "0":
+            return ""
+        mapped = str(dota_item_map.get(item_key) or "")
+        if mapped and not mapped.startswith("item_"):
+            return mapped
+        if item_key.startswith("item_"):
+            # New Dota items can arrive before Douyu's Chinese wiki map is
+            # updated. A readable official key is better model context than
+            # an opaque "unknown" marker and is never presented as Chinese.
+            return item_key.removeprefix("item_").replace("_", " ").title()
+        return f"未知({item_key})"
+
+    @classmethod
+    def _player_from_raw(cls, raw_player: dict) -> dict | None:
+        hero_id = str(raw_player.get("id") or "")
+        if hero_id in {"", "0"}:
+            return None
+        player = {
+            "id": hero_id,
+            "hero": dota_hero_map.get(hero_id, f"未知({hero_id})"),
+            "items": [
+                cls._item_name(item)
+                # Douyu's player renders the six main inventory slots
+                # with items.slice(0, 6). Backpack slots are deliberately
+                # excluded from the final equipment snapshot.
+                for item in raw_player.get("items", [])[:6]
+                if str(item) not in {"", "0"}
+            ],
+            "neutral": cls._item_name(raw_player.get("neutral")),
+            "scepter": bool(raw_player.get("aghanims_scepter", False)),
+            "shard": bool(raw_player.get("aghanims_shard", False)),
+            "facet": raw_player.get("facet", 0),
+            "talents": raw_player.get("talents", []),
+        }
+        aliases = (
+            ("kills", "kills", "kill", "k"),
+            ("deaths", "deaths", "death", "d"),
+            ("assists", "assists", "assist", "a"),
+        )
+        values: dict[str, int] = {}
+        for output_key, *input_keys in aliases:
+            raw_value = next((raw_player.get(key) for key in input_keys if key in raw_player), None)
+            try:
+                value = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if value >= 0:
+                values[output_key] = value
+        if len(values) == 3:
+            player.update(values)
+            player["kda"] = round(
+                (values["kills"] + values["assists"]) / max(1, values["deaths"]),
+                2,
+            )
+        return player
+
+    @classmethod
     def _players_from_tooltip(cls, data: dict) -> list[dict]:
         players: list[dict] = []
         seen: set[str] = set()
         for raw_player in cls._raw_players_from_tooltip(data):
-            hero_id = str(raw_player.get("id") or "")
-            if hero_id in {"", "0"} or hero_id in seen:
+            player = cls._player_from_raw(raw_player)
+            hero_id = str((player or {}).get("id") or "")
+            if not player or hero_id in seen:
                 return []
             seen.add(hero_id)
-            players.append({
-                "id": hero_id,
-                "hero": dota_hero_map.get(hero_id, f"未知({hero_id})"),
-                "items": [
-                    dota_item_map.get(str(item), f"未知({item})")
-                    for item in raw_player.get("items", [])
-                    if str(item) not in {"", "0"}
-                ],
-                "neutral": dota_item_map.get(str(raw_player.get("neutral") or ""), ""),
-                "scepter": bool(raw_player.get("aghanims_scepter", False)),
-                "shard": bool(raw_player.get("aghanims_shard", False)),
-                "facet": raw_player.get("facet", 0),
-                "talents": raw_player.get("talents", []),
-            })
+            players.append(player)
         return players if len(players) == 10 else []
+
+    @classmethod
+    def _streamer_anchor(cls, data: dict, players: list[dict]) -> dict | None:
+        """Use Douyu's explicit streamer-view hero, never a fixed lineup slot."""
+        raw_anchor = data.get("hero")
+        if not isinstance(raw_anchor, dict):
+            return None
+        anchor = cls._player_from_raw(raw_anchor)
+        lineup_ids = {str(player.get("id") or "") for player in players}
+        return anchor if anchor and anchor["id"] in lineup_ids else None
+
+    @staticmethod
+    def _anchor_signature(player: dict) -> tuple:
+        return (
+            str(player.get("id") or ""),
+            tuple(player.get("items", [])),
+            str(player.get("neutral") or ""),
+            bool(player.get("scepter")),
+            bool(player.get("shard")),
+            player.get("kills"), player.get("deaths"), player.get("assists"),
+        )
+
+    def _update_anchor_history(
+        self,
+        game: dict,
+        anchor: dict | None,
+        source: str,
+        now: float,
+    ) -> None:
+        if not anchor:
+            return
+        player = dict(anchor)
+        game["anchor_player"] = player
+        game["anchor_source"] = source
+        game["anchor_last_seen_unix_ts"] = now
+        history = game.setdefault("anchor_history", [])
+        if not isinstance(history, list):
+            history = []
+            game["anchor_history"] = history
+        if history and self._anchor_signature(history[-1].get("player", {})) == self._anchor_signature(player):
+            history[-1]["last_seen_unix_ts"] = now
+            history[-1]["player"] = player
+            history[-1]["source"] = source
+        else:
+            history.append({
+                "start_unix_ts": now,
+                "last_seen_unix_ts": now,
+                "source": source,
+                "player": player,
+            })
+            del history[:-200]
 
     def handle_dota2_snapshot(self, data: dict, source: str) -> None:
         diagnostics = self.state["tooltip_diagnostics"]
@@ -355,6 +462,12 @@ class RoomMonitor(threading.Thread):
             diagnostics["invalid_snapshots"] += 1
             return
         diagnostics["valid_snapshots"] += 1
+        anchor = self._streamer_anchor(data, players)
+        if anchor:
+            diagnostics["streamer_anchor_snapshots"] = int(
+                diagnostics.get("streamer_anchor_snapshots") or 0
+            ) + 1
+            diagnostics["streamer_anchor_last_seen_unix_ts"] = time.time()
         fingerprint = tuple(sorted(player["id"] for player in players))
         now = time.time()
         if fingerprint == self._accepted_fingerprint:
@@ -362,16 +475,23 @@ class RoomMonitor(threading.Thread):
             if isinstance(active, dict):
                 active["players"] = players
                 active["last_seen_unix_ts"] = now
+                self._update_anchor_history(active, anchor, source, now)
             self._pending_fingerprint = None
             self._pending_players = []
+            self._pending_anchor = None
+            self._pending_anchor_source = ""
             self._pending_count = 0
             return
         if fingerprint == self._pending_fingerprint:
             self._pending_count += 1
             self._pending_players = players
+            self._pending_anchor = anchor
+            self._pending_anchor_source = source
         else:
             self._pending_fingerprint = fingerprint
             self._pending_players = players
+            self._pending_anchor = anchor
+            self._pending_anchor_source = source
             self._pending_count = 1
         if self._pending_count < STABLE_SNAPSHOT_COUNT:
             return
@@ -387,9 +507,17 @@ class RoomMonitor(threading.Thread):
             "last_seen_unix_ts": now,
             "players": self._pending_players,
         }
+        self._update_anchor_history(
+            self.state["active_game"],  # type: ignore[arg-type]
+            self._pending_anchor,
+            self._pending_anchor_source,
+            now,
+        )
         self._accepted_fingerprint = fingerprint
         self._pending_fingerprint = None
         self._pending_players = []
+        self._pending_anchor = None
+        self._pending_anchor_source = ""
         self._pending_count = 0
 
     def handle_tooltips(self, message: dict[str, str]) -> None:

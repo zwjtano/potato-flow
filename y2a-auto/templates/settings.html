@@ -164,6 +164,7 @@
                                                         <input type="checkbox" name="GENERATE_TAGS" {% if config.GENERATE_TAGS %}checked{% endif %}>
                                                         自动生成标签
                                                     </label>
+                                                    <span class="help-text">关闭时录播投稿只使用直播间固定的两个标签。</span>
                                                     <label class="checkbox-label">
                                                         <input type="checkbox" name="RECOMMEND_PARTITION" {% if config.RECOMMEND_PARTITION %}checked{% endif %}>
                                                         自动推荐分区
@@ -195,7 +196,7 @@
                                                     </label>
                                                     <label class="checkbox-label">
                                                         <input type="checkbox" name="DOUYU_STATS_COVER_CONTEXT_ENABLED" {% if config.get('DOUYU_STATS_COVER_CONTEXT_ENABLED', True) %}checked{% endif %}>
-                                                        用 XML 识别主播英雄与真实装备供封面参考
+                                                        用斗鱼主播视角识别英雄、最终装备与 KDA 供封面参考
                                                     </label>
                                                 </div>
                                             </div>
