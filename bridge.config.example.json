@@ -1,6 +1,6 @@
 {
   "y2a_root": "y2a-auto",
-  "state_db": ".bridge/state.sqlite3",
+  "state_db": "state/pipeline/state.sqlite3",
   "bilibili_cookies": "y2a-auto/cookies/bili_cookies.json",
   "bilibili_partition_id": "171",
   "source_url": "https://example.com/live-room",
@@ -24,6 +24,9 @@
   "danmaku_encode_preset": "medium",
   "danmaku_encode_crf": 20,
   "ai_danmaku_summary_enabled": true,
+  "douyu_stats_enabled": true,
+  "douyu_stats_append_description": true,
+  "douyu_stats_cover_context_enabled": true,
   "ai_danmaku_max_comments": 400,
   "stable_checks": 2,
   "stable_interval_seconds": 2,
