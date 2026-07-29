@@ -389,9 +389,12 @@
                                                             {% if account.id == bilibili_default_account_id %}
                                                             <span class="badge rounded-pill text-bg-primary">默认投稿</span>
                                                             {% else %}
-                                                            <button type="submit" class="btn btn-sm btn-outline-primary"
-                                                                    formaction="{{ url_for('set_default_bilibili_account', account_id=account.id) }}"
-                                                                    formmethod="post" formnovalidate>设为默认</button>
+                                                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                                                    data-role="set-default-bilibili-account"
+                                                                    data-account-name="{{ account.name }}"
+                                                                    data-default-url="{{ url_for('set_default_bilibili_account', account_id=account.id) }}">
+                                                                设为默认
+                                                            </button>
                                                             {% endif %}
                                                             {% if not account.legacy %}
                                                             <button type="button" class="btn btn-sm btn-outline-danger"
@@ -3820,6 +3823,22 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-role="set-default-bilibili-account"]').forEach(function (button) {
+        button.addEventListener('click', async function () {
+            const name = button.dataset.accountName || '该账号';
+            const accepted = await window.PotatoUI.confirm(
+                `确认将“${name}”设为默认投稿账号？之后新建的上传任务、直播间和 YouTube 监控会默认选择此账号。`,
+                {title: '设置默认投稿账号？', confirmText: '确认设置'}
+            );
+            if (!accepted) return;
+            button.disabled = true;
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = button.dataset.defaultUrl;
+            document.body.appendChild(form);
+            form.submit();
+        });
+    });
     document.querySelectorAll('[data-role="delete-bilibili-account"]').forEach(function (button) {
         button.addEventListener('click', async function () {
             const name = button.dataset.accountName || '该账号';

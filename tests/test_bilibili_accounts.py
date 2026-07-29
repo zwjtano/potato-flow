@@ -93,6 +93,11 @@ class BilibiliAccountsTests(unittest.TestCase):
         manager = (Y2A_ROOT / "modules" / "live_recorder_manager.py").read_text(encoding="utf-8")
 
         self.assertIn("UID 未识别", settings)
+        self.assertIn('data-role="set-default-bilibili-account"', settings)
+        self.assertNotIn(
+            'formaction="{{ url_for(\'set_default_bilibili_account\'',
+            settings,
+        )
         self.assertIn("bilibili_account_id", tasks)
         self.assertIn("bilibili_account_id", live)
         self.assertIn('name="bilibili_account_id"', youtube_config)

@@ -632,6 +632,30 @@ html[data-theme="dark"] .modal-content {
     background: var(--pf-surface);
 }
 
+html[data-theme="dark"] .app-confirm-icon {
+    color: #66d9ff;
+    border: 1px solid #315a70;
+    background: #153447;
+}
+
+html[data-theme="dark"] .app-confirm-icon.danger {
+    color: #ff8390;
+    border-color: #6e3540;
+    background: #3b2029;
+}
+
+html[data-theme="dark"] .app-confirm-eyebrow {
+    color: #9ab2c8;
+}
+
+html[data-theme="dark"] .app-confirm-copy h5 {
+    color: #f2f7fc;
+}
+
+html[data-theme="dark"] .app-confirm-copy p {
+    color: #b7c6d6;
+}
+
 @media (max-width: 1100px) {
     .app-main,
     .live-console-main {
