@@ -26,6 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from .path_policy import atomic_write_text, ensure_directory, safe_path_component
 from .task_lifecycle import recording_task_capabilities
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +42,7 @@ PID_PATH = APP_ROOT / "temp" / "biliup-recorder.pid"
 STATUS_PATH = APP_ROOT / "temp" / "biliup-recorder-status.json"
 CONTROL_PATH = APP_ROOT / "temp" / "biliup-recorder-control.json"
 RELOAD_PATH = APP_ROOT / "temp" / "biliup-recorder-reload.json"
+RECORDER_RUNTIME_DIR = APP_ROOT / "temp" / "recorder-engine"
 ROOM_REFERENCE_DIR = WORKSPACE_ROOT / ".bridge" / "room-references"
 FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
 RECORDING_FILE_SUFFIXES = {
@@ -65,11 +67,15 @@ AUTO_UPLOAD_RETRY_DELAY_SECONDS = 5 * 60
 AUTO_UPLOAD_RETRY_MAX_RETRIES = 3
 RECORDING_NOTIFICATION_POLL_SECONDS = 2
 RECORDING_STAGE_LABELS = {
-    "detect": "直播检测",
-    "record": "录制安全收尾",
+    "detect": "监控开播",
+    "record": "自动录制",
     "ass": "生成 ASS",
     "ai": "生成 AI 简介",
-    "cover": "生成两张 AI 封面",
+    "xml_identity": "XML 主播识别",
+    "live_stats": "直播数据整理",
+    "cover": "生成录制文件封面",
+    "cover_16x9": "生成 16:9 个人空间封面",
+    "cover_4x3": "生成 4:3 首页推荐封面",
     "remux": "FLV 转 MP4",
     "verify": "验证内嵌封面",
     "cleanup": "清理原 FLV",
@@ -116,7 +122,7 @@ def recordings_dir(value: Any = None) -> Path:
 def validate_recordings_dir(value: Any) -> Path:
     path = recordings_dir(value)
     try:
-        path.mkdir(parents=True, exist_ok=True)
+        ensure_directory(path)
         if not path.is_dir():
             raise OSError("目标不是文件夹")
     except OSError as exc:
@@ -125,11 +131,15 @@ def validate_recordings_dir(value: Any) -> Path:
 
 
 def _atomic_json(path: Path, value: Any) -> None:
-    destination = path.resolve() if path.is_symlink() else path
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temp = destination.with_suffix(destination.suffix + ".tmp")
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temp.replace(destination)
+    try:
+        private = path.resolve(strict=False).is_relative_to(CONFIG_DIR.resolve(strict=False))
+    except (OSError, ValueError):
+        private = path.name.endswith("cookies.json")
+    atomic_write_text(
+        path,
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+        private=private,
+    )
 
 
 def _yaml_string(value: str) -> str:
@@ -137,8 +147,7 @@ def _yaml_string(value: str) -> str:
 
 
 def _slug(value: str) -> str:
-    cleaned = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", value.strip())
-    return cleaned.strip("_") or "直播间"
+    return safe_path_component(value)
 
 
 def _room_file_marker(room: dict[str, Any]) -> str:
@@ -821,7 +830,7 @@ class LiveRecorderManager:
                 suffix = str(cover_reference_suffix or "").lower()
                 if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
                     raise RecorderConfigError("人物底稿只支持 JPG、PNG 或 WEBP")
-                ROOM_REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
+                ensure_directory(ROOM_REFERENCE_DIR, private=True)
                 safe_room_id = re.sub(r"[^0-9A-Za-z_-]+", "-", room_id).strip("-")
                 destination = ROOM_REFERENCE_DIR / f"{safe_room_id}{suffix}"
                 temporary = ROOM_REFERENCE_DIR / f".{safe_room_id}.upload{suffix}"
@@ -834,6 +843,7 @@ class LiveRecorderManager:
                     temporary.unlink(missing_ok=True)
                     raise RecorderConfigError("人物底稿保存失败或文件超过 10 MB")
                 temporary.replace(destination)
+                destination.chmod(0o600)
                 if previous_reference and previous_reference != destination.name:
                     (ROOM_REFERENCE_DIR / Path(previous_reference).name).unlink(missing_ok=True)
                 room["cover_reference_file"] = destination.name
@@ -1851,10 +1861,12 @@ class LiveRecorderManager:
     def sync_configs(self, rooms: list[dict[str, Any]] | None = None) -> None:
         rooms = rooms if rooms is not None else self.list_rooms()
         root = validate_recordings_dir(None)
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        (root / "data").mkdir(parents=True, exist_ok=True)
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PID_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ensure_directory(CONFIG_DIR)
+        # biliup creates its own data/data.sqlite3 relative to cwd. Keep that
+        # third-party runtime state outside the user-facing recording tree.
+        ensure_directory(RECORDER_RUNTIME_DIR)
+        ensure_directory(LOG_PATH.parent)
+        ensure_directory(PID_PATH.parent)
 
         lines = [
             "# 由统一管理后台自动生成，请勿手动编辑。",
@@ -1865,7 +1877,7 @@ class LiveRecorderManager:
             # 手动录制允许随时停止；不能让 biliup 把短录播当作碎片删除，
             # 否则视频不会进入 segment_processor / ASS 流程。
             "filtering_threshold: 0",
-            'filename_prefix: "{streamer}_{title}_%Y-%m-%d_%H-%M"',
+            f"filename_prefix: {_yaml_string(str(root / '{streamer}_{title}_%Y-%m-%d_%H-%M'))}",
             "uploader: Noop",
             "delay: 30",
             "event_loop_interval: 30",
@@ -1897,10 +1909,11 @@ class LiveRecorderManager:
         for room in rooms:
             key = f"{_slug(str(room['name']))}_{str(room['id'])[:6]}"
             file_marker = _room_file_marker(room)
-            filename_prefix = (
-                f"{file_marker}/"
-                f"{file_marker}_{{title}}_{{live_start}}/"
-                f"{file_marker}_{{title}}_%Y-%m-%d_%H-%M"
+            filename_prefix = str(
+                root
+                / file_marker
+                / f"{file_marker}_{{title}}_{{live_start}}"
+                / f"{file_marker}_{{title}}_%Y-%m-%d_%H-%M"
             )
             session_key = str(room["id"])
             segment_time = self._room_segment_time(room)
@@ -1942,7 +1955,7 @@ class LiveRecorderManager:
                     f"      - run: {_yaml_string(finalize_command)}",
                 ])
             lines.extend(room_lines)
-        BILIUP_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(BILIUP_CONFIG_PATH, "\n".join(lines) + "\n", private=True)
         self._sync_bridge_profiles(rooms)
 
     def refresh_credentials(self) -> str:
@@ -1998,6 +2011,15 @@ class LiveRecorderManager:
         from .config_manager import load_config
 
         app_config = load_config()
+        config["douyu_stats_enabled"] = bool(
+            app_config.get("DOUYU_STATS_ENABLED", True)
+        )
+        config["douyu_stats_append_description"] = bool(
+            app_config.get("DOUYU_STATS_APPEND_DESCRIPTION", True)
+        )
+        config["douyu_stats_cover_context_enabled"] = bool(
+            app_config.get("DOUYU_STATS_COVER_CONTEXT_ENABLED", True)
+        )
         profiles = []
         for room in rooms:
             account = resolve_account(
@@ -2088,14 +2110,14 @@ class LiveRecorderManager:
                     "--status-file",
                     str(STATUS_PATH),
                 ],
-                cwd=recordings_dir(),
+                cwd=RECORDER_RUNTIME_DIR,
                 stdout=self._log_handle,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
                 text=True,
                 env=process_env,
             )
-            PID_PATH.write_text(str(self._process.pid), encoding="utf-8")
+            atomic_write_text(PID_PATH, str(self._process.pid))
             time.sleep(0.25)
             if self._process.poll() is not None:
                 exit_code = self._process.returncode
@@ -2717,7 +2739,10 @@ class LiveRecorderManager:
         allowed_recordings_root = self._recording_file_roots()["recordings"].resolve()
         stage_orders = {
             "record_only": ("record", "ass", "cover", "remux", "verify", "cleanup"),
-            "bilibili": ("detect", "record", "ass", "ai", "cover", "upload"),
+            "bilibili": (
+                "detect", "record", "ass", "ai", "xml_identity", "live_stats",
+                "cover_16x9", "cover_4x3", "upload", "cleanup",
+            ),
         }
         from .bilibili_accounts import resolve_account
         from .config_manager import load_config
@@ -2742,13 +2767,24 @@ class LiveRecorderManager:
             stages.sort(key=lambda item: order_index.get(str(item.get("key")), len(order)))
             upload_stage = next((item for item in stages if item["key"] == "upload"), {})
             ai_stage = next((item for item in stages if item["key"] == "ai"), {})
-            cover_stage = next((item for item in stages if item["key"] == "cover"), {})
+            cover_stage = next(
+                (item for item in stages if item["key"] == "cover_16x9"),
+                next((item for item in stages if item["key"] == "cover"), {}),
+            )
+            cover43_stage = next(
+                (item for item in stages if item["key"] == "cover_4x3"),
+                {},
+            )
             upload_details = upload_stage.get("details") if isinstance(upload_stage, dict) else {}
             ai_details = ai_stage.get("details") if isinstance(ai_stage, dict) else {}
             cover_details = cover_stage.get("details") if isinstance(cover_stage, dict) else {}
             upload_details = upload_details if isinstance(upload_details, dict) else {}
             ai_details = ai_details if isinstance(ai_details, dict) else {}
             cover_details = cover_details if isinstance(cover_details, dict) else {}
+            cover43_details = (
+                cover43_stage.get("details") if isinstance(cover43_stage, dict) else {}
+            )
+            cover43_details = cover43_details if isinstance(cover43_details, dict) else {}
             review = overrides.get(row["fingerprint"], {})
             cover_candidate = str(
                 review.get("cover_path")
@@ -2771,6 +2807,8 @@ class LiveRecorderManager:
             )
             cover43_candidate = str(
                 review.get("cover43_path")
+                or cover43_details.get("ai_cover_4x3_path")
+                or cover43_details.get("cover43_used_for_upload")
                 or cover_details.get("ai_cover_4x3_path")
                 or cover_details.get("cover43_used_for_upload")
                 or result.get("cover43_path")
@@ -2828,7 +2866,8 @@ class LiveRecorderManager:
                 or (matched_room or {}).get("bilibili_account_id"),
             )
             completed_stages = sum(
-                1 for stage in stages if stage.get("status") in {"completed", "skipped"}
+                1 for stage in stages
+                if stage.get("status") in {"completed", "skipped", "warning"}
             )
             failed_stage = next((stage.get("key") for stage in stages if stage.get("status") == "failed"), None)
             job_status = str(row["status"] or "")
@@ -2953,6 +2992,7 @@ class LiveRecorderManager:
                 "cover_route_available": cover_route_available,
                 "cover_updated_at": str(
                     review.get("updated_at")
+                    or cover43_stage.get("updated_at")
                     or cover_stage.get("updated_at")
                     or row["updated_at"]
                     or ""
