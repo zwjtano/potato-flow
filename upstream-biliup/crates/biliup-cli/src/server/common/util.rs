@@ -98,6 +98,7 @@ impl Recorder {
 /// - 保留 '%'，以便 strftime 能正常工作
 fn sanitize_filename(name: &str) -> String {
     let normalized = name.replace('\\', "/");
+    let is_absolute = normalized.starts_with('/');
     let parts: Vec<String> = normalized
         .split('/')
         .filter(|part| !part.is_empty() && *part != "." && *part != "..")
@@ -116,6 +117,8 @@ fn sanitize_filename(name: &str) -> String {
         .collect();
     if parts.is_empty() {
         "_".to_string()
+    } else if is_absolute {
+        format!("/{}", parts.join("/"))
     } else {
         parts.join("/")
     }
@@ -193,7 +196,7 @@ pub fn parse_time(segment_time: &str) -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::Recorder;
+    use super::{Recorder, sanitize_filename};
     use crate::server::common::util::media_ext_from_url;
     use crate::server::infrastructure::models::StreamerInfo;
     use chrono::{Local, TimeZone, Utc};
@@ -236,6 +239,14 @@ mod tests {
             format!(
                 "YYF_陪伴每一天_ DOTA2_{live_start}/YYF_陪伴每一天_ DOTA2_%Y-%m-%d_%H-%M"
             )
+        );
+    }
+
+    #[test]
+    fn recording_template_preserves_absolute_output_root() {
+        assert_eq!(
+            sanitize_filename("/data/recordings/YYF/直播:回放_%Y-%m-%d"),
+            "/data/recordings/YYF/直播_回放_%Y-%m-%d"
         );
     }
 }

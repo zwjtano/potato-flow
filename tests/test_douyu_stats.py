@@ -1,8 +1,10 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +101,30 @@ class DouyuStatsTests(unittest.TestCase):
             monitor.handle_tooltips({"content": json.dumps(second)})
         self.assertEqual(len(monitor.state["games"]), 1)
 
+    def test_current_douyu_top_only_lineup_and_http_poll_are_supported(self):
+        daemon.dota_hero_map = {str(index): f"英雄{index}" for index in range(1, 11)}
+        monitor = daemon.RoomMonitor("74960", "主播", {})
+        payload = {
+            "status": 1,
+            "timestamp": 123,
+            "top": [{"id": index, "items": []} for index in range(1, 11)],
+        }
+        with mock.patch.object(
+            daemon,
+            "_request_json",
+            return_value={"error": 0, "data": payload},
+        ):
+            for _ in range(daemon.STABLE_SNAPSHOT_COUNT):
+                monitor.poll_dota2_data()
+
+        self.assertIsNotNone(monitor.state["active_game"])
+        diagnostics = monitor.state["tooltip_diagnostics"]
+        self.assertEqual(diagnostics["messages"], 0)
+        self.assertEqual(diagnostics["http_polls"], daemon.STABLE_SNAPSHOT_COUNT)
+        self.assertEqual(diagnostics["http_snapshots"], daemon.STABLE_SNAPSHOT_COUNT)
+        self.assertEqual(diagnostics["last_raw_player_count"], 10)
+        self.assertEqual(diagnostics["last_source"], "http")
+
     def test_formatter_uses_xml_timeframe_and_xml_hero_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -160,6 +186,40 @@ class DouyuStatsTests(unittest.TestCase):
         }
         text = formatter.format_stats(stats, 100, 200, [(150, "今天打得很好")])
         self.assertEqual(text, "")
+
+    def test_formatter_recovers_stats_for_legacy_misplaced_recording(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            recordings_root = root / "recordings"
+            room = recordings_root / "主播"
+            metadata = room / ".potato-flow"
+            metadata.mkdir(parents=True)
+            legacy_session = root / "runtime" / "data" / "recordings" / "主播" / "场次"
+            legacy_session.mkdir(parents=True)
+            (legacy_session / "recording.xml").write_text(
+                """<?xml version="1.0"?><i>
+                <d p="1,1,25,1,100,0,1,0">影魔这把很肥</d>
+                <d p="2,1,25,1,150,0,2,0">影魔要出黑皇杖了</d>
+                </i>""",
+                encoding="utf-8",
+            )
+            (metadata / "douyu-stats.json").write_text(
+                json.dumps({"games": [{
+                    "start_unix_ts": 90,
+                    "end_unix_ts": 160,
+                    "players": [player(11, "影魔"), player(22, "宙斯")],
+                }]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(os.environ, {"RECORDINGS_DIR": str(recordings_root)}):
+                anchor = formatter.get_game_for_cover(legacy_session)
+                diagnostics = formatter.get_identity_diagnostics(legacy_session)
+
+            self.assertEqual(anchor["hero"], "影魔")
+            self.assertTrue(diagnostics["stats_available"])
+            self.assertEqual(diagnostics["stats_path"], str(metadata / "douyu-stats.json"))
+            self.assertEqual(diagnostics["type_tooltips_game_snapshots"], 1)
 
     def test_flush_replaces_snapshot_atomically(self):
         with tempfile.TemporaryDirectory() as temporary:
