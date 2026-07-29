@@ -23,8 +23,10 @@ BRIDGE_CONFIG = os.environ.get("BRIDGE_CONFIG", "/data/config/pipeline.json")
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/data/recordings")
 DOTA2_HEROES_URL = "https://wconf.douyucdn.cn/resource/node/config/dota2_wiki_new.json"
 DOTA2_ITEMS_URL = "https://wconf.douyucdn.cn/resource/node/config/dota2_wiki_items.json"
+DOTA2_DATA_URL = "https://www.douyu.com/wgapi/augmentedlive/dota2/data/get"
 HIGH_ENERGY_GFID = "24597"
 FLUSH_INTERVAL = 30
+DOTA2_POLL_INTERVAL = 15
 RETENTION_SECONDS = 48 * 60 * 60
 STABLE_SNAPSHOT_COUNT = 3
 TZ = timezone(timedelta(hours=8))
@@ -211,6 +213,20 @@ class RoomMonitor(threading.Thread):
         self._pending_players: list[dict] = []
         self._pending_count = 0
         self._restore_snapshot()
+        diagnostics = self.state.setdefault("tooltip_diagnostics", {})
+        if isinstance(diagnostics, dict):
+            for key, value in {
+                "messages": 0,
+                "http_polls": 0,
+                "http_snapshots": 0,
+                "valid_snapshots": 0,
+                "invalid_snapshots": 0,
+                "last_raw_player_count": 0,
+                "last_nonzero_player_count": 0,
+                "last_seen_unix_ts": None,
+                "last_source": "",
+            }.items():
+                diagnostics.setdefault(key, value)
 
     def _restore_snapshot(self) -> None:
         """Continue a recording window across safe container restarts."""
@@ -285,53 +301,55 @@ class RoomMonitor(threading.Thread):
         self.state["online_samples"].append({"unix_ts": time.time(), "value": value})  # type: ignore[union-attr]
 
     @staticmethod
-    def _players_from_tooltip(data: dict) -> list[dict]:
+    def _raw_players_from_tooltip(data: dict) -> list[dict]:
+        top = data.get("top", [])
+        bottom = data.get("bottom", [])
+        if not isinstance(top, list) or not isinstance(bottom, list):
+            return []
+        # Current Douyu GSI puts all ten heroes in ``top``. Older
+        # type_tooltips payloads split the line-up into top/bottom teams.
+        candidates = top if len(top) == 10 and not bottom else top + bottom
+        return [player for player in candidates if isinstance(player, dict)]
+
+    @classmethod
+    def _players_from_tooltip(cls, data: dict) -> list[dict]:
         players: list[dict] = []
         seen: set[str] = set()
-        for side_key in ("top", "bottom"):
-            side = data.get(side_key, [])
-            if not isinstance(side, list):
+        for raw_player in cls._raw_players_from_tooltip(data):
+            hero_id = str(raw_player.get("id") or "")
+            if hero_id in {"", "0"} or hero_id in seen:
                 return []
-            for raw_player in side:
-                hero_id = str(raw_player.get("id") or "")
-                if hero_id in {"", "0"} or hero_id in seen:
-                    return []
-                seen.add(hero_id)
-                players.append({
-                    "id": hero_id,
-                    "hero": dota_hero_map.get(hero_id, f"未知({hero_id})"),
-                    "items": [
-                        dota_item_map.get(str(item), f"未知({item})")
-                        for item in raw_player.get("items", [])
-                        if str(item) not in {"", "0"}
-                    ],
-                    "neutral": dota_item_map.get(str(raw_player.get("neutral") or ""), ""),
-                    "scepter": bool(raw_player.get("aghanims_scepter", False)),
-                    "shard": bool(raw_player.get("aghanims_shard", False)),
-                    "facet": raw_player.get("facet", 0),
-                    "talents": raw_player.get("talents", []),
-                })
+            seen.add(hero_id)
+            players.append({
+                "id": hero_id,
+                "hero": dota_hero_map.get(hero_id, f"未知({hero_id})"),
+                "items": [
+                    dota_item_map.get(str(item), f"未知({item})")
+                    for item in raw_player.get("items", [])
+                    if str(item) not in {"", "0"}
+                ],
+                "neutral": dota_item_map.get(str(raw_player.get("neutral") or ""), ""),
+                "scepter": bool(raw_player.get("aghanims_scepter", False)),
+                "shard": bool(raw_player.get("aghanims_shard", False)),
+                "facet": raw_player.get("facet", 0),
+                "talents": raw_player.get("talents", []),
+            })
         return players if len(players) == 10 else []
 
-    def handle_tooltips(self, message: dict[str, str]) -> None:
-        try:
-            data = json.loads(message.get("content", ""))
-        except (TypeError, ValueError):
-            return
+    def handle_dota2_snapshot(self, data: dict, source: str) -> None:
         diagnostics = self.state["tooltip_diagnostics"]
-        raw_players = [
-            player
-            for side_key in ("top", "bottom")
-            for player in (data.get(side_key, []) if isinstance(data.get(side_key, []), list) else [])
-            if isinstance(player, dict)
-        ]
-        diagnostics["messages"] += 1
+        raw_players = self._raw_players_from_tooltip(data)
+        if source == "type_tooltips":
+            diagnostics["messages"] += 1
+        else:
+            diagnostics["http_snapshots"] += 1
         diagnostics["last_raw_player_count"] = len(raw_players)
         diagnostics["last_nonzero_player_count"] = sum(
             str(player.get("id") or "") not in {"", "0"}
             for player in raw_players
         )
         diagnostics["last_seen_unix_ts"] = time.time()
+        diagnostics["last_source"] = source
         players = self._players_from_tooltip(data)
         if not players:
             diagnostics["invalid_snapshots"] += 1
@@ -373,6 +391,25 @@ class RoomMonitor(threading.Thread):
         self._pending_fingerprint = None
         self._pending_players = []
         self._pending_count = 0
+
+    def handle_tooltips(self, message: dict[str, str]) -> None:
+        try:
+            data = json.loads(message.get("content", ""))
+        except (TypeError, ValueError):
+            return
+        if isinstance(data, dict):
+            self.handle_dota2_snapshot(data, "type_tooltips")
+
+    def poll_dota2_data(self) -> None:
+        diagnostics = self.state["tooltip_diagnostics"]
+        diagnostics["http_polls"] += 1
+        response = _request_json(
+            f"{DOTA2_DATA_URL}?rid={self.room_id}",
+            f"https://www.douyu.com/{self.room_id}",
+        )
+        data = response.get("data")
+        if isinstance(data, dict) and data:
+            self.handle_dota2_snapshot(data, "http")
 
     def _prune(self) -> None:
         cutoff = time.time() - RETENTION_SECONDS
@@ -422,6 +459,7 @@ class RoomMonitor(threading.Thread):
                 sock.settimeout(15)
                 pending = b""
                 last_message = time.time()
+                last_dota_poll = 0.0
                 while not self._stop_event.is_set():
                     if time.time() - heartbeat_sent > 40:
                         send_heartbeat(sock)
@@ -440,6 +478,9 @@ class RoomMonitor(threading.Thread):
                             self.handle_oni(message)
                         elif message_type == "type_tooltips":
                             self.handle_tooltips(message)
+                    if time.time() - last_dota_poll >= DOTA2_POLL_INTERVAL:
+                        self.poll_dota2_data()
+                        last_dota_poll = time.time()
                     if time.time() - last_flush >= FLUSH_INTERVAL:
                         self.flush()
                         last_flush = time.time()

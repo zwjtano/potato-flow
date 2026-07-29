@@ -103,7 +103,11 @@ class BilibiliAccountsTests(unittest.TestCase):
         self.assertIn('name="bilibili_account_id"', youtube_config)
         self.assertIn("'bilibili_account_id': ''", youtube_monitor)
         self.assertIn("bilibili_account_id=bilibili_account_id", youtube_monitor)
-        self.assertIn('"bilibili_cookies": _workspace_runtime_path', manager)
+        self.assertIn('config["bilibili_cookies"] = _workspace_runtime_path', manager)
+        self.assertIn(
+            '"bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path")))',
+            manager,
+        )
 
 
 if __name__ == "__main__":

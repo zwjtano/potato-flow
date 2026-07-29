@@ -2208,13 +2208,18 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "comment_count": len(comments),
             })
             try:
-                from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
+                from modules.douyu_stats_formatter import (  # type: ignore
+                    get_game_for_cover,
+                    get_identity_diagnostics,
+                )
 
                 anchor = get_game_for_cover(str(video.parent))
+                identity_diagnostics = get_identity_diagnostics(str(video.parent))
                 if anchor:
                     store.stage(key, "xml_identity", "completed", {
                         "danmaku_xml": str(danmaku_xml),
                         "comment_count": len(comments),
+                        **identity_diagnostics,
                         "streamer_hero": str(anchor.get("hero") or ""),
                         "streamer_items": [
                             str(item) for item in anchor.get("items", []) if str(item)
@@ -2223,10 +2228,24 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         "outcome": "matched",
                     })
                 else:
+                    if not identity_diagnostics["stats_available"]:
+                        reason = "未找到斗鱼 Dota2 统计快照"
+                    elif (
+                        identity_diagnostics["type_tooltips_messages"]
+                        + identity_diagnostics["type_tooltips_http_snapshots"]
+                    ) == 0:
+                        reason = "本次录制未获取 Dota2 阵容数据"
+                    elif identity_diagnostics["type_tooltips_valid_snapshots"] == 0:
+                        reason = "Dota2 数据未形成完整的 10 人阵容"
+                    elif identity_diagnostics["type_tooltips_game_snapshots"] == 0:
+                        reason = "Dota2 数据尚未形成稳定对局快照"
+                    else:
+                        reason = "XML 未形成唯一可靠的主播英雄证据"
                     store.stage(key, "xml_identity", "skipped", {
                         "danmaku_xml": str(danmaku_xml),
                         "comment_count": len(comments),
-                        "reason": "XML 未形成唯一可靠的主播英雄证据",
+                        **identity_diagnostics,
+                        "reason": reason,
                         "outcome": "no_data",
                     })
             except Exception as exc:
@@ -2542,8 +2561,10 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         store.stage(key, "upload", "queued", upload_stage_details)
         BilibiliUploader, _ = import_y2a(cfg)
         cookie = resolve_path(str(cfg.get("bilibili_cookies", "")), cfg)
-        if not cookie.is_file() or not partition:
-            raise ValueError("bilibili 需要有效的 bilibili_cookies 和 bilibili_partition_id")
+        if not cookie.is_file():
+            raise ValueError(f"bilibili Cookie 文件不存在：{cookie}")
+        if not partition:
+            raise ValueError("bilibili 未配置有效的投稿分区 ID")
         previous = store.results(key)
         previous.update({
             "tags": tags,

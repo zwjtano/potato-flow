@@ -1177,6 +1177,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
             str(recorder_module.APP_ROOT / "cookies" / "bili_cookies.json"),
         )
         self.assertEqual(
+            config["profiles"][0]["bilibili_cookies"],
+            str(recorder_module.APP_ROOT / "cookies" / "bili_cookies.json"),
+        )
+        self.assertEqual(
             config["danmaku_fonts_dir"],
             str(recorder_module.APP_ROOT / "fonts"),
         )

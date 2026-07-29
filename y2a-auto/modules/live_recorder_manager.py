@@ -2007,7 +2007,7 @@ class LiveRecorderManager:
             config["ffmpeg"] = str(FFMPEG_DIR / "ffmpeg")
         if (FFMPEG_DIR / "ffprobe").is_file():
             config["ffprobe"] = str(FFMPEG_DIR / "ffprobe")
-        from .bilibili_accounts import resolve_account
+        from .bilibili_accounts import resolve_account, resolve_cookie_path
         from .config_manager import load_config
 
         app_config = load_config()
@@ -2037,10 +2037,7 @@ class LiveRecorderManager:
                 "ai_cover_prompt": str(room.get("ai_cover_prompt") or ""),
                 "bilibili_account_id": str(account["id"]),
                 "bilibili_account_name": str(account["name"]),
-                "bilibili_cookies": _workspace_runtime_path(
-                    account.get("cookies_path"),
-                    "y2a-auto/cookies/bili_cookies.json",
-                ),
+                "bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path"))),
             }
             custom_reference_name = Path(
                 str(room.get("cover_reference_file") or "")

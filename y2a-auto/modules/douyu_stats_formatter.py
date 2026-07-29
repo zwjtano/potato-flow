@@ -187,11 +187,15 @@ def select_anchor_player(
 
 def _stats_path(video_dir: str | os.PathLike[str]) -> Path:
     root = Path(video_dir)
+    recordings_root = Path(os.environ.get("RECORDINGS_DIR", "/data/recordings"))
+    room_name = root.parent.name if root.parent.name else root.name
     candidates = (
         root / ".potato-flow" / "douyu-stats.json",
         root.parent / ".potato-flow" / "douyu-stats.json",
         root / "stats_current.json",
         root.parent / "stats_current.json",
+        recordings_root / room_name / ".potato-flow" / "douyu-stats.json",
+        recordings_root / room_name / "stats_current.json",
     )
     return next((path for path in candidates if path.is_file()), candidates[1])
 
@@ -225,6 +229,29 @@ def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
         if candidate:
             selected = candidate
     return selected
+
+
+def get_identity_diagnostics(video_dir: str | os.PathLike[str]) -> dict:
+    """Expose the type_tooltips evidence available to XML identity matching."""
+    stats_path = _stats_path(video_dir)
+    stats = load_stats(stats_path)
+    tooltip = stats.get("tooltip_diagnostics", {})
+    if not isinstance(tooltip, dict):
+        tooltip = {}
+    games = [item for item in stats.get("games", []) if isinstance(item, dict)]
+    if isinstance(stats.get("active_game"), dict):
+        games.append(stats["active_game"])
+    return {
+        "stats_path": str(stats_path),
+        "stats_available": bool(stats),
+        "type_tooltips_messages": int(tooltip.get("messages") or 0),
+        "type_tooltips_http_polls": int(tooltip.get("http_polls") or 0),
+        "type_tooltips_http_snapshots": int(tooltip.get("http_snapshots") or 0),
+        "type_tooltips_valid_snapshots": int(tooltip.get("valid_snapshots") or 0),
+        "type_tooltips_invalid_snapshots": int(tooltip.get("invalid_snapshots") or 0),
+        "type_tooltips_last_player_count": int(tooltip.get("last_raw_player_count") or 0),
+        "type_tooltips_game_snapshots": len(games),
+    }
 
 
 def format_stats(
