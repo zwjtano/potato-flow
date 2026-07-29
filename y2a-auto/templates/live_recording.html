@@ -166,7 +166,7 @@
                         {% endif %}
                         <span class="badge rounded-pill text-bg-light">
                             {% if room.segment_enabled %}<span class="room-setting-number">{{ room.segment_minutes }}</span> 分钟{% else %}不分段{% endif %}
-                            · {{ '仅录制' if room.record_only else ('合并分P' if room.multipart_enabled and room.segment_enabled else '独立投稿') }}
+                            · {{ '不投稿' if room.record_only else ('分 P 投稿' if room.multipart_enabled and room.segment_enabled else '不分 P 投稿') }}
                         </span>
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
@@ -205,7 +205,10 @@
                                        {% if not room.segment_enabled %}disabled{% endif %}>
                                 <span></span>
                             </span>
-                            <span><strong>同一场直播合并为分P</strong><small>默认关闭。P1 创建稿件，后续分段追加到同一个 BVID。</small></span>
+                            <span>
+                                <strong>投稿方式 <span class="room-setting-inline-state" data-role="multipart-state">{{ '分 P 投稿' if room.multipart_enabled and room.segment_enabled else '不分 P 投稿' }}</span></strong>
+                                <small>开启“分 P 投稿”时，P1 创建稿件，后续分段追加到同一个 BVID；关闭时每段独立投稿。</small>
+                            </span>
                         </label>
                         <label class="room-recording-setting-option record-only">
                             <span class="room-setting-switch">
@@ -412,7 +415,10 @@
                            data-role="multipart-enabled">
                     <span></span>
                 </span>
-                <span><strong>同一场直播合并为分P</strong><small>默认关闭；关闭时每个分段独立投稿。</small></span>
+                <span>
+                    <strong>投稿方式 <span class="room-setting-inline-state" data-role="multipart-state">不分 P 投稿</span></strong>
+                    <small>开启“分 P 投稿”时，P1 创建稿件，后续分段追加到同一个 BVID；关闭时每段独立投稿。</small>
+                </span>
             </label>
             <label class="room-recording-setting-option record-only">
                 <span class="room-setting-switch">
@@ -881,6 +887,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const enabled = form.querySelector('[data-role="segment-enabled"]');
         const minutes = form.querySelector('[data-role="segment-minutes"]');
         const multipart = form.querySelector('[data-role="multipart-enabled"]');
+        const multipartState = form.querySelector('[data-role="multipart-state"]');
         const recordOnly = form.querySelector('[data-role="record-only"]');
         const accountField = form.querySelector('[data-role="bilibili-account-field"]');
         const accountInput = accountField?.querySelector('input[name="bilibili_account_id"]');
@@ -892,11 +899,17 @@ document.addEventListener('DOMContentLoaded', function () {
                 multipart.disabled = !active || recordOnlyActive;
                 if (!active || recordOnlyActive) multipart.checked = false;
             }
+            if (multipartState) {
+                multipartState.textContent = recordOnlyActive
+                    ? '不投稿'
+                    : (active && Boolean(multipart?.checked) ? '分 P 投稿' : '不分 P 投稿');
+            }
             accountField?.classList.toggle('d-none', recordOnlyActive);
             accountField?.setAttribute('aria-hidden', recordOnlyActive ? 'true' : 'false');
             if (accountInput) accountInput.disabled = recordOnlyActive;
         };
         enabled?.addEventListener('change', syncState);
+        multipart?.addEventListener('change', syncState);
         recordOnly?.addEventListener('change', syncState);
         syncState();
     });
