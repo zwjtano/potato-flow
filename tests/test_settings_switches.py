@@ -36,7 +36,7 @@ class SettingsSwitchTests(unittest.TestCase):
         self.assertIn('name="DOUYU_STATS_ENABLED"', template)
         self.assertIn('name="DOUYU_STATS_APPEND_DESCRIPTION"', template)
         self.assertIn('name="DOUYU_STATS_COVER_CONTEXT_ENABLED"', template)
-        self.assertIn("用 XML 识别主播英雄与真实装备供封面参考", template)
+        self.assertIn("用斗鱼主播视角识别英雄、最终装备与 KDA 供封面参考", template)
         app_source = APP_SOURCE.read_text(encoding="utf-8")
         self.assertIn("douyu_pipeline_settings_changed", app_source)
         self.assertIn("live_recorder_manager.refresh_credentials()", app_source)

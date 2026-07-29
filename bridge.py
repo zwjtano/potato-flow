@@ -1265,10 +1265,11 @@ def generate_recording_cover_with_ai(
         ai_topic,
         description,
     )
-    # Prefer tooltip equipment only when XML comments identify the streamer
-    # hero.  There is intentionally no fixed player-slot fallback.
+    # Prefer Douyu's explicit streamer-view hero and its final in-recording
+    # equipment snapshot. XML identity is retained only for legacy snapshots.
     tooltip_hero = ""
     tooltip_items: list[str] = []
+    tooltip_kda_instruction = ""
     tooltip_context_enabled = bool(cfg.get("douyu_stats_enabled", True)) and bool(
         cfg.get("douyu_stats_cover_context_enabled", True)
     )
@@ -1280,27 +1281,44 @@ def generate_recording_cover_with_ai(
             anchor = get_game_for_cover(recording_dir)
             if anchor:
                 tooltip_hero = str(anchor.get("hero") or "")
-                tooltip_items = [str(item) for item in anchor.get("items", []) if str(item)]
+                tooltip_items = [
+                    str(item) for item in anchor.get("items", [])[:6] if str(item)
+                ]
                 if anchor.get("neutral"):
                     tooltip_items.append(str(anchor["neutral"]))
                 if anchor.get("scepter"):
                     tooltip_items.append("A杖")
                 if anchor.get("shard"):
                     tooltip_items.append("魔晶")
+                if all(key in anchor for key in ("kills", "deaths", "assists")):
+                    tooltip_kda_instruction = (
+                        f"主播本局最终 K/D/A 为 {anchor['kills']}/{anchor['deaths']}/"
+                        f"{anchor['assists']}，KDA 为 {anchor.get('kda')}。"
+                    )
+                    details["ai_cover_streamer_kda"] = {
+                        "kills": anchor["kills"],
+                        "deaths": anchor["deaths"],
+                        "assists": anchor["assists"],
+                        "kda": anchor.get("kda"),
+                    }
+                details["ai_cover_identity_source"] = str(
+                    anchor.get("identity_source") or ""
+                )
         except Exception as exc:
             details["ai_cover_tooltip_error"] = str(exc)
 
     if tooltip_hero or tooltip_items:
         if tooltip_items:
             dota2_item_instruction = (
-                f"主播本局实际装备（由录制 XML 识别主播英雄后关联实时数据）："
+                f"主播本局最终六格主装备（最后一次有效阵容快照）："
                 f"{', '.join(tooltip_items)}。"
             )
         else:
             dota2_item_instruction = ""
         if tooltip_hero:
             dota2_instruction = (
-                f"主播本局使用的英雄为 {tooltip_hero}（由录制 XML 弹幕识别）。"
+                f"主播本局使用的英雄为 {tooltip_hero}（来自斗鱼主播视角数据）。"
+                + tooltip_kda_instruction
                 + dota2_instruction
             )
         details["ai_cover_tooltip_hero"] = tooltip_hero
@@ -2197,14 +2215,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "reason": "XML 主播英雄与装备识别已关闭",
                 "outcome": "disabled",
             })
-        elif not danmaku_xml or not comments:
-            store.stage(key, "xml_identity", "skipped", {
-                "reason": "本次录播没有可用的 XML 弹幕",
-                "outcome": "no_data",
-            })
         else:
             store.stage(key, "xml_identity", "running", {
-                "danmaku_xml": str(danmaku_xml),
+                "danmaku_xml": str(danmaku_xml or ""),
                 "comment_count": len(comments),
             })
             try:
@@ -2217,14 +2230,25 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 identity_diagnostics = get_identity_diagnostics(str(video.parent))
                 if anchor:
                     store.stage(key, "xml_identity", "completed", {
-                        "danmaku_xml": str(danmaku_xml),
+                        "danmaku_xml": str(danmaku_xml or ""),
                         "comment_count": len(comments),
                         **identity_diagnostics,
                         "streamer_hero": str(anchor.get("hero") or ""),
                         "streamer_items": [
-                            str(item) for item in anchor.get("items", []) if str(item)
+                            str(item) for item in anchor.get("items", [])[:6] if str(item)
                         ],
+                        "equipment_snapshot_unix_ts": float(
+                            anchor.get("equipment_snapshot_unix_ts") or 0
+                        ),
                         "xml_mention_score": int(anchor.get("xml_mention_score") or 0),
+                        "identity_source": str(anchor.get("identity_source") or ""),
+                        "kills": anchor.get("kills"),
+                        "deaths": anchor.get("deaths"),
+                        "assists": anchor.get("assists"),
+                        "kda": anchor.get("kda"),
+                        "kda_available": all(
+                            field in anchor for field in ("kills", "deaths", "assists")
+                        ),
                         "outcome": "matched",
                     })
                 else:
@@ -2240,9 +2264,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     elif identity_diagnostics["type_tooltips_game_snapshots"] == 0:
                         reason = "Dota2 数据尚未形成稳定对局快照"
                     else:
-                        reason = "XML 未形成唯一可靠的主播英雄证据"
+                        reason = "斗鱼未提供主播视角英雄，XML 也未形成唯一可靠证据"
                     store.stage(key, "xml_identity", "skipped", {
-                        "danmaku_xml": str(danmaku_xml),
+                        "danmaku_xml": str(danmaku_xml or ""),
                         "comment_count": len(comments),
                         **identity_diagnostics,
                         "reason": reason,
@@ -2250,7 +2274,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     })
             except Exception as exc:
                 store.stage(key, "xml_identity", "warning", {
-                    "reason": "XML 主播识别失败，但不阻断投稿",
+                    "reason": "主播英雄识别失败，但不阻断投稿",
                     "outcome": "failed_non_blocking",
                 }, error=str(exc))
 

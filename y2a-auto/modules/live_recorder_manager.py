@@ -71,7 +71,7 @@ RECORDING_STAGE_LABELS = {
     "record": "自动录制",
     "ass": "生成 ASS",
     "ai": "生成 AI 简介",
-    "xml_identity": "XML 主播识别",
+    "xml_identity": "主播英雄识别",
     "live_stats": "直播数据整理",
     "cover": "生成录制文件封面",
     "cover_16x9": "生成 16:9 个人空间封面",

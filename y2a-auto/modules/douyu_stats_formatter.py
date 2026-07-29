@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Format time-scoped Douyu statistics for one recording.
 
-The recording XML is the source of truth for both the recording timeframe and
-the streamer hero.  A DOTA2 player is only selected when hero mentions in the
-XML provide unique, repeatable evidence; there is deliberately no slot-based
-fallback.
+Recording XML supplies the exact recording timeframe. Douyu's explicit
+streamer-view ``hero`` object is the primary identity/equipment source; XML
+hero mentions remain a compatibility fallback for older snapshots. There is
+deliberately no fixed player-slot guess.
 """
 
 from __future__ import annotations
@@ -185,6 +185,52 @@ def select_anchor_player(
     return selected
 
 
+def select_streamer_player(
+    game: dict,
+    comments: Iterable[tuple[float, str]],
+    start_ts: float,
+    end_ts: float,
+) -> dict | None:
+    """Select the last authoritative streamer snapshot inside the recording."""
+    candidates: list[tuple[float, dict, str]] = []
+    history = game.get("anchor_history", [])
+    if isinstance(history, list):
+        for entry in history:
+            if not isinstance(entry, dict) or not isinstance(entry.get("player"), dict):
+                continue
+            entry_start = float(entry.get("start_unix_ts") or 0)
+            entry_end = float(entry.get("last_seen_unix_ts") or entry_start)
+            if entry_end < start_ts or entry_start > end_ts:
+                continue
+            candidates.append((
+                min(entry_end, end_ts),
+                entry["player"],
+                str(entry.get("source") or game.get("anchor_source") or "gsi"),
+            ))
+    if candidates:
+        snapshot_ts, player, source = max(candidates, key=lambda item: item[0])
+        selected = dict(player)
+        selected["identity_source"] = f"gsi_hero:{source}"
+        selected["equipment_snapshot_unix_ts"] = snapshot_ts
+        return selected
+
+    anchor = game.get("anchor_player")
+    anchor_seen = float(game.get("anchor_last_seen_unix_ts") or 0)
+    if isinstance(anchor, dict) and start_ts <= anchor_seen <= end_ts:
+        selected = dict(anchor)
+        selected["identity_source"] = f"gsi_hero:{game.get('anchor_source') or 'gsi'}"
+        selected["equipment_snapshot_unix_ts"] = min(anchor_seen, end_ts)
+        return selected
+
+    selected = select_anchor_player(game.get("players", []), comments, start_ts, end_ts)
+    if selected:
+        selected["identity_source"] = "xml_unique_mention"
+        selected["equipment_snapshot_unix_ts"] = float(
+            game.get("last_seen_unix_ts") or game.get("end_unix_ts") or end_ts
+        )
+    return selected
+
+
 def _stats_path(video_dir: str | os.PathLike[str]) -> Path:
     root = Path(video_dir)
     recordings_root = Path(os.environ.get("RECORDINGS_DIR", "/data/recordings"))
@@ -215,18 +261,19 @@ def _overlapping_games(stats: dict, start_ts: float, end_ts: float) -> list[dict
 
 
 def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
-    """Return the latest XML-identified streamer player for cover prompting."""
+    """Return the streamer hero, KDA and final in-recording equipment snapshot."""
     comments = load_xml_comments(video_dir)
-    if not comments:
-        return None
     start_ts, end_ts = recording_timeframe(video_dir, comments)
     stats = load_stats(_stats_path(video_dir))
     selected: dict | None = None
     for game in _overlapping_games(stats, start_ts, end_ts):
         game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
         game_end = min(end_ts, float(game.get("end_unix_ts") or game.get("last_seen_unix_ts") or end_ts))
-        candidate = select_anchor_player(game.get("players", []), comments, game_start, game_end)
+        candidate = select_streamer_player(game, comments, game_start, game_end)
         if candidate:
+            candidate["items"] = [
+                str(item) for item in candidate.get("items", [])[:6] if str(item)
+            ]
             selected = candidate
     return selected
 
@@ -251,6 +298,10 @@ def get_identity_diagnostics(video_dir: str | os.PathLike[str]) -> dict:
         "type_tooltips_invalid_snapshots": int(tooltip.get("invalid_snapshots") or 0),
         "type_tooltips_last_player_count": int(tooltip.get("last_raw_player_count") or 0),
         "type_tooltips_game_snapshots": len(games),
+        "gsi_streamer_anchor_snapshots": int(tooltip.get("streamer_anchor_snapshots") or 0),
+        "gsi_streamer_anchor_available": any(
+            isinstance(game.get("anchor_player"), dict) for game in games
+        ),
     }
 
 
@@ -281,18 +332,24 @@ def format_stats(
     for game in _overlapping_games(stats, start_ts, end_ts):
         game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
         game_end = min(end_ts, float(game.get("end_unix_ts") or game.get("last_seen_unix_ts") or end_ts))
-        anchor = select_anchor_player(game.get("players", []), comments, game_start, game_end)
+        anchor = select_streamer_player(game, comments, game_start, game_end)
         if not anchor:
             continue
         hero = str(anchor.get("hero") or "").strip()
-        equipment = [str(item) for item in anchor.get("items", []) if str(item)]
+        equipment = [str(item) for item in anchor.get("items", [])[:6] if str(item)]
         if anchor.get("neutral"):
             equipment.append(str(anchor["neutral"]))
         if anchor.get("scepter"):
             equipment.append("A杖")
         if anchor.get("shard"):
             equipment.append("魔晶")
-        game_lines.append(f"{hero}({','.join(equipment)})" if equipment else hero)
+        summary = f"{hero} 最终六格({','.join(equipment)})" if equipment else hero
+        if all(key in anchor for key in ("kills", "deaths", "assists")):
+            summary += (
+                f" K/D/A {anchor['kills']}/{anchor['deaths']}/{anchor['assists']}"
+                f" KDA {anchor.get('kda')}"
+            )
+        game_lines.append(summary)
 
     if not gift_totals and not high_events and not online and not game_lines:
         return ""
