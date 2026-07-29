@@ -179,14 +179,23 @@ class Picture:
         Returns:
             Picture: `self`
         """
-        tmp_dir = tempfile.gettempdir()
-        img_path = os.path.join(tmp_dir, "test." + self.imageType)
-        open(img_path, "wb").write(self.content)
-        img = Image.open(img_path)
-        new_img_path = os.path.join(tmp_dir, "test." + new_format)
-        img.save(new_img_path)
-        with open(new_img_path, "rb") as file:
-            self.content = file.read()
+        import tempfile as _tf
+        fd_in, img_path = _tf.mkstemp(suffix="." + self.imageType)
+        fd_out, new_img_path = _tf.mkstemp(suffix="." + new_format)
+        os.close(fd_out)
+        try:
+            with os.fdopen(fd_in, "wb") as f:
+                f.write(self.content)
+            with Image.open(img_path) as img:
+                img.save(new_img_path)
+            with open(new_img_path, "rb") as file:
+                self.content = file.read()
+        finally:
+            for p in (img_path, new_img_path):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
         self.__set_picture_meta_from_bytes(new_format)
         return self
 
@@ -201,15 +210,27 @@ class Picture:
         Returns:
             Picture: `self`
         """
-        tmp_dir = tempfile.gettempdir()
-        img_path = os.path.join(tmp_dir, "test." + self.imageType)
-        open(img_path, "wb").write(self.content)
-        img = Image.open(img_path)
-        img = img.resize((width, height))
-        new_img_path = os.path.join(tmp_dir, "test." + self.imageType)
-        img.save(new_img_path)
-        with open(new_img_path, "rb") as file:
-            self.content = file.read()
+        import tempfile as _tf
+        fd_in, img_path = _tf.mkstemp(suffix="." + self.imageType)
+        fd_out, new_img_path = _tf.mkstemp(suffix="." + self.imageType)
+        os.close(fd_out)
+        try:
+            with os.fdopen(fd_in, "wb") as f:
+                f.write(self.content)
+            with Image.open(img_path) as img:
+                resized = img.resize((width, height))
+                try:
+                    resized.save(new_img_path)
+                finally:
+                    resized.close()
+            with open(new_img_path, "rb") as file:
+                self.content = file.read()
+        finally:
+            for p in (img_path, new_img_path):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
         self.__set_picture_meta_from_bytes(self.imageType)
         return self
 
