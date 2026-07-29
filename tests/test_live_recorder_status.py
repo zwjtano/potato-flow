@@ -2013,7 +2013,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('name="segment_minutes"', live_source)
         self.assertIn('name="multipart_enabled"', live_source)
         self.assertIn('name="record_only"', live_source)
-        self.assertIn("同一场直播合并为分P", live_source)
+        self.assertIn("分 P 投稿", live_source)
+        self.assertIn("不分 P 投稿", live_source)
+        self.assertIn('data-role="multipart-state"', live_source)
+        self.assertIn("multipart?.addEventListener('change', syncState)", live_source)
         self.assertIn("仅录制，不自动投稿", live_source)
         self.assertIn("live_recording_room_recording_settings", app_source)
 
