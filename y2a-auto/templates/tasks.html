@@ -1477,7 +1477,16 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         size_bytes: '文件大小',
         danmaku_xml: '弹幕 XML',
         ass_path: 'ASS 字幕',
-        danmaku_count: '弹幕数量',
+        danmaku_count: 'XML 有效弹幕',
+        danmaku_xml_entries: 'XML 弹幕节点',
+        danmaku_invalid_count: '无效弹幕节点',
+        danmaku_first_second: '首条弹幕时间（秒）',
+        danmaku_last_second: '末条弹幕时间（秒）',
+        danmaku_timeline_span_seconds: '弹幕时间跨度（秒）',
+        video_duration_seconds: '视频时长（秒）',
+        danmaku_rate_per_minute: '每分钟有效弹幕',
+        danmaku_integrity: 'XML 完整性',
+        danmaku_integrity_reason: '完整性说明',
         burn_in: '烧录字幕',
         tag_generation_enabled: 'AI 标签生成',
         comment_count: '分析弹幕',
@@ -1503,6 +1512,12 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         gsi_streamer_anchor_snapshots: '主播视角快照',
         gsi_streamer_anchor_available: '主播视角数据可用',
         stats_appended: '已追加直播数据',
+        stats_collected: '已采集直播数据',
+        stats_summary: '直播数据摘要',
+        stats_length: '摘要字符数',
+        retained_xml_path: '保留的弹幕 XML',
+        retained_xml_until: 'XML 保留截止时间',
+        retained_xml_deleted_at: 'XML 到期清理时间',
         outcome: '处理结果',
         title_topic: 'AI 核心主题',
         title: '投稿标题',
@@ -1593,6 +1608,12 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     }
 
     function formatRecordingDetailValue(key, value) {
+        if (key === 'danmaku_integrity') {
+            return value === 'suspected_incomplete' ? '疑似不完整' : value === 'ok' ? '正常' : value;
+        }
+        if (key === 'retained_xml_until' || key === 'retained_xml_deleted_at') {
+            return formatRecordingDetailDate(value);
+        }
         if (key === 'size_bytes') {
             const bytes = Number(value || 0);
             if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
@@ -1728,7 +1749,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             const open = status === 'running' || status === 'queued' || status === 'failed' || status === 'warning';
             const statusName = details.outcome === 'no_data'
                 ? '无匹配数据'
-                : (recordingStageStatusNames[status] || status);
+                : details.danmaku_integrity === 'suspected_incomplete'
+                    ? 'XML 疑似不完整'
+                    : (recordingStageStatusNames[status] || status);
             return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" ${open ? 'open' : ''}>
                 <summary>
                     <span class="recording-detail-stage-icon"><i class="bi ${escapeRecordingDetail(meta.icon)}"></i></span>

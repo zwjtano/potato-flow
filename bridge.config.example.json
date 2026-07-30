@@ -16,6 +16,7 @@
   "danmaku_enabled": true,
   "danmaku_burn_in": false,
   "delete_recording_after_upload": true,
+  "danmaku_xml_retention_hours": 24,
   "danmaku_fonts_dir": "y2a-auto/fonts",
   "danmaku_font_name": "Source Han Sans HW SC VF",
   "danmaku_font_size": 42,

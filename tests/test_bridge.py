@@ -6,7 +6,7 @@ import sys
 import tempfile
 import types
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
@@ -49,6 +49,38 @@ class BridgeTests(unittest.TestCase):
 
         self.assertTrue(description.startswith(stats))
         self.assertLessEqual(len(description), 1900)
+
+    def test_live_stats_stage_details_persist_visible_summary(self):
+        stats = "——— 直播数据 ———\n👥 在线 547~957"
+
+        self.assertEqual(
+            bridge.live_stats_stage_details(stats),
+            {
+                "stats_collected": True,
+                "stats_summary": stats,
+                "stats_length": len(stats),
+                "outcome": "matched",
+            },
+        )
+
+    def test_long_sparse_xml_is_marked_suspected_incomplete(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.flv"
+            xml = root / "clip.xml"
+            video.write_bytes(b"video")
+            xml.write_text(
+                '<i><d p="1,1,25,16777215,0,0,1,0">仅一条</d></i>',
+                encoding="utf-8",
+            )
+            comments = bridge.parse_biliup_xml(xml)
+
+            with patch.object(bridge, "video_duration_seconds", return_value=3601):
+                details = bridge.danmaku_stage_details(video, xml, comments, {})
+
+            self.assertEqual(details["danmaku_integrity"], "suspected_incomplete")
+            self.assertEqual(details["video_duration_seconds"], 3601.0)
+            self.assertIn("已保留源 XML", details["danmaku_integrity_reason"])
 
     def test_avatar_reference_cache_defaults_to_writable_bridge_state_dir(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -804,6 +836,52 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result["deleted"], [])
             self.assertEqual(result["failed"], [])
             self.assertEqual(result["retained"], [str(cover.resolve())])
+
+    def test_cleanup_retains_xml_for_requested_window(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.flv"
+            xml = root / "clip.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i></i>", encoding="utf-8")
+
+            result = bridge.cleanup_uploaded_recording(
+                video,
+                xml,
+                video,
+                retained_paths=(xml,),
+                xml_retention_hours=24,
+            )
+
+            self.assertFalse(video.exists())
+            self.assertTrue(xml.exists())
+            self.assertEqual(result["retained_xml_path"], str(xml.resolve()))
+            expires = datetime.fromisoformat(result["retained_xml_until"])
+            self.assertGreater(expires, datetime.now(timezone.utc) + timedelta(hours=23))
+
+    def test_state_cleanup_deletes_only_expired_retained_xml(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = bridge.StateStore(root / "state.sqlite3")
+            video = root / "clip.flv"
+            xml = root / "clip.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i></i>", encoding="utf-8")
+            key = bridge.fingerprint(video)
+            self.assertTrue(store.claim(key, video, "bilibili"))
+            store.stage(key, "cleanup", "completed", {
+                "retained": [str(xml)],
+                "retained_xml_path": str(xml),
+                "retained_xml_until": (
+                    datetime.now(timezone.utc) - timedelta(minutes=1)
+                ).isoformat(),
+            })
+
+            self.assertEqual(store.cleanup_expired_retained_xml(), [str(xml)])
+            self.assertFalse(xml.exists())
+            details = store.stage_state(key, "cleanup")["details"]
+            self.assertIn("retained_xml_deleted_at", details)
+            self.assertEqual(details["retained"], [])
 
     def test_persist_pipeline_cover_survives_disposable_artifact_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -13,7 +13,7 @@ use rustls_platform_verifier::BuilderVerifierExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio::time::interval;
+use tokio::time::{Instant, interval};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{Connector, connect_async_tls_with_config};
@@ -25,6 +25,8 @@ use crate::protocols::{
     ConnectionInfo, ConnectionTransport, HeartbeatData, Platform, PlatformContext,
     RegistrationData, create_platform,
 };
+
+const INBOUND_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Configuration for the danmaku recorder.
 #[derive(Debug, Clone)]
@@ -517,6 +519,8 @@ impl DanmakuRecorder {
         };
 
         let (mut tcp_reader, mut tcp_writer) = tcp_stream.into_split();
+        let inbound_activity = tokio::time::sleep(INBOUND_ACTIVITY_TIMEOUT);
+        tokio::pin!(inbound_activity);
 
         loop {
             tokio::select! {
@@ -543,8 +547,18 @@ impl DanmakuRecorder {
                     }
                 }
 
+                _ = &mut inbound_activity => {
+                    return Err(DanmakuError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("{platform_name}: no inbound danmaku frames for 120 seconds"),
+                    )));
+                }
+
                 frame = read_tcp_frame(&mut tcp_reader) => {
                     let frame = frame?;
+                    inbound_activity.as_mut().reset(
+                        Instant::now() + INBOUND_ACTIVITY_TIMEOUT,
+                    );
                     match self.platform.decode_message(&frame) {
                         Ok(result) => {
                             for event in result.events {
