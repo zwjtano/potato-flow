@@ -26,8 +26,8 @@ PROBE_URL = "https://member.bilibili.com/preupload?r=probe"
 PROBE_SIZE = 10 * 1024 * 1024
 SUPPORTED_LINES = {
     "bldsa", "cnbldsa", "andsa", "atdsa",
-    "bda2", "cnbd", "anbd", "atbd",
-    "tx", "cntx", "antx", "attx",
+    "bda2", "cnbd", "anbd", "atbd", "akbd",
+    "tx", "cntx", "antx", "attx", "estx",
     "txa", "alia",
 }
 LINE_LABELS = {
@@ -39,10 +39,12 @@ LINE_LABELS = {
     "cnbd": "百度云（中国）",
     "anbd": "百度云（海外）",
     "atbd": "百度云（海外）",
+    "akbd": "百度云（新线路）",
     "tx": "腾讯云",
     "cntx": "腾讯云（中国）",
     "antx": "腾讯云（海外）",
     "attx": "腾讯云（海外）",
+    "estx": "腾讯云（新线路）",
     "txa": "腾讯云（海外）",
     "alia": "阿里云（海外）",
 }

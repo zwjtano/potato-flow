@@ -283,6 +283,16 @@ pub fn atbd() -> Line {
     }
 }
 
+/// B站 2025 探测接口返回的百度云新线路
+pub fn akbd() -> Line {
+    Line {
+        os: Uploader::Upos,
+        query: "probe_version=20250923&upcdn=akbd&zone=cs".into(),
+        probe_url: "//bb27c891csbd.aikobo.cn/OK".into(),
+        cost: 0,
+    }
+}
+
 /// 腾讯云EO
 pub fn tx() -> Line {
     Line {
@@ -320,6 +330,32 @@ pub fn attx() -> Line {
         query: "zone=cs&upcdn=attx&probe_version=20221109".into(),
         probe_url: "//c3350892cstx.anitama.net/OK".into(),
         cost: 0,
+    }
+}
+
+/// B站 2025 探测接口返回的腾讯云新线路
+pub fn estx() -> Line {
+    Line {
+        os: Uploader::Upos,
+        query: "probe_version=20250923&upcdn=estx&zone=cs".into(),
+        probe_url: "//e17962d5cstx.esheep.com/OK".into(),
+        cost: 0,
+    }
+}
+
+#[cfg(test)]
+mod potato_flow_line_tests {
+    use super::{akbd, estx};
+
+    #[test]
+    fn new_probe_lines_keep_the_server_parameters() {
+        let akbd = akbd();
+        assert_eq!(akbd.query, "probe_version=20250923&upcdn=akbd&zone=cs");
+        assert_eq!(akbd.probe_url, "//bb27c891csbd.aikobo.cn/OK");
+
+        let estx = estx();
+        assert_eq!(estx.query, "probe_version=20250923&upcdn=estx&zone=cs");
+        assert_eq!(estx.probe_url, "//e17962d5cstx.esheep.com/OK");
     }
 }
 
