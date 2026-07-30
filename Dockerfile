@@ -87,7 +87,7 @@ RUN chmod 0755 \
       /usr/local/bin/docker-entrypoint.sh \
       /app/upstream-biliup/target/release/biliup \
     && mkdir -p /data \
-    && chown biliup-y2a:biliup-y2a /data
+    && chown biliup-y2a:biliup-y2a /app /data
 
 EXPOSE 5001
 VOLUME ["/data"]

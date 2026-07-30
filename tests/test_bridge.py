@@ -14,6 +14,24 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_live_stats_are_placed_before_archive_description(self):
+        description = bridge.prepend_live_stats_to_description(
+            "直播录播：YYF《休赛期改名狂欢》。",
+            "【直播信息】\n峰值人气：123 万",
+        )
+
+        self.assertEqual(
+            description,
+            "【直播信息】\n峰值人气：123 万\n\n直播录播：YYF《休赛期改名狂欢》。",
+        )
+
+    def test_live_stats_take_priority_when_description_reaches_limit(self):
+        stats = "【直播信息】\n" + "统计" * 20
+        description = bridge.prepend_live_stats_to_description("正文" * 2000, stats)
+
+        self.assertTrue(description.startswith(stats))
+        self.assertLessEqual(len(description), 1900)
+
     def test_avatar_reference_cache_defaults_to_writable_bridge_state_dir(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

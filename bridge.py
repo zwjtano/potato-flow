@@ -458,6 +458,24 @@ def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -
     return "\n\n".join(([clean_intro] if clean_intro else []) + sections)[:1900].rstrip()
 
 
+def prepend_live_stats_to_description(
+    description: str,
+    stats_text: str,
+    limit: int = 1900,
+) -> str:
+    """Put live statistics first while keeping the archive description in range."""
+    stats = str(stats_text or "").strip()
+    body = str(description or "").strip()
+    if not stats:
+        return body[:limit].rstrip()
+    if len(stats) >= limit:
+        return stats[:limit].rstrip()
+
+    separator = "\n\n" if body else ""
+    body_budget = max(0, limit - len(stats) - len(separator))
+    return f"{stats}{separator}{body[:body_budget].rstrip()}".rstrip()
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -2431,11 +2449,12 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
         if live_stats_prepared:
             if stats_text:
-                description_budget = max(0, 1900 - len(stats_text) - 1)
-                description = description[:description_budget].rstrip() + "\n" + stats_text
+                description = prepend_live_stats_to_description(description, stats_text)
                 ai_details["stats_appended"] = True
+                ai_details["stats_prepended"] = True
+                ai_details["stats_position"] = "start"
                 ai_details["description"] = description
-                print("[bridge] 简介已追加预先整理的直播统计数据", file=sys.stderr)
+                print("[bridge] 预先整理的直播统计数据已置于简介开头", file=sys.stderr)
         elif not stats_enabled:
             store.stage(key, "live_stats", "skipped", {
                 "reason": "斗鱼直播数据统计已关闭",
@@ -2455,17 +2474,19 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
                 stats_text = get_stats_for_description(str(video.parent))
                 if stats_text:
-                    stats_text = stats_text[:1900]
-                    description_budget = max(0, 1900 - len(stats_text) - 1)
-                    description = description[:description_budget].rstrip() + "\n" + stats_text
+                    description = prepend_live_stats_to_description(description, stats_text)
                     ai_details["stats_appended"] = True
+                    ai_details["stats_prepended"] = True
+                    ai_details["stats_position"] = "start"
                     ai_details["description"] = description
                     store.stage(key, "live_stats", "completed", {
                         "stats_appended": True,
+                        "stats_prepended": True,
+                        "stats_position": "start",
                         "description_length": len(description),
                         "outcome": "matched",
                     })
-                    print("[bridge] 简介已追加直播统计数据", file=sys.stderr)
+                    print("[bridge] 直播统计数据已置于简介开头", file=sys.stderr)
                 else:
                     store.stage(key, "live_stats", "skipped", {
                         "reason": "本次录播时间内没有匹配的直播数据",
