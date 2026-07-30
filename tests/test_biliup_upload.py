@@ -176,6 +176,12 @@ class BiliupUploaderAdapterTests(unittest.TestCase):
 
 
 class BiliupLineManagerTests(unittest.TestCase):
+    def test_new_bilibili_probe_lines_are_supported(self):
+        self.assertIn("akbd", biliup_line_manager.SUPPORTED_LINES)
+        self.assertIn("estx", biliup_line_manager.SUPPORTED_LINES)
+        self.assertEqual(biliup_line_manager.LINE_LABELS["akbd"], "百度云（新线路）")
+        self.assertEqual(biliup_line_manager.LINE_LABELS["estx"], "腾讯云（新线路）")
+
     def test_probe_measures_upload_lines_strictly_one_at_a_time(self):
         active = 0
         maximum_active = 0
