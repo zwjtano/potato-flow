@@ -339,43 +339,30 @@
     {% endif %}
 
     {% if source_filter != 'recording' %}
+    <section class="recording-task-section standard-task-section mb-4" aria-labelledby="youtubeTasksTitle">
     <div class="task-section-heading standard-task-heading">
         <div>
             <div class="d-flex align-items-center gap-2">
                 <span class="task-source-icon youtube"><i class="bi bi-youtube"></i></span>
-                <h2>YouTube / 手动上传任务</h2>
+                <h2 id="youtubeTasksTitle">YouTube / 手动上传任务</h2>
                 <span class="badge rounded-pill text-bg-light">{{ pagination.total if pagination else (tasks|length) }}</span>
             </div>
             <p>通过视频链接创建的下载、处理和投稿任务。</p>
         </div>
     </div>
     {% if tasks %}
-    <div class="modern-list">
+    <div class="modern-list recording-task-list standard-task-list">
         <!-- 桌面端表格（md及以上显示） -->
         <div class="table-responsive modern-table d-none d-md-block">
-                <table class="table table-striped table-hover table-borderless table-sm align-middle mb-0 tasks-table no-min-width">
-                    <colgroup>
-                        <col class="col-id">
-                        <col class="col-title">
-                        <col class="col-status">
-                        <col class="col-time">
-                        <col class="col-platform">
-                        <col class="col-partition">
-                        <col class="col-tags">
-                        <col class="col-result">
-                        <col class="col-actions">
-                    </colgroup>
+                <table class="table table-hover table-borderless align-middle mb-0 recording-tasks-table standard-tasks-table tasks-table">
                     <thead class="table-light">
                         <tr>
-                            <th class="col-id">ID</th>
-                            <th class="col-title">视频标题</th>
-                            <th class="col-status">状态</th>
-                            <th class="col-time">时间</th>
-                            <th class="col-platform">平台</th>
-                            <th class="col-partition">分区</th>
-                            <th class="col-tags">标签</th>
-                            <th class="col-result">上传结果</th>
-                            <th class="col-actions">操作</th>
+                            <th>视频任务</th>
+                            <th>投稿账号</th>
+                            <th class="text-center">状态</th>
+                            <th>处理进度</th>
+                            <th class="text-center">更新时间</th>
+                            <th class="text-end">结果与操作</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -388,7 +375,7 @@
 
         <!-- 移动端卡片（md以下显示） -->
         <div class="d-block d-md-none">
-            <div class="task-cards">
+            <div class="task-cards recording-task-cards">
                 {% for task in tasks %}
                     {% include 'partials/task_card.html' %}
                 {% endfor %}
@@ -448,6 +435,7 @@
             {{- '' -}}
             </div>
     {% endif %}
+    </section>
     {% endif %}
         </div>
     </nav>
@@ -954,6 +942,14 @@ html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: 
 .recording-tasks-table th { font-size: .78rem; color: #667287; font-weight: 700; }
 .recording-tasks-table th.recording-updated-heading { white-space: nowrap; }
 .recording-tasks-table td { padding: .8rem .65rem; }
+.standard-tasks-table { table-layout: fixed; font-size: .82rem; }
+.standard-tasks-table th:nth-child(1) { width: 31%; }
+.standard-tasks-table th:nth-child(2) { width: 15%; }
+.standard-tasks-table th:nth-child(3) { width: 11%; }
+.standard-tasks-table th:nth-child(4) { width: 18%; }
+.standard-tasks-table th:nth-child(5) { width: 11%; }
+.standard-tasks-table th:nth-child(6) { width: 14%; }
+.standard-task-row > td { font-size: .82rem; }
 .recording-task-title { font-weight: 650; color: #202736; max-width: 420px; }
 .record-only-badge {
     display: inline-flex;
@@ -977,6 +973,7 @@ html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: 
 .recording-cover-trigger:focus-visible { outline: 2px solid #0d6efd; outline-offset: 2px; }
 .recording-task-cover { display: block; width: 104px; height: 65px; border-radius: 9px; object-fit: cover; background: #e9edf3; }
 .recording-task-cover.fallback { display: grid; flex: 0 0 auto; place-items: center; color: #9aa5b5; font-size: 1.15rem; background: #eef2f6; border: 1px solid #e2e7ee; }
+.recording-task-cover.fallback small { display: block; margin-top: .15rem; font-size: .6rem; font-weight: 650; }
 .recording-task-cover-fallback { display: none; width: 104px; height: 65px; align-items: center; justify-content: center; flex-direction: column; gap: 3px; color: #7c8999; border: 1px solid #dbe3eb; border-radius: 9px; background: #eef3f7; }
 .recording-task-cover-fallback i { font-size: 1.05rem; }
 .recording-task-cover-fallback small { font-size: .62rem; font-weight: 650; }
@@ -1005,6 +1002,28 @@ html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color
 .recording-bvid-link { display: inline-flex; align-items: center; gap: .35rem; padding: .28rem .55rem; color: #08794d; border: 1px solid #7bd7ad; border-radius: 999px; background: #eafaf3; font-size: .72rem; font-weight: 750; text-decoration: none; white-space: nowrap; }
 .recording-bvid-link span { color: #3f8066; font-size: .65rem; font-weight: 650; }
 .recording-bvid-link:hover { color: #065f3d; border-color: #43bd84; background: #dcf7ea; }
+.youtube-account-cell strong { color: #344054; font-size: .82rem; font-weight: 700; }
+.youtube-account-cell small { font-size: .72rem; }
+.youtube-task-meta { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: .35rem .7rem; margin-top: .35rem; color: #778195; font-size: .72rem; }
+.youtube-task-meta code { max-width: 145px; overflow: hidden; color: #687487; text-overflow: ellipsis; white-space: nowrap; }
+.youtube-task-tags { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .35rem; }
+.youtube-task-tags .badge { max-width: 100px; overflow: hidden; font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
+.youtube-progress-summary { min-width: 0; padding: .35rem .45rem; }
+.youtube-progress-summary .recording-upload-live { margin-top: 0; font-size: .7rem; text-align: right; }
+.youtube-cover-stages { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .45rem; }
+.youtube-cover-stage { display: inline-flex; align-items: center; gap: .25rem; padding: .18rem .38rem; color: #788597; border: 1px solid #dce3ea; border-radius: 999px; background: #f7f9fb; font-size: .64rem; font-weight: 700; }
+.youtube-cover-stage.status-running { color: #0b63ce; border-color: #b8d5fb; background: #edf6ff; }
+.youtube-cover-stage.status-completed, .youtube-cover-stage.status-skipped { color: #137044; border-color: #b7dfcb; background: #eef9f3; }
+.youtube-cover-stage.status-failed { color: #b42335; border-color: #f1bdc5; background: #fff3f5; }
+.youtube-part-badge { display: inline-flex; align-items: center; padding: .2rem .48rem; color: #4d6074; border: 1px solid #d8e0e8; border-radius: 999px; background: #f3f6f9; font-size: .68rem; font-weight: 750; white-space: nowrap; }
+.standard-task-card { margin-bottom: 0; }
+.youtube-mobile-account { display: flex; min-width: 0; align-items: center; gap: .55rem; }
+.youtube-mobile-account strong, .youtube-mobile-account small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.youtube-mobile-account strong { color: #344054; font-size: .82rem; }
+.youtube-mobile-account small { margin-top: .1rem; color: #8490a4; font-size: .72rem; }
+.youtube-task-error { display: grid; width: 100%; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .5rem; padding: .6rem .7rem; color: #a61e2d; border: 1px solid #f1bdc5; border-radius: 10px; background: #fff3f5; font-size: .75rem; text-align: left; }
+.youtube-task-error span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.youtube-task-error strong { font-size: .72rem; }
 .recording-task-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: .4rem; }
 .recording-progress-trigger { display: block; width: 100%; padding: .35rem .45rem; color: inherit; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; transition: border-color .15s ease, background .15s ease; }
 .recording-progress-trigger:hover, .recording-progress-trigger:focus-visible { border-color: #b8d5fb; outline: none; background: #f4f8ff; }
@@ -1038,6 +1057,17 @@ html[data-theme="dark"] .recording-task-card.status-failed {
     background: #2b1b22;
     box-shadow: inset 4px 0 0 #ff5f73;
 }
+html[data-theme="dark"] .youtube-account-cell strong,
+html[data-theme="dark"] .youtube-mobile-account strong { color: #e1ebf5; }
+html[data-theme="dark"] .youtube-task-meta,
+html[data-theme="dark"] .youtube-mobile-account small { color: #9eb0c3; }
+html[data-theme="dark"] .youtube-part-badge { color: #b9c8d8; border-color: #3b4d5f; background: #20303e; }
+html[data-theme="dark"] .youtube-task-error { color: #ffadb7; border-color: #63313a; background: #361f27; }
+html[data-theme="dark"] .youtube-cover-stage { color: #9eb0c3; border-color: #34485a; background: #1f2c38; }
+html[data-theme="dark"] .youtube-cover-stage.status-running { color: #8bc1ff; border-color: #315a82; background: #1d3348; }
+html[data-theme="dark"] .youtube-cover-stage.status-completed,
+html[data-theme="dark"] .youtube-cover-stage.status-skipped { color: #7fdaa9; border-color: #315d49; background: #1d382c; }
+html[data-theme="dark"] .youtube-cover-stage.status-failed { color: #ffadb7; border-color: #63313a; background: #361f27; }
 html[data-theme="dark"] .recording-task-card .recording-progress-trigger {
     color: #dce7f2;
     border-color: #2d4255;

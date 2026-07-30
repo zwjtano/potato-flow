@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 
 ROOT = Path(__file__).resolve().parents[1]
 Y2A_ROOT = ROOT / "y2a-auto"
@@ -132,7 +134,7 @@ class BiliupUploaderAdapterTests(unittest.TestCase):
             video = Path(temp) / "video.flv"
             cover = Path(temp) / "cover.jpg"
             video.write_bytes(b"video")
-            cover.write_bytes(b"cover")
+            Image.new("RGB", (640, 400), (20, 40, 60)).save(cover)
             expected = {"bvid": "BV1FLOW", "aid": 1}
             with (
                 patch.object(bilibili_uploader, "configure_bilibili_runtime"),

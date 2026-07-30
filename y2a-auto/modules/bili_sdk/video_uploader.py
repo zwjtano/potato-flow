@@ -39,9 +39,9 @@ async def upload_cover(cover: Picture, credential: Credential) -> str:
     credential.raise_for_no_bili_jct()
     api = _API["cover_up"]
     pic = cover if isinstance(cover, Picture) else Picture().from_file(cover)
-    cover = pic.convert_format("png")
+    pic.convert_format("jpeg")
     data = {
-        "cover": f'data:image/png;base64,{base64.b64encode(pic.content).decode("utf-8")}'
+        "cover": f'data:image/jpeg;base64,{base64.b64encode(pic.content).decode("utf-8")}'
     }
     return (await Api(**api, credential=credential).update_data(**data).result)["url"]
 

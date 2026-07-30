@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+from PIL import Image
+
 from modules.bili_sdk.exceptions.NetworkException import NetworkException
 from modules.bili_sdk.utils.AsyncEvent import AsyncEvent
 from modules.bili_sdk.video_uploader import (
@@ -182,6 +184,7 @@ class BilibiliProgressTests(unittest.TestCase):
 
     def test_upload_video_emits_stage_progress_and_retry_log(self):
         progress = []
+        stages = []
         logger = Mock()
 
         class FakePage:
@@ -236,9 +239,9 @@ class BilibiliProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             video_path = os.path.join(temp_dir, "video.mp4")
             cover_path = os.path.join(temp_dir, "cover.jpg")
-            for path in (video_path, cover_path):
-                with open(path, "wb") as stream:
-                    stream.write(b"test")
+            with open(video_path, "wb") as stream:
+                stream.write(b"test")
+            Image.new("RGB", (640, 400), (20, 40, 60)).save(cover_path)
 
             with patch(
                 "modules.bilibili_uploader.setup_task_logger", return_value=logger
@@ -273,6 +276,9 @@ class BilibiliProgressTests(unittest.TestCase):
                     youtube_url="https://www.youtube.com/watch?v=test",
                     task_id="test-task",
                     progress_callback=progress.append,
+                    stage_callback=lambda stage, status, message, details: stages.append(
+                        (stage, status, message, details)
+                    ),
                 )
 
         self.assertTrue(success)
@@ -286,6 +292,17 @@ class BilibiliProgressTests(unittest.TestCase):
             progress,
             ["0.0%", "31.7%", "63.3%", "95.0%", "96.0%", "98.0%", "99.0%", "100.0%"],
         )
+        self.assertEqual(
+            [(stage, status) for stage, status, _message, _details in stages],
+            [
+                ("cover_precheck", "running"),
+                ("cover_precheck", "completed"),
+                ("cover_upload", "running"),
+                ("cover_upload", "completed"),
+            ],
+        )
+        self.assertEqual(stages[1][3]["format"], "JPEG")
+        self.assertEqual((stages[1][3]["width"], stages[1][3]["height"]), (1146, 717))
         log_messages = [call.args[0] for call in logger.info.call_args_list]
         self.assertTrue(any("尝试 1/3，1 秒后重试" in item for item in log_messages))
         self.assertTrue(any("正在提交分P" in item for item in log_messages))
@@ -315,9 +332,9 @@ class BilibiliProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             video_path = os.path.join(temp_dir, "part-2.mp4")
             cover_path = os.path.join(temp_dir, "cover.jpg")
-            for path in (video_path, cover_path):
-                with open(path, "wb") as stream:
-                    stream.write(b"test")
+            with open(video_path, "wb") as stream:
+                stream.write(b"test")
+            Image.new("RGB", (640, 400), (20, 40, 60)).save(cover_path)
 
             with patch(
                 "modules.bilibili_uploader.setup_task_logger", return_value=Mock()

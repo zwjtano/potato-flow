@@ -1,4 +1,5 @@
 import ast
+import json
 import pathlib
 import sqlite3
 import tempfile
@@ -23,6 +24,34 @@ def _load_app_partition_helper():
 
 
 class ForceUploadMetadataTests(unittest.TestCase):
+    def test_pipeline_checkpoint_preserves_cover_stage_status(self):
+        existing = json.dumps({
+            "completed": [tm.PIPELINE_STAGE_COVER_PRECHECK],
+            "stage_status": {
+                tm.PIPELINE_STAGE_COVER_PRECHECK: {
+                    "status": "completed",
+                    "message": "JPEG 1146x717",
+                }
+            },
+        })
+        with patch.object(
+            tm,
+            "get_task",
+            return_value={"pipeline_checkpoint": existing},
+        ), patch.object(tm, "update_task") as update_mock:
+            tm._persist_pipeline_checkpoint(
+                "task-id",
+                {tm.PIPELINE_STAGE_UPLOAD},
+            )
+
+        payload = json.loads(update_mock.call_args.kwargs["pipeline_checkpoint"])
+        self.assertIn(tm.PIPELINE_STAGE_COVER_PRECHECK, payload["completed"])
+        self.assertIn(tm.PIPELINE_STAGE_UPLOAD, payload["completed"])
+        self.assertEqual(
+            payload["stage_status"][tm.PIPELINE_STAGE_COVER_PRECHECK]["message"],
+            "JPEG 1146x717",
+        )
+
     def test_add_task_keeps_uuid_and_creates_display_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = pathlib.Path(temp_dir) / "tasks.db"

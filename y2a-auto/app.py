@@ -29,6 +29,19 @@ from modules.biliup_line_manager import (
 )
 from modules.whisper_languages import WHISPER_LANGUAGE_LIST
 from modules.task_manager import add_task, start_task, pause_task, abandon_task, get_task, get_tasks_paginated, get_tasks_by_status, get_all_tasks, update_task, delete_task, force_upload_task, TASK_STATES, clear_all_tasks, retry_failed_tasks, register_task_updates_listener, unregister_task_updates_listener, resolve_cookie_file_path
+from modules.task_manager import (
+    PIPELINE_STAGE_DOWNLOAD_VIDEO,
+    PIPELINE_STAGE_FETCH_INFO,
+    PIPELINE_STAGE_COVER_PRECHECK,
+    PIPELINE_STAGE_COVER_UPLOAD,
+    PIPELINE_STAGE_GENERATE_TAGS,
+    PIPELINE_STAGE_MODERATE_CONTENT,
+    PIPELINE_STAGE_RECOMMEND_PARTITION,
+    PIPELINE_STAGE_TRANSLATE_CONTENT,
+    PIPELINE_STAGE_TRANSLATE_SUBTITLE,
+    PIPELINE_STAGE_UPLOAD,
+    _get_completed_stages,
+)
 from modules.task_lifecycle import (
     can_automatically_cleanup_youtube_download,
     youtube_task_capabilities,
@@ -721,15 +734,18 @@ def _get_current_cover_path(task: dict, task_dir_real: str):
         if candidate and os.path.exists(candidate):
             return candidate
 
-    for name in ('cover.jpg', 'cover.png', 'cover.webp', 'thumbnail.jpg', 'thumbnail.png', 'thumbnail.webp'):
-        candidate = _safe_join_task_dir(task_dir_real, name)
-        if candidate and os.path.exists(candidate):
-            return candidate
+    for prefix in ('custom_cover', 'cover', 'thumbnail'):
+        for ext in ALLOWED_COVER_EXTENSIONS:
+            candidate = _safe_join_task_dir(task_dir_real, f'{prefix}{ext}')
+            if candidate and os.path.exists(candidate):
+                return candidate
 
     if os.path.isdir(task_dir_real):
         with os.scandir(task_dir_real) as entries:
             for entry in entries:
                 if not entry.is_file():
+                    continue
+                if entry.name.lower().startswith('original_cover.'):
                     continue
                 if entry.name.lower().endswith(tuple(ALLOWED_COVER_EXTENSIONS.keys())):
                     candidate = _safe_join_task_dir(task_dir_real, entry.name)
@@ -737,6 +753,15 @@ def _get_current_cover_path(task: dict, task_dir_real: str):
                         return candidate
 
     return ''
+
+
+def _task_cover_available(task: dict) -> bool:
+    """Return whether the task has a cover that the cover route can serve."""
+    try:
+        task_dir_real = _get_task_dir_real(task.get('id'))
+    except (AttributeError, TypeError, ValueError, OSError):
+        return False
+    return bool(_get_current_cover_path(task, task_dir_real))
 
 
 def _replace_task_cover(task: dict, uploaded_file):
@@ -2304,9 +2329,7 @@ def tasks():
     config = load_config()
     all_youtube_tasks = get_all_tasks()
     for task in all_youtube_tasks:
-        account = resolve_account(config, task.get('bilibili_account_id'))
-        task['bilibili_account_name'] = account['name']
-        task['bilibili_account_uid'] = account.get('bilibili_uid', '')
+        _decorate_youtube_task_for_view(task, config)
     all_recording_jobs = live_recorder_manager.pipeline_jobs(500)
     queue_summary = build_queue_summary(all_youtube_tasks, all_recording_jobs)
 
@@ -2333,15 +2356,96 @@ def tasks():
                          bilibili_default_account_id=default_account_id(config))
 
 
+def _youtube_pipeline_stages(config: dict) -> list[str]:
+    """Return the stages that are visible for a YouTube/manual task."""
+    stages = [PIPELINE_STAGE_FETCH_INFO]
+    if _coerce_checkbox_value(config.get('TRANSLATE_TITLE', True)) or _coerce_checkbox_value(config.get('TRANSLATE_DESCRIPTION', True)):
+        stages.append(PIPELINE_STAGE_TRANSLATE_CONTENT)
+    if _coerce_checkbox_value(config.get('GENERATE_TAGS', True)):
+        stages.append(PIPELINE_STAGE_GENERATE_TAGS)
+    if _coerce_checkbox_value(config.get('RECOMMEND_PARTITION', False)):
+        stages.append(PIPELINE_STAGE_RECOMMEND_PARTITION)
+    if _coerce_checkbox_value(config.get('CONTENT_MODERATION_ENABLED', False)):
+        stages.append(PIPELINE_STAGE_MODERATE_CONTENT)
+    stages.append(PIPELINE_STAGE_DOWNLOAD_VIDEO)
+    if _coerce_checkbox_value(config.get('SUBTITLE_TRANSLATION_ENABLED', False)) or _coerce_checkbox_value(config.get('SUBTITLE_EMBED_IN_VIDEO', True)):
+        stages.append(PIPELINE_STAGE_TRANSLATE_SUBTITLE)
+    stages.extend((PIPELINE_STAGE_COVER_PRECHECK, PIPELINE_STAGE_COVER_UPLOAD))
+    stages.append(PIPELINE_STAGE_UPLOAD)
+    return stages
+
+
+def _decorate_youtube_task_for_view(task: dict, config: dict) -> dict:
+    """Attach account and compact pipeline presentation fields to a task."""
+    account = resolve_account(config, task.get('bilibili_account_id'))
+    task['bilibili_account_name'] = account['name']
+    task['bilibili_account_uid'] = account.get('bilibili_uid', '')
+    task['bilibili_account_avatar_url'] = account.get('avatar_url', '')
+
+    visible_stages = _youtube_pipeline_stages(config)
+    completed_stages = _get_completed_stages(task)
+    completed_count = len(set(visible_stages) & set(completed_stages))
+    total_stages = max(1, len(visible_stages))
+    if task.get('status') == TASK_STATES['COMPLETED']:
+        completed_count = total_stages
+
+    task['completed_stages'] = completed_count
+    task['total_stages'] = total_stages
+    task['progress_percent'] = min(100, (completed_count * 100) // total_stages)
+    task['cover_available'] = _task_cover_available(task)
+    try:
+        checkpoint = json.loads(task.get('pipeline_checkpoint') or '{}')
+    except (TypeError, ValueError):
+        checkpoint = {}
+    raw_stage_status = checkpoint.get('stage_status', {}) if isinstance(checkpoint, dict) else {}
+    if not isinstance(raw_stage_status, dict):
+        raw_stage_status = {}
+    cover_stage_status = []
+    for key, label in (
+        (PIPELINE_STAGE_COVER_PRECHECK, '封面预检'),
+        (PIPELINE_STAGE_COVER_UPLOAD, '封面上传'),
+    ):
+        stage = raw_stage_status.get(key, {})
+        if not isinstance(stage, dict):
+            stage = {}
+        status = str(stage.get('status') or '')
+        if not status:
+            status = 'completed' if task.get('status') == TASK_STATES['COMPLETED'] else 'pending'
+        cover_stage_status.append({
+            'key': key,
+            'label': label,
+            'status': status,
+            'message': str(stage.get('message') or ''),
+            'details': stage.get('details') if isinstance(stage.get('details'), dict) else {},
+        })
+    task['cover_stage_status'] = cover_stage_status
+    task['progress_label'] = {
+        TASK_STATES['COMPLETED']: '全部处理完成',
+        TASK_STATES['FAILED']: '处理失败',
+        TASK_STATES['AWAITING_REVIEW']: '等待人工审核',
+        TASK_STATES['READY_FOR_UPLOAD']: '等待上传',
+        TASK_STATES['PAUSED']: '已暂停',
+    }.get(task.get('status'), task_status_display(task.get('status')))
+    active_cover_stage = next(
+        (
+            stage for stage in cover_stage_status
+            if stage['status'] in {'running', 'failed'}
+        ),
+        None,
+    )
+    if active_cover_stage:
+        task['progress_label'] = (
+            f"{active_cover_stage['label']}失败"
+            if active_cover_stage['status'] == 'failed'
+            else f"正在{active_cover_stage['label']}"
+        )
+    return task
+
+
 def _render_task_fragments(task: dict, config: dict | None = None) -> dict:
     if config is None:
         config = load_config()
-    account = resolve_account(config, task.get('bilibili_account_id'))
-    task = {
-        **task,
-        'bilibili_account_name': account['name'],
-        'bilibili_account_uid': account.get('bilibili_uid', ''),
-    }
+    task = _decorate_youtube_task_for_view(dict(task), config)
 
     return {
         'task_id': task.get('id'),

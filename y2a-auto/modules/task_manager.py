@@ -378,6 +378,8 @@ PIPELINE_STAGE_RECOMMEND_PARTITION = 'recommend_partition'
 PIPELINE_STAGE_MODERATE_CONTENT = 'moderate_content'
 PIPELINE_STAGE_DOWNLOAD_VIDEO = 'download_video'
 PIPELINE_STAGE_TRANSLATE_SUBTITLE = 'translate_subtitle'
+PIPELINE_STAGE_COVER_PRECHECK = 'cover_precheck'
+PIPELINE_STAGE_COVER_UPLOAD = 'cover_upload'
 PIPELINE_STAGE_UPLOAD = 'upload_to_bilibili'
 LEGACY_PIPELINE_STAGE_UPLOAD = 'upload_to_acfun'
 
@@ -389,6 +391,8 @@ PIPELINE_STAGE_ORDER = [
     PIPELINE_STAGE_MODERATE_CONTENT,
     PIPELINE_STAGE_DOWNLOAD_VIDEO,
     PIPELINE_STAGE_TRANSLATE_SUBTITLE,
+    PIPELINE_STAGE_COVER_PRECHECK,
+    PIPELINE_STAGE_COVER_UPLOAD,
     PIPELINE_STAGE_UPLOAD,
 ]
 
@@ -670,9 +674,13 @@ def _parse_pipeline_checkpoint(raw_value):
     completed = [str(x) for x in completed if x]
     # 过滤未知stage，保持向前兼容
     completed_set = {x for x in completed if x in set(PIPELINE_STAGE_ORDER)}
+    stage_status = data.get('stage_status', {})
+    if not isinstance(stage_status, dict):
+        stage_status = {}
     return {
         'version': int(data.get('version', 1) or 1),
         'completed': sorted(completed_set, key=lambda s: PIPELINE_STAGE_ORDER.index(s)),
+        'stage_status': stage_status,
         'updated_at': data.get('updated_at'),
     }
 
@@ -736,13 +744,50 @@ def _get_completed_stages(task):
 
 
 def _persist_pipeline_checkpoint(task_id, completed_stages):
-    stages = [s for s in PIPELINE_STAGE_ORDER if s in set(completed_stages or set())]
+    current_task = get_task(task_id)
+    current = _parse_pipeline_checkpoint(
+        current_task.get(PIPELINE_CHECKPOINT_FIELD) if current_task else None
+    )
+    merged_completed = set(current.get('completed', []) or []) | set(completed_stages or set())
+    stages = [s for s in PIPELINE_STAGE_ORDER if s in merged_completed]
     payload = {
         'version': 1,
         'completed': stages,
+        'stage_status': current.get('stage_status', {}),
         'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     }
     update_task(task_id, silent=True, **{PIPELINE_CHECKPOINT_FIELD: json.dumps(payload, ensure_ascii=False)})
+
+
+def _update_pipeline_stage_status(task_id, stage, status, message='', details=None):
+    task = get_task(task_id)
+    checkpoint = _parse_pipeline_checkpoint(
+        task.get(PIPELINE_CHECKPOINT_FIELD) if task else None
+    )
+    completed = set(checkpoint.get('completed', []) or [])
+    if status in {'completed', 'skipped'}:
+        completed.add(stage)
+    elif status in {'running', 'failed'}:
+        completed.discard(stage)
+    stage_status = dict(checkpoint.get('stage_status', {}) or {})
+    stage_status[stage] = {
+        'status': str(status or ''),
+        'message': str(message or ''),
+        'details': details if isinstance(details, dict) else {},
+        'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    payload = {
+        'version': 1,
+        'completed': [s for s in PIPELINE_STAGE_ORDER if s in completed],
+        'stage_status': stage_status,
+        'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    update_task(
+        task_id,
+        silent=True,
+        **{PIPELINE_CHECKPOINT_FIELD: json.dumps(payload, ensure_ascii=False)},
+    )
+    return completed
 
 
 def _mark_stage_done(task_id, completed_stages, stage):
@@ -7800,6 +7845,26 @@ class TaskProcessor:
                     silent=True,
                 )
 
+            def _on_upload_stage(stage, status, message, details=None):
+                _update_pipeline_stage_status(
+                    task_id,
+                    stage,
+                    status,
+                    message,
+                    details,
+                )
+                if (
+                    stage == PIPELINE_STAGE_COVER_PRECHECK
+                    and status == 'completed'
+                    and isinstance(details, dict)
+                    and details.get('path')
+                ):
+                    update_task(
+                        task_id,
+                        cover_path_local=str(details['path']),
+                        silent=True,
+                    )
+
             success, result = uploader.upload_video(
                 video_file_path=video_path,
                 cover_file_path=cover_path,
@@ -7811,6 +7876,7 @@ class TaskProcessor:
                 task_id=task_id,
                 progress_callback=_on_progress,
                 queue_status_callback=_on_upload_queue_status,
+                stage_callback=_on_upload_stage,
                 title_limit=effective_limits['title_limit'],
                 description_limit=effective_limits['description_limit'],
             )

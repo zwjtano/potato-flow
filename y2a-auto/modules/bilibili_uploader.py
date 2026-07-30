@@ -20,6 +20,11 @@ from .bilibili_runtime import configure_bilibili_runtime
 from .bilibili_auth import load_credential_from_file, validate_credential_remote
 from .biliup_uploader import upload_with_biliup
 from .config_manager import load_config
+from .cover_preflight import (
+    BILIBILI_COVER43_SIZE,
+    CoverPreflightError,
+    prepare_bilibili_cover,
+)
 from .notifications import notify_cookie_invalid
 from .utils import get_app_subdir
 from .upload_queue import bilibili_upload_slot, default_bilibili_upload_lock
@@ -613,6 +618,7 @@ class BilibiliUploader:
         existing_submission: Optional[dict] = None,
         is_original: bool = False,
         queue_status_callback: Optional[Callable[[str], None]] = None,
+        stage_callback: Optional[Callable[[str, str, str, Optional[dict]], None]] = None,
     ) -> Tuple[bool, Union[dict, str]]:
         """Serialize every Bilibili submission across threads and bridge processes."""
 
@@ -643,6 +649,7 @@ class BilibiliUploader:
                 page_titles=page_titles,
                 existing_submission=existing_submission,
                 is_original=is_original,
+                stage_callback=stage_callback,
             )
 
     def _upload_video_unlocked(
@@ -663,12 +670,26 @@ class BilibiliUploader:
         page_titles: Optional[List[str]] = None,
         existing_submission: Optional[dict] = None,
         is_original: bool = False,
+        stage_callback: Optional[Callable[[str, str, str, Optional[dict]], None]] = None,
     ) -> Tuple[bool, Union[dict, str]]:
         self.task_id = task_id
         self.logger = setup_task_logger(task_id or "unknown")
 
         try:
             configure_bilibili_runtime()
+
+            def _report_stage(
+                stage: str,
+                status: str,
+                message: str,
+                details: Optional[dict] = None,
+            ) -> None:
+                if not stage_callback:
+                    return
+                try:
+                    stage_callback(stage, status, message, details)
+                except Exception:
+                    pass
 
             video_paths = (
                 [str(path) for path in video_file_path]
@@ -684,6 +705,57 @@ class BilibiliUploader:
                 return False, f"封面文件不存在: {cover_file_path}"
             if cover43_file_path and not os.path.exists(cover43_file_path):
                 return False, f"首页推荐封面文件不存在: {cover43_file_path}"
+
+            _report_stage("cover_precheck", "running", "正在转换并检查投稿封面", None)
+            try:
+                cover_info = prepare_bilibili_cover(cover_file_path)
+                cover_file_path = cover_info["path"]
+                cover43_info = None
+                if cover43_file_path:
+                    cover43_info = prepare_bilibili_cover(
+                        cover43_file_path,
+                        target_size=BILIBILI_COVER43_SIZE,
+                    )
+                    cover43_file_path = cover43_info["path"]
+            except CoverPreflightError as exc:
+                message = f"封面预检失败: {exc}"
+                _report_stage("cover_precheck", "failed", message, None)
+                self.log(message)
+                return False, message
+
+            precheck_details = {
+                "format": cover_info["format"],
+                "width": cover_info["width"],
+                "height": cover_info["height"],
+                "ratio": round(cover_info["ratio"], 4),
+                "size_bytes": cover_info["size_bytes"],
+                "source_format": cover_info["source_format"],
+                "path": cover_info["path"],
+            }
+            if cover43_info:
+                precheck_details["cover43"] = {
+                    "format": cover43_info["format"],
+                    "width": cover43_info["width"],
+                    "height": cover43_info["height"],
+                    "ratio": round(cover43_info["ratio"], 4),
+                    "size_bytes": cover43_info["size_bytes"],
+                    "source_format": cover43_info["source_format"],
+                    "path": cover43_info["path"],
+                }
+            _report_stage(
+                "cover_precheck",
+                "completed",
+                (
+                    f"封面预检通过：JPEG {cover_info['width']}×{cover_info['height']}，"
+                    f"{cover_info['size_bytes'] / 1024:.0f}KB"
+                ),
+                precheck_details,
+            )
+            self.log(
+                f"封面预检通过：{cover_info['source_format']} -> JPEG "
+                f"{cover_info['width']}x{cover_info['height']}，"
+                f"{cover_info['size_bytes'] / 1024:.0f}KB"
+            )
 
             credential = load_credential_from_file(self.cookie_file)
             credential_ok, credential_msg = validate_credential_remote(credential)
@@ -721,6 +793,8 @@ class BilibiliUploader:
                     f"使用 Biliup 投稿，全局线路："
                     f"{str(upload_config.get('BILIBILI_UPLOAD_LINE') or 'bldsa').strip().lower()}"
                 )
+                if existing_submission:
+                    _report_stage("cover_upload", "skipped", "追加分P沿用已有稿件封面", None)
                 biliup_ok, biliup_result = upload_with_biliup(
                     cookie_file=self.cookie_file,
                     video_paths=video_paths,
@@ -733,6 +807,7 @@ class BilibiliUploader:
                     existing_submission=existing_submission,
                     progress_callback=progress_callback,
                     progress_detail_callback=progress_detail_callback,
+                    stage_callback=_report_stage,
                     log_callback=self.log,
                 )
                 if (
@@ -879,16 +954,20 @@ class BilibiliUploader:
             @uploader.on(video_uploader.VideoUploaderEvents.PRE_COVER.value)
             def on_pre_cover(_data):
                 _emit_progress("96.0%")
+                _report_stage("cover_upload", "running", "正在上传投稿封面", None)
                 self.log("开始上传Bilibili封面")
 
             @uploader.on(video_uploader.VideoUploaderEvents.AFTER_COVER.value)
             def on_after_cover(_data):
                 _emit_progress("98.0%")
+                _report_stage("cover_upload", "completed", "投稿封面上传完成", None)
                 self.log("Bilibili封面上传成功")
 
             @uploader.on(video_uploader.VideoUploaderEvents.COVER_FAILED.value)
             def on_cover_failed(data):
-                self.log(f"Bilibili封面上传失败：{_event_error(data)}")
+                message = f"Bilibili封面上传失败：{_event_error(data)}"
+                _report_stage("cover_upload", "failed", message, None)
+                self.log(message)
 
             @uploader.on(video_uploader.VideoUploaderEvents.PRE_SUBMIT.value)
             def on_pre_submit(_data):
@@ -916,6 +995,8 @@ class BilibiliUploader:
                 isinstance(existing_submission, dict)
                 and existing_submission.get("bvid")
             )
+            if appending:
+                _report_stage("cover_upload", "skipped", "追加分P沿用已有稿件封面", None)
             self.log("开始追加Bilibili分P" if appending else "开始上传到bilibili")
 
             async def _run_upload():

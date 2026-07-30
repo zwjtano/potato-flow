@@ -143,7 +143,40 @@ pub async fn upload_by_command(
             .map(|s| s.to_string())
             .unwrap();
     }
-    cover_up(&mut studio, &bili).await?;
+    let machine_output = std::env::var_os("POTATOFLOW_MACHINE_OUTPUT").is_some();
+    if machine_output {
+        println!(
+            "POTATOFLOW_STAGE={}",
+            serde_json::json!({
+                "stage": "cover_upload",
+                "status": "running",
+                "message": "正在上传投稿封面"
+            })
+        );
+    }
+    if let Err(error) = cover_up(&mut studio, &bili).await {
+        if machine_output {
+            println!(
+                "POTATOFLOW_STAGE={}",
+                serde_json::json!({
+                    "stage": "cover_upload",
+                    "status": "failed",
+                    "message": format!("Biliup封面上传失败: {error}")
+                })
+            );
+        }
+        return Err(error);
+    }
+    if machine_output {
+        println!(
+            "POTATOFLOW_STAGE={}",
+            serde_json::json!({
+                "stage": "cover_upload",
+                "status": "completed",
+                "message": "投稿封面上传完成"
+            })
+        );
+    }
     studio.videos = upload(&video_path, &bili, line, limit).await?;
     apply_potatoflow_page_title(&mut studio.videos);
 
