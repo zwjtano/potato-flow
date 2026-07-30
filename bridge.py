@@ -1011,7 +1011,7 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("莱席拉克（Leshrac）", ("老鹿", "leshrac")),
     ("食人魔魔法师（Ogre Magi）", ("蓝胖", "ogre magi")),
     ("光之守卫（Keeper of the Light）", ("光法", "kotl", "keeper of the light")),
-    ("瘟疫法师（Necrophos）", ("死灵法", "nec", "necrophos")),
+    ("瘟疫法师（Necrophos）", ("瘟疫法师", "死灵法", "死灵法师", "nec", "necrophos")),
     ("自然先知（Nature's Prophet）", ("先知", "furion", "nature's prophet")),
     ("暗影萨满（Shadow Shaman）", ("小y", "小歪", "shadow shaman")),
     ("干扰者（Disruptor）", ("萨尔", "disruptor")),
@@ -1049,6 +1049,76 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("斧王（Axe）", ("斧王", "axe")),
     ("帕吉（Pudge）", ("屠夫", "胖子", "pudge")),
 )
+
+
+def _tag_identity_key(value: object) -> str:
+    """Return a conservative semantic key for short recording tags."""
+    key = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").casefold())
+    if len(key) >= 4 and len(key) % 2 == 0:
+        half = len(key) // 2
+        if key[:half] == key[half:]:
+            key = key[:half]
+    return key
+
+
+def dedupe_recording_tags(tags: Iterable[object], limit: int | None = None) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in tags:
+        tag = str(raw_tag or "").strip()
+        key = _tag_identity_key(tag)
+        if not tag or not key or key in seen:
+            continue
+        result.append(tag)
+        seen.add(key)
+        if limit is not None and len(result) >= limit:
+            break
+    return result
+
+
+def _contains_unverified_dota2_hero(value: object) -> bool:
+    folded = str(value or "").casefold()
+    for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
+        terms = (canonical_name.split("（", 1)[0], *aliases)
+        for term in terms:
+            candidate = str(term or "").strip().casefold()
+            if not candidate:
+                continue
+            if re.fullmatch(r"[a-z][a-z0-9' -]*", candidate):
+                if len(candidate) >= 3 and re.search(
+                    rf"(?<![a-z0-9]){re.escape(candidate)}(?![a-z0-9])",
+                    folded,
+                ):
+                    return True
+            elif candidate in folded:
+                return True
+    return False
+
+
+def filter_unverified_dota2_metadata(
+    title_topic: str,
+    description: str,
+    tags: Iterable[object],
+) -> tuple[str, str, list[str], dict[str, Any]]:
+    """Remove hero claims when XML/GSI did not identify the streamer uniquely."""
+    filtered_topic = "" if _contains_unverified_dota2_hero(title_topic) else title_topic
+    filtered_lines: list[str] = []
+    for line in str(description or "").splitlines():
+        sentences = re.split(r"(?<=[。！？!?])", line)
+        filtered_lines.append("".join(
+            sentence for sentence in sentences
+            if not _contains_unverified_dota2_hero(sentence)
+        ))
+    filtered_description = "\n".join(filtered_lines).strip()
+    original_tags = [str(tag or "").strip() for tag in tags if str(tag or "").strip()]
+    hero_tags = [tag for tag in original_tags if _contains_unverified_dota2_hero(tag)]
+    filtered_tags = dedupe_recording_tags(tag for tag in original_tags if tag not in hero_tags)
+    details = {
+        "unverified_hero_topic_removed": filtered_topic != title_topic,
+        "unverified_hero_description_removed": filtered_description != str(description or "").strip(),
+        "unverified_hero_tags_removed": hero_tags,
+    }
+    return filtered_topic, filtered_description, filtered_tags, details
 
 
 _DOTA2_ITEM_CONTEXT_ALIASES = (
@@ -1631,6 +1701,7 @@ def cleanup_uploaded_recording(
     danmaku_xml: Path | None,
     upload_video: Path,
     artifact_dir: Path | None = None,
+    retained_paths: Iterable[Path | None] = (),
 ) -> dict[str, Any]:
     """Remove recording inputs and generated artifacts after upload is durable."""
     candidates = [
@@ -1650,8 +1721,10 @@ def cleanup_uploaded_recording(
             continue
         seen.add(path)
         try:
+            existed = path.exists() or path.is_symlink()
             path.unlink(missing_ok=True)
-            deleted.append(str(path))
+            if existed and not path.exists() and not path.is_symlink():
+                deleted.append(str(path))
         except OSError as exc:
             failed.append({"kind": kind, "path": str(path), "error": str(exc)})
     if artifact_dir is not None:
@@ -1666,16 +1739,24 @@ def cleanup_uploaded_recording(
                 shutil.rmtree(artifact_path)
                 deleted.extend(
                     item for item in artifact_files
-                    if item not in deleted
+                    if item not in deleted and not Path(item).exists()
                 )
-                deleted.append(str(artifact_path))
+                if not artifact_path.exists():
+                    deleted.append(str(artifact_path))
         except OSError as exc:
             failed.append({
                 "kind": "artifacts",
                 "path": str(artifact_path),
                 "error": str(exc),
             })
-    return {"deleted": deleted, "failed": failed}
+    retained = []
+    for candidate in retained_paths:
+        if candidate is None:
+            continue
+        path = candidate.resolve()
+        if path.is_file() and str(path) not in retained:
+            retained.append(str(path))
+    return {"deleted": deleted, "retained": retained, "failed": failed}
 
 
 def persist_pipeline_cover(
@@ -1795,7 +1876,7 @@ def render_metadata(
     description = str(
         cfg.get("description_template") or DEFAULT_DESCRIPTION_TEMPLATE
     ).format_map(values).strip()
-    tags = [str(tag).strip() for tag in cfg.get("tags", []) if str(tag).strip()]
+    tags = dedupe_recording_tags(cfg.get("tags", []))
     if not title:
         raise ValueError("渲染后的标题为空")
     return title, description, tags
@@ -1845,7 +1926,7 @@ def enhance_recording_metadata(
     }
 
     generated_tags: list[str] = []
-    final_tags = [str(tag).strip() for tag in existing_tags if str(tag).strip()]
+    final_tags = dedupe_recording_tags(existing_tags)
     if generate_tags_enabled:
         generated_tags = [
             str(tag).strip()
@@ -1860,11 +1941,7 @@ def enhance_recording_metadata(
             )
             if str(tag).strip()
         ][:6]
-        seen = {tag.casefold() for tag in final_tags}
-        for tag in generated_tags:
-            if tag.casefold() not in seen:
-                final_tags.append(tag)
-                seen.add(tag.casefold())
+        final_tags = dedupe_recording_tags([*final_tags, *generated_tags])
 
     partition_id = str(fallback_partition_id or "").strip()
     selection: dict[str, Any] = {}
@@ -2274,6 +2351,30 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     ai_details.update(metadata_automation)
                     print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
 
+        metadata_values_for_evidence = recording_metadata_values(video, cfg)
+        if not locked_game_context and recording_cover_has_dota2_context(
+            metadata_values_for_evidence["streamer"],
+            title,
+            description,
+            *tags,
+        ):
+            original_ai_topic = ai_topic
+            filtered_topic, filtered_description, filtered_tags, evidence_filter = (
+                filter_unverified_dota2_metadata(ai_topic, description, tags)
+            )
+            ai_topic = filtered_topic
+            if filtered_description:
+                description = filtered_description
+            tags = filtered_tags
+            if ai_topic != original_ai_topic:
+                title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
+            ai_details.update(evidence_filter)
+            ai_details["title_topic"] = ai_topic or metadata_values_for_evidence["ai_topic"]
+            ai_details["title"] = title
+            ai_details["description"] = description
+            ai_details["final_tags"] = tags
+            metadata_automation["final_tags"] = tags
+
         part_values = recording_metadata_values(video, cfg, ai_topic=ai_topic)
         part_topic = str(ai_topic or part_values["ai_topic"]).strip()
         part_description = description
@@ -2293,8 +2394,10 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             part_description = description
             override_tags = review_override.get("tags")
             if isinstance(override_tags, list):
-                tags = [str(tag).strip() for tag in override_tags if str(tag).strip()][:6]
+                tags = dedupe_recording_tags(override_tags, limit=6)
             partition = str(review_override.get("partition_id") or partition).strip()
+
+        tags = dedupe_recording_tags(tags, limit=12)
 
         page_title = recording_part_title(video, part_number, part_topic)
         multipart_parts: list[dict[str, Any]] = []
@@ -2805,7 +2908,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 video_file_path=str(upload_video), cover_file_path=str(cover), title=title,
                 cover43_file_path=str(cover43) if cover43 else "",
                 description=description, tags=tags, partition_id=partition,
-                youtube_url=source_url, task_id=None,
+                youtube_url=source_url, task_id=key[:12],
                 page_titles=[page_title],
                 existing_submission=existing_submission,
                 is_original=True,
@@ -2900,6 +3003,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 danmaku_xml,
                 upload_video,
                 artifact_dir=work_dir,
+                retained_paths=(cover, cover43),
             )
             store.stage(
                 key,

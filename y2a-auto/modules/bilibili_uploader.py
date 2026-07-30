@@ -14,7 +14,7 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 from .bili_sdk import video_uploader
 from .bili_sdk.exceptions import ArgsException, ResponseCodeException
-from .bili_sdk.utils.network import Api
+from .bili_sdk.utils.network import Api, HEADERS
 
 from .bilibili_runtime import configure_bilibili_runtime
 from .bilibili_auth import load_credential_from_file, validate_credential_remote
@@ -340,30 +340,49 @@ class BilibiliUploader:
 
                 pinned = False
                 pin_error = ""
+                pin_attempts = 0
                 if pin:
-                    try:
-                        await Api(
-                            url="https://api.bilibili.com/x/v2/reply/top",
-                            method="POST",
-                            verify=True,
-                            credential=credential,
-                        ).update_data(
-                            type=1,
-                            oid=int(aid),
-                            rpid=int(rpid),
-                            action=1,
-                        ).request()
-                        pinned = True
-                    except Exception as exc:
-                        pin_error = _compact_exception_text(str(exc))
-                return str(rpid), pinned, pin_error
+                    pin_headers = {
+                        **HEADERS,
+                        "Origin": "https://www.bilibili.com",
+                        "Referer": (
+                            f"https://www.bilibili.com/video/{bvid}/"
+                            if bvid
+                            else f"https://www.bilibili.com/video/av{aid}/"
+                        ),
+                    }
+                    # A newly created reply is not always immediately visible
+                    # to the pin endpoint. Retry only the non-critical pin step;
+                    # never post a duplicate description comment.
+                    for attempt, delay_seconds in enumerate((0, 1, 2), start=1):
+                        pin_attempts = attempt
+                        if delay_seconds:
+                            await asyncio.sleep(delay_seconds)
+                        try:
+                            await Api(
+                                url="https://api.bilibili.com/x/v2/reply/top",
+                                method="POST",
+                                verify=True,
+                                credential=credential,
+                            ).update_headers(**pin_headers).update_data(
+                                type=1,
+                                oid=int(aid),
+                                rpid=int(rpid),
+                                action=1,
+                            ).request()
+                            pinned = True
+                            pin_error = ""
+                            break
+                        except Exception as exc:
+                            pin_error = _compact_exception_text(str(exc))
+                return str(rpid), pinned, pin_error, pin_attempts
 
             try:
-                rpid, pinned, pin_error = asyncio.run(_publish())
+                rpid, pinned, pin_error, pin_attempts = asyncio.run(_publish())
             except RuntimeError:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    rpid, pinned, pin_error = pool.submit(
+                    rpid, pinned, pin_error, pin_attempts = pool.submit(
                         asyncio.run, _publish()
                     ).result()
 
@@ -372,6 +391,7 @@ class BilibiliUploader:
                 "pinned": pinned,
                 "rpid": rpid,
                 "message_length": len(message),
+                "pin_attempts": pin_attempts,
             })
             if pin_error:
                 details["pin_error"] = pin_error
