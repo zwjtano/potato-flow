@@ -23,6 +23,7 @@ from .utils import get_app_root_dir, get_app_subdir
 
 RESULT_PREFIX = "POTATOFLOW_RESULT="
 PROGRESS_PREFIX = "POTATOFLOW_PROGRESS="
+STAGE_PREFIX = "POTATOFLOW_STAGE="
 
 
 def _biliup_binary() -> str:
@@ -96,7 +97,7 @@ def _compact_error(lines: deque[str]) -> str:
     useful = []
     for raw in lines:
         line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", str(raw or "")).strip()
-        if not line or line.startswith((PROGRESS_PREFIX, RESULT_PREFIX)):
+        if not line or line.startswith((PROGRESS_PREFIX, RESULT_PREFIX, STAGE_PREFIX)):
             continue
         useful.append(line)
     return " | ".join(useful[-8:])[-1800:] or "Biliup 投稿进程异常退出"
@@ -146,6 +147,7 @@ def upload_with_biliup(
     existing_submission: Optional[dict[str, Any]] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
     progress_detail_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    stage_callback: Optional[Callable[[str, str, str, Optional[dict]], None]] = None,
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> tuple[bool, dict[str, Any] | str]:
     config = load_config()
@@ -211,7 +213,21 @@ def upload_with_biliup(
             for raw_line in process.stdout:
                 line_text = raw_line.rstrip("\r\n")
                 recent_lines.append(line_text)
-                if line_text.startswith(PROGRESS_PREFIX):
+                if line_text.startswith(STAGE_PREFIX):
+                    try:
+                        stage_event = json.loads(line_text[len(STAGE_PREFIX):])
+                        if stage_callback and isinstance(stage_event, dict):
+                            stage_callback(
+                                str(stage_event.get("stage") or ""),
+                                str(stage_event.get("status") or ""),
+                                str(stage_event.get("message") or ""),
+                                stage_event.get("details")
+                                if isinstance(stage_event.get("details"), dict)
+                                else None,
+                            )
+                    except Exception:
+                        pass
+                elif line_text.startswith(PROGRESS_PREFIX):
                     try:
                         progress = json.loads(line_text[len(PROGRESS_PREFIX):])
                         now = time.monotonic()

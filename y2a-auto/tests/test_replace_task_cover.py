@@ -41,6 +41,7 @@ def _load_cover_helpers(downloads_dir, mock_update_task):
         '_validate_cover_upload',
         '_find_original_cover_backup',
         '_get_current_cover_path',
+        '_task_cover_available',
         '_replace_task_cover',
     }
     variable_names = {'ALLOWED_COVER_EXTENSIONS'}
@@ -105,12 +106,48 @@ class ReplaceTaskCoverTests(unittest.TestCase):
         self.mock_update_task = MagicMock()
         ns = _load_cover_helpers(self.downloads_dir, self.mock_update_task)
         self._replace_task_cover = ns['_replace_task_cover']
+        self._task_cover_available = ns['_task_cover_available']
+        self._get_current_cover_path = ns['_get_current_cover_path']
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _task_dir(self):
         return os.path.realpath(os.path.join(self.downloads_dir, self.TASK_ID))
+
+    def test_cover_available_discovers_file_without_database_path(self):
+        self._create_existing_cover('thumbnail.webp')
+
+        self.assertTrue(self._task_cover_available({'id': self.TASK_ID}))
+
+    def test_cover_available_accepts_jpeg_fallback_name(self):
+        self._create_existing_cover('legacy-thumbnail.jpeg')
+
+        self.assertTrue(self._task_cover_available({'id': self.TASK_ID}))
+
+    def test_cover_available_rejects_stale_database_path(self):
+        task = {
+            'id': self.TASK_ID,
+            'cover_path_local': os.path.join(self._task_dir(), 'missing.jpg'),
+        }
+
+        self.assertFalse(self._task_cover_available(task))
+
+    def test_cover_available_handles_legacy_invalid_task_id(self):
+        self.assertFalse(self._task_cover_available({'id': 'legacy-task-id'}))
+
+    def test_cover_lookup_prefers_custom_cover_over_downloaded_cover(self):
+        self._create_existing_cover('cover.jpg')
+        custom = self._create_existing_cover('custom_cover.png')
+
+        selected = self._get_current_cover_path({}, self._task_dir())
+
+        self.assertEqual(selected, custom)
+
+    def test_original_backup_is_not_used_as_active_cover(self):
+        self._create_existing_cover('original_cover.jpg')
+
+        self.assertFalse(self._task_cover_available({'id': self.TASK_ID}))
 
     # ------------------------------------------------------------------
     # Branch 1: no pre-existing cover
