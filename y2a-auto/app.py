@@ -2167,7 +2167,7 @@ def index():
                 'title': r[2] or r[3] or '未获取标题',
                 'status': r[4],
                 'updated_at': r[5],
-                'upload_target': upload_target,
+                'upload_target': 'bilibili',
                 'upload_id': upload_id,
                 'source': 'youtube',
             })
