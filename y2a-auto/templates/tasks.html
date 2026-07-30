@@ -355,6 +355,14 @@
         <!-- 桌面端表格（md及以上显示） -->
         <div class="table-responsive modern-table d-none d-md-block">
                 <table class="table table-hover table-borderless align-middle mb-0 recording-tasks-table standard-tasks-table tasks-table">
+                    <colgroup>
+                        <col class="standard-col-video">
+                        <col class="standard-col-account">
+                        <col class="standard-col-status">
+                        <col class="standard-col-progress">
+                        <col class="standard-col-updated">
+                        <col class="standard-col-actions">
+                    </colgroup>
                     <thead class="table-light">
                         <tr>
                             <th>视频任务</th>
@@ -604,6 +612,30 @@
                 </button>
                 <a class="btn btn-warning d-none" data-role="recording-detail-review"><i class="bi bi-pencil-square"></i> 人工审核</a>
                 <a class="btn btn-outline-success d-none" data-role="recording-detail-bilibili" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> 查看 B站稿件</a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 普通视频任务详情 -->
+<div class="modal fade" id="standardTaskDetailModal" tabindex="-1" aria-labelledby="standardTaskDetailTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="min-w-0">
+                    <h5 class="modal-title text-truncate" id="standardTaskDetailTitle">视频任务详情</h5>
+                    <div class="small text-muted mt-1 text-truncate" data-role="standard-detail-meta"></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body" data-role="standard-detail-body" aria-live="polite">
+                <div class="recording-detail-loading" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span> 正在读取任务进度…</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-primary" onclick="refreshActiveStandardTaskDetail()">
+                    <i class="bi bi-arrow-clockwise" aria-hidden="true"></i> 刷新详情
+                </button>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
             </div>
         </div>
@@ -942,14 +974,17 @@ html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: 
 .recording-tasks-table th { font-size: .78rem; color: #667287; font-weight: 700; }
 .recording-tasks-table th.recording-updated-heading { white-space: nowrap; }
 .recording-tasks-table td { padding: .8rem .65rem; }
-.standard-tasks-table { table-layout: fixed; font-size: .82rem; }
-.standard-tasks-table th:nth-child(1) { width: 31%; }
-.standard-tasks-table th:nth-child(2) { width: 15%; }
-.standard-tasks-table th:nth-child(3) { width: 11%; }
-.standard-tasks-table th:nth-child(4) { width: 18%; }
-.standard-tasks-table th:nth-child(5) { width: 11%; }
-.standard-tasks-table th:nth-child(6) { width: 14%; }
-.standard-task-row > td { font-size: .82rem; }
+.standard-tasks-table { min-width: 1080px; table-layout: fixed; font-size: .82rem; }
+.standard-tasks-table .standard-col-video { width: 34%; }
+.standard-tasks-table .standard-col-account { width: 11%; }
+.standard-tasks-table .standard-col-status { width: 8%; }
+.standard-tasks-table .standard-col-progress { width: 25%; }
+.standard-tasks-table .standard-col-updated { width: 10%; }
+.standard-tasks-table .standard-col-actions { width: 12%; }
+.standard-task-row > td { padding-top: .55rem; padding-bottom: .55rem; font-size: .82rem; }
+.standard-task-row .recording-video-cell { min-width: 0; }
+.standard-task-row .recording-task-cover,
+.standard-task-row .recording-task-cover-fallback { width: 88px; height: 55px; }
 .recording-task-title { font-weight: 650; color: #202736; max-width: 420px; }
 .record-only-badge {
     display: inline-flex;
@@ -987,6 +1022,8 @@ html[data-theme="dark"] .recording-progress-count,
 html[data-theme="dark"] .recording-progress-percent { color: #9eb0c3; }
 html[data-theme="dark"] .recording-progress-trigger:hover,
 html[data-theme="dark"] .recording-progress-trigger:focus-visible { border-color: #315a75; background: #162838; }
+html[data-theme="dark"] .youtube-progress-summary:has(.standard-progress-trigger:hover),
+html[data-theme="dark"] .youtube-progress-summary:has(.standard-progress-trigger:focus-visible) { border-color: #315a75; background: #162838; }
 html[data-theme="dark"] .task-source-icon.recording { color: #63b9ff; border-color: #28506c; background: #132b3b; }
 html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color: #65303a; background: #392029; }
 .recording-cover-preview-content { overflow: hidden; border: 0; border-radius: 16px; }
@@ -1008,7 +1045,15 @@ html[data-theme="dark"] .task-source-icon.youtube { color: #ff7081; border-color
 .youtube-task-meta code { max-width: 145px; overflow: hidden; color: #687487; text-overflow: ellipsis; white-space: nowrap; }
 .youtube-task-tags { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .35rem; }
 .youtube-task-tags .badge { max-width: 100px; overflow: hidden; font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
-.youtube-progress-summary { min-width: 0; padding: .35rem .45rem; }
+.youtube-progress-summary { position: relative; min-width: 0; padding: .45rem .55rem; border: 1px solid transparent; border-radius: 10px; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
+.youtube-progress-summary:has(.standard-progress-trigger:hover),
+.youtube-progress-summary:has(.standard-progress-trigger:focus-visible) { border-color: #b8d5fb; background: #f4f8ff; box-shadow: 0 3px 10px rgba(13,110,253,.08); }
+.standard-progress-trigger { position: absolute; z-index: 2; inset: 0; width: 100%; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+.standard-progress-trigger:focus-visible { outline: 2px solid #0d6efd; outline-offset: 2px; }
+.youtube-progress-summary > :not(.standard-progress-trigger) { pointer-events: none; }
+.standard-progress-hint { display: block; margin-top: .35rem; color: #6d7f95; font-size: .66rem; font-weight: 650; opacity: 0; transform: translateY(-2px); transition: opacity .15s ease, transform .15s ease; }
+.youtube-progress-summary:has(.standard-progress-trigger:hover) .standard-progress-hint,
+.youtube-progress-summary:has(.standard-progress-trigger:focus-visible) .standard-progress-hint { opacity: 1; transform: translateY(0); }
 .youtube-progress-summary .recording-upload-live { margin-top: 0; font-size: .7rem; text-align: right; }
 .youtube-cover-stages { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .45rem; }
 .youtube-cover-stage { display: inline-flex; align-items: center; gap: .25rem; padding: .18rem .38rem; color: #788597; border: 1px solid #dce3ea; border-radius: 999px; background: #f7f9fb; font-size: .64rem; font-weight: 700; }
@@ -1784,6 +1829,106 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         loadRecordingJobDetail(activeRecordingDetailJobId);
     }
 
+    let activeStandardTaskDetailId = '';
+    let standardTaskDetailRequestInFlight = false;
+
+    function renderStandardTaskDetail(task) {
+        const modal = document.getElementById('standardTaskDetailModal');
+        const body = modal?.querySelector('[data-role="standard-detail-body"]');
+        if (!modal || !body) return;
+        modal.querySelector('#standardTaskDetailTitle').textContent = task.title || '视频任务详情';
+        modal.querySelector('[data-role="standard-detail-meta"]').textContent =
+            `${task.display_id || task.id?.slice(0, 12) || ''} · ${task.completed_stages || 0}/${task.total_stages || 0} 步`;
+        const stageHtml = (task.stages || []).map(stage => {
+            const status = stage.status || 'pending';
+            const statusName = recordingStageStatusNames[status] || status;
+            const detailFields = stage.details && typeof stage.details === 'object'
+                ? renderRecordingDetailFields(stage.details)
+                : '';
+            const message = stage.message
+                ? `<div class="recording-detail-skip"><i class="bi bi-info-circle" aria-hidden="true"></i><span>${escapeRecordingDetail(stage.message)}</span></div>`
+                : '';
+            const timing = stage.updated_at
+                ? `更新 ${formatRecordingDetailDate(stage.updated_at)}`
+                : (status === 'completed' ? '已完成，旧任务未记录单步时间' : '尚未开始');
+            const open = status === 'running' || status === 'failed';
+            return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" ${open ? 'open' : ''}>
+                <summary>
+                    <span class="recording-detail-stage-icon"><i class="bi ${escapeRecordingDetail(stage.icon || 'bi-circle')}" aria-hidden="true"></i></span>
+                    <span class="recording-detail-stage-title">
+                        <strong>${escapeRecordingDetail(stage.label || stage.key)}</strong>
+                        <small class="recording-detail-stage-description">${escapeRecordingDetail(stage.description || '')}</small>
+                        <small class="recording-detail-stage-timing">${escapeRecordingDetail(timing)}</small>
+                    </span>
+                    <span class="recording-detail-stage-status ${escapeRecordingDetail(status)}">${escapeRecordingDetail(statusName)}</span>
+                </summary>
+                <div class="recording-detail-stage-body">
+                    ${message}
+                    ${detailFields ? `<dl class="recording-detail-fields">${detailFields}</dl>` : '<span class="text-muted small">当前步骤暂无更多产物信息。</span>'}
+                </div>
+            </details>`;
+        }).join('');
+        const error = task.error
+            ? `<div class="recording-detail-error"><strong>任务错误：</strong>${escapeRecordingDetail(task.error)}</div>`
+            : '';
+        body.innerHTML = `
+            <div class="recording-detail-summary">
+                <div><strong>${escapeRecordingDetail(task.progress_label || task.status_label || '处理中')}</strong><span class="text-muted small">创建于 ${escapeRecordingDetail(formatRecordingDetailDate(task.created_at))}，更新于 ${escapeRecordingDetail(formatRecordingDetailDate(task.updated_at))}</span></div>
+                <span class="badge ${task.status === 'failed' ? 'text-bg-danger' : task.status === 'completed' ? 'text-bg-success' : 'text-bg-primary'}">${escapeRecordingDetail(task.status_label || task.status || '处理中')}</span>
+            </div>
+            ${error}
+            <div class="recording-detail-legend" aria-label="流水线状态说明">
+                <strong>状态说明</strong>
+                <span class="recording-detail-legend-item completed"><i class="bi bi-circle-fill" aria-hidden="true"></i>绿色：已完成</span>
+                <span class="recording-detail-legend-item running"><i class="bi bi-circle-fill" aria-hidden="true"></i>蓝色：处理中</span>
+                <span class="recording-detail-legend-item queued"><i class="bi bi-circle-fill" aria-hidden="true"></i>黄色：等待中</span>
+                <span class="recording-detail-legend-item skipped"><i class="bi bi-circle-fill" aria-hidden="true"></i>灰色：已跳过</span>
+                <span class="recording-detail-legend-item failed"><i class="bi bi-circle-fill" aria-hidden="true"></i>红色：失败</span>
+                <span class="ms-auto">点击步骤可展开详情</span>
+            </div>
+            <div class="recording-detail-stages">${stageHtml}</div>`;
+    }
+
+    async function loadStandardTaskDetail(taskId, showLoading = false) {
+        if (!taskId || standardTaskDetailRequestInFlight) return;
+        const modal = document.getElementById('standardTaskDetailModal');
+        const body = modal?.querySelector('[data-role="standard-detail-body"]');
+        if (!modal || !body) return;
+        standardTaskDetailRequestInFlight = true;
+        if (showLoading) {
+            body.innerHTML = '<div class="recording-detail-loading" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span> 正在读取任务进度…</div>';
+        }
+        try {
+            const response = await fetch(`/tasks/${encodeURIComponent(taskId)}/detail`, {
+                cache: 'no-store',
+                headers: {'Accept': 'application/json', 'Cache-Control': 'no-cache'},
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.message || '任务详情读取失败');
+            if (activeStandardTaskDetailId !== taskId) return;
+            renderStandardTaskDetail(result.task);
+        } catch (error) {
+            if (activeStandardTaskDetailId === taskId) {
+                body.innerHTML = `<div class="recording-detail-loading text-danger" role="alert"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> ${escapeRecordingDetail(error.message)}</div>`;
+            }
+        } finally {
+            standardTaskDetailRequestInFlight = false;
+        }
+    }
+
+    function openStandardTaskDetail(taskId) {
+        const modal = document.getElementById('standardTaskDetailModal');
+        if (!modal || !taskId) return;
+        activeStandardTaskDetailId = taskId;
+        bootstrap.Modal.getOrCreateInstance(modal).show();
+        loadStandardTaskDetail(taskId, true);
+    }
+
+    function refreshActiveStandardTaskDetail() {
+        if (!activeStandardTaskDetailId) return;
+        loadStandardTaskDetail(activeStandardTaskDetailId);
+    }
+
     let recordingUploadMetricsInFlight = false;
 
     async function refreshRecordingUploadMetrics() {
@@ -2292,6 +2437,12 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             if (btn.dataset.bindRecordingDetail === '1') return;
             btn.dataset.bindRecordingDetail = '1';
             btn.addEventListener('click', () => openRecordingJobDetail(btn.dataset.jobId));
+        });
+
+        queryAllWithin(root, '.standard-progress-trigger').forEach(btn => {
+            if (btn.dataset.bindStandardDetail === '1') return;
+            btn.dataset.bindStandardDetail = '1';
+            btn.addEventListener('click', () => openStandardTaskDetail(btn.dataset.taskId));
         });
 
         queryAllWithin(root, '.recording-cover-trigger').forEach(btn => {

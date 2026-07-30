@@ -63,6 +63,8 @@
     {% endif %}
 
     <div class="youtube-progress-summary mt-3">
+        <button type="button" class="standard-progress-trigger" data-task-id="{{ task.id }}"
+                aria-label="查看“{{ display_title }}”处理详情"></button>
         <div class="recording-progress-mobile-head">
             <span class="recording-progress-current">{{ task.progress_label }}</span>
             <span class="recording-progress-count">{{ task.completed_stages }}/{{ task.total_stages }} 步</span>
@@ -78,6 +80,7 @@
             </span>
             {% endfor %}
         </div>
+        <small class="standard-progress-hint">点击查看每一步详情</small>
     </div>
 
     {% if task.error_message %}

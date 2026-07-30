@@ -2442,6 +2442,71 @@ def _decorate_youtube_task_for_view(task: dict, config: dict) -> dict:
     return task
 
 
+YOUTUBE_PIPELINE_STAGE_META = {
+    PIPELINE_STAGE_FETCH_INFO: ('读取视频信息', '读取标题、简介、封面和视频元数据', 'bi-card-text'),
+    PIPELINE_STAGE_TRANSLATE_CONTENT: ('翻译标题与简介', '生成适合投稿的中文标题和简介', 'bi-translate'),
+    PIPELINE_STAGE_GENERATE_TAGS: ('生成投稿标签', '根据视频内容生成 B站投稿标签', 'bi-tags'),
+    PIPELINE_STAGE_RECOMMEND_PARTITION: ('推荐投稿分区', '分析内容并选择合适的 B站分区', 'bi-diagram-3'),
+    PIPELINE_STAGE_MODERATE_CONTENT: ('检查投稿内容', '检查标题、简介和标签是否需要人工确认', 'bi-shield-check'),
+    PIPELINE_STAGE_DOWNLOAD_VIDEO: ('下载视频文件', '下载并检查待投稿的视频文件', 'bi-download'),
+    PIPELINE_STAGE_TRANSLATE_SUBTITLE: ('处理字幕与视频', '翻译字幕，并按配置完成字幕嵌入或视频处理', 'bi-badge-cc'),
+    PIPELINE_STAGE_COVER_PRECHECK: ('封面预检', '检查封面尺寸、格式和上传可用性', 'bi-image'),
+    PIPELINE_STAGE_COVER_UPLOAD: ('封面上传', '上传并确认 B站投稿封面', 'bi-cloud-arrow-up'),
+    PIPELINE_STAGE_UPLOAD: ('投稿到 B站', '上传视频与投稿信息，并取得稿件 BV 号', 'bi-send-check'),
+}
+
+
+def _youtube_pipeline_stage_details(task: dict, config: dict) -> list[dict]:
+    """Build the authenticated task-detail timeline used by the tasks page."""
+    visible_stages = _youtube_pipeline_stages(config)
+    completed_stages = _get_completed_stages(task)
+    try:
+        checkpoint = json.loads(task.get('pipeline_checkpoint') or '{}')
+    except (TypeError, ValueError):
+        checkpoint = {}
+    raw_statuses = checkpoint.get('stage_status', {}) if isinstance(checkpoint, dict) else {}
+    if not isinstance(raw_statuses, dict):
+        raw_statuses = {}
+
+    active_stage_by_status = {
+        'fetching_info': PIPELINE_STAGE_FETCH_INFO,
+        'translating': PIPELINE_STAGE_TRANSLATE_CONTENT,
+        'tagging': PIPELINE_STAGE_GENERATE_TAGS,
+        'partitioning': PIPELINE_STAGE_RECOMMEND_PARTITION,
+        'moderating': PIPELINE_STAGE_MODERATE_CONTENT,
+        'downloading': PIPELINE_STAGE_DOWNLOAD_VIDEO,
+        'asr_transcribing': PIPELINE_STAGE_TRANSLATE_SUBTITLE,
+        'translating_subtitle': PIPELINE_STAGE_TRANSLATE_SUBTITLE,
+        'encoding_video': PIPELINE_STAGE_TRANSLATE_SUBTITLE,
+        'uploading': PIPELINE_STAGE_UPLOAD,
+    }
+    active_stage = active_stage_by_status.get(str(task.get('status') or ''))
+    stages = []
+    for key in visible_stages:
+        raw = raw_statuses.get(key, {})
+        raw = raw if isinstance(raw, dict) else {}
+        status = str(raw.get('status') or '')
+        if not status:
+            if task.get('status') == TASK_STATES['COMPLETED'] or key in completed_stages:
+                status = 'completed'
+            elif key == active_stage:
+                status = 'running'
+            else:
+                status = 'pending'
+        label, description, icon = YOUTUBE_PIPELINE_STAGE_META[key]
+        stages.append({
+            'key': key,
+            'label': label,
+            'description': description,
+            'icon': icon,
+            'status': status,
+            'message': str(raw.get('message') or ''),
+            'details': raw.get('details') if isinstance(raw.get('details'), dict) else {},
+            'updated_at': raw.get('updated_at'),
+        })
+    return stages
+
+
 def _render_task_fragments(task: dict, config: dict | None = None) -> dict:
     if config is None:
         config = load_config()
@@ -2466,6 +2531,35 @@ def task_fragment(task_id):
     return jsonify({
         'success': True,
         **_render_task_fragments(task, config)
+    })
+
+
+@app.route('/tasks/<task_id>/detail')
+@login_required
+def task_detail(task_id):
+    """Return the standard task pipeline in the same shape as recording details."""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({'success': False, 'message': '任务不存在'}), 404
+    config = load_config()
+    decorated = _decorate_youtube_task_for_view(dict(task), config)
+    return jsonify({
+        'success': True,
+        'task': {
+            'id': decorated.get('id'),
+            'display_id': decorated.get('display_id'),
+            'title': decorated.get('video_title_translated') or decorated.get('video_title_original') or '未获取标题',
+            'status': decorated.get('status'),
+            'status_label': task_status_display(decorated.get('status')),
+            'progress_label': decorated.get('progress_label'),
+            'progress_percent': decorated.get('progress_percent'),
+            'completed_stages': decorated.get('completed_stages'),
+            'total_stages': decorated.get('total_stages'),
+            'created_at': decorated.get('created_at'),
+            'updated_at': decorated.get('updated_at'),
+            'error': decorated.get('error_message') or '',
+            'stages': _youtube_pipeline_stage_details(decorated, config),
+        },
     })
 
 

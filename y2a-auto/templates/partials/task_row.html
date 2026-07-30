@@ -70,6 +70,8 @@
     </td>
     <td>
         <div class="youtube-progress-summary">
+            <button type="button" class="standard-progress-trigger" data-task-id="{{ task.id }}"
+                    aria-label="查看“{{ display_title }}”处理详情"></button>
             <div class="d-flex justify-content-between gap-2 mb-1">
                 <span class="recording-progress-current">{{ task.progress_label }}</span>
                 <span class="recording-progress-percent">{{ progress }}%</span>
@@ -89,6 +91,7 @@
                 </span>
                 {% endfor %}
             </div>
+            <small class="standard-progress-hint">点击查看每一步详情</small>
         </div>
     </td>
     <td class="text-center">
