@@ -2737,7 +2737,7 @@ class LiveRecorderManager:
         stage_orders = {
             "record_only": ("record", "ass", "cover", "remux", "verify", "cleanup"),
             "bilibili": (
-                "detect", "record", "ass", "ai", "xml_identity", "live_stats",
+                "detect", "record", "ass", "live_stats", "xml_identity", "ai",
                 "cover", "cover_16x9", "cover_4x3", "upload", "cleanup",
             ),
         }

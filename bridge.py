@@ -572,8 +572,8 @@ class StateStore:
             )
             for stage, status in (
                 ("detect", "completed"), ("record", "completed"),
-                ("ass", "pending"), ("ai", "pending"),
-                ("xml_identity", "pending"), ("live_stats", "pending"),
+                ("ass", "pending"), ("live_stats", "pending"),
+                ("xml_identity", "pending"), ("ai", "pending"),
                 ("cover_16x9", "pending"), ("cover_4x3", "pending"),
                 ("upload", "pending"), ("cleanup", "pending"),
             ):
@@ -1192,6 +1192,8 @@ def generate_recording_cover_with_ai(
     target_size: tuple[int, int] | None = None,
     output_path: Path | None = None,
     recording_dir: Path | None = None,
+    game_context: dict[str, Any] | None = None,
+    game_context_locked: bool = False,
 ) -> tuple[Path | None, dict[str, Any]]:
     """Generate one independent AI cover for the requested Bilibili aspect ratio."""
     root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
@@ -1276,11 +1278,12 @@ def generate_recording_cover_with_ai(
         cfg.get("douyu_stats_cover_context_enabled", True)
     )
     details["ai_cover_tooltip_context_enabled"] = tooltip_context_enabled
-    if recording_dir is not None and tooltip_context_enabled:
+    if tooltip_context_enabled and (game_context_locked or recording_dir is not None):
         try:
-            from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
-
-            anchor = get_game_for_cover(recording_dir)
+            anchor = game_context
+            if not game_context_locked and recording_dir is not None:
+                from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
+                anchor = get_game_for_cover(recording_dir)
             if anchor:
                 tooltip_hero = str(anchor.get("hero") or "")
                 tooltip_items = [
@@ -1330,6 +1333,17 @@ def generate_recording_cover_with_ai(
         details["ai_cover_dota2_source"] = "tooltip"
         dota2_item_matches = match_dota2_items(*tooltip_items)
         dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
+    elif game_context_locked:
+        dota2_item_matches = []
+        dota2_instruction = (
+            "本段没有可靠匹配到主播同一场对局。禁止展示、猜测或补画任何具体 "
+            "DOTA 2 英雄；如需游戏氛围，只能使用不含角色身份的抽象场景。"
+        )
+        dota2_item_instruction = (
+            "本段没有可靠匹配到主播同一场对局的英雄与装备数据。"
+            "禁止展示、猜测或补画任何具体 DOTA 2 英雄和装备图标。"
+        )
+        details["ai_cover_dota2_source"] = "locked_no_match"
     else:
         dota2_item_matches = (
             match_dota2_items(title, ai_topic, description)
@@ -1365,6 +1379,9 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_item_reference_path"] = str(item_reference_path)
         else:
             details["ai_cover_dota2_item_reference_used"] = False
+            dota2_item_instruction = (
+                "本局装备的官方图标参考不可用。为避免画错装备，禁止展示任何具体装备图标。"
+            )
     if tooltip_hero:
         hero_reference_path, official_hero, hero_reference_error = (
             build_dota2_hero_reference(
@@ -1395,6 +1412,9 @@ def generate_recording_cover_with_ai(
             )
         else:
             details["ai_cover_dota2_hero_reference_used"] = False
+            dota2_instruction = (
+                "本局英雄的官方参考图不可用。为避免画错英雄，禁止展示任何具体英雄。"
+            )
     dota2_ability_matches = (
         match_dota2_abilities(title, ai_topic, description)
         if recording_cover_has_dota2_context(
@@ -1874,6 +1894,7 @@ def generate_danmaku_metadata_with_ai(
     comments,
     base_description: str,
     cfg: dict[str, Any],
+    grounding_context: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """Generate a grounded description and concise title topic from danmaku."""
     if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
@@ -1894,6 +1915,7 @@ def generate_danmaku_metadata_with_ai(
             "base_description": base_description,
             "comment_count": len(comments),
             "sampled_comments": format_comments_for_ai(selected),
+            "verified_live_context": grounding_context or {},
         }
         legacy_prompt = str(cfg.get("ai_danmaku_prompt") or "").strip()
         title_prompt = str(
@@ -1905,6 +1927,8 @@ def generate_danmaku_metadata_with_ai(
         system_prompt = legacy_prompt or f"""
 你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和内容充实的中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
+verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；英雄、装备和 KDA
+只能使用其中已经确认的数据，禁止从弹幕、标题或常识猜测，且不得把其他对局的数据混入本段。
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
 description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
 description 先用两至四段按事件发展总结主要内容，再添加“重要时间点”。
@@ -2092,6 +2116,71 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         else:
             store.stage(key, "ass", "skipped", {"reason": "未找到弹幕 XML 或弹幕处理未启用"})
 
+        # Collect stable live context before AI so metadata and both cover
+        # variants are grounded in the same recording and the same game.
+        y2a_root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+        if str(y2a_root) not in sys.path:
+            sys.path.insert(0, str(y2a_root))
+        stats_enabled = bool(cfg.get("douyu_stats_enabled", True))
+        append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
+        cover_context_enabled = bool(cfg.get("douyu_stats_cover_context_enabled", True))
+        stats_text = ""
+        live_stats_prepared = True
+        current_stage = "live_stats"
+        if not stats_enabled:
+            store.stage(key, "live_stats", "skipped", {"reason": "斗鱼直播数据统计已关闭", "outcome": "disabled"})
+        elif not append_stats_enabled:
+            store.stage(key, "live_stats", "skipped", {"reason": "直播数据追加到简介已关闭", "outcome": "disabled"})
+        else:
+            store.stage(key, "live_stats", "running", {"description_before_length": len(description)})
+            try:
+                from modules.douyu_stats_formatter import get_stats_for_description  # type: ignore
+                stats_text = str(get_stats_for_description(str(video.parent)) or "")[:1900]
+                if stats_text:
+                    store.stage(key, "live_stats", "completed", {"stats_collected": True, "stats_length": len(stats_text), "outcome": "matched"})
+                else:
+                    store.stage(key, "live_stats", "skipped", {"reason": "本次录播时间内没有匹配的直播数据", "outcome": "no_data"})
+            except Exception as exc:
+                store.stage(key, "live_stats", "warning", {"reason": "直播数据整理失败，但不阻断投稿", "outcome": "failed_non_blocking"}, error=str(exc))
+
+        locked_game_context: dict[str, Any] | None = None
+        identity_prepared = True
+        current_stage = "xml_identity"
+        if not stats_enabled:
+            store.stage(key, "xml_identity", "skipped", {"reason": "斗鱼直播数据统计已关闭", "outcome": "disabled"})
+        elif not cover_context_enabled:
+            store.stage(key, "xml_identity", "skipped", {"reason": "XML 主播英雄与装备识别已关闭", "outcome": "disabled"})
+        else:
+            store.stage(key, "xml_identity", "running", {"danmaku_xml": str(danmaku_xml or ""), "comment_count": len(comments)})
+            try:
+                from modules.douyu_stats_formatter import get_game_for_cover, get_identity_diagnostics  # type: ignore
+                locked_game_context = get_game_for_cover(str(video.parent))
+                identity_diagnostics = get_identity_diagnostics(str(video.parent))
+                if locked_game_context:
+                    anchor = locked_game_context
+                    store.stage(key, "xml_identity", "completed", {
+                        "danmaku_xml": str(danmaku_xml or ""), "comment_count": len(comments),
+                        **identity_diagnostics, "streamer_hero": str(anchor.get("hero") or ""),
+                        "streamer_items": [str(item) for item in anchor.get("items", [])[:6] if str(item)],
+                        "equipment_snapshot_unix_ts": float(anchor.get("equipment_snapshot_unix_ts") or 0),
+                        "identity_source": str(anchor.get("identity_source") or ""),
+                        "kills": anchor.get("kills"), "deaths": anchor.get("deaths"),
+                        "assists": anchor.get("assists"), "kda": anchor.get("kda"),
+                        "outcome": "matched",
+                    })
+                else:
+                    store.stage(key, "xml_identity", "skipped", {**identity_diagnostics, "reason": "未形成唯一可靠的主播同场对局证据", "outcome": "no_data"})
+            except Exception as exc:
+                store.stage(key, "xml_identity", "warning", {"reason": "主播英雄识别失败，但不阻断投稿", "outcome": "failed_non_blocking"}, error=str(exc))
+
+        verified_live_context: dict[str, Any] = {"live_stats": stats_text}
+        if locked_game_context:
+            verified_live_context["game"] = {
+                key_name: locked_game_context.get(key_name)
+                for key_name in ("hero", "items", "neutral", "scepter", "shard", "kills", "deaths", "assists", "kda", "identity_source")
+                if locked_game_context.get(key_name) not in (None, "", [])
+            }
+
         current_stage = "ai"
         ai_topic = ""
         ai_details: dict[str, Any] = {}
@@ -2138,7 +2227,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         else:
             if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
                 store.stage(key, "ai", "running", {"comment_count": len(comments)})
-                description, ai_topic = generate_danmaku_metadata_with_ai(comments, description, cfg)
+                description, ai_topic = generate_danmaku_metadata_with_ai(comments, description, cfg, verified_live_context)
                 title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
                 ai_details.update({
                     "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
@@ -2263,7 +2352,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         cover_context_enabled = bool(cfg.get("douyu_stats_cover_context_enabled", True))
 
         current_stage = "xml_identity"
-        if not stats_enabled:
+        if identity_prepared:
+            pass
+        elif not stats_enabled:
             store.stage(key, "xml_identity", "skipped", {
                 "reason": "斗鱼直播数据统计已关闭",
                 "outcome": "disabled",
@@ -2338,7 +2429,14 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "live_stats"
         append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
-        if not stats_enabled:
+        if live_stats_prepared:
+            if stats_text:
+                description_budget = max(0, 1900 - len(stats_text) - 1)
+                description = description[:description_budget].rstrip() + "\n" + stats_text
+                ai_details["stats_appended"] = True
+                ai_details["description"] = description
+                print("[bridge] 简介已追加预先整理的直播统计数据", file=sys.stderr)
+        elif not stats_enabled:
             store.stage(key, "live_stats", "skipped", {
                 "reason": "斗鱼直播数据统计已关闭",
                 "outcome": "disabled",
@@ -2468,6 +2566,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     target_size=(1920, 1080),
                     output_path=work_dir / "ai_cover_16x9.jpg",
                     recording_dir=video.parent,
+                    game_context=locked_game_context,
+                    game_context_locked=True,
                 )
                 if generated_cover:
                     cover = generated_cover
@@ -2556,6 +2656,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     target_size=(1600, 1200),
                     output_path=work_dir / "ai_cover_4x3.jpg",
                     recording_dir=video.parent,
+                    game_context=locked_game_context,
+                    game_context_locked=True,
                 )
                 if generated_cover43:
                     cover43 = generated_cover43

@@ -83,14 +83,6 @@
                 <span class="recording-progress-count">{{ task.completed_stages }}/{{ task.total_stages }} 步</span>
                 <span class="recording-upload-live{% if not task.upload_progress %} d-none{% endif %}" data-task-progress>{{ task.upload_progress or '' }}</span>
             </div>
-            <div class="youtube-cover-stages">
-                {% for stage in task.cover_stage_status %}
-                <span class="youtube-cover-stage status-{{ stage.status }}" title="{{ stage.message or stage.label }}">
-                    <i class="bi bi-{{ 'check-circle-fill' if stage.status in ['completed', 'skipped'] else ('x-circle-fill' if stage.status == 'failed' else ('arrow-repeat' if stage.status == 'running' else 'circle')) }}"></i>
-                    {{ stage.label }}
-                </span>
-                {% endfor %}
-            </div>
             <small class="standard-progress-hint">点击查看每一步详情</small>
         </div>
     </td>
