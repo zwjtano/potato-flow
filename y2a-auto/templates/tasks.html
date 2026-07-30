@@ -1398,6 +1398,16 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         cleanup: {name: '清理录播源文件', description: '仅在投稿成功进入终态后删除原始 FLV/XML 和临时文件', icon: 'bi-trash3'},
         upload: {name: '投稿到 B站', description: '上传视频、双封面与投稿信息，并取得稿件 BV 号', icon: 'bi-cloud-arrow-up'},
     };
+    function recordingStageMetaFor(job, key) {
+        if (key === 'cover' && !job.record_only) {
+            return {
+                name: '生成 AI 投稿封面',
+                description: '生成并保存用于 B站投稿的视频封面',
+                icon: 'bi-image',
+            };
+        }
+        return recordingStageMeta[key] || {name: key, icon: 'bi-circle'};
+    }
     const recordingStageStatusNames = {
         pending: '等待中',
         queued: '等待投稿队列',
@@ -1652,7 +1662,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             ? job.stages.map(stage => stage.key)
             : Object.keys(recordingStageMeta);
         const stageHtml = visibleStageKeys.map(key => {
-            const meta = recordingStageMeta[key] || {name: key, icon: 'bi-circle'};
+            const meta = recordingStageMetaFor(job, key);
             const stage = stagesByKey.get(key) || {key, status: 'pending', details: {}};
             const status = stage.status || 'pending';
             const details = stage.details && typeof stage.details === 'object' ? stage.details : {};
@@ -1698,7 +1708,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             : job.status === 'failed' ? (job.record_only ? '本地处理失败' : '等待人工审核')
             : job.status === 'paused' ? '投稿已暂停，可恢复或删除'
             : job.upload_queued ? `等待投稿队列（第 ${job.upload_queue_position || 1} 位）`
-            : job.active_stage ? `正在${recordingStageMeta[job.active_stage]?.name || job.active_stage}`
+            : job.active_stage ? `正在${recordingStageMetaFor(job, job.active_stage).name}`
             : `${completed}/${total} 步已完成`;
         const retryNotice = job.auto_retry_scheduled
             ? `<div class="recording-detail-retry"><i class="bi bi-clock-history"></i><div><strong>投稿将在 5 分钟后自动重试</strong><div class="small">计划时间：${escapeRecordingDetail(formatRecordingDetailDate(job.auto_retry_at))} · 第 ${escapeRecordingDetail(job.auto_retry_number)}/${escapeRecordingDetail(job.auto_retry_max_retries)} 次自动重试</div></div></div>`

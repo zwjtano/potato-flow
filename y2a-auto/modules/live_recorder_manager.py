@@ -2738,7 +2738,7 @@ class LiveRecorderManager:
             "record_only": ("record", "ass", "cover", "remux", "verify", "cleanup"),
             "bilibili": (
                 "detect", "record", "ass", "ai", "xml_identity", "live_stats",
-                "cover_16x9", "cover_4x3", "upload", "cleanup",
+                "cover", "cover_16x9", "cover_4x3", "upload", "cleanup",
             ),
         }
         from .bilibili_accounts import resolve_account

@@ -39,6 +39,7 @@ from dota2_items import (
     dota2_item_prompt_instruction,
     match_dota2_items,
 )
+from dota2_heroes import build_dota2_hero_reference
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
@@ -1313,6 +1314,8 @@ def generate_recording_cover_with_ai(
             dota2_item_instruction = (
                 f"主播本局最终六格主装备（最后一次有效阵容快照）："
                 f"{', '.join(tooltip_items)}。"
+                "只能表现这份列表中的主装备，数量不得超过列表数量；不得额外添加第七件装备。"
+                "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
             )
         else:
             dota2_item_instruction = ""
@@ -1326,6 +1329,7 @@ def generate_recording_cover_with_ai(
         details["ai_cover_tooltip_items"] = tooltip_items
         details["ai_cover_dota2_source"] = "tooltip"
         dota2_item_matches = match_dota2_items(*tooltip_items)
+        dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
     else:
         dota2_item_matches = (
             match_dota2_items(title, ai_topic, description)
@@ -1342,7 +1346,7 @@ def generate_recording_cover_with_ai(
     if dota2_item_matches:
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
-            resolve_path(".dota2-item-cache", cfg),
+            Path("/data/cache/dota2/items"),
             work_dir / "dota2_item_references.png",
         )
         details["ai_cover_dota2_items"] = [
@@ -1361,6 +1365,36 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_item_reference_path"] = str(item_reference_path)
         else:
             details["ai_cover_dota2_item_reference_used"] = False
+    if tooltip_hero:
+        hero_reference_path, official_hero, hero_reference_error = (
+            build_dota2_hero_reference(
+                tooltip_hero,
+                Path("/data/cache/dota2/heroes"),
+                work_dir / "dota2_hero_reference.png",
+            )
+        )
+        details["ai_cover_dota2_official_hero"] = (
+            {
+                "chinese_name": official_hero.chinese_name,
+                "english_name": official_hero.english_name,
+                "icon_slug": official_hero.icon_slug,
+            }
+            if official_hero
+            else None
+        )
+        details["ai_cover_dota2_hero_reference_error"] = hero_reference_error
+        if hero_reference_path is not None:
+            reference_paths.append(hero_reference_path)
+            details["ai_cover_dota2_hero_reference_used"] = True
+            details["ai_cover_dota2_hero_reference_path"] = str(hero_reference_path)
+            dota2_instruction = (
+                f"随附的 DOTA 2 OFFICIAL HERO REFERENCE 是 {tooltip_hero} 的 Valve 官方英雄参考。"
+                "若画面出现该英雄，必须保持官方脸部、体型、护甲、武器、轮廓和主色特征；"
+                "不得替换成其他英雄、其他游戏角色或仅凭中文名称臆造。"
+                + dota2_instruction
+            )
+        else:
+            details["ai_cover_dota2_hero_reference_used"] = False
     dota2_ability_matches = (
         match_dota2_abilities(title, ai_topic, description)
         if recording_cover_has_dota2_context(
@@ -1690,6 +1724,25 @@ def recording_metadata_values(
     }
 
 
+def topic_mentions_streamer(topic: str, streamer: str) -> bool:
+    """Return whether a topic already names the streamer or a known alias."""
+    topic_key = _compact_alias(topic)
+    streamer_key = _compact_alias(streamer)
+    if not topic_key or not streamer_key or streamer_key == _compact_alias("主播"):
+        return False
+    candidates = {str(streamer or "").strip(), normalize_dota2_streamer_name(streamer)}
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        keys = {_compact_alias(canonical_name), *(_compact_alias(alias) for alias in aliases)}
+        if streamer_key in keys:
+            candidates.add(canonical_name)
+            candidates.update(aliases)
+    return any(
+        (candidate_key := _compact_alias(candidate))
+        and candidate_key in topic_key
+        for candidate in candidates
+    )
+
+
 def render_metadata(
     video: Path,
     cfg: dict[str, Any],
@@ -1697,6 +1750,10 @@ def render_metadata(
 ) -> tuple[str, str, list[str]]:
     values = recording_metadata_values(video, cfg, ai_topic)
     title = str(cfg.get("title_template") or DEFAULT_TITLE_TEMPLATE).format_map(values).strip()
+    if topic_mentions_streamer(values["ai_topic"], values["streamer"]):
+        redundant_prefix = f"{values['streamer']}｜"
+        if title.startswith(redundant_prefix):
+            title = title[len(redundant_prefix):].lstrip()
     description = str(
         cfg.get("description_template") or DEFAULT_DESCRIPTION_TEMPLATE
     ).format_map(values).strip()

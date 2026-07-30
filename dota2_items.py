@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from functools import lru_cache
 
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
@@ -169,6 +171,39 @@ DOTA2_ITEMS: tuple[Dota2Item, ...] = (
 )
 
 
+@lru_cache(maxsize=1)
+def _official_dota2_items() -> tuple[Dota2Item, ...]:
+    """Load the complete current item catalogue from Valve's Datafeed."""
+    request = urllib.request.Request(
+        DOTA2_ITEM_DATA_SOURCE,
+        headers={"User-Agent": "Mozilla/5.0 PotatoFlow/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as remote:
+            payload = json.load(remote)
+    except (OSError, ValueError, urllib.error.URLError):
+        return ()
+    rows = payload.get("result", {}).get("data", {}).get("itemabilities", [])
+    result: list[Dota2Item] = []
+    for row in rows if isinstance(rows, list) else []:
+        internal_name = str(row.get("name") or "")
+        chinese_name = str(row.get("name_loc") or "").strip()
+        english_name = str(row.get("name_english_loc") or "").strip()
+        if not internal_name.startswith("item_") or internal_name.startswith("item_recipe_"):
+            continue
+        icon_slug = internal_name.removeprefix("item_")
+        if chinese_name and english_name and icon_slug:
+            result.append(_item(chinese_name, english_name, icon_slug))
+    return tuple(result)
+
+
+def _all_dota2_items() -> tuple[Dota2Item, ...]:
+    """Merge curated aliases with every unchanged/current official item."""
+    merged = {item.icon_slug: item for item in _official_dota2_items()}
+    merged.update({item.icon_slug: item for item in DOTA2_ITEMS})
+    return tuple(merged.values())
+
+
 def _alias_pattern(alias: str) -> re.Pattern[str]:
     escaped = re.escape(alias.casefold())
     if re.fullmatch(r"[a-z][a-z0-9' ._-]*", alias.casefold()):
@@ -180,7 +215,7 @@ def match_dota2_items(*content: str, limit: int = MAX_MATCHED_ITEMS) -> list[Dot
     combined = "\n".join(str(value or "") for value in content)
     folded = combined.casefold()
     candidates: list[Dota2ItemMatch] = []
-    for item in DOTA2_ITEMS:
+    for item in _all_dota2_items():
         for alias in sorted(item.aliases, key=len, reverse=True):
             for found in _alias_pattern(alias).finditer(folded):
                 candidates.append(
