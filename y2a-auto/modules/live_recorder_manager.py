@@ -3715,6 +3715,18 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         details = details if isinstance(details, dict) else {}
         if variant not in {"16x9", "4x3"}:
             raise RecorderConfigError("封面类型无效")
+
+        cache_dir = self._recording_file_roots()["artifacts"] / "task-covers"
+
+        def image_suffix(data: bytes) -> str:
+            if data.startswith(b"\xff\xd8\xff"):
+                return ".jpg"
+            if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                return ".png"
+            if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                return ".webp"
+            return ""
+
         if variant == "4x3":
             candidate = str(
                 review.get("cover43_path")
@@ -3757,17 +3769,6 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             return cache_path
         if not bvid:
             raise RecorderConfigError("该任务暂无可预览的封面")
-
-        cache_dir = self._recording_file_roots()["artifacts"] / "task-covers"
-
-        def image_suffix(data: bytes) -> str:
-            if data.startswith(b"\xff\xd8\xff"):
-                return ".jpg"
-            if data.startswith(b"\x89PNG\r\n\x1a\n"):
-                return ".png"
-            if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-                return ".webp"
-            return ""
 
         for suffix in (".jpg", ".jpeg", ".png", ".webp"):
             cached = (cache_dir / f"{fingerprint}{suffix}").resolve()

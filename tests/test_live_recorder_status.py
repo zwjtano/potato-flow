@@ -1489,6 +1489,36 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertTrue(corrected.is_file())
             self.assertFalse(wrong_path.exists())
 
+    def test_pipeline_cover_fetches_remote_four_by_three_cover(self):
+        manager = LiveRecorderManager()
+        fingerprint = "c" * 64
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            roots = {
+                "recordings": root / "recordings",
+                "artifacts": root / "artifacts",
+            }
+            job = {
+                "bvid": "BV1potato",
+                "bilibili_cover43_url": "https://i0.hdslb.com/cover43.png",
+                "review_override": {},
+                "stages": [],
+            }
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager, "_recording_file_roots", return_value=roots
+            ), mock.patch.object(
+                recorder_module,
+                "_open_url",
+                return_value=(b"\x89PNG\r\n\x1a\n" + b"x" * 128, "https://i0.hdslb.com/cover43.png"),
+            ):
+                cover = manager.pipeline_cover(fingerprint, "4x3")
+
+            self.assertEqual(
+                cover,
+                (roots["artifacts"] / "task-covers" / f"{fingerprint}-4x3.png").resolve(),
+            )
+            self.assertTrue(cover.is_file())
+
     def test_pipeline_jobs_accept_biliup_speed_field(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

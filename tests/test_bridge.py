@@ -14,6 +14,24 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_recording_tags_dedupe_repeated_streamer_aliases(self):
+        self.assertEqual(
+            bridge.dedupe_recording_tags(["yyfyyf", "YYF", "直播回放"]),
+            ["yyfyyf", "直播回放"],
+        )
+
+    def test_unverified_dota_hero_metadata_is_removed(self):
+        topic, description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "死灵法师翻盘",
+            "弹幕热议输赢。影魔最终六神装。\n观众讨论赛后复盘。",
+            ["YYF", "影魔", "DOTA2"],
+        )
+
+        self.assertEqual(topic, "")
+        self.assertEqual(description, "弹幕热议输赢。\n观众讨论赛后复盘。")
+        self.assertEqual(tags, ["YYF", "DOTA2"])
+        self.assertEqual(details["unverified_hero_tags_removed"], ["影魔"])
+
     def test_live_stats_are_placed_before_archive_description(self):
         description = bridge.prepend_live_stats_to_description(
             "直播录播：YYF《休赛期改名狂欢》。",
@@ -675,6 +693,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(uploads[0]["description"], "已生成简介")
             self.assertEqual(uploads[0]["tags"], ["直播", "DOTA2"])
             self.assertEqual(uploads[0]["partition_id"], "129")
+            self.assertEqual(uploads[0]["task_id"], key[:12])
             self.assertEqual(Path(uploads[0]["cover_file_path"]).read_bytes(), b"saved-cover")
             self.assertTrue(store.stage_state(key, "ai")["details"]["reused_on_retry"])
             self.assertTrue(store.stage_state(key, "cover_16x9")["details"]["reused_on_retry"])
@@ -766,6 +785,25 @@ class BridgeTests(unittest.TestCase):
                 for path in (video, xml, upload_video, ass, ai_cover)
             ))
             self.assertFalse(upload_video.parent.exists())
+            self.assertEqual(result["retained"], [])
+
+    def test_cleanup_reports_only_removed_paths_and_retained_final_covers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            missing_video = root / "missing.flv"
+            cover = root / "final-cover.jpg"
+            cover.write_bytes(b"cover")
+
+            result = bridge.cleanup_uploaded_recording(
+                missing_video,
+                None,
+                missing_video,
+                retained_paths=(cover,),
+            )
+
+            self.assertEqual(result["deleted"], [])
+            self.assertEqual(result["failed"], [])
+            self.assertEqual(result["retained"], [str(cover.resolve())])
 
     def test_persist_pipeline_cover_survives_disposable_artifact_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -392,13 +392,18 @@ class BilibiliProgressTests(unittest.TestCase):
             def __init__(self, **kwargs):
                 self.url = kwargs["url"]
                 self.data = {}
+                self.headers = {}
+
+            def update_headers(self, **kwargs):
+                self.headers = kwargs
+                return self
 
             def update_data(self, **kwargs):
                 self.data = kwargs
                 return self
 
             async def request(self):
-                calls.append((self.url, self.data))
+                calls.append((self.url, self.data, self.headers))
                 if self.url.endswith("/add"):
                     return {"reply": {"rpid": 987654}}
                 return {}
@@ -421,6 +426,65 @@ class BilibiliProgressTests(unittest.TestCase):
         self.assertEqual(details["rpid"], "987654")
         self.assertEqual(calls[0][1]["oid"], 123)
         self.assertEqual(calls[1][1]["action"], 1)
+        self.assertEqual(
+            calls[1][2]["Referer"],
+            "https://www.bilibili.com/video/BV1test/",
+        )
+        self.assertEqual(calls[1][2]["Origin"], "https://www.bilibili.com")
+        self.assertEqual(details["pin_attempts"], 1)
+
+    def test_publish_description_comment_retries_pin_without_reposting(self):
+        calls = []
+        pin_attempts = 0
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.data = {}
+                self.headers = {}
+
+            def update_headers(self, **kwargs):
+                self.headers = kwargs
+                return self
+
+            def update_data(self, **kwargs):
+                self.data = kwargs
+                return self
+
+            async def request(self):
+                nonlocal pin_attempts
+                calls.append(self.url)
+                if self.url.endswith("/add"):
+                    return {"reply": {"rpid": 987654}}
+                pin_attempts += 1
+                if pin_attempts < 3:
+                    raise RuntimeError("-404 啥都木有")
+                return {}
+
+        async def no_sleep(_seconds):
+            return None
+
+        with patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=object(),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ), patch(
+            "modules.bilibili_uploader.asyncio.sleep",
+            no_sleep,
+        ):
+            details = BilibiliUploader("cookies.json").publish_description_comment(
+                {"aid": 123, "bvid": "BV1test"},
+                "简介",
+                pin=True,
+            )
+
+        self.assertTrue(details["posted"])
+        self.assertTrue(details["pinned"])
+        self.assertEqual(details["pin_attempts"], 3)
+        self.assertEqual(sum(url.endswith("/add") for url in calls), 1)
+        self.assertEqual(sum(url.endswith("/top") for url in calls), 3)
 
 
 if __name__ == "__main__":
