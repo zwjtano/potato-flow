@@ -602,6 +602,73 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(anchor["equipment_snapshot_unix_ts"], 180)
         self.assertEqual(anchor["identity_source"], "gsi_hero:http")
 
+    def test_formatter_rejects_switching_observer_view_and_uses_dominant_xml(self):
+        game = {
+            "start_unix_ts": 100,
+            "end_unix_ts": 400,
+            "players": [player(41, "虚空假面", ["狂战斧"]), player(14, "帕吉")],
+            "anchor_history": [
+                {
+                    "start_unix_ts": 100,
+                    "last_seen_unix_ts": 220,
+                    "source": "http",
+                    "player": player(14, "帕吉"),
+                },
+                {
+                    "start_unix_ts": 220,
+                    "last_seen_unix_ts": 400,
+                    "source": "http",
+                    "player": player(41, "虚空假面", ["狂战斧"]),
+                },
+            ],
+        }
+        comments = [(150, "虚空" * 30), (300, "屠夫" * 4)]
+
+        anchor = formatter.select_streamer_player(game, comments, 100, 400)
+
+        self.assertEqual(anchor["hero"], "虚空假面")
+        self.assertEqual(anchor["identity_source"], "xml_dominant_mention")
+        self.assertEqual(anchor["xml_mention_score"], 30)
+
+    def test_formatter_rejects_sparse_gsi_and_ambiguous_xml(self):
+        game = {
+            "start_unix_ts": 100,
+            "end_unix_ts": 400,
+            "players": [player(11, "影魔"), player(74, "祈求者")],
+            "anchor_history": [{
+                "start_unix_ts": 390,
+                "last_seen_unix_ts": 390,
+                "source": "type_tooltips",
+                "player": player(11, "影魔"),
+            }],
+        }
+        comments = [(150, "影魔" * 49), (300, "卡尔" * 47)]
+
+        self.assertIsNone(
+            formatter.select_streamer_player(game, comments, 100, 400)
+        )
+
+    def test_formatter_keeps_stable_gsi_even_when_xml_discusses_another_hero(self):
+        game = {
+            "start_unix_ts": 100,
+            "end_unix_ts": 400,
+            "players": [player(11, "影魔", ["黑皇杖"]), player(74, "祈求者")],
+            "anchor_history": [{
+                "start_unix_ts": 100,
+                "last_seen_unix_ts": 400,
+                "source": "http",
+                "player": player(11, "影魔", ["黑皇杖"]),
+            }],
+        }
+
+        anchor = formatter.select_streamer_player(
+            game, [(200, "卡尔" * 100)], 100, 400
+        )
+
+        self.assertEqual(anchor["hero"], "影魔")
+        self.assertEqual(anchor["identity_source"], "gsi_hero:http")
+        self.assertEqual(anchor["gsi_observed_seconds"], 300)
+
     def test_formatter_appends_kda_only_when_source_provides_it(self):
         anchor = player(11, "影魔", ["黑皇杖"])
         anchor.update({"kills": 12, "deaths": 3, "assists": 9, "kda": 7.0})
@@ -629,7 +696,7 @@ class DouyuStatsTests(unittest.TestCase):
             session.mkdir()
             (session / f"{session.name}.xml").write_text(
                 """<?xml version="1.0"?><i>
-                <d p="1,1,25,1,100,0,1,0">影魔六神了</d>
+                <d p="1,1,25,1,100,0,1,0">""" + "影魔" * 25 + """</d>
                 <d p="2,1,25,1,150,0,2,0">影魔装备成型</d>
                 </i>""",
                 encoding="utf-8",
@@ -726,7 +793,7 @@ class DouyuStatsTests(unittest.TestCase):
             session.mkdir()
             (session / f"{session.name}.xml").write_text(
                 """<?xml version="1.0"?><i>
-                <d p="1,1,25,1,100,0,1,0">影魔这把很肥</d>
+                <d p="1,1,25,1,100,0,1,0">""" + "影魔" * 25 + """</d>
                 <d p="2,1,25,1,150,0,2,0">影魔要出黑皇杖了</d>
                 <d p="3,1,25,1,200,0,3,0">漂亮</d>
                 </i>""",
@@ -832,7 +899,7 @@ class DouyuStatsTests(unittest.TestCase):
             legacy_session.mkdir(parents=True)
             (legacy_session / f"{legacy_session.name}.xml").write_text(
                 """<?xml version="1.0"?><i>
-                <d p="1,1,25,1,100,0,1,0">影魔这把很肥</d>
+                <d p="1,1,25,1,100,0,1,0">""" + "影魔" * 25 + """</d>
                 <d p="2,1,25,1,150,0,2,0">影魔要出黑皇杖了</d>
                 </i>""",
                 encoding="utf-8",

@@ -62,6 +62,11 @@ HERO_ALIASES: dict[str, tuple[str, ...]] = {
     "帕吉": ("屠夫", "胖子"),
 }
 
+GSI_MIN_OBSERVATION_SECONDS = 60.0
+XML_MIN_MENTION_SCORE = 25
+XML_MIN_DOMINANCE_RATIO = 2.0
+XML_MIN_MENTION_SHARE = 0.6
+
 
 def load_stats(stats_path: str | os.PathLike[str]) -> dict:
     """Load one atomic stats snapshot, returning an empty dict on failure."""
@@ -174,7 +179,7 @@ def select_anchor_player(
     start_ts: float,
     end_ts: float,
 ) -> dict | None:
-    """Select the streamer hero only from unique XML mention evidence."""
+    """Select a hero only from strong, dominant XML mention evidence."""
     texts = [
         _normalise_text(text)
         for unix_ts, text in comments
@@ -195,14 +200,32 @@ def select_anchor_player(
         )
         scores.append((score, player))
     scores.sort(key=lambda item: item[0], reverse=True)
-    if not scores or scores[0][0] < 2:
+    if not scores or scores[0][0] < XML_MIN_MENTION_SCORE:
         return None
     runner_up = scores[1][0] if len(scores) > 1 else 0
-    if scores[0][0] <= runner_up:
+    top_score = scores[0][0]
+    total_score = sum(score for score, _player in scores)
+    if runner_up and top_score < runner_up * XML_MIN_DOMINANCE_RATIO:
+        return None
+    if total_score and top_score / total_score < XML_MIN_MENTION_SHARE:
         return None
     selected = dict(scores[0][1])
-    selected["xml_mention_score"] = scores[0][0]
+    selected["xml_mention_score"] = top_score
+    selected["xml_runner_up_score"] = runner_up
+    selected["xml_mention_share"] = round(top_score / total_score, 4)
     return selected
+
+
+def _covered_seconds(intervals: Iterable[tuple[float, float]]) -> float:
+    merged: list[list[float]] = []
+    for start, end in sorted(intervals):
+        if end < start:
+            continue
+        if not merged or start > merged[-1][1]:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    return sum(end - start for start, end in merged)
 
 
 def select_streamer_player(
@@ -211,9 +234,10 @@ def select_streamer_player(
     start_ts: float,
     end_ts: float,
 ) -> dict | None:
-    """Select the last authoritative streamer snapshot inside the recording."""
-    candidates: list[tuple[float, dict, str]] = []
-    history = game.get("anchor_history", [])
+    """Select a stable streamer view, with strong XML evidence as fallback."""
+    candidates: list[tuple[float, float, dict, str]] = []
+    raw_history = game.get("anchor_history")
+    history = raw_history if isinstance(raw_history, list) else []
     if isinstance(history, list):
         for entry in history:
             if not isinstance(entry, dict) or not isinstance(entry.get("player"), dict):
@@ -223,28 +247,54 @@ def select_streamer_player(
             if entry_end < start_ts or entry_start > end_ts:
                 continue
             candidates.append((
+                max(entry_start, start_ts),
                 min(entry_end, end_ts),
                 entry["player"],
                 str(entry.get("source") or game.get("anchor_source") or "gsi"),
             ))
     if candidates:
-        snapshot_ts, player, source = max(candidates, key=lambda item: item[0])
-        selected = dict(player)
-        selected["identity_source"] = f"gsi_hero:{source}"
-        selected["equipment_snapshot_unix_ts"] = snapshot_ts
-        return selected
+        hero_ids = {
+            str(player.get("id") or _normalise_text(player.get("hero")))
+            for _entry_start, _entry_end, player, _source in candidates
+        }
+        evidence_span = max(end for _start, end, _player, _source in candidates) - min(
+            start for start, _end, _player, _source in candidates
+        )
+        observed_seconds = _covered_seconds(
+            (start, end) for start, end, _player, _source in candidates
+        )
+        stable_enough = observed_seconds >= GSI_MIN_OBSERVATION_SECONDS or (
+            len(candidates) >= 3 and evidence_span >= GSI_MIN_OBSERVATION_SECONDS
+        )
+        if len(hero_ids) == 1 and stable_enough:
+            _entry_start, snapshot_ts, player, source = max(
+                candidates, key=lambda item: item[1]
+            )
+            selected = dict(player)
+            selected["identity_source"] = f"gsi_hero:{source}"
+            selected["equipment_snapshot_unix_ts"] = snapshot_ts
+            selected["gsi_observed_seconds"] = round(observed_seconds, 3)
+            return selected
 
     anchor = game.get("anchor_player")
     anchor_seen = float(game.get("anchor_last_seen_unix_ts") or 0)
-    if isinstance(anchor, dict) and start_ts <= anchor_seen <= end_ts:
+    game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
+    legacy_observed_seconds = anchor_seen - game_start
+    if (
+        not isinstance(raw_history, list)
+        and isinstance(anchor, dict)
+        and start_ts <= anchor_seen <= end_ts
+        and legacy_observed_seconds >= GSI_MIN_OBSERVATION_SECONDS
+    ):
         selected = dict(anchor)
         selected["identity_source"] = f"gsi_hero:{game.get('anchor_source') or 'gsi'}"
         selected["equipment_snapshot_unix_ts"] = min(anchor_seen, end_ts)
+        selected["gsi_observed_seconds"] = round(legacy_observed_seconds, 3)
         return selected
 
     selected = select_anchor_player(game.get("players", []), comments, start_ts, end_ts)
     if selected:
-        selected["identity_source"] = "xml_unique_mention"
+        selected["identity_source"] = "xml_dominant_mention"
         selected["equipment_snapshot_unix_ts"] = float(
             game.get("last_seen_unix_ts") or game.get("end_unix_ts") or end_ts
         )
