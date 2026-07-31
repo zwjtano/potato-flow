@@ -23,6 +23,7 @@ BRIDGE_CONFIG = os.environ.get("BRIDGE_CONFIG", "/data/config/pipeline.json")
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/data/recordings")
 DOTA2_HEROES_URL = "https://wconf.douyucdn.cn/resource/node/config/dota2_wiki_new.json"
 DOTA2_ITEMS_URL = "https://wconf.douyucdn.cn/resource/node/config/dota2_wiki_items.json"
+DOTA2_OFFICIAL_ITEMS_URL = "https://www.dota2.com/datafeed/itemlist?language=schinese"
 DOTA2_DATA_URL = "https://www.douyu.com/wgapi/augmentedlive/dota2/data/get"
 HIGH_ENERGY_GFID = "24597"
 FLUSH_INTERVAL = 30
@@ -135,6 +136,26 @@ def load_dota2_maps() -> None:
     try:
         heroes = _request_json(DOTA2_HEROES_URL).get("heroes", {})
         items = _request_json(DOTA2_ITEMS_URL).get("items", {})
+        official_items: dict[str, str] = {}
+        try:
+            rows = (
+                _request_json(DOTA2_OFFICIAL_ITEMS_URL)
+                .get("result", {})
+                .get("data", {})
+                .get("itemabilities", [])
+            )
+            for row in rows:
+                name = str(row.get("name_loc") or "").strip()
+                item_id = str(row.get("id") or "")
+                item_key = str(row.get("name") or "")
+                if not name or name.startswith("item_"):
+                    continue
+                if item_id:
+                    official_items[item_id] = name
+                if item_key:
+                    official_items[item_key] = name
+        except Exception as exc:
+            print(f"[stats] DOTA2 官方装备中文名加载失败，继续使用斗鱼映射: {exc}", flush=True)
         dota_hero_map = {
             str(info.get("ID")): str(info.get("Name") or key)
             for key, info in heroes.items()
@@ -142,13 +163,20 @@ def load_dota2_maps() -> None:
         }
         item_map: dict[str, str] = {}
         for key, info in items.items():
-            name = str(info.get("Name") or key)
             item_id = str(info.get("ID") or "")
             item_key = str(info.get("Key") or key)
+            douyu_name = str(info.get("Name") or "").strip()
+            name = (
+                douyu_name
+                if douyu_name and not douyu_name.startswith("item_")
+                else official_items.get(item_key) or official_items.get(item_id) or item_key
+            )
             if item_id:
                 item_map[item_id] = name
             if item_key:
                 item_map[item_key] = name
+        for item_ref, name in official_items.items():
+            item_map.setdefault(item_ref, name)
         dota_item_map = item_map
         print(f"[stats] DOTA2 映射: {len(dota_hero_map)} 英雄, {len(dota_item_map)} 装备", flush=True)
     except Exception as exc:

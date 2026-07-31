@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -29,6 +30,46 @@ def player(hero_id, hero, items=None):
 
 
 class DouyuStatsTests(unittest.TestCase):
+    def test_official_item_names_fill_douyu_translation_gaps(self):
+        responses = {
+            daemon.DOTA2_HEROES_URL: {"heroes": {"hero": {"ID": "1", "Name": "敌法师"}}},
+            daemon.DOTA2_ITEMS_URL: {
+                "items": {
+                    "item_duelist_gloves": {
+                        "ID": "2097",
+                        "Key": "item_duelist_gloves",
+                        "Name": "",
+                    }
+                }
+            },
+            daemon.DOTA2_OFFICIAL_ITEMS_URL: {
+                "result": {
+                    "data": {
+                        "itemabilities": [
+                            {
+                                "id": 2097,
+                                "name": "item_duelist_gloves",
+                                "name_loc": "决斗家手套",
+                            },
+                            {
+                                "id": 1858,
+                                "name": "item_hydras_breath",
+                                "name_loc": "怪蛇之息",
+                            },
+                        ]
+                    }
+                }
+            },
+        }
+
+        with mock.patch.object(daemon, "_request_json", side_effect=lambda url, referer="": responses[url]):
+            daemon.load_dota2_maps()
+
+        self.assertEqual(daemon.dota_item_map["2097"], "决斗家手套")
+        self.assertEqual(daemon.dota_item_map["item_duelist_gloves"], "决斗家手套")
+        self.assertEqual(daemon.dota_item_map["1858"], "怪蛇之息")
+        self.assertEqual(daemon.dota_item_map["item_hydras_breath"], "怪蛇之息")
+
     def test_packet_decoder_retains_fragmented_tail(self):
         first = daemon.encode_packet("type@=dgb/gfid@=1/")
         second = daemon.encode_packet("type@=oni/un@=100/")
@@ -259,7 +300,7 @@ class DouyuStatsTests(unittest.TestCase):
             root = Path(temporary)
             session = root / "主播_直播_1970-01-01_00-01"
             session.mkdir()
-            (session / "recording.xml").write_text(
+            (session / f"{session.name}.xml").write_text(
                 """<?xml version="1.0"?><i>
                 <d p="1,1,25,1,100,0,1,0">影魔六神了</d>
                 <d p="2,1,25,1,150,0,2,0">影魔装备成型</d>
@@ -282,12 +323,81 @@ class DouyuStatsTests(unittest.TestCase):
             self.assertEqual(anchor["items"], [f"装备{i}" for i in range(1, 7)])
             self.assertEqual(anchor["equipment_snapshot_unix_ts"], 160)
 
+    def test_formatter_ignores_xml_from_another_recording_segment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary) / "YYF_单排影魔_2026-07-30_11-47"
+            session.mkdir()
+            (session / f"{session.name}.xml").write_text(
+                '<i><d p="1,1,25,1,100,0,1,0">本段弹幕</d></i>',
+                encoding="utf-8",
+            )
+            (session / "YYF_下一段_2026-07-30_12-47.xml").write_text(
+                '<i><d p="1,1,25,1,200,0,1,0">下一段弹幕</d></i>',
+                encoding="utf-8",
+            )
+
+            comments = formatter.load_xml_comments(session)
+
+            self.assertEqual(comments, [(100.0, "本段弹幕")])
+
+    def test_formatter_uses_directory_time_when_matching_xml_is_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary) / "YYF_单排影魔_2026-07-30_11-47"
+            session.mkdir()
+            (session / "YYF_下一段_2026-07-30_12-47.xml").write_text(
+                '<i><d p="1,1,25,1,200,0,1,0">下一段弹幕</d></i>',
+                encoding="utf-8",
+            )
+            expected = time.mktime(time.strptime("2026-07-30 11:47:00", "%Y-%m-%d %H:%M:%S"))
+
+            start_ts, end_ts = formatter.recording_timeframe(session)
+
+            self.assertEqual(start_ts, expected)
+            self.assertEqual(end_ts, expected + 3600.0)
+
+    def test_cover_identity_selects_game_with_longest_recording_overlap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session = root / "主播_直播_1970-01-01_00-01"
+            session.mkdir()
+            (session / f"{session.name}.xml").write_text(
+                '<i><d p="1,1,25,1,100,0,1,0">开始</d>'
+                '<d p="2,1,25,1,200,0,2,0">结束</d></i>',
+                encoding="utf-8",
+            )
+            stats = {
+                "games": [
+                    {
+                        "start_unix_ts": 90,
+                        "end_unix_ts": 190,
+                        "anchor_player": player(11, "影魔", ["黑皇杖"]),
+                        "anchor_last_seen_unix_ts": 180,
+                    },
+                    {
+                        "start_unix_ts": 190,
+                        "end_unix_ts": 260,
+                        "anchor_player": player(22, "敌法师", ["狂战斧"]),
+                        "anchor_last_seen_unix_ts": 195,
+                    },
+                ]
+            }
+            metadata = root / ".potato-flow"
+            metadata.mkdir()
+            (metadata / "douyu-stats.json").write_text(
+                json.dumps(stats, ensure_ascii=False), encoding="utf-8"
+            )
+
+            anchor = formatter.get_game_for_cover(session)
+
+            self.assertEqual(anchor["hero"], "影魔")
+            self.assertEqual(anchor["items"], ["黑皇杖"])
+
     def test_formatter_uses_xml_timeframe_and_xml_hero_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             session = root / "主播_直播_1970-01-01_00-01"
             session.mkdir()
-            (session / "recording.xml").write_text(
+            (session / f"{session.name}.xml").write_text(
                 """<?xml version="1.0"?><i>
                 <d p="1,1,25,1,100,0,1,0">影魔这把很肥</d>
                 <d p="2,1,25,1,150,0,2,0">影魔要出黑皇杖了</d>
@@ -393,7 +503,7 @@ class DouyuStatsTests(unittest.TestCase):
             metadata.mkdir(parents=True)
             legacy_session = root / "runtime" / "data" / "recordings" / "主播" / "场次"
             legacy_session.mkdir(parents=True)
-            (legacy_session / "recording.xml").write_text(
+            (legacy_session / f"{legacy_session.name}.xml").write_text(
                 """<?xml version="1.0"?><i>
                 <d p="1,1,25,1,100,0,1,0">影魔这把很肥</d>
                 <d p="2,1,25,1,150,0,2,0">影魔要出黑皇杖了</d>
