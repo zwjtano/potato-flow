@@ -82,6 +82,20 @@ def _normalise_text(value: object) -> str:
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").casefold())
 
 
+def _count_hero_alias(text: str, alias: str) -> int:
+    """Count an alias without matching short Latin aliases inside words."""
+    folded_text = str(text or "").casefold()
+    folded_alias = str(alias or "").casefold().strip()
+    if not folded_alias:
+        return 0
+    if re.fullmatch(r"[0-9a-z]+", folded_alias):
+        return len(re.findall(
+            rf"(?<![0-9a-z]){re.escape(folded_alias)}(?![0-9a-z])",
+            folded_text,
+        ))
+    return _normalise_text(folded_text).count(_normalise_text(folded_alias))
+
+
 @lru_cache(maxsize=8)
 def _load_xml_comments_cached(
     signature: tuple[tuple[str, int, int], ...],
@@ -181,7 +195,7 @@ def select_anchor_player(
 ) -> dict | None:
     """Select a hero only from strong, dominant XML mention evidence."""
     texts = [
-        _normalise_text(text)
+        str(text or "")
         for unix_ts, text in comments
         if start_ts <= unix_ts <= end_ts
     ]
@@ -195,7 +209,7 @@ def select_anchor_player(
         aliases.update(_normalise_text(alias) for alias in HERO_ALIASES.get(hero, ()))
         aliases.discard("")
         score = sum(
-            sum(text.count(alias) for alias in aliases)
+            sum(_count_hero_alias(text, alias) for alias in aliases)
             for text in texts
         )
         scores.append((score, player))
@@ -275,22 +289,6 @@ def select_streamer_player(
             selected["equipment_snapshot_unix_ts"] = snapshot_ts
             selected["gsi_observed_seconds"] = round(observed_seconds, 3)
             return selected
-
-    anchor = game.get("anchor_player")
-    anchor_seen = float(game.get("anchor_last_seen_unix_ts") or 0)
-    game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
-    legacy_observed_seconds = anchor_seen - game_start
-    if (
-        not isinstance(raw_history, list)
-        and isinstance(anchor, dict)
-        and start_ts <= anchor_seen <= end_ts
-        and legacy_observed_seconds >= GSI_MIN_OBSERVATION_SECONDS
-    ):
-        selected = dict(anchor)
-        selected["identity_source"] = f"gsi_hero:{game.get('anchor_source') or 'gsi'}"
-        selected["equipment_snapshot_unix_ts"] = min(anchor_seen, end_ts)
-        selected["gsi_observed_seconds"] = round(legacy_observed_seconds, 3)
-        return selected
 
     selected = select_anchor_player(game.get("players", []), comments, start_ts, end_ts)
     if selected:

@@ -71,7 +71,7 @@ class RecordingFilesTests(unittest.TestCase):
     def test_batch_delete_keeps_button_reference_before_async_confirmation(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
         handler = source[source.index("async function deleteSelectedFiles(event)"):
-                         source.index("async function loadFiles()")]
+                         source.index("async function loadFiles(")]
 
         self.assertLess(
             handler.index("const button = event.currentTarget;"),
