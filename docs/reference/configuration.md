@@ -16,6 +16,7 @@
 | `danmaku_enabled` | `true` | 采集 XML 并生成 ASS |
 | `danmaku_burn_in` | `false` | 是否把弹幕烧录进视频 |
 | `delete_recording_after_upload` | `true` | 投稿成功后删除对应源录播 |
+| `danmaku_xml_retention_hours` | `24` | 投稿成功后继续保留弹幕 XML 的小时数，便于核查完整性 |
 | `ai_danmaku_summary_enabled` | `true` | 使用弹幕生成稿件信息 |
 | `post_description_comment` | `true` | 投稿后把简介发为评论 |
 | `pin_description_comment` | `true` | 尝试置顶简介评论 |

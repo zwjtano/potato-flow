@@ -45,6 +45,31 @@ def parse_biliup_xml(path: Path) -> list[DanmakuComment]:
     return comments
 
 
+def inspect_biliup_xml(
+    path: Path,
+    comments: list[DanmakuComment] | None = None,
+) -> dict[str, Any]:
+    """Return auditable entry and timeline diagnostics for one XML sidecar."""
+    parsed = comments if comments is not None else parse_biliup_xml(path)
+    root = ET.parse(path).getroot()
+    xml_entries = sum(1 for _ in root.iter("d"))
+    timeline = [comment.time for comment in parsed]
+    first_second = min(timeline) if timeline else None
+    last_second = max(timeline) if timeline else None
+    return {
+        "danmaku_xml_entries": xml_entries,
+        "danmaku_count": len(parsed),
+        "danmaku_invalid_count": max(0, xml_entries - len(parsed)),
+        "danmaku_first_second": first_second,
+        "danmaku_last_second": last_second,
+        "danmaku_timeline_span_seconds": (
+            max(0.0, float(last_second) - float(first_second))
+            if first_second is not None and last_second is not None
+            else 0.0
+        ),
+    }
+
+
 def _ass_time(seconds: float) -> str:
     centiseconds = max(0, int(round(seconds * 100)))
     hours, remainder = divmod(centiseconds, 360000)

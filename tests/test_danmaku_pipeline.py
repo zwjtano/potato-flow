@@ -5,6 +5,7 @@ from pathlib import Path
 from danmaku_pipeline import (
     build_ass,
     format_comments_for_ai,
+    inspect_biliup_xml,
     parse_biliup_xml,
     select_summary_comments,
 )
@@ -49,6 +50,22 @@ class DanmakuPipelineTests(unittest.TestCase):
             selected = select_summary_comments(parse_biliup_xml(path), 20)
             self.assertEqual(len(selected), 2)
             self.assertNotIn("uid", format_comments_for_ai(selected).lower())
+
+    def test_inspect_xml_reports_raw_valid_invalid_and_timeline_counts(self):
+        path = self._write_xml(
+            '<d p="10,1,25,16777215,0,0,1,0">第一条</d>'
+            '<d p="invalid">坏节点</d>'
+            '<d p="75.5,1,25,16777215,0,0,2,0">第二条</d>'
+        )
+
+        details = inspect_biliup_xml(path)
+
+        self.assertEqual(details["danmaku_xml_entries"], 3)
+        self.assertEqual(details["danmaku_count"], 2)
+        self.assertEqual(details["danmaku_invalid_count"], 1)
+        self.assertEqual(details["danmaku_first_second"], 10.0)
+        self.assertEqual(details["danmaku_last_second"], 75.5)
+        self.assertEqual(details["danmaku_timeline_span_seconds"], 65.5)
 
     def test_ai_comment_timestamps_use_bilibili_chapter_format(self):
         comments = parse_biliup_xml(

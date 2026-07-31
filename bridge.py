@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.request
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +25,7 @@ from danmaku_pipeline import (
     build_ass,
     burn_ass,
     format_comments_for_ai,
+    inspect_biliup_xml,
     parse_biliup_xml,
     probe_video_size,
     select_summary_comments,
@@ -476,6 +477,54 @@ def prepend_live_stats_to_description(
     return f"{stats}{separator}{body[:body_budget].rstrip()}".rstrip()
 
 
+def live_stats_stage_details(stats_text: str) -> dict[str, Any]:
+    """Persist the human-readable statistics instead of only its length."""
+    summary = str(stats_text or "").strip()
+    return {
+        "stats_collected": bool(summary),
+        "stats_summary": summary,
+        "stats_length": len(summary),
+        "outcome": "matched" if summary else "no_data",
+    }
+
+
+def danmaku_stage_details(
+    video: Path,
+    danmaku_xml: Path,
+    comments: list[Any],
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """Describe XML coverage and flag implausibly sparse long recordings."""
+    details = inspect_biliup_xml(danmaku_xml, comments)
+    duration = video_duration_seconds(video, str(cfg.get("ffprobe", "ffprobe")))
+    duration_minutes = max(0.0, float(duration or 0.0) / 60.0)
+    rate = len(comments) / duration_minutes if duration_minutes > 0 else 0.0
+    minimum_duration = max(
+        0.0,
+        float(cfg.get("danmaku_sparse_warning_min_duration_seconds", 1800) or 1800),
+    )
+    minimum_rate = max(
+        0.0,
+        float(cfg.get("danmaku_sparse_warning_min_per_minute", 2.0) or 2.0),
+    )
+    suspected = bool(
+        duration is not None
+        and duration >= minimum_duration
+        and rate < minimum_rate
+    )
+    details.update({
+        "video_duration_seconds": round(float(duration), 3) if duration is not None else None,
+        "danmaku_rate_per_minute": round(rate, 3),
+        "danmaku_integrity": "suspected_incomplete" if suspected else "ok",
+    })
+    if suspected:
+        details["danmaku_integrity_reason"] = (
+            f"{duration_minutes:.1f} 分钟录播仅保存 {len(comments)} 条有效弹幕，"
+            f"低于完整性预警阈值 {minimum_rate:g} 条/分钟；已保留源 XML 供核查"
+        )
+    return details
+
+
 class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -544,6 +593,61 @@ class StateStore:
         db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
         return db
+
+    def cleanup_expired_retained_xml(self) -> list[str]:
+        """Delete only XML files explicitly retained by completed upload tasks."""
+        now = datetime.now(timezone.utc)
+        deleted: list[str] = []
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT fingerprint, details_json FROM upload_stages
+                   WHERE stage='cleanup' AND status='completed'
+                     AND details_json LIKE '%retained_xml_until%'"""
+            ).fetchall()
+            for row in rows:
+                try:
+                    details = json.loads(row["details_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                retained_until = str(details.get("retained_xml_until") or "")
+                retained_path = str(details.get("retained_xml_path") or "")
+                if (
+                    not retained_until
+                    or not retained_path
+                    or details.get("retained_xml_deleted_at")
+                ):
+                    continue
+                try:
+                    expires = datetime.fromisoformat(retained_until.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if expires > now:
+                    continue
+                path = Path(retained_path)
+                try:
+                    existed = path.exists() or path.is_symlink()
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    details["retained_xml_cleanup_error"] = str(exc)
+                else:
+                    if existed:
+                        deleted.append(str(path))
+                    details["retained_xml_deleted_at"] = now.isoformat()
+                    details.pop("retained_xml_cleanup_error", None)
+                    details["retained"] = [
+                        item for item in details.get("retained", [])
+                        if str(item) != str(path)
+                    ]
+                db.execute(
+                    """UPDATE upload_stages SET details_json=?, updated_at=?
+                       WHERE fingerprint=? AND stage='cleanup'""",
+                    (
+                        json.dumps(details, ensure_ascii=False, default=str),
+                        utc_now(),
+                        row["fingerprint"],
+                    ),
+                )
+        return deleted
 
     def upload_exists(self, key: str) -> bool:
         with self.connect() as db:
@@ -1702,8 +1806,15 @@ def cleanup_uploaded_recording(
     upload_video: Path,
     artifact_dir: Path | None = None,
     retained_paths: Iterable[Path | None] = (),
+    xml_retention_hours: float = 0.0,
 ) -> dict[str, Any]:
     """Remove recording inputs and generated artifacts after upload is durable."""
+    retained_paths = tuple(retained_paths)
+    retained_resolved = {
+        candidate.resolve()
+        for candidate in retained_paths
+        if candidate is not None
+    }
     candidates = [
         ("video", video),
         ("danmaku_xml", danmaku_xml),
@@ -1720,6 +1831,8 @@ def cleanup_uploaded_recording(
         if path in seen:
             continue
         seen.add(path)
+        if path in retained_resolved:
+            continue
         try:
             existed = path.exists() or path.is_symlink()
             path.unlink(missing_ok=True)
@@ -1756,7 +1869,22 @@ def cleanup_uploaded_recording(
         path = candidate.resolve()
         if path.is_file() and str(path) not in retained:
             retained.append(str(path))
-    return {"deleted": deleted, "retained": retained, "failed": failed}
+    result: dict[str, Any] = {
+        "deleted": deleted,
+        "retained": retained,
+        "failed": failed,
+    }
+    if (
+        danmaku_xml is not None
+        and danmaku_xml.resolve() in retained_resolved
+        and danmaku_xml.is_file()
+        and xml_retention_hours > 0
+    ):
+        result["retained_xml_path"] = str(danmaku_xml.resolve())
+        result["retained_xml_until"] = (
+            datetime.now(timezone.utc) + timedelta(hours=float(xml_retention_hours))
+        ).isoformat()
+    return result
 
 
 def persist_pipeline_cover(
@@ -2201,13 +2329,35 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         preset=str(cfg.get("danmaku_encode_preset", "medium")),
                         crf=int(cfg.get("danmaku_encode_crf", 20)),
                     )
-                store.stage(key, "ass", "completed", {
-                    "danmaku_xml": str(danmaku_xml), "ass_path": str(ass_path),
-                    "danmaku_count": len(comments), "burn_in": bool(cfg.get("danmaku_burn_in", False)),
+                ass_details = danmaku_stage_details(video, danmaku_xml, comments, cfg)
+                ass_details.update({
+                    "danmaku_xml": str(danmaku_xml),
+                    "ass_path": str(ass_path),
+                    "burn_in": bool(cfg.get("danmaku_burn_in", False)),
                 })
+                store.stage(
+                    key,
+                    "ass",
+                    "warning"
+                    if ass_details["danmaku_integrity"] == "suspected_incomplete"
+                    else "completed",
+                    ass_details,
+                )
             else:
                 print(f"WARN 弹幕 XML 中没有可用弹幕: {danmaku_xml}", file=sys.stderr)
-                store.stage(key, "ass", "skipped", {"danmaku_xml": str(danmaku_xml), "reason": "XML 中没有可用弹幕"})
+                ass_details = danmaku_stage_details(video, danmaku_xml, comments, cfg)
+                ass_details.update({
+                    "danmaku_xml": str(danmaku_xml),
+                    "reason": "XML 中没有可用弹幕",
+                })
+                store.stage(
+                    key,
+                    "ass",
+                    "warning"
+                    if ass_details["danmaku_integrity"] == "suspected_incomplete"
+                    else "skipped",
+                    ass_details,
+                )
         else:
             store.stage(key, "ass", "skipped", {"reason": "未找到弹幕 XML 或弹幕处理未启用"})
 
@@ -2232,7 +2382,12 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 from modules.douyu_stats_formatter import get_stats_for_description  # type: ignore
                 stats_text = str(get_stats_for_description(str(video.parent)) or "")[:1900]
                 if stats_text:
-                    store.stage(key, "live_stats", "completed", {"stats_collected": True, "stats_length": len(stats_text), "outcome": "matched"})
+                    store.stage(
+                        key,
+                        "live_stats",
+                        "completed",
+                        live_stats_stage_details(stats_text),
+                    )
                 else:
                     store.stage(key, "live_stats", "skipped", {"reason": "本次录播时间内没有匹配的直播数据", "outcome": "no_data"})
             except Exception as exc:
@@ -2587,7 +2742,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         "stats_prepended": True,
                         "stats_position": "start",
                         "description_length": len(description),
-                        "outcome": "matched",
+                        **live_stats_stage_details(stats_text),
                     })
                     print("[bridge] 直播统计数据已置于简介开头", file=sys.stderr)
                 else:
@@ -2998,12 +3153,25 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
                 "upload_video_path": str(upload_video),
             })
+            xml_retention_hours = max(
+                0.0,
+                float(
+                    24
+                    if cfg.get("danmaku_xml_retention_hours") is None
+                    else cfg["danmaku_xml_retention_hours"]
+                ),
+            )
             previous["source_cleanup"] = cleanup_uploaded_recording(
                 video,
                 danmaku_xml,
                 upload_video,
                 artifact_dir=work_dir,
-                retained_paths=(cover, cover43),
+                retained_paths=(
+                    cover,
+                    cover43,
+                    danmaku_xml if xml_retention_hours > 0 else None,
+                ),
+                xml_retention_hours=xml_retention_hours,
             )
             store.stage(
                 key,
@@ -3301,6 +3469,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(Path(args.config))
     state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)
     store = StateStore(state_path)
+    if args.command not in {"status", "close-session"}:
+        store.cleanup_expired_retained_xml()
 
     if args.command == "close-session":
         closed = store.close_multipart_session(str(args.session_key))
