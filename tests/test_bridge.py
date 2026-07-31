@@ -251,6 +251,33 @@ class BridgeTests(unittest.TestCase):
             "重要时间点\n26:03 大狗缺席导致选人回溯",
         )
 
+    def test_grounded_timeline_accepts_adjacent_exact_evidence_cluster(self):
+        comments = [
+            types.SimpleNamespace(time=100.0, text="肉山已经开了"),
+            types.SimpleNamespace(time=112.0, text="盾被对面抢了"),
+        ]
+
+        self.assertEqual(
+            bridge.render_grounded_danmaku_timeline(
+                [{
+                    "event": "肉山盾遭到对手抢夺",
+                    "evidence_texts": ["肉山已经开了", "盾被对面抢了"],
+                    "evidence_keywords": ["肉山", "盾", "抢"],
+                }],
+                comments,
+                comments,
+                delay_seconds=8,
+                duration_seconds=300,
+            ),
+            "重要时间点\n01:32 肉山盾遭到对手抢夺",
+        )
+
+    def test_timeline_target_scales_with_recording_duration(self):
+        self.assertEqual(bridge.timeline_target_range(None), (6, 10))
+        self.assertEqual(bridge.timeline_target_range(1800), (4, 8))
+        self.assertEqual(bridge.timeline_target_range(3600), (8, 12))
+        self.assertEqual(bridge.timeline_target_range(7200), (10, 14))
+
     def test_grounded_timeline_rejects_unverifiable_evidence(self):
         sampled = [types.SimpleNamespace(time=1268.0, text="BP顺位受到质疑")]
 
@@ -335,6 +362,13 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("完整 XML", prompt)
         self.assertIn("不要在简介正文中手写时间点", prompt)
         self.assertIn("不得编造时间或事件", prompt)
+
+    def test_timeline_prompt_is_generic_and_only_adds_game_events_conditionally(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("适用于所有直播类型", source)
+        self.assertIn("只有输入明确属于", source)
+        self.assertIn("不得把聊天、访谈", source)
 
     def test_profile_override_and_metadata(self):
         base = {

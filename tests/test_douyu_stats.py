@@ -648,6 +648,30 @@ class DouyuStatsTests(unittest.TestCase):
             formatter.select_streamer_player(game, comments, 100, 400)
         )
 
+    def test_formatter_short_ascii_alias_requires_token_boundary(self):
+        players = [player(1, "敌法师"), player(2, "宙斯")]
+        unrelated = [(100 + index, "good game") for index in range(25)]
+
+        self.assertIsNone(
+            formatter.select_anchor_player(players, unrelated, 100, 200)
+        )
+
+        explicit = [(100 + index, "这把AM太肥了") for index in range(25)]
+        selected = formatter.select_anchor_player(players, explicit, 100, 200)
+        self.assertEqual(selected["hero"], "敌法师")
+
+    def test_formatter_rejects_legacy_single_late_anchor_snapshot(self):
+        game = {
+            "start_unix_ts": 100,
+            "end_unix_ts": 400,
+            "players": [player(11, "影魔"), player(22, "宙斯")],
+            "anchor_player": player(22, "宙斯"),
+            "anchor_last_seen_unix_ts": 390,
+            "anchor_source": "http",
+        }
+
+        self.assertIsNone(formatter.select_streamer_player(game, [], 100, 400))
+
     def test_formatter_keeps_stable_gsi_even_when_xml_discusses_another_hero(self):
         game = {
             "start_unix_ts": 100,
@@ -766,6 +790,12 @@ class DouyuStatsTests(unittest.TestCase):
                         "end_unix_ts": 190,
                         "anchor_player": player(11, "影魔", ["黑皇杖"]),
                         "anchor_last_seen_unix_ts": 180,
+                        "anchor_history": [{
+                            "start_unix_ts": 100,
+                            "last_seen_unix_ts": 180,
+                            "source": "http",
+                            "player": player(11, "影魔", ["黑皇杖"]),
+                        }],
                     },
                     {
                         "start_unix_ts": 190,
@@ -846,6 +876,12 @@ class DouyuStatsTests(unittest.TestCase):
                     "end_unix_ts": 200,
                     "anchor_player": player(35, "狙击手"),
                     "anchor_last_seen_unix_ts": 180,
+                    "anchor_history": [{
+                        "start_unix_ts": 100,
+                        "last_seen_unix_ts": 180,
+                        "source": "http",
+                        "player": player(35, "狙击手"),
+                    }],
                 },
                 {
                     "start_unix_ts": 200,
@@ -856,6 +892,16 @@ class DouyuStatsTests(unittest.TestCase):
                         "shard": True,
                     },
                     "anchor_last_seen_unix_ts": 280,
+                    "anchor_history": [{
+                        "start_unix_ts": 200,
+                        "last_seen_unix_ts": 280,
+                        "source": "http",
+                        "player": {
+                            **player(2, "斧王", ["闪烁匕首", "刃甲", "相位鞋"]),
+                            "neutral": "Rattlecage",
+                            "shard": True,
+                        },
+                    }],
                 },
             ],
         }

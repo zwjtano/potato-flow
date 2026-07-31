@@ -449,6 +449,14 @@ def strip_ai_timeline_lines(description: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
+def timeline_target_range(duration_seconds: float | None) -> tuple[int, int]:
+    """Return a useful highlight target scaled to the recording duration."""
+    if duration_seconds is None or float(duration_seconds) <= 0:
+        return 6, 10
+    minimum = max(3, min(10, int((float(duration_seconds) + 479) // 480)))
+    return minimum, min(14, minimum + 4)
+
+
 def render_grounded_danmaku_timeline(
     timeline: Any,
     selected_comments: list[Any],
@@ -502,6 +510,29 @@ def render_grounded_danmaku_timeline(
                 for keyword in keywords
             )
         ]
+        if not matching_comments:
+            # One event is often described by several adjacent reactions. Keep
+            # the anchor XML-grounded when no single comment contains every
+            # keyword by requiring the exact sampled evidence to form a short
+            # cluster that collectively contains them all.
+            evidence_matches = sorted(
+                (
+                    comment for comment in all_comments
+                    if str(getattr(comment, "text", "")).strip() in evidence_texts
+                ),
+                key=lambda comment: float(comment.time),
+            )
+            for first in evidence_matches:
+                cluster = [
+                    comment for comment in evidence_matches
+                    if float(first.time) <= float(comment.time) <= float(first.time) + 30.0
+                ]
+                cluster_text = "\n".join(
+                    str(getattr(comment, "text", "")) for comment in cluster
+                ).casefold()
+                if all(keyword.casefold() in cluster_text for keyword in keywords):
+                    matching_comments = cluster
+                    break
         if not matching_comments:
             continue
         event = re.sub(r"\s+", " ", str(item.get("event") or "")).strip()
@@ -2258,6 +2289,9 @@ def generate_danmaku_metadata_with_ai(
             print("WARN 未配置 Y2A OPENAI_API_KEY，跳过弹幕 AI 简介", file=sys.stderr)
             return base_description, ""
         selected = select_summary_comments(comments, int(cfg.get("ai_danmaku_max_comments", 400)))
+        timeline_minimum, timeline_maximum = timeline_target_range(
+            timeline_duration_seconds
+        )
         payload = {
             "base_description": base_description,
             "comment_count": len(comments),
@@ -2270,6 +2304,10 @@ def generate_danmaku_metadata_with_ai(
                 for comment in selected
             ],
             "verified_live_context": grounding_context or {},
+            "timeline_target_count": {
+                "minimum": timeline_minimum,
+                "maximum": timeline_maximum,
+            },
             "timestamp_reaction_delay_seconds": max(
                 0,
                 min(60, int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0)),
@@ -2300,8 +2338,14 @@ description 只写两至四段事件总结，不要包含“重要时间点”�
 timeline 只选择 sampled_comment_evidence 有直接证据的事件。每项返回 event、evidence_texts
 和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
 evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
+如果证据充足，timeline 应覆盖录播开头、中段和结尾，并返回 {timeline_minimum} 至
+{timeline_maximum} 个彼此不同的关键看点。适用于所有直播类型：优先选择内容推进、关键决定、
+意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
+游戏内容时，才额外考虑阵容选择、关键交锋、操作失误、局势转折和翻盘；不得把聊天、访谈、
+户外、才艺或其他直播强行描述成游戏对局。不要把同一事件拆成多条，也不要为了达到数量编造内容。
 不要返回时间戳；程序会使用 evidence_keywords 回到完整 XML 查找第一条匹配弹幕。
-完整 XML 中必须存在一条同时包含所有关键词的弹幕；否则必须省略该事件，不得用宽泛关键词拼凑结论。
+完整 XML 中必须存在一条同时包含所有关键词的弹幕，或在 30 秒内存在一组逐字复制的
+evidence_texts 共同覆盖所有关键词；否则必须省略该事件，不得用宽泛关键词拼凑结论。
 弹幕时间晚于画面事件：应选最早一批明确相关弹幕作为证据锚点，不要选择刷屏高峰；程序会按
 timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
 title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
@@ -2316,7 +2360,7 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             model_name=str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini")),
             system_prompt=system_prompt,
             payload=payload,
-            max_tokens=1400,
+            max_tokens=2200,
             temperature=0.2,
             thinking_enabled=bool(ai_cfg.get("OPENAI_THINKING_ENABLED", False)),
             logger_obj=None,

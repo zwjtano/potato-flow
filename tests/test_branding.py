@@ -92,7 +92,7 @@ class BrandingTests(unittest.TestCase):
             with self.subTest(icon=icon):
                 self.assertIn(f".bi-{icon}::before", icon_styles)
 
-    def test_tasks_page_uses_manual_refresh_without_detail_polling(self):
+    def test_tasks_page_uses_manual_refresh_and_sse_without_detail_polling(self):
         template = (ROOT / "y2a-auto" / "templates" / "tasks.html").read_text(
             encoding="utf-8"
         )
@@ -108,7 +108,7 @@ class BrandingTests(unittest.TestCase):
             "document.addEventListener('DOMContentLoaded', function()",
             1,
         )[-1]
-        self.assertNotIn("initTasksEventStream();", dom_ready)
+        self.assertIn("initTasksEventStream();", dom_ready)
         self.assertNotIn("refreshTasksData(true), 400", dom_ready)
 
     def test_sidebar_shows_centralized_version_and_author(self):
