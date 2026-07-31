@@ -76,7 +76,7 @@
         <p>B站、斗鱼与抖音自动监控，每个录制分段完成后立即进入弹幕与上传流水线。</p>
     </div>
     <div class="page-actions recorder-header-actions">
-        <a class="btn btn-light border" href="{{ url_for('live_recording') }}"><i class="bi bi-arrow-clockwise"></i> 刷新</a>
+        <button class="btn btn-light border" type="button" data-action="refresh-live-recording"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
         <button class="btn btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#rawLogModal"><i class="bi bi-terminal"></i> 原始日志</button>
         <button class="btn btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal"><i class="bi bi-folder2-open"></i> 文件管理</button>
         <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addRoomModal"><i class="bi bi-plus-lg"></i> 新增直播间</button>
@@ -334,7 +334,7 @@
                     <div><h3>录制文件</h3><p>显示该直播间最近生成的视频、XML 弹幕和 ASS</p></div>
                     <button class="btn btn-sm btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal"><i class="bi bi-folder2-open"></i> 管理全部文件</button>
                 </div>
-                <div class="generated-file-list">
+                <div class="generated-file-list" data-generated-files-room="{{ room.id }}">
                     {% set file_state = namespace(count=0) %}
                     {% for file in recording_files %}
                     {% if file.room_id == room.id and file_state.count < 10 %}
@@ -545,6 +545,8 @@ document.addEventListener('DOMContentLoaded', function () {
     let roomResolveTimer = null;
     let resolvedRoomUrl = '';
     let recordingFiles = [];
+    let recordingFilesRefreshInFlight = false;
+    const roomFileSignatures = new Map();
     const selectedRecordingFileIds = new Set();
     let filter = 'all';
     const escapeHtml = value => String(value ?? '').replace(
@@ -738,6 +740,56 @@ document.addEventListener('DOMContentLoaded', function () {
         const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
         return `${(value / Math.pow(1024, index)).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
     }
+    function generatedFileSignature(file) {
+        return JSON.stringify([
+            file.id,
+            file.name,
+            file.size_bytes,
+            file.modified_at,
+            file.extension,
+            Boolean(file.locked),
+            file.lock_reason || '',
+            Boolean(file.has_cover),
+        ]);
+    }
+    function buildGeneratedFileRow(file, signature) {
+        const typeIcons = {video: 'bi-camera-video', xml: 'bi-chat-square-text', ass: 'bi-badge-cc'};
+        const extension = String(file.extension || (file.type === 'video' ? '视频' : file.type || '')).toUpperCase();
+        const visual = file.type === 'video' && file.has_cover
+            ? `<img class="generated-file-cover" src="/live-recording/files/${encodeURIComponent(file.id)}/cover?v=${encodeURIComponent(file.modified_timestamp || '')}" alt="${escapeHtml(file.name)} 封面" loading="lazy">`
+            : `<span class="generated-file-icon ${escapeHtml(file.type)}"><i class="bi ${typeIcons[file.type] || 'bi-file-earmark'}"></i></span>`;
+        const lock = file.locked
+            ? `<span class="generated-file-lock"><i class="bi bi-record-circle"></i> ${escapeHtml(file.lock_reason || '处理中')}</span>`
+            : '';
+        const template = document.createElement('template');
+        template.innerHTML = `<div class="generated-file-row${file.has_cover ? ' has-cover' : ''}" data-file-id="${escapeHtml(file.id)}" data-file-signature="${escapeHtml(signature)}">${visual}<div class="generated-file-copy"><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small><span>${escapeHtml(extension)}</span><time>${escapeHtml(file.modified_at || '')}</time></small></div><span class="generated-file-size">${formatBytes(file.size_bytes)}</span>${lock}<a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载" aria-label="下载文件 ${escapeHtml(file.name)}"><i class="bi bi-download"></i></a></div>`;
+        return template.content.firstElementChild;
+    }
+    function renderRoomFileLists() {
+        document.querySelectorAll('[data-generated-files-room]').forEach(list => {
+            const roomId = String(list.dataset.generatedFilesRoom || '');
+            const files = recordingFiles
+                .filter(file => String(file.room_id || '') === roomId)
+                .slice(0, 10);
+            const signature = JSON.stringify(files.map(generatedFileSignature));
+            if (roomFileSignatures.get(roomId) === signature) return;
+            roomFileSignatures.set(roomId, signature);
+            if (!files.length) {
+                list.innerHTML = '<div class="generated-files-empty"><i class="bi bi-folder2-open"></i><strong>还没有生成文件</strong><span>开始录制后，视频和弹幕文件会直接显示在这里</span></div>';
+                return;
+            }
+            const existingRows = new Map(
+                [...list.querySelectorAll('[data-file-id]')].map(row => [row.dataset.fileId, row])
+            );
+            const nextRows = files.map(file => {
+                const fileSignature = generatedFileSignature(file);
+                const existing = existingRows.get(String(file.id));
+                if (existing?.dataset.fileSignature === fileSignature) return existing;
+                return buildGeneratedFileRow(file, fileSignature);
+            });
+            list.replaceChildren(...nextRows);
+        });
+    }
     function renderFiles() {
         if (!filesModal) return;
         const query = (filesModal.querySelector('[data-role="file-search"]').value || '').trim().toLowerCase();
@@ -825,12 +877,17 @@ document.addEventListener('DOMContentLoaded', function () {
             updateFileSelectionControls();
         }
     }
-    async function loadFiles() {
-        if (!filesModal) return;
+    async function loadFiles(options = {}) {
+        if (!filesModal || recordingFilesRefreshInFlight || document.hidden) return;
+        const silent = Boolean(options?.silent);
         const rows = filesModal.querySelector('[data-role="file-rows"]');
-        rows.innerHTML = '<tr><td colspan="6" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr>';
+        if (!silent) rows.innerHTML = '<tr><td colspan="6" class="file-empty"><span class="spinner-border spinner-border-sm"></span> 正在读取文件…</td></tr>';
+        recordingFilesRefreshInFlight = true;
         try {
-            const response = await fetch('/live-recording/files', {headers: {'Accept': 'application/json'}});
+            const response = await fetch('/live-recording/files', {
+                cache: 'no-store',
+                headers: {'Accept': 'application/json'},
+            });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '读取失败');
             recordingFiles = result.files || [];
@@ -838,9 +895,12 @@ document.addEventListener('DOMContentLoaded', function () {
             [...selectedRecordingFileIds].forEach(id => { if (!availableIds.has(id)) selectedRecordingFileIds.delete(id); });
             filesModal.querySelector('[data-role="file-count"]').textContent = result.total_files ?? recordingFiles.length;
             filesModal.querySelector('[data-role="file-size"]').textContent = formatBytes(result.total_size_bytes);
+            renderRoomFileLists();
             renderFiles();
         } catch (error) {
-            rows.innerHTML = `<tr><td colspan="6" class="file-empty text-danger"><i class="bi bi-exclamation-triangle"></i><strong>文件读取失败</strong><span>${escapeHtml(error.message)}</span></td></tr>`;
+            if (!silent) rows.innerHTML = `<tr><td colspan="6" class="file-empty text-danger"><i class="bi bi-exclamation-triangle"></i><strong>文件读取失败</strong><span>${escapeHtml(error.message)}</span></td></tr>`;
+        } finally {
+            recordingFilesRefreshInFlight = false;
         }
     }
     async function deleteFile(event) {
@@ -948,9 +1008,20 @@ document.addEventListener('DOMContentLoaded', function () {
             button.disabled = false;
         }
     }
+    function selectRoom(roomId, updateLocation = true) {
+        const selectedItem = items.find(node => node.dataset.room === roomId);
+        if (!selectedItem) return;
+        items.forEach(node => node.classList.toggle('active', node === selectedItem));
+        panels.forEach(panel => panel.classList.toggle('d-none', panel.dataset.panel !== roomId));
+        if (updateLocation) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', roomId);
+            url.searchParams.delete('add_room');
+            window.history.replaceState({room: roomId}, '', url);
+        }
+    }
     items.forEach(item => item.addEventListener('click', function () {
-        items.forEach(node => node.classList.toggle('active', node === item));
-        panels.forEach(panel => panel.classList.toggle('d-none', panel.dataset.panel !== item.dataset.room));
+        selectRoom(item.dataset.room);
     }));
     search?.addEventListener('input', applyFilter);
     tabs.forEach(tab => tab.addEventListener('click', function () { tabs.forEach(node => node.classList.remove('active')); tab.classList.add('active'); filter = tab.dataset.filter; applyFilter(); }));
@@ -969,7 +1040,7 @@ document.addEventListener('DOMContentLoaded', function () {
         resetRoomResolution();
         addRoomForm.querySelector('[data-role="segment-enabled"]')?.dispatchEvent(new Event('change'));
     });
-    filesModal?.addEventListener('shown.bs.modal', loadFiles);
+    filesModal?.addEventListener('shown.bs.modal', () => loadFiles());
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
     filesModal?.querySelector('[data-action="delete-selected-files"]')?.addEventListener('click', deleteSelectedFiles);
     filesModal?.querySelectorAll('[data-role^="file-select-all"]').forEach(input => input.addEventListener('change', selectVisibleFiles));
@@ -993,11 +1064,27 @@ document.addEventListener('DOMContentLoaded', function () {
         resolve(false);
     });
     document.querySelectorAll('[data-action="room-recording"]').forEach(button => button.addEventListener('click', controlRoomRecording));
+    document.querySelector('[data-action="refresh-live-recording"]')?.addEventListener('click', async function () {
+        const button = this;
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        try {
+            await Promise.allSettled([refreshLiveStatus(), loadFiles({silent: true})]);
+        } finally {
+            button.disabled = false;
+            button.removeAttribute('aria-busy');
+        }
+    });
     if (new URLSearchParams(window.location.search).get('add_room') === '1' && addRoomModal) {
         bootstrap.Modal.getOrCreateInstance(addRoomModal).show();
     }
-    refreshLiveStatus();
-    window.setInterval(refreshLiveStatus, 5000);
+    function refreshLiveRecordingPage() {
+        if (document.hidden) return;
+        refreshLiveStatus();
+        loadFiles({silent: true});
+    }
+    refreshLiveRecordingPage();
+    window.setInterval(refreshLiveRecordingPage, 5000);
 });
 </script>
 {% endblock %}

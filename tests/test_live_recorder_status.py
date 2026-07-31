@@ -1338,6 +1338,25 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("scheduleRecordingCoverRefresh(jobId)", tasks)
         self.assertIn("await refreshTasksData(true)", tasks)
 
+    def test_live_room_files_and_selected_room_refresh_without_page_reload(self):
+        template = (Y2A_ROOT / "templates" / "live_recording.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('data-generated-files-room="{{ room.id }}"', template)
+        self.assertIn("function renderRoomFileLists()", template)
+        self.assertIn("list.replaceChildren(...nextRows)", template)
+        self.assertIn("existing?.dataset.fileSignature === fileSignature", template)
+        self.assertIn("loadFiles({silent: true})", template)
+        self.assertIn("window.setInterval(refreshLiveRecordingPage, 5000)", template)
+        self.assertIn("function selectRoom(roomId, updateLocation = true)", template)
+        self.assertIn("url.searchParams.set('room', roomId)", template)
+        self.assertIn('data-action="refresh-live-recording"', template)
+        self.assertNotIn(
+            "href=\"{{ url_for('live_recording') }}\"><i class=\"bi bi-arrow-clockwise\"></i> 刷新",
+            template,
+        )
+
     def test_pipeline_jobs_expose_unified_task_metadata(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
