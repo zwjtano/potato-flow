@@ -18,6 +18,7 @@
 | `delete_recording_after_upload` | `true` | 投稿成功后删除对应源录播 |
 | `danmaku_xml_retention_hours` | `24` | 投稿成功后继续保留弹幕 XML 的小时数，便于核查完整性 |
 | `ai_danmaku_summary_enabled` | `true` | 使用弹幕生成稿件信息 |
+| `ai_danmaku_reaction_delay_seconds` | `8` | 将弹幕证据锚定的看点统一提前若干秒，补偿观众反应延迟；`0` 表示关闭 |
 | `post_description_comment` | `true` | 投稿后把简介发为评论 |
 | `pin_description_comment` | `true` | 尝试置顶简介评论 |
 
@@ -25,7 +26,7 @@
 
 ## 单直播间设置
 
-直播间自己的分段、分P、仅录制和 AI 提示词保存在持久化配置中，优先级高于系统默认值。
+直播间自己的分段、分P、仅录制、AI 提示词和时间点提前补偿保存在持久化配置中，优先级高于系统默认值。提前补偿可在直播间的“AI 投稿设置”中按房间调整，默认 8 秒。
 
 ## 录播文件夹
 

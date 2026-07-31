@@ -235,12 +235,13 @@
                     <span class="room-ai-prompts-icon"><i class="bi bi-stars"></i></span>
                     <span>
                         <strong>AI 投稿提示词</strong>
-                        <small>分别控制这个直播间的标题、简介和封面生成</small>
+                        <small>控制这个直播间的标题、简介、封面和时间点校准</small>
                     </span>
                     {% set custom_prompt_count = (1 if room.ai_title_prompt else 0) + (1 if room.ai_description_prompt else 0) + (1 if room.ai_cover_prompt else 0) %}
                     <span class="badge rounded-pill {{ 'text-bg-primary' if custom_prompt_count else 'text-bg-light' }}">
                         {{ custom_prompt_count ~ ' 项自定义' if custom_prompt_count else '使用默认' }}
                     </span>
+                    <span class="badge rounded-pill text-bg-light">提前 {{ room.ai_danmaku_reaction_delay_seconds|default(8) }} 秒</span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
                 </summary>
                 <form method="post" enctype="multipart/form-data"
@@ -314,6 +315,17 @@
                             <textarea id="room-cover-prompt-{{ room.id }}" name="ai_cover_prompt" rows="6" maxlength="6000"
                                       placeholder="{{ recording_prompt_defaults.cover }}">{{ room.ai_cover_prompt or '' }}</textarea>
                             <span class="prompt-default-hint"><i class="bi bi-shield-check"></i> 人物底稿与 DOTA2 系统约束始终生效</span>
+                        </div>
+                        <div class="room-prompt-field">
+                            <div class="room-prompt-label">
+                                <span><i class="bi bi-stopwatch"></i></span>
+                                <div><label for="room-reaction-delay-{{ room.id }}">时间点提前补偿</label><small>校准观众反应相对画面的延迟</small></div>
+                            </div>
+                            <input id="room-reaction-delay-{{ room.id }}"
+                                   name="ai_danmaku_reaction_delay_seconds" type="number"
+                                   min="0" max="60" step="1"
+                                   value="{{ room.ai_danmaku_reaction_delay_seconds|default(8) }}">
+                            <span class="prompt-default-hint"><i class="bi bi-clock-history"></i> 默认提前 8 秒；填 0 可关闭补偿</span>
                         </div>
                     </div>
                     <details class="default-prompts-preview">

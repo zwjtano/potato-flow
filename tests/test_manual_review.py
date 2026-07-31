@@ -115,6 +115,8 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn('name="ai_title_prompt"', live_template)
         self.assertIn('name="ai_description_prompt"', live_template)
         self.assertIn('name="ai_cover_prompt"', live_template)
+        self.assertIn('name="ai_danmaku_reaction_delay_seconds"', live_template)
+        self.assertIn("默认提前 8 秒", live_template)
         self.assertIn('name="cover_reference_file"', live_template)
         self.assertIn("封面人物底稿", live_template)
         self.assertIn("保存 AI 设置", live_template)
@@ -123,6 +125,8 @@ class ManualReviewTests(unittest.TestCase):
         tasks_template = (
             ROOT / "y2a-auto" / "templates" / "tasks.html"
         ).read_text(encoding="utf-8")
+        self.assertIn("XML 验证通过时间点", tasks_template)
+        self.assertIn("时间点提前补偿（秒）", tasks_template)
 
         self.assertIn("状态说明", tasks_template)
         for label in ("绿色：已完成", "蓝色：处理中", "黄色：等待中", "灰色：已跳过", "红色：失败"):

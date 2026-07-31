@@ -1498,6 +1498,17 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         burn_in: '烧录字幕',
         tag_generation_enabled: 'AI 标签生成',
         comment_count: '分析弹幕',
+        timeline_target_min: '时间点最低目标',
+        timeline_target_max: '时间点建议上限',
+        timeline_candidate_count: 'AI 候选时间点',
+        timeline_verified_count: 'XML 验证通过时间点',
+        timeline_rejected_count: '未通过或重复时间点',
+        timeline_retry_attempted: '已补充生成一次',
+        timeline_retry_error: '补充生成错误',
+        timeline_target_met: '达到最低目标',
+        timeline_shortfall: '距离最低目标还差',
+        timeline_evidence_status: '时间点证据状态',
+        timeline_reaction_delay_seconds: '时间点提前补偿（秒）',
         streamer_hero: '识别到的主播英雄',
         streamer_items: '对局最终六格装备',
         streamer_neutral: '对局中立装备',
@@ -1643,6 +1654,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         }
         if (key === 'danmaku_integrity') {
             return value === 'suspected_incomplete' ? '疑似不完整' : value === 'ok' ? '正常' : value;
+        }
+        if (key === 'timeline_evidence_status') {
+            return value === 'sufficient' ? '证据充足' : value === 'insufficient' ? '证据不足' : value;
         }
         if (key === 'retained_xml_until' || key === 'retained_xml_deleted_at') {
             return formatRecordingDetailDate(value);

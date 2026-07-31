@@ -96,6 +96,47 @@ def _count_hero_alias(text: str, alias: str) -> int:
     return _normalise_text(folded_text).count(_normalise_text(folded_alias))
 
 
+def _count_hero_aliases(text: str, aliases: Iterable[str]) -> int:
+    """Count evidence locations once when one nickname contains another."""
+    folded_text = str(text or "").casefold()
+    normalized_text = _normalise_text(folded_text)
+    spans: list[tuple[str, int, int]] = []
+    for value in aliases:
+        alias = str(value or "").casefold().strip()
+        if not alias:
+            continue
+        if re.fullmatch(r"[0-9a-z]+", alias):
+            spans.extend(
+                ("latin", match.start(), match.end())
+                for match in re.finditer(
+                    rf"(?<![0-9a-z]){re.escape(alias)}(?![0-9a-z])",
+                    folded_text,
+                )
+            )
+        else:
+            normalized_alias = _normalise_text(alias)
+            if not normalized_alias:
+                continue
+            start = 0
+            while True:
+                found = normalized_text.find(normalized_alias, start)
+                if found < 0:
+                    break
+                spans.append(("cjk", found, found + len(normalized_alias)))
+                start = found + 1
+
+    accepted: list[tuple[str, int, int]] = []
+    for span in sorted(spans, key=lambda item: (item[0], item[1], -(item[2] - item[1]))):
+        kind, start, end = span
+        if any(
+            kind == prior_kind and start < prior_end and end > prior_start
+            for prior_kind, prior_start, prior_end in accepted
+        ):
+            continue
+        accepted.append(span)
+    return len(accepted)
+
+
 @lru_cache(maxsize=8)
 def _load_xml_comments_cached(
     signature: tuple[tuple[str, int, int], ...],
@@ -208,10 +249,7 @@ def select_anchor_player(
         aliases = {_normalise_text(hero)}
         aliases.update(_normalise_text(alias) for alias in HERO_ALIASES.get(hero, ()))
         aliases.discard("")
-        score = sum(
-            sum(_count_hero_alias(text, alias) for alias in aliases)
-            for text in texts
-        )
+        score = sum(_count_hero_aliases(text, aliases) for text in texts)
         scores.append((score, player))
     scores.sort(key=lambda item: item[0], reverse=True)
     if not scores or scores[0][0] < XML_MIN_MENTION_SCORE:

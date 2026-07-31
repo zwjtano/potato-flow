@@ -1661,6 +1661,9 @@ def live_recording_room_prompts(room_id):
             title_prompt=request.form.get('ai_title_prompt', ''),
             description_prompt=request.form.get('ai_description_prompt', ''),
             cover_prompt=request.form.get('ai_cover_prompt', ''),
+            reaction_delay_seconds=request.form.get(
+                'ai_danmaku_reaction_delay_seconds', '8'
+            ),
             cover_reference_file=reference_file,
             cover_reference_suffix=reference_suffix,
             restore_cover_reference=(

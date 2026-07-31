@@ -660,6 +660,19 @@ class DouyuStatsTests(unittest.TestCase):
         selected = formatter.select_anchor_player(players, explicit, 100, 200)
         self.assertEqual(selected["hero"], "敌法师")
 
+    def test_formatter_does_not_double_count_overlapping_chinese_aliases(self):
+        players = [player(1, "拍拍熊"), player(2, "宙斯")]
+        thirteen_mentions = [(100 + index, "这把拍拍熊很肥") for index in range(13)]
+
+        self.assertIsNone(
+            formatter.select_anchor_player(players, thirteen_mentions, 100, 200)
+        )
+
+        twenty_five_mentions = [(100 + index, "这把拍拍熊很肥") for index in range(25)]
+        selected = formatter.select_anchor_player(players, twenty_five_mentions, 100, 200)
+        self.assertEqual(selected["hero"], "拍拍熊")
+        self.assertEqual(selected["xml_mention_score"], 25)
+
     def test_formatter_rejects_legacy_single_late_anchor_snapshot(self):
         game = {
             "start_unix_ts": 100,

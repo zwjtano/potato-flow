@@ -772,6 +772,7 @@ class LiveRecorderManager:
             room.setdefault("multipart_enabled", False)
             room.setdefault("record_only", False)
             room.setdefault("bilibili_account_id", "")
+            room.setdefault("ai_danmaku_reaction_delay_seconds", 8)
         return rooms
 
     @staticmethod
@@ -802,17 +803,25 @@ class LiveRecorderManager:
         title_prompt: str = "",
         description_prompt: str = "",
         cover_prompt: str = "",
+        reaction_delay_seconds: Any = 8,
         cover_reference_file: Any = None,
         cover_reference_suffix: str = "",
         restore_cover_reference: bool = False,
     ) -> dict[str, Any]:
         """Save per-room AI settings and an optional custom character reference."""
+        try:
+            reaction_delay = int(reaction_delay_seconds)
+        except (TypeError, ValueError) as exc:
+            raise RecorderConfigError("时间点提前补偿必须是 0 到 60 秒的整数") from exc
+        if not 0 <= reaction_delay <= 60:
+            raise RecorderConfigError("时间点提前补偿必须是 0 到 60 秒的整数")
         values = {
             "ai_title_prompt": str(title_prompt or "").strip(),
             "ai_description_prompt": str(description_prompt or "").strip(),
             "ai_cover_prompt": str(cover_prompt or "").strip(),
+            "ai_danmaku_reaction_delay_seconds": reaction_delay,
         }
-        for value in values.values():
+        for value in (values["ai_title_prompt"], values["ai_description_prompt"], values["ai_cover_prompt"]):
             if len(value) > 6000:
                 raise RecorderConfigError("单个自定义提示词不能超过 6000 个字符")
         with self._lock:
@@ -2051,6 +2060,9 @@ class LiveRecorderManager:
                 "ai_title_prompt": str(room.get("ai_title_prompt") or ""),
                 "ai_description_prompt": str(room.get("ai_description_prompt") or ""),
                 "ai_cover_prompt": str(room.get("ai_cover_prompt") or ""),
+                "ai_danmaku_reaction_delay_seconds": int(
+                    room.get("ai_danmaku_reaction_delay_seconds", 8) or 0
+                ),
                 "bilibili_account_id": str(account["id"]),
                 "bilibili_account_name": str(account["name"]),
                 "bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path"))),
@@ -3251,6 +3263,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 返回 JSON：{{"title_topic":"...","description":"..."}}。
 """.strip()
             generated: dict[str, Any] = {}
+            timeline_diagnostics: dict[str, Any] = {}
             if "description" in selected:
                 ass_stage = next(
                     (stage for stage in job.get("stages", []) if stage.get("key") == "ass"),
@@ -3344,6 +3357,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         bridge_config,
                         grounding_context,
                         float(duration_seconds) if duration_seconds is not None else None,
+                        timeline_diagnostics,
                     )
                 )
                 if not re.search(
@@ -3391,7 +3405,10 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     limit=1900,
                 )
             else:
-                generated_description = generated_description[:1800]
+                generated_description = bridge.fit_description_preserving_timeline(
+                    generated_description,
+                    1800,
+                )
             if "description" in selected and not re.search(
                 r"(?m)^\d{1,2}:\d{2}(?::\d{2})?\s+\S",
                 generated_description,
@@ -3486,6 +3503,11 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 "ai_regenerated_at": now,
                 "ai_title_topic": title_topic or None,
                 "ai_cover_details": cover_details or previous.get("ai_cover_details"),
+                "timeline_diagnostics": (
+                    timeline_diagnostics
+                    if "description" in selected
+                    else previous.get("timeline_diagnostics")
+                ),
                 "pending_published_update": True,
                 "updated_at": now,
             }
