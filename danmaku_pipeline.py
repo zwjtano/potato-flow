@@ -236,29 +236,111 @@ def burn_ass(
     preset: str = "medium",
     crf: int = 20,
     queue_status_callback: Callable[[str], None] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> Path:
     with danmaku_burn_slot(queue_status_callback):
         output.parent.mkdir(parents=True, exist_ok=True)
         video_filter = f"subtitles=filename='{_filter_path(ass_path)}'"
         if fonts_dir and fonts_dir.is_dir():
             video_filter += f":fontsdir='{_filter_path(fonts_dir)}'"
-        command = [
+        base_command = [
             ffmpeg, "-hide_banner", "-loglevel", "warning", "-y", "-i", str(video),
             "-vf", video_filter, "-c:v", "libx264",
             "-preset", str(preset), "-crf", str(max(0, min(51, int(crf)))),
-            "-c:a", "copy", "-movflags", "+faststart", str(output),
         ]
-        completed = subprocess.run(command, capture_output=True, text=True)
-        if completed.returncode != 0:
+        duration_seconds = 0.0
+        ffprobe = "ffprobe"
+        ffmpeg_path = Path(str(ffmpeg)).expanduser()
+        sibling_ffprobe = ffmpeg_path.with_name("ffprobe")
+        if ffmpeg_path.parent != Path(".") and sibling_ffprobe.is_file():
+            ffprobe = str(sibling_ffprobe)
+        try:
+            probe = subprocess.run(
+                [
+                    ffprobe, "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1", str(video),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if probe.returncode == 0:
+                duration_seconds = max(0.0, float(probe.stdout.strip() or 0))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            duration_seconds = 0.0
+
+        def encode(audio_args: list[str]) -> tuple[int, str]:
+            command = base_command + audio_args + [
+                "-movflags", "+faststart", "-progress", "pipe:1", "-nostats",
+                str(output),
+            ]
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            progress: dict[str, str] = {}
+            if process.stdout is not None:
+                for raw_line in process.stdout:
+                    key, separator, value = raw_line.strip().partition("=")
+                    if not separator:
+                        continue
+                    progress[key] = value
+                    if key != "progress" or not progress_callback:
+                        continue
+                    processed_seconds = 0.0
+                    try:
+                        processed_seconds = float(progress.get("out_time_us") or 0) / 1_000_000
+                    except (TypeError, ValueError):
+                        pass
+                    speed_text = str(progress.get("speed") or "0").rstrip("x")
+                    try:
+                        encode_speed = max(0.0, float(speed_text))
+                    except (TypeError, ValueError):
+                        encode_speed = 0.0
+                    percent = (
+                        min(99.9, max(0.0, processed_seconds / duration_seconds * 100))
+                        if duration_seconds > 0
+                        else 0.0
+                    )
+                    eta_seconds = (
+                        max(0.0, duration_seconds - processed_seconds) / encode_speed
+                        if duration_seconds > 0 and encode_speed > 0
+                        else None
+                    )
+                    try:
+                        progress_callback({
+                            "percent": percent,
+                            "processed_seconds": processed_seconds,
+                            "duration_seconds": duration_seconds,
+                            "encode_speed": encode_speed,
+                            "eta_seconds": eta_seconds,
+                        })
+                    except Exception:
+                        pass
+                    progress = {}
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            return process.wait(), stderr
+
+        returncode, stderr = encode(["-c:a", "copy"])
+        if returncode != 0:
             # Opus and a few live codecs cannot be stream-copied into MP4. Retry
             # with AAC while keeping the expensive video encode settings intact.
-            command = command[:-5] + [
-                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)
-            ]
-            completed = subprocess.run(command, capture_output=True, text=True)
-        if completed.returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
-            detail = completed.stderr.strip()[-2000:]
+            output.unlink(missing_ok=True)
+            returncode, stderr = encode(["-c:a", "aac", "-b:a", "192k"])
+        if returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
+            detail = stderr.strip()[-2000:]
             raise RuntimeError(f"FFmpeg 烧录 ASS 失败: {detail}")
+        if progress_callback:
+            progress_callback({
+                "percent": 100.0,
+                "processed_seconds": duration_seconds,
+                "duration_seconds": duration_seconds,
+                "encode_speed": 0.0,
+                "eta_seconds": 0.0,
+            })
         return output
 
 

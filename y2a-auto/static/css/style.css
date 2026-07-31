@@ -300,6 +300,7 @@ html:not([data-theme="dark"]) .room-recording-settings-card .room-recording-summ
 .room-recording-duration { justify-content: space-between; }
 .room-recording-duration-input { display: flex; width: 112px; flex: 0 0 auto; align-items: center; gap: 6px; color: #7b8592; font-size: 10px; }
 .room-recording-duration-input .form-control { min-width: 0; color: #087cc1; font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.room-recording-quality-select { width: 150px; flex: 0 0 auto; color: #087cc1; font-size: 12px; font-weight: 750; }
 .room-setting-number { color: #087cc1; font-weight: 800; font-variant-numeric: tabular-nums; }
 .room-recording-settings-note { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; color: #647284; border: 1px solid #d9e7f5; border-radius: 9px; background: #f1f7fd; font-size: 12px; line-height: 1.65; }
 .room-recording-settings-note i { margin-top: 1px; color: #3284c8; }

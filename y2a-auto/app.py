@@ -1543,6 +1543,8 @@ def bilibili_archives():
         page = 1
     archives = {'archives': [], 'page': page, 'page_size': 20, 'total': 0}
     archive_error = ''
+    message_overview = {'categories': {}}
+    message_overview_error = ''
     if selected_account_id:
         try:
             archives = live_recorder_manager.bilibili_archives(
@@ -1552,8 +1554,16 @@ def bilibili_archives():
             )
         except RecorderConfigError as exc:
             archive_error = str(exc)
+        try:
+            message_overview = live_recorder_manager.bilibili_message_overview(
+                selected_account_id,
+            )
+        except RecorderConfigError as exc:
+            message_overview_error = str(exc)
     selected_bvid = str(request.args.get('bvid') or '').strip()
     selected_archive = None
+    archive_comments = {'comments': [], 'page': 1, 'has_more': False}
+    archive_comments_error = ''
     if selected_account_id and selected_bvid:
         try:
             selected_archive = live_recorder_manager.bilibili_archive_detail(
@@ -1562,6 +1572,15 @@ def bilibili_archives():
             )
         except RecorderConfigError as exc:
             archive_error = str(exc)
+        if selected_archive:
+            try:
+                archive_comments = live_recorder_manager.bilibili_archive_comments(
+                    selected_account_id,
+                    selected_bvid,
+                    aid=selected_archive.get('aid'),
+                )
+            except RecorderConfigError as exc:
+                archive_comments_error = str(exc)
     return render_template(
         'bilibili_archives.html',
         accounts=accounts,
@@ -1572,7 +1591,67 @@ def bilibili_archives():
         selected_archive=selected_archive,
         replacement_videos=live_recorder_manager.burned_replacement_videos(200),
         replacement_jobs=live_recorder_manager.archive_replacement_jobs(30),
+        bilibili_id_mapping=_build_bilibili_partition_mapping(),
+        archive_comments=archive_comments,
+        archive_comments_error=archive_comments_error,
+        message_overview=message_overview,
+        message_overview_error=message_overview_error,
     )
+
+
+@app.route('/bilibili-archives/update', methods=['POST'])
+@login_required
+def bilibili_archive_update():
+    account_id = str(request.form.get('account_id') or '').strip()
+    bvid = str(request.form.get('bvid') or '').strip()
+    tags = [
+        tag.strip()
+        for tag in str(request.form.get('tags') or '').replace('，', ',').split(',')
+        if tag.strip()
+    ]
+    try:
+        live_recorder_manager.update_bilibili_archive_metadata(
+            account_id=account_id,
+            bvid=bvid,
+            title=str(request.form.get('title') or '').strip(),
+            description=str(request.form.get('description') or ''),
+            tags=tags,
+            partition_id=str(request.form.get('partition_id') or '').strip(),
+        )
+        flash(f'{bvid} 的标题、简介、标签和分区已提交到 B站，视频与分P未改动。', 'success')
+    except RecorderConfigError as exc:
+        flash(str(exc), 'danger')
+    return redirect(url_for(
+        'bilibili_archives',
+        account_id=account_id,
+        bvid=bvid,
+    ))
+
+
+@app.route('/bilibili-archives/reply', methods=['POST'])
+@login_required
+def bilibili_archive_reply():
+    account_id = str(request.form.get('account_id') or '').strip()
+    bvid = str(request.form.get('bvid') or '').strip()
+    if str(request.form.get('confirm_reply') or '') != '1':
+        flash('请先确认本次回复会立即发布到 B站。', 'danger')
+    else:
+        try:
+            live_recorder_manager.reply_to_bilibili_archive_comment(
+                account_id=account_id,
+                bvid=bvid,
+                root_rpid=str(request.form.get('root_rpid') or '').strip(),
+                parent_rpid=str(request.form.get('parent_rpid') or '').strip(),
+                message=str(request.form.get('message') or ''),
+            )
+            flash('评论回复已发布到 B站。', 'success')
+        except RecorderConfigError as exc:
+            flash(str(exc), 'danger')
+    return redirect(url_for(
+        'bilibili_archives',
+        account_id=account_id,
+        bvid=bvid,
+    ))
 
 
 @app.route('/bilibili-archives/replace', methods=['POST'])
@@ -1691,6 +1770,7 @@ def live_recording_save_room():
             danmaku_burn_in=_coerce_checkbox_value(
                 request.form.get('danmaku_burn_in', 'off')
             ),
+            recording_quality=request.form.get('recording_quality', 'source'),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
         )
         room_name = str(room.get('name') or '直播间')
@@ -1802,6 +1882,7 @@ def live_recording_room_recording_settings(room_id):
             danmaku_burn_in=_coerce_checkbox_value(
                 request.form.get('danmaku_burn_in', 'off')
             ),
+            recording_quality=request.form.get('recording_quality', 'source'),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
         )
         room_name = str(room.get('name') or '直播间')

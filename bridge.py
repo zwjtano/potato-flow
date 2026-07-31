@@ -2033,14 +2033,28 @@ def generate_recording_cover_with_ai(
         else None
     )
     reference = custom_reference or recording_cover_reference(streamer)
-    reference_name = reference[0] if reference else ""
     reference_kind = "custom" if custom_reference else ("dedicated" if reference else "")
-    reference_paths: list[Path] = [reference[1]] if reference else []
     if not reference:
-        raise ValueError(
-            f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
-            "为避免图片模型根据昵称猜错人物，已停止 AI 封面生成"
+        avatar_url = str(cfg.get("streamer_avatar_url") or "").strip()
+        if not avatar_url:
+            raise ValueError(
+                f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
+                "且未获取到该直播间头像，无法生成 AI 封面"
+            )
+        try:
+            avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
+        except Exception as exc:
+            raise ValueError(
+                f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
+                f"且该直播间头像不可用: {exc}"
+            ) from exc
+        reference = (
+            normalize_dota2_streamer_name(streamer) or streamer or "主播",
+            avatar_reference,
         )
+        reference_kind = "avatar"
+    reference_name = reference[0]
+    reference_paths: list[Path] = [reference[1]]
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
     elif reference_kind == "custom":
@@ -2050,6 +2064,8 @@ def generate_recording_cover_with_ai(
             "标志性配饰、主色与画风的辨识度。可以根据本段内容调整表情、动作和背景，"
             "但不得换脸、真人化或替换成其他角色。"
         )
+    elif reference_kind == "avatar":
+        reference_instruction = recording_avatar_reference_instruction(streamer)
     else:
         reference_instruction = ""
     subject_identity_instruction = recording_cover_subject_identity_instruction(
@@ -3182,6 +3198,10 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                             "running" if status == "burning" else "queued",
                             burn_stage_details,
                         )
+
+                    def update_burn_progress(progress: dict[str, Any]) -> None:
+                        burn_stage_details.update(progress)
+                        store.stage(key, "burn", "running", burn_stage_details)
                     upload_video = burn_ass(
                         video,
                         ass_path,
@@ -3193,10 +3213,10 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         preset=str(cfg.get("danmaku_encode_preset", "medium")),
                         crf=int(cfg.get("danmaku_encode_crf", 20)),
                         queue_status_callback=update_burn_queue,
+                        progress_callback=update_burn_progress,
                     )
                     store.stage(key, "burn", "completed", {
-                        "source_video_path": str(video),
-                        "ass_path": str(ass_path),
+                        **burn_stage_details,
                         "burned_video_path": str(upload_video),
                         "burn_in": True,
                     })
@@ -4523,6 +4543,10 @@ def main(argv: list[str] | None = None) -> int:
                             "running" if status == "burning" else "queued",
                             burn_stage_details,
                         )
+
+                    def update_burn_progress(progress: dict[str, Any]) -> None:
+                        burn_stage_details.update(progress)
+                        store.stage(key, "burn", "running", burn_stage_details)
                     remux_source = burn_ass(
                         path,
                         ass_path,
@@ -4535,10 +4559,10 @@ def main(argv: list[str] | None = None) -> int:
                         preset=str(record_cfg.get("danmaku_encode_preset", "medium")),
                         crf=int(record_cfg.get("danmaku_encode_crf", 20)),
                         queue_status_callback=update_burn_queue,
+                        progress_callback=update_burn_progress,
                     )
                     store.stage(key, "burn", "completed", {
-                        "source_video_path": str(path),
-                        "ass_path": str(ass_path),
+                        **burn_stage_details,
                         "burned_video_path": str(remux_source),
                         "burn_in": True,
                     })

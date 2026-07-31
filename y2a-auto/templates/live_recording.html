@@ -69,6 +69,7 @@
 </span>
 {%- endmacro %}
 {% macro platform_name(platform) -%}{{ '哔哩哔哩直播' if platform == 'bilibili' else ('抖音直播' if platform == 'douyin' else '斗鱼直播') }}{%- endmacro %}
+{% macro recording_quality_name(quality) -%}{{ {'source':'原画','2160p':'最高 2160p','1080p':'最高 1080p','720p':'最高 720p'}.get(quality, '原画') }}{%- endmacro %}
 <section class="studio-page-header recorder-header">
     <div>
         <div class="recorder-eyebrow">LIVE RECORDER</div>
@@ -136,7 +137,7 @@
                 <div><span>直播状态</span><strong data-role="runtime-primary">{{ room.runtime.primary }}</strong><small data-role="runtime-secondary">{{ room.runtime.secondary }}</small></div>
                 <div><span>录制时长</span><strong data-role="duration">{{ format_duration(room.runtime.duration_seconds) if room.runtime.recording else '—' }}</strong><small data-role="started-at">{{ '开始于 ' ~ room.runtime.started_at if room.runtime.started_at else '开播后实时显示' }}</small></div>
                 <div><span>当前文件</span><strong data-role="current-file" title="{{ room.runtime.current_file }}">{{ room.runtime.current_file or '—' }}</strong><small data-role="segment-rule">{{ ('每 ' ~ room.segment_minutes ~ ' 分钟自动分段') if room.segment_enabled else '整场直播不分段' }}</small></div>
-                <div><span>弹幕采集</span><strong data-role="danmaku-state">{{ '录制中' if room.runtime.recording else ('已启用' if recorder_status.running else '待命') }}</strong><small>XML 与视频同步保存</small></div>
+                <div><span>目标画质</span><strong data-role="recording-quality-state">{{ recording_quality_name(room.recording_quality) }}</strong><small>不可用时自动回退 · XML 同步保存</small></div>
             </div>
 
             <details class="room-ai-prompts-card room-recording-settings-card">
@@ -166,8 +167,9 @@
                         {% endif %}
                         <span class="badge rounded-pill text-bg-light">
                             {% if room.segment_enabled %}<span class="room-setting-number">{{ room.segment_minutes }}</span> 分钟{% else %}不分段{% endif %}
+                            · {{ recording_quality_name(room.recording_quality) }}
                             · {{ '不投稿' if room.record_only else ('分 P 投稿' if room.multipart_enabled and room.segment_enabled else '不分 P 投稿') }}
-                            {% if room.danmaku_burn_in %}· 已烧录弹幕{% endif %}
+                            {% if room.danmaku_burn_in %}· 烧录弹幕{% endif %}
                         </span>
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
@@ -188,6 +190,15 @@
                                 <span></span>
                             </span>
                             <span><strong>开启录制分段</strong><small>关闭后整场直播只生成一个视频，下播或手动停止后再投稿。</small></span>
+                        </label>
+                        <label class="room-recording-duration">
+                            <span><strong>录制分辨率</strong><small>平台没有指定档位时自动选择最接近画质</small></span>
+                            <select class="form-select room-recording-quality-select" name="recording_quality" data-role="recording-quality">
+                                <option value="source" {% if room.recording_quality == 'source' %}selected{% endif %}>原画</option>
+                                <option value="2160p" {% if room.recording_quality == '2160p' %}selected{% endif %}>最高 2160p</option>
+                                <option value="1080p" {% if room.recording_quality == '1080p' %}selected{% endif %}>最高 1080p</option>
+                                <option value="720p" {% if room.recording_quality == '720p' %}selected{% endif %}>最高 720p</option>
+                            </select>
                         </label>
                         <label class="room-recording-duration">
                             <span><strong>每段录制时长</strong><small>1–1440 分钟，默认 60 分钟</small></span>
@@ -420,6 +431,15 @@
                     <span></span>
                 </span>
                 <span><strong>开启录制分段</strong><small>默认开启；关闭后整场直播只生成一个视频。</small></span>
+            </label>
+            <label class="room-recording-duration">
+                <span><strong>录制分辨率</strong><small>默认原画；不可用时自动选择最接近档位</small></span>
+                <select class="form-select room-recording-quality-select" name="recording_quality" data-role="recording-quality">
+                    <option value="source" selected>原画</option>
+                    <option value="2160p">最高 2160p</option>
+                    <option value="1080p">最高 1080p</option>
+                    <option value="720p">最高 720p</option>
+                </select>
             </label>
             <label class="room-recording-duration">
                 <span><strong>每段录制时长</strong><small>1–1440 分钟，默认 60 分钟</small></span>
@@ -964,7 +984,8 @@ document.addEventListener('DOMContentLoaded', function () {
         panel.querySelector('[data-role="segment-rule"]').textContent = room.recording && room.current_file_size_bytes
             ? `已写入 ${formatBytes(room.current_file_size_bytes)} · ${segmentRule}`
             : segmentRule;
-        panel.querySelector('[data-role="danmaku-state"]').textContent = room.recording ? '录制中' : '已启用';
+        const qualityNames = {source: '原画', '2160p': '最高 2160p', '1080p': '最高 1080p', '720p': '最高 720p'};
+        panel.querySelector('[data-role="recording-quality-state"]').textContent = qualityNames[room.recording_quality] || '原画';
         const recordingToggle = panel.querySelector('[data-action="room-recording"]');
         const enabled = Boolean(engineRunning && room.manual_enabled);
         recordingToggle.dataset.enabled = enabled ? 'true' : 'false';

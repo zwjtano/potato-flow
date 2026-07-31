@@ -3,6 +3,7 @@
 
 import asyncio
 import concurrent.futures
+import json
 import logging
 import os
 import re
@@ -528,6 +529,30 @@ class BilibiliUploader:
                 "title": str(archive.get("title") or ""),
                 "cover": str(archive.get("cover") or ""),
                 "state": archive.get("state"),
+                "state_desc": str(
+                    archive.get("state_descv3")
+                    or archive.get("state_desc")
+                    or ""
+                ),
+                "description": str(archive.get("desc") or ""),
+                "partition_id": str(archive.get("tid") or ""),
+                "tags": [
+                    tag.strip()
+                    for tag in (
+                        ",".join(
+                            str(item.get("tag_name") or item.get("name") or item)
+                            if isinstance(item, dict)
+                            else str(item)
+                            for item in (archive.get("tag") or archive.get("tags") or [])
+                        )
+                        if isinstance(archive.get("tag") or archive.get("tags"), list)
+                        else str(archive.get("tag") or archive.get("tags") or "")
+                    ).split(",")
+                    if tag.strip()
+                ],
+                "published_at": int(
+                    archive.get("ptime") or archive.get("ctime") or 0
+                ),
                 "pages": [
                     {
                         "page_number": index,
@@ -542,6 +567,274 @@ class BilibiliUploader:
             }
         except Exception as exc:
             return False, f"读取 B站稿件失败: {_compact_exception_text(str(exc))}"
+
+    def archive_comments(
+        self,
+        *,
+        aid: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Read recent root comments and visible child replies for one archive."""
+        if int(aid or 0) <= 0:
+            return False, "稿件缺少 aid，无法读取评论"
+        try:
+            configure_bilibili_runtime()
+            credential = load_credential_from_file(self.cookie_file)
+
+            async def _read():
+                return await (
+                    Api(
+                        url="https://api.bilibili.com/x/v2/reply/main",
+                        method="GET",
+                        verify=True,
+                        credential=credential,
+                    )
+                    .update_params(
+                        type=1,
+                        oid=int(aid),
+                        mode=3,
+                        next=max(0, int(page) - 1),
+                        ps=max(1, min(20, int(page_size))),
+                    )
+                    .result
+                )
+
+            payload = asyncio.run(_read())
+            payload = payload if isinstance(payload, dict) else {}
+            rows = payload.get("replies") or []
+            comments: list[dict[str, Any]] = []
+
+            def append_comment(item: dict[str, Any], *, root_rpid: str = "") -> None:
+                member = item.get("member") if isinstance(item.get("member"), dict) else {}
+                content = item.get("content") if isinstance(item.get("content"), dict) else {}
+                rpid = str(item.get("rpid_str") or item.get("rpid") or "")
+                if not rpid:
+                    return
+                comments.append({
+                    "rpid": rpid,
+                    "root_rpid": root_rpid or rpid,
+                    "parent_rpid": rpid,
+                    "is_child": bool(root_rpid),
+                    "user_name": str(member.get("uname") or "B站用户"),
+                    "user_avatar": str(member.get("avatar") or ""),
+                    "message": str(content.get("message") or ""),
+                    "created_at": int(item.get("ctime") or 0),
+                    "like_count": int(item.get("like") or 0),
+                    "reply_count": int(item.get("rcount") or 0),
+                })
+
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                root_rpid = str(row.get("rpid_str") or row.get("rpid") or "")
+                append_comment(row)
+                children = row.get("replies") if isinstance(row.get("replies"), list) else []
+                for child in children:
+                    if isinstance(child, dict):
+                        append_comment(child, root_rpid=root_rpid)
+            cursor = payload.get("cursor") if isinstance(payload.get("cursor"), dict) else {}
+            return True, {
+                "comments": comments,
+                "page": max(1, int(page)),
+                "has_more": not bool(cursor.get("is_end", True)),
+            }
+        except Exception as exc:
+            return False, f"读取 B站评论失败: {_compact_exception_text(str(exc))}"
+
+    def reply_to_archive_comment(
+        self,
+        *,
+        aid: int,
+        root_rpid: str,
+        parent_rpid: str,
+        message: str,
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Send one explicit manual reply to a selected archive comment."""
+        clean_message = _normalize_multiline_text(message)[:1000].strip()
+        if int(aid or 0) <= 0:
+            return False, "稿件缺少 aid，无法回复"
+        if not str(root_rpid or "").isdigit() or not str(parent_rpid or "").isdigit():
+            return False, "回复对象无效"
+        if not clean_message:
+            return False, "回复内容为空"
+        try:
+            configure_bilibili_runtime()
+            credential = load_credential_from_file(self.cookie_file)
+            credential_ok, credential_msg = validate_credential_remote(credential)
+            if not credential_ok:
+                return False, f"Bilibili登录态无效: {credential_msg}"
+
+            async def _reply():
+                return await (
+                    Api(
+                        url="https://api.bilibili.com/x/v2/reply/add",
+                        method="POST",
+                        verify=True,
+                        credential=credential,
+                    )
+                    .update_data(
+                        type=1,
+                        oid=int(aid),
+                        root=int(root_rpid),
+                        parent=int(parent_rpid),
+                        message=clean_message,
+                        plat=1,
+                    )
+                    .result
+                )
+
+            response = asyncio.run(_reply())
+            response = response if isinstance(response, dict) else {}
+            reply = response.get("reply") if isinstance(response.get("reply"), dict) else response
+            return True, {
+                "rpid": str(reply.get("rpid_str") or reply.get("rpid") or ""),
+                "message": clean_message,
+            }
+        except Exception as exc:
+            return False, f"回复 B站评论失败: {_compact_exception_text(str(exc))}"
+
+    def message_overview(self) -> Tuple[bool, Union[dict, str]]:
+        """Read comment/reply, private-message, like and system-notice previews."""
+        try:
+            configure_bilibili_runtime()
+            credential = load_credential_from_file(self.cookie_file)
+            credential_ok, credential_msg = validate_credential_remote(credential)
+            if not credential_ok:
+                return False, f"Bilibili登录态无效: {credential_msg}"
+
+            endpoints = {
+                "reply": (
+                    "https://api.bilibili.com/x/msgfeed/reply",
+                    {"platform": "web", "build": 0, "mobi_app": "web"},
+                ),
+                "private": (
+                    "https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions",
+                    {
+                        "session_type": 1,
+                        "group_fold": 1,
+                        "unfollow_fold": 0,
+                        "sort_rule": 2,
+                        "build": 0,
+                        "mobi_app": "web",
+                    },
+                ),
+                "like": (
+                    "https://api.bilibili.com/x/msgfeed/like",
+                    {"platform": "web", "build": 0, "mobi_app": "web"},
+                ),
+                "system": (
+                    "https://api.bilibili.com/x/msgfeed/sys-msg",
+                    {"build": 0, "mobi_app": "web"},
+                ),
+            }
+
+            async def _read_one(url: str, params: dict[str, Any]):
+                return await (
+                    Api(
+                        url=url,
+                        method="GET",
+                        verify=True,
+                        credential=credential,
+                    ).update_params(**params).result
+                )
+
+            async def _read_all():
+                return await asyncio.gather(
+                    *(_read_one(url, params) for url, params in endpoints.values()),
+                    return_exceptions=True,
+                )
+
+            payloads = asyncio.run(_read_all())
+            categories: dict[str, dict[str, Any]] = {}
+            labels = {
+                "reply": ("评论与回复", "https://message.bilibili.com/#/reply"),
+                "private": ("私信", "https://message.bilibili.com/#/whisper"),
+                "like": ("收到的赞", "https://message.bilibili.com/#/love"),
+                "system": ("系统通知", "https://message.bilibili.com/#/system"),
+            }
+
+            def first_text(*values: Any) -> str:
+                for value in values:
+                    text = str(value or "").strip()
+                    if text:
+                        return text
+                return ""
+
+            for (category_key, _endpoint), payload in zip(endpoints.items(), payloads):
+                label, external_url = labels[category_key]
+                if isinstance(payload, Exception):
+                    categories[category_key] = {
+                        "label": label,
+                        "external_url": external_url,
+                        "unread_count": 0,
+                        "items": [],
+                        "error": _compact_exception_text(str(payload)),
+                    }
+                    continue
+                data = payload if isinstance(payload, dict) else {}
+                rows = (
+                    data.get("items")
+                    or data.get("replies")
+                    or data.get("session_list")
+                    or data.get("list")
+                    or []
+                )
+                normalized_items = []
+                unread_count = int(data.get("unread") or data.get("unread_count") or 0)
+                for row in rows[:8] if isinstance(rows, list) else []:
+                    if not isinstance(row, dict):
+                        continue
+                    user = row.get("user") if isinstance(row.get("user"), dict) else {}
+                    member = row.get("member") if isinstance(row.get("member"), dict) else {}
+                    account = row.get("account_info") if isinstance(row.get("account_info"), dict) else {}
+                    item = row.get("item") if isinstance(row.get("item"), dict) else {}
+                    last_message = row.get("last_msg") if isinstance(row.get("last_msg"), dict) else {}
+                    raw_content = last_message.get("content")
+                    if isinstance(raw_content, str) and raw_content.startswith("{"):
+                        try:
+                            decoded_content = json.loads(raw_content)
+                            if isinstance(decoded_content, dict):
+                                raw_content = decoded_content.get("content") or raw_content
+                        except (TypeError, ValueError):
+                            pass
+                    row_unread = int(row.get("unread_count") or row.get("unread") or 0)
+                    if category_key == "private":
+                        unread_count += row_unread
+                    normalized_items.append({
+                        "user_name": first_text(
+                            user.get("nickname"), user.get("uname"),
+                            member.get("uname"), account.get("name"),
+                            row.get("title"), label,
+                        ),
+                        "user_avatar": first_text(
+                            user.get("avatar"), member.get("avatar"),
+                            account.get("pic_url"),
+                        ),
+                        "text": first_text(
+                            item.get("source_content"),
+                            item.get("target_reply_content"),
+                            item.get("title"),
+                            row.get("content"), row.get("message"),
+                            raw_content,
+                        ),
+                        "created_at": int(
+                            row.get("reply_time") or row.get("like_time")
+                            or row.get("ctime") or row.get("timestamp")
+                            or last_message.get("timestamp") or 0
+                        ),
+                        "unread_count": row_unread,
+                    })
+                categories[category_key] = {
+                    "label": label,
+                    "external_url": external_url,
+                    "unread_count": unread_count,
+                    "items": normalized_items,
+                    "error": "",
+                }
+            return True, {"categories": categories}
+        except Exception as exc:
+            return False, f"读取 B站消息失败: {_compact_exception_text(str(exc))}"
 
     def replace_archive_page_source(
         self,

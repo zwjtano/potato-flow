@@ -1,12 +1,16 @@
+import io
 import tempfile
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from danmaku_pipeline import (
     DanmakuComment,
     build_ass,
+    burn_ass,
     format_comments_for_ai,
     inspect_biliup_xml,
     parse_biliup_xml,
@@ -25,6 +29,49 @@ SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 class DanmakuPipelineTests(unittest.TestCase):
+    def test_burn_reports_percent_speed_and_eta(self):
+        class FakeProcess:
+            def __init__(self, command, **_kwargs):
+                Path(command[-1]).write_bytes(b"burned-video")
+                self.stdout = io.StringIO(
+                    "out_time_us=30000000\nspeed=2.0x\nprogress=continue\n"
+                    "out_time_us=60000000\nspeed=2.0x\nprogress=end\n"
+                )
+                self.stderr = io.StringIO("")
+
+            def wait(self):
+                return 0
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.flv"
+            ass = root / "clip.ass"
+            output = root / "clip.mp4"
+            video.write_bytes(b"video")
+            ass.write_text("[Script Info]", encoding="utf-8")
+            updates = []
+            with patch(
+                "danmaku_pipeline.subprocess.run",
+                return_value=types.SimpleNamespace(
+                    returncode=0,
+                    stdout="60.0\n",
+                    stderr="",
+                ),
+            ), patch("danmaku_pipeline.subprocess.Popen", FakeProcess):
+                result = burn_ass(
+                    video,
+                    ass,
+                    output,
+                    progress_callback=updates.append,
+                )
+
+        self.assertEqual(result, output)
+        self.assertEqual(updates[0]["percent"], 50.0)
+        self.assertEqual(updates[0]["encode_speed"], 2.0)
+        self.assertEqual(updates[0]["eta_seconds"], 15.0)
+        self.assertEqual(updates[-1]["percent"], 100.0)
+        self.assertEqual(updates[-1]["eta_seconds"], 0.0)
+
     def test_burn_queue_serializes_multiple_files(self):
         active = 0
         maximum = 0
