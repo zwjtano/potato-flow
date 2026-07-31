@@ -1432,6 +1432,8 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("BKB＝黑皇杖（Black King Bar）", prompt)
         self.assertIn("羊刀＝邪恶镰刀（Scythe of Vyse）", prompt)
         self.assertIn("OFFICIAL ITEM ICON REFERENCES", prompt)
+        self.assertIn("禁止在封面底部或任何位置生成物品栏", prompt)
+        self.assertIn("不得绘制仿冒的装备图标", prompt)
 
     def test_unknown_streamer_cover_uses_room_avatar_as_reference(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"

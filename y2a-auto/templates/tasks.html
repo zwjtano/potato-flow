@@ -1493,6 +1493,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         comment_count: '分析弹幕',
         streamer_hero: '识别到的主播英雄',
         streamer_items: '对局最终六格装备',
+        streamer_neutral: '对局中立装备',
+        streamer_scepter: '已有 A 杖',
+        streamer_shard: '已有魔晶',
         equipment_snapshot_unix_ts: '装备最终快照时间',
         identity_source: '主播识别来源',
         kills: '击杀',
@@ -1657,6 +1660,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         }
         if (key.startsWith('unverified_hero_')) {
             return Array.isArray(value) ? value.length > 0 : Boolean(value);
+        }
+        if (key === 'streamer_neutral' || key === 'streamer_scepter' || key === 'streamer_shard') {
+            return Boolean(value);
         }
         return true;
     }
