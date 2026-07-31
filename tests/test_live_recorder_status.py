@@ -1350,11 +1350,34 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("loadFiles({silent: true})", template)
         self.assertIn("window.setInterval(refreshLiveRecordingPage, 5000)", template)
         self.assertIn("function selectRoom(roomId, updateLocation = true)", template)
-        self.assertIn("url.searchParams.set('room', roomId)", template)
+        self.assertIn('data-room-uid="{{ room.uid }}"', template)
+        self.assertIn("url.searchParams.set('room', selectedItem.dataset.roomUid)", template)
+        self.assertNotIn("selectedItem.dataset.roomUid || roomId", template)
         self.assertIn('data-action="refresh-live-recording"', template)
         self.assertNotIn(
             "href=\"{{ url_for('live_recording') }}\"><i class=\"bi bi-arrow-clockwise\"></i> 刷新",
             template,
+        )
+
+    def test_room_uid_prefers_platform_room_id_and_falls_back_to_url(self):
+        self.assertEqual(
+            LiveRecorderManager.room_uid({
+                "id": "internal-uuid",
+                "platform_room_id": "9999",
+                "url": "https://www.douyu.com/100",
+            }),
+            "9999",
+        )
+        self.assertEqual(
+            LiveRecorderManager.room_uid({
+                "id": "internal-uuid",
+                "url": "https://live.bilibili.com/200?from=search",
+            }),
+            "200",
+        )
+        self.assertEqual(
+            LiveRecorderManager.room_uid({"id": "internal-uuid"}),
+            "",
         )
 
     def test_pipeline_jobs_expose_unified_task_metadata(self):

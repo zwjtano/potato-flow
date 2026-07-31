@@ -1324,11 +1324,22 @@ def live_recording():
             reference_kind = 'avatar'
         room['cover_reference_kind'] = reference_kind
         room['cover_reference_is_custom'] = reference_kind == 'custom'
-    requested_room_id = request.args.get('room', '').strip()
-    selected_room_id = (
-        requested_room_id
-        if any(room.get('id') == requested_room_id for room in rooms)
-        else (str(rooms[0].get('id')) if rooms else '')
+    requested_room_uid = request.args.get('room', '').strip()
+    selected_room = next(
+        (
+            room for room in rooms
+            if requested_room_uid
+            and str(room.get('uid') or '') == requested_room_uid
+        ),
+        None,
+    )
+    if requested_room_uid and selected_room is None:
+        first_room_uid = str((rooms[0] if rooms else {}).get('uid') or '')
+        return redirect(
+            url_for('live_recording', **({'room': first_room_uid} if first_room_uid else {}))
+        )
+    selected_room_id = str(
+        (selected_room or (rooms[0] if rooms else {})).get('id') or ''
     )
     recording_files = live_recorder_manager.recording_files(limit=500).get("files", [])
     config = load_config()
@@ -1343,6 +1354,17 @@ def live_recording():
         bilibili_accounts=normalize_accounts(config),
         bilibili_default_account_id=default_account_id(config),
     )
+
+
+def _live_recording_room_query(room_id: str) -> str:
+    room = next(
+        (
+            item for item in live_recorder_manager.list_rooms()
+            if str(item.get('id') or '') == str(room_id or '')
+        ),
+        None,
+    )
+    return live_recorder_manager.room_uid(room) if room else str(room_id or '')
 
 
 @app.route('/live-recording/status')
@@ -1652,7 +1674,9 @@ def live_recording_room_prompts(room_id):
         )
     except (RecorderConfigError, ValueError) as exc:
         flash(str(exc), 'danger')
-    return redirect(url_for('live_recording', room=room_id))
+    return redirect(
+        url_for('live_recording', room=_live_recording_room_query(room_id))
+    )
 
 
 @app.route('/live-recording/rooms/<room_id>/recording-settings', methods=['POST'])
@@ -1689,7 +1713,9 @@ def live_recording_room_recording_settings(room_id):
             flash(f'“{room_name}”的录制与分段设置已保存。', 'success')
     except RecorderConfigError as exc:
         flash(str(exc), 'danger')
-    return redirect(url_for('live_recording', room=room_id))
+    return redirect(
+        url_for('live_recording', room=_live_recording_room_query(room_id))
+    )
 
 
 @app.route('/live-recording/rooms/<room_id>/cover-reference')
