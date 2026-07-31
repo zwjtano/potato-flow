@@ -53,8 +53,8 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "生成可直接用于哔哩哔哩投稿、内容充实的完整中文简介：先用两至四段概括主要内容、"
-    "事件发展、关键时刻和观众反应，再列出重要时间点。时间点必须来自输入弹幕的时间轴，"
-    "每行以 MM:SS 或 HH:MM:SS 开头并紧跟事件说明，以便哔哩哔哩识别为可点击跳转；"
+    "事件发展、关键时刻和观众反应，再选出有完整弹幕证据的重要事件。"
+    "不要在简介正文中手写时间点；程序会回到完整 XML 定位最早证据、补偿反应延迟并统一格式化。"
     "没有足够证据时宁可少列，不得编造时间或事件。只使用输入能够支持的事实，不虚构主播"
     "原话、比赛结果或人物。不要出现文件名、任务编号、内部路径和机械化套话，不超过1800字。"
 )
@@ -435,32 +435,99 @@ def strip_recording_intro(description: str) -> str:
     ).strip()
 
 
-def compensate_danmaku_timestamps(description: str, delay_seconds: int = 8) -> str:
-    """Move AI timeline anchors earlier to compensate for viewer reaction lag."""
+def strip_ai_timeline_lines(description: str) -> str:
+    """Keep AI prose but discard model-formatted timestamps and headings."""
+    lines = str(description or "").splitlines()
+    timestamp_line = re.compile(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s+")
+    kept = [
+        line
+        for line in lines
+        if not timestamp_line.match(line)
+        and not re.fullmatch(r"\s*重要时间点\s*[：:]?\s*", line)
+    ]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
+def render_grounded_danmaku_timeline(
+    timeline: Any,
+    selected_comments: list[Any],
+    all_comments: list[Any],
+    *,
+    delay_seconds: int = 8,
+    duration_seconds: float | None = None,
+) -> str:
+    """Render only timeline anchors that copy an exact XML evidence pair."""
+    if not isinstance(timeline, list):
+        return ""
+    sampled_texts = {
+        str(comment.text).strip()
+        for comment in selected_comments
+        if str(getattr(comment, "text", "")).strip()
+    }
     delay = max(0, min(60, int(delay_seconds or 0)))
-    if not delay:
-        return str(description or "")
+    maximum = None if duration_seconds is None else max(0.0, float(duration_seconds))
+    verified: dict[int, str] = {}
 
-    pattern = re.compile(r"(?m)^(?P<prefix>\s*)(?P<stamp>\d{1,2}:\d{2}(?::\d{2})?)(?=\s)")
+    for item in timeline:
+        if not isinstance(item, dict):
+            continue
+        raw_evidence_texts = item.get("evidence_texts")
+        evidence_texts = (
+            [str(text or "").strip() for text in raw_evidence_texts[:3]]
+            if isinstance(raw_evidence_texts, list)
+            else [str(item.get("evidence_text") or "").strip()]
+        )
+        if not evidence_texts or any(
+            not text or text not in sampled_texts
+            for text in evidence_texts
+        ):
+            continue
+        raw_keywords = item.get("evidence_keywords")
+        if not isinstance(raw_keywords, list):
+            continue
+        keywords = list(dict.fromkeys(
+            re.sub(r"\s+", " ", str(keyword or "")).strip()
+            for keyword in raw_keywords[:4]
+            if len(re.sub(r"\s+", "", str(keyword or ""))) >= 2
+        ))
+        evidence_corpus = "\n".join(evidence_texts).casefold()
+        if not keywords or any(keyword.casefold() not in evidence_corpus for keyword in keywords):
+            continue
+        matching_comments = [
+            comment
+            for comment in all_comments
+            if all(
+                keyword.casefold() in str(getattr(comment, "text", "")).casefold()
+                for keyword in keywords
+            )
+        ]
+        if not matching_comments:
+            continue
+        event = re.sub(r"\s+", " ", str(item.get("event") or "")).strip()
+        event = re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", event)
+        if not event:
+            continue
+        earliest = min(matching_comments, key=lambda comment: float(comment.time))
+        corrected = max(0, int(float(earliest.time)) - delay)
+        if maximum is not None and corrected > maximum + 1:
+            continue
+        verified.setdefault(corrected, event[:120])
 
-    def replace(match: re.Match[str]) -> str:
-        parts = [int(value) for value in match.group("stamp").split(":")]
-        if len(parts) == 2:
-            total = parts[0] * 60 + parts[1]
-            width = 2
-        else:
-            total = parts[0] * 3600 + parts[1] * 60 + parts[2]
-            width = 3
-        corrected = max(0, total - delay)
-        if width == 2 and corrected < 3600:
-            stamp = f"{corrected // 60:02d}:{corrected % 60:02d}"
-        else:
-            hours, remainder = divmod(corrected, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            stamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return f"{match.group('prefix')}{stamp}"
+    if not verified:
+        return ""
 
-    return pattern.sub(replace, str(description or ""))
+    def format_timestamp(total: int) -> str:
+        hours, remainder = divmod(total, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    lines = [
+        f"{format_timestamp(second)} {verified[second]}"
+        for second in sorted(verified)
+    ]
+    return "重要时间点\n" + "\n".join(lines)
 
 
 def _multipart_summary_body(description: str) -> str:
@@ -2173,6 +2240,7 @@ def generate_danmaku_metadata_with_ai(
     base_description: str,
     cfg: dict[str, Any],
     grounding_context: dict[str, Any] | None = None,
+    timeline_duration_seconds: float | None = None,
 ) -> tuple[str, str]:
     """Generate a grounded description and concise title topic from danmaku."""
     if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
@@ -2193,6 +2261,13 @@ def generate_danmaku_metadata_with_ai(
             "base_description": base_description,
             "comment_count": len(comments),
             "sampled_comments": format_comments_for_ai(selected),
+            "sampled_comment_evidence": [
+                {
+                    "timestamp_seconds": max(0, int(float(comment.time))),
+                    "text": str(comment.text),
+                }
+                for comment in selected
+            ],
             "verified_live_context": grounding_context or {},
             "timestamp_reaction_delay_seconds": max(
                 0,
@@ -2206,7 +2281,12 @@ def generate_danmaku_metadata_with_ai(
         description_prompt = str(
             cfg.get("ai_description_prompt") or DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
         ).strip()
-        system_prompt = legacy_prompt or f"""
+        legacy_instruction = (
+            f"本直播间旧版自定义要求：{legacy_prompt}"
+            if legacy_prompt
+            else ""
+        )
+        system_prompt = f"""
 你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和内容充实的中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；英雄、装备和 KDA
@@ -2215,17 +2295,20 @@ verified_live_context.live_stats 只作为事实参考。description 严禁复�
 在线人数、英雄装备统计表；这些内容由投稿流程在最后一步独立渲染，并且只渲染一次。
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
 description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
-description 先用两至四段按事件发展总结主要内容，再添加“重要时间点”。
-重要事件每行必须严格写成“MM:SS 事件说明”或“HH:MM:SS 事件说明”，行首不要添加项目符号、
-括号或其他字符，以便哔哩哔哩识别为可点击时间跳转。时间必须依据 sampled_comments 中已有的
-时间戳并尽量贴近对应弹幕证据；若信息不足则减少条目，禁止为了凑数编造时间或事件。
+description 只写两至四段事件总结，不要包含“重要时间点”标题或任何手写时间。
+timeline 只选择 sampled_comment_evidence 有直接证据的事件。每项返回 event、evidence_texts
+和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
+evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
+不要返回时间戳；程序会使用 evidence_keywords 回到完整 XML 查找第一条匹配弹幕。
+完整 XML 中必须存在一条同时包含所有关键词的弹幕；否则必须省略该事件，不得用宽泛关键词拼凑结论。
 弹幕时间晚于画面事件：应选最早一批明确相关弹幕作为证据锚点，不要选择刷屏高峰；程序会按
 timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
 title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
 {DOTA2_METADATA_DISAMBIGUATION}
 本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
-返回 JSON 对象：{{"title_topic":"...","description":"..."}}，description 不超过 1600 个中文字符。
+{legacy_instruction}
+返回 JSON 对象：{{"title_topic":"...","description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
 """.strip()
         result = _request_json_object(
             client=get_openai_client(ai_cfg),
@@ -2249,10 +2332,18 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             generated_description,
             count=1,
         ).strip()
-        generated_description = compensate_danmaku_timestamps(
-            generated_description,
-            int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0),
+        generated_description = strip_ai_timeline_lines(generated_description)
+        timeline_text = render_grounded_danmaku_timeline(
+            (result or {}).get("timeline"),
+            selected,
+            comments,
+            delay_seconds=int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0),
+            duration_seconds=timeline_duration_seconds,
         )
+        if timeline_text:
+            generated_description = "\n\n".join(
+                part for part in (generated_description, timeline_text) if part
+            )
         description = (
             f"{base_description}{generated_description}"
             if generated_description
@@ -2576,7 +2667,13 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         else:
             if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
                 store.stage(key, "ai", "running", {"comment_count": len(comments)})
-                description, ai_topic = generate_danmaku_metadata_with_ai(comments, description, cfg, verified_live_context)
+                description, ai_topic = generate_danmaku_metadata_with_ai(
+                    comments,
+                    description,
+                    cfg,
+                    verified_live_context,
+                    recording_duration_seconds,
+                )
                 title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
                 ai_details.update({
                     "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
@@ -3389,6 +3486,10 @@ def generate_record_only_cover(video: Path, base_cfg: dict[str, Any]) -> Path:
                 comments,
                 description,
                 cfg,
+                timeline_duration_seconds=video_duration_seconds(
+                    video,
+                    str(cfg.get("ffprobe", "ffprobe")),
+                ),
             )
             title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
     width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
