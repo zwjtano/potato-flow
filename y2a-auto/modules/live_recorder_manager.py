@@ -3754,19 +3754,23 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
     def pipeline_cover(self, fingerprint: str, variant: str = "16x9") -> Path:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise RecorderConfigError("任务编号无效")
+        if variant not in {"16x9", "4x3"}:
+            raise RecorderConfigError("封面类型无效")
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
         review = job.get("review_override")
         review = review if isinstance(review, dict) else {}
+        stage_key = "cover_4x3" if variant == "4x3" else "cover_16x9"
         cover_stage = next(
-            (stage for stage in job.get("stages", []) if stage.get("key") == "cover"),
-            {},
+            (stage for stage in job.get("stages", []) if stage.get("key") == stage_key),
+            next(
+                (stage for stage in job.get("stages", []) if stage.get("key") == "cover"),
+                {},
+            ),
         )
         details = cover_stage.get("details") if isinstance(cover_stage, dict) else {}
         details = details if isinstance(details, dict) else {}
-        if variant not in {"16x9", "4x3"}:
-            raise RecorderConfigError("封面类型无效")
 
         cache_dir = self._recording_file_roots()["artifacts"] / "task-covers"
 

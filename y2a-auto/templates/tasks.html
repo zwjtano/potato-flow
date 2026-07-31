@@ -2054,8 +2054,6 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                 root.dataset.recordingCoverAvailable !== coverAvailable ||
                 (coverAvailable === '1' && root.dataset.recordingCoverVersion !== coverVersion)
             ) {
-                root.dataset.recordingCoverAvailable = coverAvailable;
-                root.dataset.recordingCoverVersion = coverVersion;
                 scheduleRecordingCoverRefresh(jobId);
             }
 
@@ -2099,13 +2097,18 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     function scheduleRecordingCoverRefresh(jobId) {
         if (!jobId || recordingCoverRefreshes.has(jobId)) return;
         recordingCoverRefreshes.add(jobId);
-        window.setTimeout(async () => {
+        const refreshWhenIdle = async () => {
+            if (refreshInProgress) {
+                window.setTimeout(refreshWhenIdle, 100);
+                return;
+            }
             try {
                 await refreshTasksData(true);
             } finally {
                 recordingCoverRefreshes.delete(jobId);
             }
-        }, 0);
+        };
+        window.setTimeout(refreshWhenIdle, 0);
     }
 
     async function refreshRecordingUploadMetrics() {

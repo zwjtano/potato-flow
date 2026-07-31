@@ -1337,6 +1337,16 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('data-recording-cover-version="{{ job.cover_updated_at }}"', tasks)
         self.assertIn("scheduleRecordingCoverRefresh(jobId)", tasks)
         self.assertIn("await refreshTasksData(true)", tasks)
+        self.assertIn("if (refreshInProgress)", tasks)
+        self.assertIn("window.setTimeout(refreshWhenIdle, 100)", tasks)
+        self.assertNotIn(
+            "root.dataset.recordingCoverAvailable = coverAvailable",
+            tasks,
+        )
+        self.assertNotIn(
+            "root.dataset.recordingCoverVersion = coverVersion",
+            tasks,
+        )
 
     def test_live_room_files_and_selected_room_refresh_without_page_reload(self):
         template = (Y2A_ROOT / "templates" / "live_recording.html").read_text(
@@ -1535,6 +1545,44 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), b"\xff\xd8\xff" + b"x" * 128)
             response_json.assert_called_once()
             open_url.assert_called_once()
+
+    def test_pipeline_cover_reads_independent_stage_paths_before_upload_finishes(self):
+        manager = LiveRecorderManager()
+        fingerprint = "d" * 64
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            roots = {
+                "recordings": root / "recordings",
+                "artifacts": root / "artifacts",
+            }
+            roots["recordings"].mkdir()
+            roots = {key: path.resolve() for key, path in roots.items()}
+            cover16 = roots["recordings"] / "clip.jpg"
+            cover43 = roots["recordings"] / "clip_4x3.png"
+            cover16.write_bytes(b"16x9-cover")
+            cover43.write_bytes(b"4x3-cover")
+            job = {
+                "bvid": "",
+                "review_override": {},
+                "stages": [
+                    {
+                        "key": "cover_16x9",
+                        "details": {"ai_cover_16x9_path": str(cover16)},
+                    },
+                    {
+                        "key": "cover_4x3",
+                        "details": {"ai_cover_4x3_path": str(cover43)},
+                    },
+                ],
+            }
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager, "_recording_file_roots", return_value=roots
+            ):
+                resolved16 = manager.pipeline_cover(fingerprint, "16x9")
+                resolved43 = manager.pipeline_cover(fingerprint, "4x3")
+
+        self.assertEqual(resolved16, cover16.resolve())
+        self.assertEqual(resolved43, cover43.resolve())
 
     def test_pipeline_cover_corrects_cached_extension_from_image_content(self):
         manager = LiveRecorderManager()
