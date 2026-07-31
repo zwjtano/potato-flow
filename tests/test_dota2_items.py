@@ -23,6 +23,10 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertNotIn("Maelstrom", names)
         self.assertNotIn("Shadow Blade", names)
 
+    def test_streamer_slang_xuela_resolves_to_bloodthorn(self):
+        matches = dota2_items.match_dota2_items("最后补一把血辣")
+        self.assertEqual([match.item.english_name for match in matches], ["Bloodthorn"])
+
     def test_ambiguous_single_characters_do_not_trigger_items(self):
         matches = dota2_items.match_dota2_items(
             "他跳上高台开雾后捡到一块盾牌。"

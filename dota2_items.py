@@ -77,7 +77,7 @@ DOTA2_ITEMS: tuple[Dota2Item, ...] = (
     _item("黑皇杖", "Black King Bar", "black_king_bar", "BKB", "黑皇"),
     _item("邪恶镰刀", "Scythe of Vyse", "sheepstick", "羊刀", "妖术杖"),
     _item("紫怨", "Orchid Malevolence", "orchid", "紫苑"),
-    _item("血棘", "Bloodthorn", "bloodthorn", "大紫怨"),
+    _item("血棘", "Bloodthorn", "bloodthorn", "大紫怨", "血辣"),
     _item("Eul的神圣法杖", "Eul's Scepter of Divinity", "cyclone", "风杖", "吹风杖", "吹风"),
     _item("风之杖", "Wind Waker", "wind_waker", "大吹风"),
     _item("原力法杖", "Force Staff", "force_staff", "推推", "推推棒"),
