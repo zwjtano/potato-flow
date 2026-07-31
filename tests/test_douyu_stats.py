@@ -81,6 +81,333 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual([item[0] for item in messages], ["oni"])
         self.assertEqual(pending, b"")
 
+    def test_high_energy_uses_voice_danmu_price_and_deduplicates_queue(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {})
+        socket_record = {
+            "voiceRecordId": "voice-123",
+            "price": "50000",
+            "realPrice": "30000",
+            "hoverTime": "1800",
+            "expireV2At": "1700001800",
+            "acptime": "1700000000",
+            "un": "付费用户",
+        }
+        monitor.handle_voice_trlt({
+            "mtype": "2",
+            "list": json.dumps([json.dumps(socket_record, ensure_ascii=False)]),
+        })
+
+        details = monitor.state["high_energy"]["details"]
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]["event_id"], "voice-123")
+        self.assertEqual(details[0]["amount"], 300)
+        self.assertEqual(details[0]["price_cents"], 30000)
+        self.assertEqual(details[0]["listed_price_cents"], 50000)
+        self.assertEqual(details[0]["hover_seconds"], 1800)
+        self.assertEqual(details[0]["user"], "付费用户")
+        self.assertEqual(details[0]["accepted_unix_ts"], 1700000000)
+        self.assertEqual(details[0]["timestamp_source"], "acptime")
+
+        queue_record = {
+            **socket_record,
+            "userNick": "完整昵称",
+            "content": "审核通过后的正文",
+        }
+        with mock.patch.object(
+            daemon,
+            "_request_json",
+            return_value={"error": 0, "msg": "success", "data": [json.dumps(queue_record)]},
+        ):
+            monitor.poll_high_energy_queue()
+
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]["content"], "审核通过后的正文")
+        diagnostics = monitor.state["high_energy"]["diagnostics"]
+        self.assertEqual(diagnostics["socket_messages"], 1)
+        self.assertEqual(diagnostics["socket_records"], 1)
+        self.assertEqual(diagnostics["queue_polls"], 1)
+        self.assertEqual(diagnostics["queue_records"], 1)
+        self.assertEqual(diagnostics["duplicate_records"], 1)
+        self.assertEqual(details[0]["sources"], ["voice_trlt", "query_queue"])
+
+    def test_high_energy_socket_promotes_accept_time_after_queue(self):
+        monitor = daemon.RoomMonitor("88660", "主播", {})
+        queue_record = {
+            "voiceRecordId": "voice-cross-source",
+            "price": 10000,
+            "realPrice": 5000,
+            "hoverTime": 300,
+            "userNick": "队列昵称",
+        }
+        socket_record = {
+            **queue_record,
+            "acptime": 1700000000,
+            "un": "Socket昵称",
+            "content": "Socket正文",
+        }
+
+        monitor._record_high_energy(queue_record, "query_queue", now=1700000010)
+        monitor._record_high_energy(socket_record, "voice_trlt", now=1700000012)
+
+        event = monitor.state["high_energy"]["details"][0]
+        self.assertEqual(len(monitor.state["high_energy"]["details"]), 1)
+        self.assertEqual(event["unix_ts"], 1700000000)
+        self.assertEqual(event["accepted_unix_ts"], 1700000000)
+        self.assertEqual(event["observed_unix_ts"], 1700000010)
+        self.assertEqual(event["timestamp_source"], "acptime")
+        self.assertEqual(event["amount"], 50)
+        self.assertEqual(event["sources"], ["query_queue", "voice_trlt"])
+        self.assertEqual(event["content"], "Socket正文")
+
+    def test_high_energy_accepts_single_nested_stt_record(self):
+        records = daemon.decode_high_energy_records(
+            "voiceRecordId@=voice-456/realPrice@=1000/hoverTime@=60/"
+        )
+        self.assertEqual(records, [{
+            "voiceRecordId": "voice-456",
+            "realPrice": "1000",
+            "hoverTime": "60",
+        }])
+
+    def test_high_energy_marks_missing_accept_time_as_observed(self):
+        event = daemon.normalize_high_energy_record({
+            "voiceRecordId": "voice-no-acptime",
+            "price": 5000,
+            "realPrice": 0,
+            "hoverTime": 120,
+        }, "query_queue", now=1700000000)
+
+        self.assertEqual(event["amount"], 0)
+        self.assertEqual(event["listed_price_cents"], 5000)
+        self.assertIsNone(event["accepted_unix_ts"])
+        self.assertEqual(event["observed_unix_ts"], 1700000000)
+        self.assertEqual(event["timestamp_source"], "observed_at")
+
+    def test_high_energy_keeps_fractional_yuan_amount(self):
+        event = daemon.normalize_high_energy_record({
+            "voiceRecordId": "voice-fraction",
+            "realPrice": 50,
+            "hoverTime": 60,
+        }, "query_queue", now=1700000000)
+
+        self.assertEqual(event["price_cents"], 50)
+        self.assertEqual(event["amount"], 0.5)
+        text = formatter.format_stats(
+            {"high_energy": {"details": [event]}},
+            1699999999,
+            1700000001,
+            [],
+        )
+        self.assertIn("高能弹幕 ×1 | 0.5元", text)
+
+    def test_high_energy_decodes_voice_trlt_gson_array_from_packet(self):
+        packet = daemon.encode_packet(
+            "type@=voice_trlt/mtype@=2/"
+            "list@=voiceRecordId@AA=voice-1@ASrealPrice@AA=1000@AS"
+            "userIcon@AA=https:@AS@ASapic.douyucdn.cn@ASavatar.jpg@AS@S"
+            "voiceRecordId@AA=voice-2@ASrealPrice@AA=3000@AS/"
+        )
+        messages, pending = daemon.decode_packets(packet)
+        self.assertEqual(pending, b"")
+        message = messages[0][1]
+        self.assertEqual(message["list"], (
+            "voiceRecordId@A=voice-1/realPrice@A=1000/"
+            "userIcon@A=https://apic.douyucdn.cn/avatar.jpg//"
+            "voiceRecordId@A=voice-2/realPrice@A=3000/"
+        ))
+
+        monitor = daemon.RoomMonitor("9999", "主播", {})
+        monitor.handle_voice_trlt(message)
+        self.assertEqual(
+            [item["event_id"] for item in monitor.state["high_energy"]["details"]],
+            ["voice-1", "voice-2"],
+        )
+        self.assertEqual(
+            [item["amount"] for item in monitor.state["high_energy"]["details"]],
+            [10, 30],
+        )
+
+    def test_legacy_24597_dgb_is_ignored(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {
+            "24597": {"name": "高能弹幕", "price": 500},
+            "1": {"name": "飞机", "price": 100},
+        })
+        monitor.handle_dgb({"gfid": "24597", "gfn": "高能弹幕", "gfcnt": "9"})
+        monitor.handle_dgb({"gfid": "1", "gfn": "飞机", "gfcnt": "2"})
+
+        self.assertEqual(monitor.state["high_energy"]["details"], [])
+        self.assertEqual(len(monitor.state["gift_events"]), 1)
+        self.assertEqual(monitor.state["gift_events"][0]["name"], "飞机")
+        self.assertEqual(monitor.state["gift_events"][0]["total_value"], 200)
+
+    def test_gift_catalog_prefers_v5_and_uses_v2_for_special_gifts(self):
+        responses = {
+            "v5": {
+                "error": 0,
+                "data": {"giftList": [
+                    {"id": 1, "name": "新飞机", "priceInfo": {
+                        "price": 10000, "priceType": "YUCHI",
+                    }},
+                ]},
+            },
+            "v2": {
+                "error": 0,
+                "data": {"giftList": [
+                    {"id": 1, "name": "旧飞机", "priceInfo": {
+                        "price": 9000, "priceType": "YUCHI",
+                    }},
+                    {"id": 2, "name": "特殊礼物", "priceInfo": {
+                        "price": 600, "priceType": "YUCHI",
+                    }},
+                    {"id": 3, "name": "鱼丸礼物", "priceInfo": {
+                        "price": 100, "priceType": "YUWAN",
+                    }},
+                ]},
+            },
+        }
+
+        def request(url, _referer=""):
+            return responses["v5" if "/v5/" in url else "v2"]
+
+        with mock.patch.object(daemon, "_request_json", side_effect=request):
+            prices = daemon.load_gift_prices("9999")
+
+        self.assertEqual(prices["1"]["name"], "新飞机")
+        self.assertEqual(prices["1"]["price_cents"], 10000)
+        self.assertEqual(prices["1"]["catalog_source"], "v5")
+        self.assertEqual(prices["2"]["price_cents"], 600)
+        self.assertEqual(prices["2"]["catalog_source"], "v2")
+        self.assertEqual(prices["3"]["price_cents"], 0)
+        self.assertEqual(prices["3"]["raw_price"], 100)
+
+    def test_gift_catalog_falls_back_when_v5_fails(self):
+        def request(url, _referer=""):
+            if "/v5/" in url:
+                raise OSError("v5 unavailable")
+            return {"error": 0, "data": {"giftList": [{
+                "id": 7,
+                "name": "火箭",
+                "priceInfo": {"price": 50000, "priceType": "YUCHI"},
+            }]}}
+
+        with mock.patch.object(daemon, "_request_json", side_effect=request):
+            prices = daemon.load_gift_prices("9999")
+
+        self.assertEqual(prices["7"]["price_cents"], 50000)
+        self.assertEqual(prices["7"]["catalog_source"], "v2")
+
+    def test_dgb_keeps_low_value_and_unknown_prop_events_for_diagnostics(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {
+            "24677": {
+                "name": "钻粉卡", "price": 6, "price_cents": 600,
+                "price_type": "YUCHI", "catalog_source": "v5",
+            },
+            "24678": {
+                "name": "钻粉飞机", "price": 100, "price_cents": 10000,
+                "price_type": "YUCHI", "catalog_source": "v5",
+            },
+        })
+        monitor.handle_dgb({
+            "gfid": "24677", "gfn": "钻粉卡", "gfcnt": "2", "hits": "2",
+            "uid": "42", "nn": "用户", "hc": "event-low",
+        })
+        monitor.handle_dgb({
+            "gfid": "824", "gfn": "粉丝荧光棒", "gfcnt": "3", "gpf": "1",
+            "pid": "268", "bcnt": "3", "skinid": "9", "hc": "event-prop",
+        })
+        monitor.handle_dgb({"gfid": "24678", "gfn": "钻粉飞机", "gfcnt": "1"})
+
+        events = monitor.state["gift_events"]
+        self.assertEqual(len(events), 3)
+        self.assertEqual(events[0]["unit_price_cents"], 600)
+        self.assertEqual(events[0]["total_value_cents"], 1200)
+        self.assertEqual(events[0]["hits"], 2)
+        self.assertEqual(events[1]["prop_id"], 268)
+        self.assertEqual(events[1]["gift_prop_flag"], 1)
+        self.assertEqual(events[1]["skin_id"], 9)
+        self.assertTrue(events[1]["price_unknown"])
+        self.assertFalse(events[1]["paid"])
+        diagnostics = monitor.state["gift_diagnostics"]
+        self.assertEqual(diagnostics["messages"], 3)
+        self.assertEqual(diagnostics["recorded_events"], 3)
+        self.assertEqual(diagnostics["priced_events"], 2)
+        self.assertEqual(diagnostics["unpriced_events"], 1)
+        self.assertEqual(diagnostics["prop_events"], 1)
+        self.assertEqual(diagnostics["unknown_gift_ids"], {"824": 1})
+
+    def test_formatter_filters_full_gift_stream_only_at_output(self):
+        stats = {"gift_events": [
+            {
+                "unix_ts": 150, "name": "钻粉卡", "paid": True,
+                "unit_price_cents": 600, "total_value_cents": 1200, "count": 2,
+            },
+            {
+                "unix_ts": 160, "name": "未知道具", "paid": False,
+                "unit_price_cents": 0, "total_value_cents": 0, "count": 9,
+            },
+            {
+                "unix_ts": 170, "name": "钻粉飞机", "paid": True,
+                "unit_price_cents": 10000, "total_value_cents": 20000, "count": 2,
+            },
+        ]}
+
+        text = formatter.format_stats(stats, 100, 200, [])
+
+        self.assertIn("钻粉飞机×2(200元)", text)
+        self.assertIn("礼物价值合计 200元", text)
+        self.assertNotIn("钻粉卡", text)
+        self.assertNotIn("未知道具", text)
+
+    def test_diamond_fan_membership_events_are_separate_from_gifts(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {})
+        with mock.patch.object(daemon.time, "time", return_value=1700000000):
+            monitor.handle_diamond_fan("dfobc", {
+                "rid": "9999", "uid": "42", "nn": "新钻粉", "dfl": "1",
+            })
+            monitor.handle_diamond_fan("odfpbc", {
+                "drid": "9999", "uid": "42", "nn": "新钻粉", "dfl": "1",
+            })
+            monitor.handle_diamond_fan("rdfpbc", {
+                "drid": "9999", "uid": "43", "nn": "续费钻粉", "mn": "3",
+                "ct": "1700000010", "dfl": "5", "hc": "diamond-renew-1",
+            })
+            monitor.handle_diamond_fan("odfpbc", {
+                "drid": "10000", "uid": "44", "nn": "其他房间", "mn": "12",
+            })
+
+        events = monitor.state["diamond_fans"]["events"]
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["action"], "open")
+        self.assertEqual(events[0]["months"], 1)
+        self.assertEqual(events[1]["action"], "renew")
+        self.assertEqual(events[1]["months"], 3)
+        self.assertEqual(events[1]["diamond_level"], 5)
+        self.assertTrue(events[1]["broadcast"])
+        self.assertEqual(monitor.state["gift_events"], [])
+        diagnostics = monitor.state["diamond_fans"]["diagnostics"]
+        self.assertEqual(diagnostics["messages"], 4)
+        self.assertEqual(diagnostics["recorded_events"], 2)
+        self.assertEqual(diagnostics["open_events"], 1)
+        self.assertEqual(diagnostics["renew_events"], 1)
+        self.assertEqual(diagnostics["multi_month_events"], 1)
+        self.assertEqual(diagnostics["duplicate_messages"], 1)
+        self.assertEqual(diagnostics["ignored_other_room_events"], 1)
+        self.assertEqual(events[0]["sources"], ["dfobc", "odfpbc"])
+
+    def test_formatter_reports_diamond_membership_without_inventing_amount(self):
+        stats = {
+            "diamond_fans": {"events": [
+                {"unix_ts": 150, "action": "open", "months": 1},
+                {"unix_ts": 160, "action": "renew", "months": 3},
+            ]},
+        }
+
+        text = formatter.format_stats(stats, 100, 200, [])
+
+        self.assertIn("💎 钻粉 开通1次/1个月 续费1次/3个月", text)
+        self.assertNotIn("礼物价值合计", text)
+        self.assertNotIn("高能弹幕", text)
+
     def test_disabled_global_switch_stops_room_discovery(self):
         with tempfile.TemporaryDirectory() as temporary:
             config = Path(temporary) / "pipeline.json"
