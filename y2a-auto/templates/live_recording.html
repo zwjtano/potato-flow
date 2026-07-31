@@ -102,7 +102,7 @@
         </div>
         <div class="room-list" id="roomList">
             {% for room in rooms %}
-            <button class="room-item {{ 'active' if room.id == selected_room_id }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}">
+            <button class="room-item {{ 'active' if room.id == selected_room_id }}" type="button" data-name="{{ room.name|lower }}" data-state="{{ room.runtime.state }}" data-room="{{ room.id }}" data-room-uid="{{ room.uid }}">
                 {{ room_avatar(room) }}
                 <span class="room-item-copy"><strong>{{ room.name }}</strong><small>{{ platform_name(room.platform) }} · {{ room.display_room_id }}</small></span>
                 <span class="room-state {{ room.runtime.state }}" data-role="room-state"><i class="bi bi-circle-fill"></i><span data-role="state-label">{{ room.runtime.label }}</span></span>
@@ -1015,7 +1015,7 @@ document.addEventListener('DOMContentLoaded', function () {
         panels.forEach(panel => panel.classList.toggle('d-none', panel.dataset.panel !== roomId));
         if (updateLocation) {
             const url = new URL(window.location.href);
-            url.searchParams.set('room', roomId);
+            url.searchParams.set('room', selectedItem.dataset.roomUid);
             url.searchParams.delete('add_room');
             window.history.replaceState({room: roomId}, '', url);
         }

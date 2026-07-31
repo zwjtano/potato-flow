@@ -934,6 +934,7 @@ class LiveRecorderManager:
             parsed_room_url = urlparse(room_url)
             room["display_url"] = parsed_room_url._replace(query="", fragment="").geturl()
             room["display_room_id"] = parsed_room_url.path.rstrip("/").rsplit("/", 1)[-1] or "—"
+            room["uid"] = cls.room_uid(room)
             remark = f"{_slug(str(room.get('name') or ''))}_{str(room.get('id') or '')[:6]}"
             worker = workers_by_remark.get(remark) or workers_by_url.get(room_url)
             raw_status = cls._worker_status(worker.get("downloader_status")) if worker else "Unknown"
@@ -998,6 +999,20 @@ class LiveRecorderManager:
             }
             enriched.append(room)
         return enriched
+
+    @staticmethod
+    def room_uid(room: dict[str, Any]) -> str:
+        """Return the public room identifier used in live-recording URLs."""
+        platform_room_id = str(room.get("platform_room_id") or "").strip()
+        if platform_room_id:
+            return platform_room_id
+        room_url = str(room.get("url") or "").strip()
+        if room_url:
+            parsed = urlparse(room_url)
+            url_room_id = parsed.path.rstrip("/").rsplit("/", 1)[-1].strip()
+            if url_room_id:
+                return url_room_id
+        return ""
 
     @staticmethod
     def _attach_current_recording_files(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
