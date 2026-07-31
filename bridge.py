@@ -44,7 +44,7 @@ from dota2_heroes import build_dota2_hero_reference
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
-DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}｜【直播回放】"
+DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
 DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "根据本段直播的实际内容和弹幕反应提炼一个自然、有信息量的核心主题；"
@@ -3616,6 +3616,10 @@ def main(argv: list[str] | None = None) -> int:
                     "cover_path": str(cover_path),
                     "attached_pic": 1,
                     "original_flv_deleted": final_video != path,
+                    "video_duration_seconds": video_duration_seconds(
+                        final_video,
+                        str(record_cfg.get("ffprobe", "ffprobe")),
+                    ),
                 }
                 store.finish(key, "completed", result)
                 emit_recording_task_result_notification(

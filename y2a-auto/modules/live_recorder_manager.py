@@ -50,12 +50,13 @@ RECORDING_FILE_SUFFIXES = {
     ".ts": "video", ".m2ts": "video", ".mov": "video",
     ".xml": "xml", ".ass": "ass",
 }
-DEFAULT_RECORDING_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}｜【直播回放】"
+DEFAULT_RECORDING_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_RECORDING_DESCRIPTION_TEMPLATE = "{recording_intro}"
 LEGACY_RECORDING_TITLE_TEMPLATES = {
     "",
     "{stem}",
     "【直播回放】{streamer}｜{ai_topic}｜{date}",
+    "{streamer}｜{ai_topic}｜{date}｜【直播回放】",
 }
 LEGACY_RECORDING_DESCRIPTION_TEMPLATES = {
     "",
@@ -2782,6 +2783,35 @@ class LiveRecorderManager:
                 cover43_stage.get("details") if isinstance(cover43_stage, dict) else {}
             )
             cover43_details = cover43_details if isinstance(cover43_details, dict) else {}
+            duration_seconds = 0
+            duration_sources = [result]
+            duration_sources.extend(
+                stage.get("details")
+                for stage in stages
+                if isinstance(stage.get("details"), dict)
+            )
+            for duration_source in duration_sources:
+                if not isinstance(duration_source, dict):
+                    continue
+                raw_duration = (
+                    duration_source.get("video_duration_seconds")
+                    or duration_source.get("duration_seconds")
+                )
+                try:
+                    duration_seconds = max(0, int(round(float(raw_duration or 0))))
+                except (TypeError, ValueError):
+                    duration_seconds = 0
+                if duration_seconds > 0:
+                    break
+            if duration_seconds >= 3600:
+                hours, remainder = divmod(duration_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                duration_text = f"{hours}:{minutes:02d}:{seconds:02d}"
+            elif duration_seconds > 0:
+                minutes, seconds = divmod(duration_seconds, 60)
+                duration_text = f"{minutes}:{seconds:02d}"
+            else:
+                duration_text = ""
             review = overrides.get(row["fingerprint"], {})
             cover_candidate = str(
                 review.get("cover_path")
@@ -2960,6 +2990,8 @@ class LiveRecorderManager:
                 "short_id": row["fingerprint"][:12],
                 "video_path": video_path, "video_name": Path(video_path).name,
                 "title": title,
+                "duration_seconds": duration_seconds,
+                "duration_text": duration_text,
                 "description": description,
                 "tags": tags,
                 "partition_id": partition_id,

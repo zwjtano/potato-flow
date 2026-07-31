@@ -141,9 +141,10 @@
                                         <span class="recording-task-cover-fallback" aria-hidden="true">
                                             <i class="bi bi-camera-video"></i><small>暂无封面</small>
                                         </span>
+                                        {% if job.duration_text %}<span class="recording-cover-duration">{{ job.duration_text }}</span>{% endif %}
                                     </button>
                                     {% else %}
-                                    <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
+                                    <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i>{% if job.duration_text %}<span class="recording-cover-duration">{{ job.duration_text }}</span>{% endif %}</span>
                                     {% endif %}
                                 <div class="recording-video-copy">
                                         <div class="recording-task-title title-clamp">
@@ -272,9 +273,10 @@
                                 <span class="recording-task-cover-fallback" aria-hidden="true">
                                     <i class="bi bi-camera-video"></i><small>暂无封面</small>
                                 </span>
+                                {% if job.duration_text %}<span class="recording-cover-duration">{{ job.duration_text }}</span>{% endif %}
                             </button>
                             {% else %}
-                            <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
+                            <span class="recording-task-cover fallback" aria-hidden="true"><i class="bi bi-camera-video"></i>{% if job.duration_text %}<span class="recording-cover-duration">{{ job.duration_text }}</span>{% endif %}</span>
                             {% endif %}
                             <div class="recording-video-copy min-w-0">
                                 <div class="recording-task-title title-clamp">
@@ -1003,11 +1005,12 @@ html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: 
 .recording-task-file { display: block; max-width: 420px; margin-top: .25rem; color: #8a94a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .72rem; }
 .recording-video-cell { display: flex; align-items: center; gap: .8rem; min-width: 260px; }
 .recording-video-copy { min-width: 0; }
-.recording-cover-trigger { flex: 0 0 auto; padding: 0; border: 0; border-radius: 9px; background: transparent; box-shadow: 0 0 0 1px rgba(31,42,55,.08); overflow: hidden; transition: transform .15s ease, box-shadow .15s ease; }
+.recording-cover-trigger { position: relative; flex: 0 0 auto; padding: 0; border: 0; border-radius: 9px; background: transparent; box-shadow: 0 0 0 1px rgba(31,42,55,.08); overflow: hidden; transition: transform .15s ease, box-shadow .15s ease; }
 .recording-cover-trigger:hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(31,42,55,.16); }
 .recording-cover-trigger:focus-visible { outline: 2px solid #0d6efd; outline-offset: 2px; }
 .recording-task-cover { display: block; width: 104px; height: 65px; border-radius: 9px; object-fit: cover; background: #e9edf3; }
-.recording-task-cover.fallback { display: grid; flex: 0 0 auto; place-items: center; color: #9aa5b5; font-size: 1.15rem; background: #eef2f6; border: 1px solid #e2e7ee; }
+.recording-task-cover.fallback { position: relative; display: grid; flex: 0 0 auto; place-items: center; color: #9aa5b5; font-size: 1.15rem; background: #eef2f6; border: 1px solid #e2e7ee; }
+.recording-cover-duration { position: absolute; right: 5px; bottom: 4px; z-index: 1; padding: 1px 4px; border-radius: 4px; color: #fff; background: rgba(0,0,0,.78); font-size: .68rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.35; }
 .recording-task-cover.fallback small { display: block; margin-top: .15rem; font-size: .6rem; font-weight: 650; }
 .recording-task-cover-fallback { display: none; width: 104px; height: 65px; align-items: center; justify-content: center; flex-direction: column; gap: 3px; color: #7c8999; border: 1px solid #dbe3eb; border-radius: 9px; background: #eef3f7; }
 .recording-task-cover-fallback i { font-size: 1.05rem; }
