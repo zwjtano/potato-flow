@@ -52,6 +52,163 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 Path(temp) / "recordings",
             )
 
+    def test_published_description_regeneration_reuses_xml_timeline_pipeline(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            xml = root / "recording.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i><d p=\"20,1,25,1\">高能事件</d></i>", encoding="utf-8")
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "原标题",
+                "description": "原简介\n\n重要时间点\n00:12 原事件",
+                "tags": ["录播"],
+                "partition_id": "171",
+                "duration_seconds": 60,
+                "result": {"video_duration_seconds": 60.5},
+                "stages": [
+                    {"key": "ass", "details": {"danmaku_xml": str(xml), "video_duration_seconds": 60.5}},
+                    {"key": "live_stats", "details": {"stats_summary": "直播数据"}},
+                    {"key": "xml_identity", "details": {"streamer_hero": "噬魂鬼"}},
+                    {"key": "ai", "details": {"title_topic": "原主题"}},
+                ],
+            }
+            generated = "新简介\n\n重要时间点\n00:12 高能事件"
+            expected_description = "直播数据\n\n" + generated
+            stored = {}
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+                side_effect=lambda _fingerprint, metadata: stored.update(metadata),
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={"ai_danmaku_summary_enabled": True},
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "YYF", "date": "07-31", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.parse_biliup_xml",
+                return_value=[mock.Mock(time=20.0, text="高能事件")],
+            ), mock.patch(
+                "bridge.generate_danmaku_metadata_with_ai",
+                return_value=(generated, "新主题"),
+            ) as generate:
+                result = manager.regenerate_published_metadata("a" * 64, {"description"})
+
+        self.assertEqual(result["description"], expected_description)
+        self.assertEqual(stored["description"], expected_description)
+        self.assertTrue(result["pending_published_update"])
+        self.assertEqual(generate.call_args.args[1], "")
+        self.assertEqual(generate.call_args.args[3]["live_stats"], "直播数据")
+        self.assertEqual(generate.call_args.args[3]["game"]["hero"], "噬魂鬼")
+        self.assertEqual(generate.call_args.args[4], 60.5)
+
+    def test_published_description_regeneration_recovers_historical_live_stats(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            xml = root / "recording.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i><d p=\"20,1,25,1\">高能事件</d></i>", encoding="utf-8")
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "原标题",
+                "description": "原简介",
+                "tags": [],
+                "partition_id": "171",
+                "stages": [
+                    {"key": "ass", "details": {"danmaku_xml": str(xml)}},
+                    {"key": "live_stats", "details": {}},
+                ],
+            }
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+            ) as store, mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={
+                    "ai_danmaku_summary_enabled": True,
+                    "douyu_stats_enabled": True,
+                    "douyu_stats_append_description": True,
+                },
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "YYF", "date": "07-31", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.parse_biliup_xml",
+                return_value=[mock.Mock(time=20.0, text="高能事件")],
+            ), mock.patch(
+                "modules.douyu_stats_formatter.get_stats_for_description",
+                return_value="💬 高能弹幕 ×1 | 300元",
+            ) as stats, mock.patch(
+                "bridge.generate_danmaku_metadata_with_ai",
+                return_value=("新简介\n\n重要时间点\n00:12 高能事件", "新主题"),
+            ) as generate:
+                result = manager.regenerate_published_metadata("a" * 64, {"description"})
+
+        stats.assert_called_once_with(str(video.parent))
+        self.assertTrue(result["description"].startswith("💬 高能弹幕 ×1 | 300元\n\n"))
+        self.assertEqual(
+            generate.call_args.args[3]["live_stats"],
+            "💬 高能弹幕 ×1 | 300元",
+        )
+        self.assertTrue(store.called)
+
+    def test_published_description_regeneration_keeps_old_copy_without_verified_timeline(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            xml = root / "recording.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i><d p=\"20,1,25,1\">事件</d></i>", encoding="utf-8")
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "原标题",
+                "description": "原简介\n\n重要时间点\n00:12 原事件",
+                "tags": [],
+                "partition_id": "171",
+                "stages": [{"key": "ass", "details": {"danmaku_xml": str(xml)}}],
+            }
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+            ) as store, mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={"ai_danmaku_summary_enabled": True},
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "YYF", "date": "07-31", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.parse_biliup_xml",
+                return_value=[mock.Mock(time=20.0, text="事件")],
+            ), mock.patch(
+                "bridge.generate_danmaku_metadata_with_ai",
+                return_value=("只有普通简介，没有时间点", "新主题"),
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "保留原简介"):
+                    manager.regenerate_published_metadata("a" * 64, {"description"})
+
+        store.assert_not_called()
+
     def test_default_recordings_directory_uses_docker_mount_when_available(self):
         with mock.patch(
             "modules.config_manager.load_config",

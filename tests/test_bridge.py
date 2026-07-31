@@ -269,6 +269,12 @@ class BridgeTests(unittest.TestCase):
             "正文",
         )
 
+    def test_ai_written_important_event_list_is_discarded(self):
+        self.assertEqual(
+            bridge.strip_ai_timeline_lines("正文\n\n重要事件：\n事件一\n事件二"),
+            "正文",
+        )
+
     def test_live_stats_stage_details_persist_visible_summary(self):
         stats = "——— 直播数据 ———\n👥 在线 547~957"
 
