@@ -46,6 +46,7 @@
             <a class="app-nav-link {% if request.path.startswith('/live-recording') %}active{% endif %}" href="{{ url_for('live_recording') }}" aria-label="直播录制" title="直播录制"><i class="bi bi-record-circle"></i><span>直播录制</span></a>
             <a class="app-nav-link {% if request.path.startswith('/youtube_monitor') %}active{% endif %}" href="{{ url_for('youtube_monitor_index') }}" aria-label="YouTube 监控" title="YouTube 监控"><i class="bi bi-youtube"></i><span>YouTube 监控</span></a>
             <div class="app-nav-label">任务中心</div>
+            <a class="app-nav-link {% if request.path.startswith('/bilibili-archives') %}active{% endif %}" href="{{ url_for('bilibili_archives') }}" aria-label="投稿中心" title="投稿中心"><i class="bi bi-collection-play"></i><span>投稿中心</span></a>
             <a class="app-nav-link {% if request.path.startswith('/tasks') or request.path.startswith('/task/') %}active{% endif %}" href="{{ url_for('tasks') }}" aria-label="上传任务" title="上传任务"><i class="bi bi-cloud-arrow-up"></i><span>上传任务</span></a>
             <a class="app-nav-link {% if request.path.startswith('/manual_review') %}active{% endif %}" href="{{ url_for('manual_review') }}" aria-label="人工审核" title="人工审核"><i class="bi bi-shield-check"></i><span>人工审核</span></a>
             <div class="app-nav-label">系统</div>
@@ -85,6 +86,7 @@
         </header>
         {% set shell_section = '首页' %}{% set shell_icon = 'bi-grid-1x2' %}
         {% if request.path.startswith('/live-recording') %}{% set shell_section = '直播录制' %}{% set shell_icon = 'bi-record-circle' %}
+        {% elif request.path.startswith('/bilibili-archives') %}{% set shell_section = '投稿中心' %}{% set shell_icon = 'bi-collection-play' %}
         {% elif request.path.startswith('/tasks') or request.path.startswith('/task/') %}{% set shell_section = '上传任务' %}{% set shell_icon = 'bi-cloud-arrow-up' %}
         {% elif request.path.startswith('/manual_review') %}{% set shell_section = '人工审核' %}{% set shell_icon = 'bi-shield-check' %}
         {% elif request.path.startswith('/youtube_monitor') %}{% set shell_section = 'YouTube 监控' %}{% set shell_icon = 'bi-youtube' %}

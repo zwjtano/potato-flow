@@ -3,12 +3,54 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import subprocess
+import tempfile
+import threading
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - production runs on Linux/macOS
+    fcntl = None
+
+
+_BURN_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def danmaku_burn_slot(
+    status_callback: Callable[[str], None] | None = None,
+) -> Iterator[None]:
+    """Serialize FFmpeg burn-in across threads and bridge processes."""
+    configured = str(os.environ.get("POTATO_DANMAKU_BURN_LOCK") or "").strip()
+    lock_path = Path(configured) if configured else Path(tempfile.gettempdir()) / "potato-flow-danmaku-burn.lock"
+    lock_path = lock_path.expanduser().resolve()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def report(status: str) -> None:
+        if status_callback:
+            try:
+                status_callback(status)
+            except Exception:
+                pass
+
+    report("queued")
+    with _BURN_THREAD_LOCK:
+        with lock_path.open("a+b") as lock_handle:
+            if fcntl is not None:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                report("burning")
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 @dataclass(frozen=True)
@@ -193,29 +235,31 @@ def burn_ass(
     fonts_dir: Path | None = None,
     preset: str = "medium",
     crf: int = 20,
+    queue_status_callback: Callable[[str], None] | None = None,
 ) -> Path:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    video_filter = f"subtitles=filename='{_filter_path(ass_path)}'"
-    if fonts_dir and fonts_dir.is_dir():
-        video_filter += f":fontsdir='{_filter_path(fonts_dir)}'"
-    command = [
-        ffmpeg, "-hide_banner", "-loglevel", "warning", "-y", "-i", str(video),
-        "-vf", video_filter, "-c:v", "libx264",
-        "-preset", str(preset), "-crf", str(max(0, min(51, int(crf)))),
-        "-c:a", "copy", "-movflags", "+faststart", str(output),
-    ]
-    completed = subprocess.run(command, capture_output=True, text=True)
-    if completed.returncode != 0:
-        # Opus and a few live codecs cannot be stream-copied into MP4. Retry
-        # with AAC while keeping the expensive video encode settings intact.
-        command = command[:-5] + [
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)
+    with danmaku_burn_slot(queue_status_callback):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        video_filter = f"subtitles=filename='{_filter_path(ass_path)}'"
+        if fonts_dir and fonts_dir.is_dir():
+            video_filter += f":fontsdir='{_filter_path(fonts_dir)}'"
+        command = [
+            ffmpeg, "-hide_banner", "-loglevel", "warning", "-y", "-i", str(video),
+            "-vf", video_filter, "-c:v", "libx264",
+            "-preset", str(preset), "-crf", str(max(0, min(51, int(crf)))),
+            "-c:a", "copy", "-movflags", "+faststart", str(output),
         ]
         completed = subprocess.run(command, capture_output=True, text=True)
-    if completed.returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
-        detail = completed.stderr.strip()[-2000:]
-        raise RuntimeError(f"FFmpeg 烧录 ASS 失败: {detail}")
-    return output
+        if completed.returncode != 0:
+            # Opus and a few live codecs cannot be stream-copied into MP4. Retry
+            # with AAC while keeping the expensive video encode settings intact.
+            command = command[:-5] + [
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)
+            ]
+            completed = subprocess.run(command, capture_output=True, text=True)
+        if completed.returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
+            detail = completed.stderr.strip()[-2000:]
+            raise RuntimeError(f"FFmpeg 烧录 ASS 失败: {detail}")
+        return output
 
 
 def select_summary_comments(comments: list[DanmakuComment], limit: int = 400) -> list[DanmakuComment]:

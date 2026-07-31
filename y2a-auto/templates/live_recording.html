@@ -167,6 +167,7 @@
                         <span class="badge rounded-pill text-bg-light">
                             {% if room.segment_enabled %}<span class="room-setting-number">{{ room.segment_minutes }}</span> 分钟{% else %}不分段{% endif %}
                             · {{ '不投稿' if room.record_only else ('分 P 投稿' if room.multipart_enabled and room.segment_enabled else '不分 P 投稿') }}
+                            {% if room.danmaku_burn_in %}· 已烧录弹幕{% endif %}
                         </span>
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
@@ -218,10 +219,18 @@
                             </span>
                             <span><strong>仅录制，不自动投稿</strong><small>默认关闭。单场独立文件夹内保留视频、XML 并生成 ASS，不进入 AI 与 B站投稿。</small></span>
                         </label>
+                        <label class="room-recording-setting-option">
+                            <span class="room-setting-switch">
+                                <input type="checkbox" name="danmaku_burn_in" value="on"
+                                       data-role="danmaku-burn-in" {% if room.danmaku_burn_in %}checked{% endif %}>
+                                <span></span>
+                            </span>
+                            <span><strong>烧录 ASS 弹幕进视频</strong><small>默认关闭。开启后用 FFmpeg 转码，将弹幕永久写入画面，同时保留外置 ASS。</small></span>
+                        </label>
                     </div>
                     <div class="room-recording-settings-note">
                         <i class="bi bi-stars"></i>
-                        <span>仅录制文件会生成同名 ASS 与 AI 封面，FLV 无转码封装为带内嵌封面的 MP4，永久跳过自动补投稿并保留在文件管理中；封装失败时会保留原 FLV。正常投稿时，每一 P 根据本段弹幕生成独立页面标题和摘要，稿件简介自动汇总全部分段。录制中修改会先安全收尾当前文件，再应用新设置。</span>
+                        <span>仅录制文件会生成同名 ASS 与 AI 封面；关闭烧录时，FLV 无转码封装为带内嵌封面的 MP4，开启后则先转码烧录弹幕再嵌入封面。两种模式都永久跳过自动投稿，失败时保留原 FLV。正常投稿开启烧录后，上传的是已写入弹幕的视频。录制中修改会先安全收尾当前文件，再应用新设置。</span>
                     </div>
                     <div class="room-ai-prompts-actions">
                         <span><i class="bi bi-shield-check"></i> 设置只对“{{ room.name }}”生效</span>
@@ -439,6 +448,14 @@
                     <span></span>
                 </span>
                 <span><strong>仅录制，不自动投稿</strong><small>默认关闭；仍会保留 XML、生成 ASS、AI 封面和 MP4。</small></span>
+            </label>
+            <label class="room-recording-setting-option">
+                <span class="room-setting-switch">
+                    <input type="checkbox" name="danmaku_burn_in" value="on"
+                           data-role="danmaku-burn-in">
+                    <span></span>
+                </span>
+                <span><strong>烧录 ASS 弹幕进视频</strong><small>默认关闭；开启后普通投稿和仅录制都会转码并将弹幕写入画面。</small></span>
             </label>
         </div>
     </section>

@@ -14,7 +14,7 @@
 | 字段 | 默认值 | 说明 |
 |---|---:|---|
 | `danmaku_enabled` | `true` | 采集 XML 并生成 ASS |
-| `danmaku_burn_in` | `false` | 是否把弹幕烧录进视频 |
+| `danmaku_burn_in` | `false` | 是否把 ASS 弹幕烧录进视频；直播间页可按房间覆盖，同时影响正常投稿和仅录制流程 |
 | `delete_recording_after_upload` | `true` | 投稿成功后删除对应源录播 |
 | `danmaku_xml_retention_hours` | `24` | 投稿成功后继续保留弹幕 XML 的小时数，便于核查完整性 |
 | `ai_danmaku_summary_enabled` | `true` | 使用弹幕生成稿件信息 |

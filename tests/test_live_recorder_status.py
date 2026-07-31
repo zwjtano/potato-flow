@@ -736,6 +736,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["segment_minutes"], 60)
         self.assertFalse(room["multipart_enabled"])
         self.assertFalse(room["record_only"])
+        self.assertFalse(room["danmaku_burn_in"])
 
     def test_room_recording_settings_are_saved_per_room(self):
         manager = LiveRecorderManager()
@@ -752,6 +753,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 segment_enabled=True,
                 segment_minutes="90",
                 multipart_enabled=True,
+                danmaku_burn_in=True,
             )
 
         self.assertEqual(state, "saved")
@@ -759,6 +761,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["segment_minutes"], 90)
         self.assertTrue(room["multipart_enabled"])
         self.assertFalse(room["record_only"])
+        self.assertTrue(room["danmaku_burn_in"])
         persisted_rooms = atomic_json.call_args_list[0].args[1]
         self.assertNotIn("segment_minutes", persisted_rooms[1])
         sync_configs.assert_called_once_with(persisted_rooms)
@@ -889,12 +892,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     segment_minutes=45,
                     multipart_enabled=True,
                     record_only=True,
+                    danmaku_burn_in=True,
                 )
 
         self.assertTrue(room["segment_enabled"])
         self.assertEqual(room["segment_minutes"], 45)
         self.assertTrue(room["record_only"])
         self.assertFalse(room["multipart_enabled"])
+        self.assertTrue(room["danmaku_burn_in"])
 
     def test_search_rooms_returns_douyu_candidates(self):
         manager = LiveRecorderManager()
@@ -1335,6 +1340,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                         self.rooms[0],
                         avatar_url="https://example.com/a.jpg",
                         ai_danmaku_reaction_delay_seconds=12,
+                        danmaku_burn_in=True,
                     ),
                     self.rooms[1],
                 ]
@@ -1354,6 +1360,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
             config["profiles"][0]["ai_danmaku_reaction_delay_seconds"],
             12,
         )
+        self.assertTrue(config["profiles"][0]["danmaku_burn_in"])
+        self.assertFalse(config["profiles"][1]["danmaku_burn_in"])
         self.assertEqual(
             config["bilibili_cookies"],
             str(recorder_module.APP_ROOT / "cookies" / "bili_cookies.json"),
@@ -2396,6 +2404,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('value="60"', source)
         self.assertIn('name="multipart_enabled"', source)
         self.assertIn('name="record_only"', source)
+        self.assertIn('name="danmaku_burn_in"', source)
         self.assertIn('value="{{ room.segment_minutes }}"', source)
         self.assertIn("整场直播不分段", source)
         self.assertNotIn("按 2.5 GB 自动分段", source)
@@ -2411,6 +2420,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('name="segment_minutes"', live_source)
         self.assertIn('name="multipart_enabled"', live_source)
         self.assertIn('name="record_only"', live_source)
+        self.assertIn('name="danmaku_burn_in"', live_source)
+        self.assertIn("烧录 ASS 弹幕进视频", live_source)
         self.assertIn("分 P 投稿", live_source)
         self.assertIn("不分 P 投稿", live_source)
         self.assertIn('data-role="multipart-state"', live_source)
@@ -2441,6 +2452,22 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertNotIn("return '刚刚'", tasks_source)
         self.assertIn("<span>BV号</span>{{ job.bvid }}", tasks_source)
         self.assertIn("recording-updated-heading", tasks_source)
+
+    def test_archive_center_exposes_all_history_and_safe_source_replacement(self):
+        template = (Y2A_ROOT / "templates" / "bilibili_archives.html").read_text(encoding="utf-8")
+        base = (Y2A_ROOT / "templates" / "base.html").read_text(encoding="utf-8")
+        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
+        uploader_source = (Y2A_ROOT / "modules" / "bilibili_uploader.py").read_text(encoding="utf-8")
+
+        self.assertIn("投稿中心", base)
+        self.assertIn("全部历史稿件", template)
+        self.assertIn('value="all"', template)
+        self.assertIn("指定分P换源", template)
+        self.assertIn("二次确认", template)
+        self.assertIn("仅显示 ASS 烧录阶段已完成", template)
+        self.assertIn("/bilibili-archives/replace", app_source)
+        self.assertIn("https://member.bilibili.com/x/web/archives", uploader_source)
+        self.assertIn("https://member.bilibili.com/x/vu/web/edit", uploader_source)
 
     def test_delete_room_button_is_enabled_while_worker_runs(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")

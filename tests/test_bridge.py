@@ -810,7 +810,7 @@ class BridgeTests(unittest.TestCase):
             cover = video.with_suffix(".jpg")
             cover.write_bytes(b"cover")
 
-            def finish_local_pipeline(_video, _cover, _cfg, progress_callback=None):
+            def finish_local_pipeline(_video, _cover, _cfg, progress_callback=None, **_kwargs):
                 output = video.with_suffix(".mp4")
                 for event, details in (
                     ("remux_completed", {"output_path": str(output), "copy_mode": "-c copy"}),
@@ -846,12 +846,14 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(generate_cover.call_count, 1)
             self.assertEqual(generate_cover.call_args.args[0], video.resolve())
-            remux.assert_called_once_with(
-                video.resolve(),
-                cover,
-                ANY,
-                progress_callback=ANY,
+            self.assertEqual(remux.call_count, 1)
+            self.assertEqual(remux.call_args.args[0], video.resolve())
+            self.assertEqual(remux.call_args.args[1], cover)
+            self.assertEqual(
+                remux.call_args.kwargs["output_path"],
+                video.resolve().with_suffix(".mp4"),
             )
+            self.assertEqual(remux.call_args.kwargs["original_flv"], video.resolve())
             with sqlite3.connect(state) as db:
                 rows = db.execute(
                     "SELECT video_path, room_id, reason FROM recording_exclusions"
@@ -879,6 +881,7 @@ class BridgeTests(unittest.TestCase):
                 [
                     ("record", "completed"),
                     ("ass", "completed"),
+                    ("burn", "skipped"),
                     ("cover", "completed"),
                     ("remux", "completed"),
                     ("verify", "completed"),
@@ -888,6 +891,56 @@ class BridgeTests(unittest.TestCase):
             ass = video.with_name(f"{video.stem}.zh-CN.ass")
             self.assertTrue(ass.is_file())
             self.assertIn("测试弹幕", ass.read_text(encoding="utf-8-sig"))
+
+    def test_record_only_burns_ass_before_attaching_cover_when_enabled(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "record-only.flv"
+            xml = root / "record-only.xml"
+            state = root / "state.sqlite3"
+            config = root / "bridge.config.json"
+            video.write_bytes(b"video")
+            xml.write_text(
+                '<i><d p="1.2,1,25,16777215,0,0,0,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
+            config.write_text(json.dumps({
+                "state_db": str(state),
+                "danmaku_burn_in": True,
+            }), encoding="utf-8")
+            cover = video.with_suffix(".jpg")
+            cover.write_bytes(b"cover")
+            burned = video.with_name(f".{video.stem}.potato-burn.mp4")
+            final_video = video.with_suffix(".mp4")
+
+            with patch.object(bridge, "probe_video_size", return_value=(1280, 720)), \
+                    patch.object(bridge, "generate_record_only_cover", return_value=cover), \
+                    patch.object(bridge, "burn_ass", return_value=burned) as burn, \
+                    patch.object(
+                        bridge,
+                        "remux_record_only_flv_with_cover",
+                        return_value=final_video,
+                    ) as remux:
+                result = bridge.main([
+                    "--config", str(config),
+                    "record-only", "--room-id", "room-1", str(video), str(xml),
+                ])
+
+            self.assertEqual(result, 0)
+            self.assertEqual(burn.call_args.args[:3], (video.resolve(), ANY, burned.resolve()))
+            self.assertEqual(remux.call_count, 1)
+            self.assertEqual(remux.call_args.args[0], burned)
+            self.assertEqual(remux.call_args.args[1], cover)
+            self.assertEqual(remux.call_args.kwargs["output_path"], final_video.resolve())
+            self.assertEqual(remux.call_args.kwargs["original_flv"], video.resolve())
+            with sqlite3.connect(state) as db:
+                burn_stage = db.execute(
+                    "SELECT status, details_json FROM upload_stages WHERE stage='burn'"
+                ).fetchone()
+                task = db.execute("SELECT result_json FROM uploads").fetchone()
+            self.assertEqual(burn_stage[0], "completed")
+            self.assertTrue(json.loads(burn_stage[1])["burn_in"])
+            self.assertTrue(json.loads(task[0])["danmaku_burn_in"])
 
     def test_record_only_cover_matches_video_resolution(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1006,7 +1059,7 @@ class BridgeTests(unittest.TestCase):
             )
 
             with patch.object(bridge.subprocess, "run", return_value=failed):
-                with self.assertRaisesRegex(RuntimeError, "FLV 转 MP4 失败"):
+                with self.assertRaisesRegex(RuntimeError, "录播封装 MP4 失败"):
                     bridge.remux_record_only_flv_with_cover(video, cover, {})
 
             self.assertTrue(video.is_file())
@@ -1082,7 +1135,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(
                 set(stages),
                 {
-                    "detect", "record", "ass", "ai", "xml_identity", "live_stats",
+                    "detect", "record", "ass", "burn", "ai", "xml_identity", "live_stats",
                     "cover_16x9", "cover_4x3", "upload", "cleanup",
                 },
             )

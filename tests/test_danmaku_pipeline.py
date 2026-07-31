@@ -1,4 +1,6 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from danmaku_pipeline import (
     inspect_biliup_xml,
     parse_biliup_xml,
     select_summary_comments,
+    danmaku_burn_slot,
 )
 
 
@@ -22,6 +25,29 @@ SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 class DanmakuPipelineTests(unittest.TestCase):
+    def test_burn_queue_serializes_multiple_files(self):
+        active = 0
+        maximum = 0
+        guard = threading.Lock()
+
+        def worker():
+            nonlocal active, maximum
+            with danmaku_burn_slot():
+                with guard:
+                    active += 1
+                    maximum = max(maximum, active)
+                time.sleep(0.03)
+                with guard:
+                    active -= 1
+
+        threads = [threading.Thread(target=worker) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(maximum, 1)
+
     def test_parse_and_build_ass(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

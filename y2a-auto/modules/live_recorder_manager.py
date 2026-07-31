@@ -771,6 +771,7 @@ class LiveRecorderManager:
             room.setdefault("segment_minutes", DEFAULT_RECORDING_SEGMENT_MINUTES)
             room.setdefault("multipart_enabled", False)
             room.setdefault("record_only", False)
+            room.setdefault("danmaku_burn_in", False)
             room.setdefault("bilibili_account_id", "")
             room.setdefault("ai_danmaku_reaction_delay_seconds", 8)
         return rooms
@@ -1000,6 +1001,7 @@ class LiveRecorderManager:
                 "segment_enabled": bool(room.get("segment_enabled", True)),
                 "segment_minutes": cls._room_segment_minutes(room),
                 "record_only": bool(room.get("record_only", False)),
+                "danmaku_burn_in": bool(room.get("danmaku_burn_in", False)),
                 "multipart_enabled": bool(
                     not room.get("record_only", False)
                     and room.get("segment_enabled", True)
@@ -1528,6 +1530,7 @@ class LiveRecorderManager:
         segment_minutes: Any,
         multipart_enabled: bool,
         record_only: bool,
+        danmaku_burn_in: bool = False,
         bilibili_account_id: str = "",
     ) -> dict[str, Any]:
         try:
@@ -1543,6 +1546,7 @@ class LiveRecorderManager:
                 multipart_enabled and segment_enabled and not record_only
             ),
             "record_only": bool(record_only),
+            "danmaku_burn_in": bool(danmaku_burn_in),
             "bilibili_account_id": str(bilibili_account_id or "").strip(),
         }
 
@@ -1554,6 +1558,7 @@ class LiveRecorderManager:
         segment_minutes: Any = None,
         multipart_enabled: bool | None = None,
         record_only: bool | None = None,
+        danmaku_burn_in: bool | None = None,
         bilibili_account_id: str | None = None,
     ) -> dict[str, Any]:
         resolved = self.resolve_room(url)
@@ -1564,6 +1569,7 @@ class LiveRecorderManager:
                 segment_minutes,
                 multipart_enabled,
                 record_only,
+                danmaku_burn_in,
                 bilibili_account_id,
             )
         )
@@ -1579,6 +1585,9 @@ class LiveRecorderManager:
                     False if multipart_enabled is None else multipart_enabled
                 ),
                 record_only=False if record_only is None else record_only,
+                danmaku_burn_in=(
+                    False if danmaku_burn_in is None else danmaku_burn_in
+                ),
                 bilibili_account_id=bilibili_account_id or "",
             )
             if settings_provided
@@ -1613,6 +1622,7 @@ class LiveRecorderManager:
                             "segment_minutes": DEFAULT_RECORDING_SEGMENT_MINUTES,
                             "multipart_enabled": False,
                             "record_only": False,
+                            "danmaku_burn_in": False,
                         }
                     ),
                 }
@@ -1823,6 +1833,7 @@ class LiveRecorderManager:
         segment_minutes: Any,
         multipart_enabled: bool,
         record_only: bool = False,
+        danmaku_burn_in: bool = False,
         bilibili_account_id: str = "",
     ) -> tuple[dict[str, Any], str]:
         """Save per-room segmentation/upload mode and safely rotate active files."""
@@ -1848,6 +1859,7 @@ class LiveRecorderManager:
                 "segment_minutes": minutes,
                 "multipart_enabled": bool(multipart_enabled and segment_enabled),
                 "record_only": bool(record_only),
+                "danmaku_burn_in": bool(danmaku_burn_in),
                 "bilibili_account_id": str(bilibili_account_id or "").strip(),
             })
             if (room["record_only"] or not room["multipart_enabled"]) and not target_recording:
@@ -2063,6 +2075,7 @@ class LiveRecorderManager:
                 "ai_danmaku_reaction_delay_seconds": int(
                     room.get("ai_danmaku_reaction_delay_seconds", 8) or 0
                 ),
+                "danmaku_burn_in": bool(room.get("danmaku_burn_in", False)),
                 "bilibili_account_id": str(account["id"]),
                 "bilibili_account_name": str(account["name"]),
                 "bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path"))),
@@ -2708,7 +2721,7 @@ class LiveRecorderManager:
                 db.row_factory = sqlite3.Row
                 display_ids = self._ensure_pipeline_display_ids(db, room_markers)
                 uploads = db.execute(
-                    "SELECT * FROM uploads ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 100)),)
+                    "SELECT * FROM uploads ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 500)),)
                 ).fetchall()
                 stage_rows = db.execute(
                     "SELECT * FROM upload_stages ORDER BY updated_at"
@@ -3614,6 +3627,306 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             raise
         except Exception as exc:
             raise RecorderConfigError(f"更新 B站稿件失败：{exc}") from exc
+
+    def bilibili_archive_accounts(self) -> list[dict[str, Any]]:
+        """Return configured Bilibili accounts without exposing Cookie paths."""
+        from .bilibili_accounts import normalize_accounts
+        from .config_manager import load_config
+
+        return [
+            {
+                "id": str(account.get("id") or ""),
+                "name": str(account.get("name") or "B站账号"),
+                "uid": str(account.get("bilibili_uid") or ""),
+                "avatar_url": str(account.get("avatar_url") or ""),
+            }
+            for account in normalize_accounts(load_config())
+        ]
+
+    def _bilibili_archive_uploader(self, account_id: str):
+        from .bilibili_accounts import resolve_account, resolve_cookie_path
+        from .bilibili_uploader import BilibiliUploader
+        from .config_manager import load_config
+
+        account = resolve_account(load_config(), account_id)
+        cookie_path = resolve_cookie_path(account.get("cookies_path"))
+        if not cookie_path.is_file():
+            raise RecorderConfigError(
+                f"投稿账号“{account.get('name') or account.get('id')}”的 Cookie 不存在"
+            )
+        return account, BilibiliUploader(cookie_file=str(cookie_path))
+
+    def bilibili_archives(
+        self,
+        account_id: str,
+        *,
+        page: int = 1,
+        status: str = "pubed",
+    ) -> dict[str, Any]:
+        account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.list_archives(page=page, page_size=20, status=status)
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        return {**result, "account_id": str(account.get("id") or account_id)}
+
+    def bilibili_archive_detail(self, account_id: str, bvid: str) -> dict[str, Any]:
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.archive_detail(bvid)
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        return result
+
+    def burned_replacement_videos(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Return completed, still-existing burn-in outputs safe for source replacement."""
+        roots = self._recording_file_roots()
+        candidates: list[dict[str, Any]] = []
+        seen: set[Path] = set()
+        processing_files, active_markers = self._recording_locks()
+        for job in self.pipeline_jobs(500):
+            burn_stage = next(
+                (
+                    stage for stage in (job.get("stages") or [])
+                    if stage.get("key") == "burn" and stage.get("status") == "completed"
+                ),
+                {},
+            )
+            if not burn_stage:
+                continue
+            details = burn_stage.get("details")
+            details = details if isinstance(details, dict) else {}
+            result = job.get("result")
+            result = result if isinstance(result, dict) else {}
+            path_values = (
+                result.get("burned_video_path"),
+                result.get("final_video_path"),
+                result.get("upload_video"),
+                details.get("burned_video_path"),
+            )
+            for value in path_values:
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                path = Path(value).expanduser().resolve()
+                if path in seen or not path.is_file() or _recording_file_type(path) != "video":
+                    continue
+                source = ""
+                relative_path = ""
+                for root_name, root in roots.items():
+                    try:
+                        relative_path = path.relative_to(root).as_posix()
+                        source = root_name
+                        break
+                    except ValueError:
+                        continue
+                if not source:
+                    continue
+                info = self._recording_file_info(
+                    path,
+                    source,
+                    relative_path,
+                    processing_files,
+                    active_markers,
+                )
+                if info.get("locked"):
+                    continue
+                seen.add(path)
+                candidates.append({
+                    **info,
+                    "job_id": str(job.get("id") or ""),
+                    "job_display_id": str(job.get("display_id") or job.get("short_id") or ""),
+                    "room_name": str(job.get("room_name") or "未匹配主播"),
+                    "burned": True,
+                })
+                break
+            if len(candidates) >= max(1, min(int(limit), 500)):
+                break
+        candidates.sort(key=lambda item: float(item.get("modified_timestamp") or 0), reverse=True)
+        return candidates
+
+    def _ensure_archive_replacement_table(self) -> None:
+        state_path = self._pipeline_state_path()
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(state_path, timeout=30) as db:
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS bilibili_source_replacements (
+                    id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    bvid TEXT NOT NULL,
+                    page_number INTEGER NOT NULL,
+                    page_title TEXT NOT NULL,
+                    file_id TEXT NOT NULL,
+                    video_name TEXT NOT NULL,
+                    video_path TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    progress_json TEXT,
+                    result_json TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+
+    def _update_archive_replacement(
+        self,
+        replacement_id: str,
+        *,
+        status: str | None = None,
+        progress: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        self._ensure_archive_replacement_table()
+        assignments = ["updated_at=?"]
+        values: list[Any] = [datetime.now(timezone.utc).isoformat()]
+        for column, value in (
+            ("status", status),
+            ("progress_json", json.dumps(progress, ensure_ascii=False) if progress is not None else None),
+            ("result_json", json.dumps(result, ensure_ascii=False) if result is not None else None),
+            ("error", error),
+        ):
+            if value is not None:
+                assignments.append(f"{column}=?")
+                values.append(value)
+        values.append(replacement_id)
+        with sqlite3.connect(self._pipeline_state_path(), timeout=30) as db:
+            db.execute(
+                f"UPDATE bilibili_source_replacements SET {', '.join(assignments)} WHERE id=?",
+                values,
+            )
+
+    def archive_replacement_jobs(self, limit: int = 30) -> list[dict[str, Any]]:
+        self._ensure_archive_replacement_table()
+        with sqlite3.connect(self._pipeline_state_path(), timeout=30) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute(
+                "SELECT * FROM bilibili_source_replacements ORDER BY created_at DESC LIMIT ?",
+                (max(1, min(int(limit), 100)),),
+            ).fetchall()
+        jobs = []
+        for row in rows:
+            item = dict(row)
+            for source_key, target_key in (
+                ("progress_json", "progress"),
+                ("result_json", "result"),
+            ):
+                try:
+                    item[target_key] = json.loads(item.get(source_key) or "{}")
+                except json.JSONDecodeError:
+                    item[target_key] = {}
+            jobs.append(item)
+        return jobs
+
+    def start_archive_source_replacement(
+        self,
+        *,
+        account_id: str,
+        bvid: str,
+        page_number: Any,
+        file_id: str,
+        confirmation_bvid: str,
+    ) -> dict[str, Any]:
+        clean_bvid = str(bvid or "").strip()
+        if str(confirmation_bvid or "").strip() != clean_bvid:
+            raise RecorderConfigError("二次确认的 BVID 与目标稿件不一致")
+        try:
+            target_page = int(page_number)
+        except (TypeError, ValueError) as exc:
+            raise RecorderConfigError("请选择要换源的分P") from exc
+        detail = self.bilibili_archive_detail(account_id, clean_bvid)
+        pages = detail.get("pages") if isinstance(detail.get("pages"), list) else []
+        if target_page <= 0 or target_page > len(pages):
+            raise RecorderConfigError("目标分P不存在")
+        selected_page = pages[target_page - 1]
+        video_path, video_info = self.recording_file(file_id)
+        allowed_ids = {item["id"] for item in self.burned_replacement_videos(500)}
+        if file_id not in allowed_ids:
+            raise RecorderConfigError("只能选择已完成 ASS 烧录且当前未被占用的视频")
+        self._ensure_archive_replacement_table()
+        with sqlite3.connect(self._pipeline_state_path(), timeout=30) as db:
+            active = db.execute(
+                """SELECT id FROM bilibili_source_replacements
+                   WHERE bvid=? AND page_number=? AND status IN ('queued','uploading','submitting')""",
+                (clean_bvid, target_page),
+            ).fetchone()
+            if active:
+                raise RecorderConfigError("该稿件的目标分P已有换源任务在队列中")
+            replacement_id = uuid.uuid4().hex
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                """INSERT INTO bilibili_source_replacements
+                   (id, account_id, bvid, page_number, page_title, file_id,
+                    video_name, video_path, status, progress_json, result_json,
+                    error, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', '{}', '{}', NULL, ?, ?)""",
+                (
+                    replacement_id,
+                    str(account_id or ""),
+                    clean_bvid,
+                    target_page,
+                    str(selected_page.get("title") or f"P{target_page}"),
+                    file_id,
+                    str(video_info.get("name") or video_path.name),
+                    str(video_path),
+                    now,
+                    now,
+                ),
+            )
+
+        def worker() -> None:
+            try:
+                _account, uploader = self._bilibili_archive_uploader(account_id)
+
+                def queue_status(status: str) -> None:
+                    self._update_archive_replacement(
+                        replacement_id,
+                        status="uploading" if status == "uploading" else "queued",
+                    )
+
+                def upload_progress(progress: dict[str, Any]) -> None:
+                    self._update_archive_replacement(
+                        replacement_id,
+                        status=(
+                            "submitting"
+                            if progress.get("phase") == "submitting"
+                            else "uploading"
+                        ),
+                        progress=progress,
+                    )
+
+                ok, result = uploader.replace_archive_page_source(
+                    bvid=clean_bvid,
+                    page_number=target_page,
+                    video_file_path=str(video_path),
+                    progress_detail_callback=upload_progress,
+                    queue_status_callback=queue_status,
+                )
+                if not ok or not isinstance(result, dict):
+                    raise RuntimeError(str(result))
+                self._update_archive_replacement(
+                    replacement_id,
+                    status="completed",
+                    progress={"percent": 100.0},
+                    result=result,
+                )
+            except Exception as exc:
+                self._update_archive_replacement(
+                    replacement_id,
+                    status="failed",
+                    error=str(exc),
+                )
+
+        threading.Thread(
+            target=worker,
+            name=f"potato-bilibili-replace-{replacement_id[:8]}",
+            daemon=True,
+        ).start()
+        return {
+            "id": replacement_id,
+            "bvid": clean_bvid,
+            "page_number": target_page,
+            "page_title": str(selected_page.get("title") or f"P{target_page}"),
+            "video_name": str(video_info.get("name") or video_path.name),
+            "status": "queued",
+        }
 
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
         return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)

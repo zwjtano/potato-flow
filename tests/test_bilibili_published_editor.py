@@ -45,6 +45,23 @@ class _FakeApi:
     def result(self):
         async def resolve():
             self.__class__.calls.append(self)
+            if self.url.endswith("/x/web/archives"):
+                return {
+                    "page": {"pn": 1, "ps": 20, "count": 1},
+                    "arc_audits": [{
+                        "Archive": {
+                            "aid": 123,
+                            "bvid": "BV1test0000",
+                            "title": "历史稿件",
+                            "cover": "https://example.com/old.jpg",
+                            "state": 0,
+                            "state_desc": "已通过",
+                            "duration": 60,
+                            "ptime": 123456,
+                        },
+                        "Videos": [{"cid": 1}],
+                    }],
+                }
             if self.url.endswith("/archive/view"):
                 return {
                     "archive": {
@@ -146,6 +163,95 @@ class BilibiliUploadProgressTests(unittest.TestCase):
     "本机未安装完整 Bilibili SDK 运行依赖",
 )
 class PublishedMetadataEditorTests(unittest.TestCase):
+    def test_archive_center_lists_all_authenticated_account_archives(self):
+        _FakeApi.calls = []
+        uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+        with (
+            patch.object(bilibili_uploader, "configure_bilibili_runtime"),
+            patch.object(
+                bilibili_uploader,
+                "load_credential_from_file",
+                return_value=_Credential(),
+            ),
+            patch.object(
+                bilibili_uploader,
+                "validate_credential_remote",
+                return_value=(True, "ok"),
+            ),
+            patch.object(bilibili_uploader, "Api", _FakeApi),
+        ):
+            ok, result = uploader.list_archives(status="all")
+
+        self.assertTrue(ok)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["archives"][0]["bvid"], "BV1test0000")
+        archives_call = next(call for call in _FakeApi.calls if call.url.endswith("/x/web/archives"))
+        self.assertEqual(archives_call.params["status"], "all")
+
+    def test_replace_source_uploads_one_page_and_preserves_all_other_pages(self):
+        class ReplacementUploader:
+            def __init__(self, pages, **_kwargs):
+                self.pages = pages
+
+            def on(self, _event):
+                return lambda callback: callback
+
+            async def upload_pages(self):
+                return [{
+                    "title": self.pages[0].title,
+                    "desc": self.pages[0].description,
+                    "filename": "new-part-two",
+                    "cid": 202,
+                }]
+
+        _FakeApi.calls = []
+        with TemporaryDirectory() as temp_dir:
+            replacement = Path(temp_dir) / "burned.mp4"
+            replacement.write_bytes(b"burned-video")
+            uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+            with (
+                patch.object(bilibili_uploader, "configure_bilibili_runtime"),
+                patch.object(
+                    bilibili_uploader,
+                    "load_credential_from_file",
+                    return_value=_Credential(),
+                ),
+                patch.object(
+                    bilibili_uploader,
+                    "validate_credential_remote",
+                    return_value=(True, "ok"),
+                ),
+                patch.object(bilibili_uploader, "Api", _FakeApi),
+                patch.object(
+                    bilibili_uploader.video_uploader,
+                    "VideoUploader",
+                    ReplacementUploader,
+                ),
+                patch.object(
+                    bilibili_uploader,
+                    "get_app_subdir",
+                    return_value=temp_dir,
+                ),
+            ):
+                ok, result = uploader.replace_archive_page_source(
+                    bvid="BV1test0000",
+                    page_number=2,
+                    video_file_path=str(replacement),
+                )
+
+        self.assertTrue(ok)
+        self.assertEqual(result["old_cid"], 2)
+        self.assertEqual(result["new_cid"], 202)
+        edit_call = next(call for call in _FakeApi.calls if call.url.endswith("/web/edit"))
+        self.assertEqual(
+            [page["filename"] for page in edit_call.data["videos"]],
+            ["part-one", "new-part-two"],
+        )
+        self.assertEqual(
+            [page["title"] for page in edit_call.data["videos"]],
+            ["13点旧标题", "14点旧标题"],
+        )
+
     def test_update_preserves_every_existing_page(self):
         _FakeApi.calls = []
         with TemporaryDirectory() as temp_dir:
