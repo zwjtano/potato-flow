@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from danmaku_pipeline import (
+    DanmakuComment,
     build_ass,
     format_comments_for_ai,
     inspect_biliup_xml,
@@ -50,6 +51,35 @@ class DanmakuPipelineTests(unittest.TestCase):
             selected = select_summary_comments(parse_biliup_xml(path), 20)
             self.assertEqual(len(selected), 2)
             self.assertNotIn("uid", format_comments_for_ai(selected).lower())
+
+    def test_ai_sampling_preserves_rare_numeric_event_evidence(self):
+        comments = [
+            DanmakuComment(
+                time=float(index),
+                mode=1,
+                color=0,
+                text=f"普通反应{chr(0x4e00 + index)}",
+            )
+            for index in range(100)
+        ]
+        comments[93] = DanmakuComment(
+            time=93.0,
+            mode=1,
+            color=0,
+            text="20秒买活",
+        )
+        comments[99] = DanmakuComment(
+            time=99.0,
+            mode=1,
+            color=0,
+            text="q4q4q4q4q4q4q4q4q4q4q4q4q4q4",
+        )
+
+        selected = select_summary_comments(comments, 20)
+
+        self.assertEqual(len(selected), 20)
+        self.assertIn("20秒买活", [comment.text for comment in selected])
+        self.assertEqual([comment.time for comment in selected], sorted(comment.time for comment in selected))
 
     def test_inspect_xml_reports_raw_valid_invalid_and_timeline_counts(self):
         path = self._write_xml(

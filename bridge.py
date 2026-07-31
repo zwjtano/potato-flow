@@ -47,15 +47,26 @@ VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
 DEFAULT_RECORDING_TITLE_AI_PROMPT = (
-    "根据本段直播的实际内容和弹幕反应提炼一个自然、有信息量的核心主题；"
-    "突出关键对局、英雄、事件或节目效果，不使用夸张的虚假结论。"
-    "不要包含主播名、日期、时间和“直播回放”，最多18个中文字符。"
+    "根据本段直播的实际内容和弹幕反应，从有精确弹幕证据的重要事件中提炼一个自然、"
+    "有信息量的完整核心主题标题。将当前主播或本段主角的可靠名称自然融入句子，主语不必放在最前；"
+    "不得使用“主播名｜事件”这种姓名标签加竖线的机械格式。突出关键对局、英雄、事件或节目效果，"
+    "不使用夸张的虚假结论；标题中的核心事件必须同时进入重要时间点。不要包含日期、时间和“直播回放”，"
+    "最多24个中文字符。"
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
-    "生成可直接用于哔哩哔哩投稿、内容充实的完整中文简介：先用两至四段概括主要内容、"
-    "事件发展、关键时刻和观众反应，再选出有完整弹幕证据的重要事件。"
+    "生成可直接用于哔哩哔哩投稿、内容充实的完整中文简介：用两至四段自然叙述，主要按弹幕内容随直播时间的"
+    "变化向前推进。从开场的话题或状态写起，再写中段出现的关键变化、互动或节目效果，最后交代后段的发展、结果或复盘。"
+    "不要为了突出标题而打乱实际顺序，也不要忽略弹幕话题的转换；只保留有明确证据的内容，用自然过渡串起整段直播。"
+    "叙述中要写清人物主语：包括当前直播间主播，以及弹幕内容确实提到的其他主播、选手或嘉宾。"
+    "其他人物必须有可靠原文证据并能明确消歧；不得把弹幕用户名、模糊外号或同名对象写成视频人物。"
+    "确实发生的赛后复盘、回看失误或自我调侃可以作为节目效果写入，但必须说明复盘了什么，不得将“赛后复盘”"
+    "当成空泛栏目词。避免“直播精彩内容、引发热议、争议话题”等不说具体事件的句子。"
     "不要在简介正文中手写时间点；程序会回到完整 XML 定位最早证据、补偿反应延迟并统一格式化。"
-    "没有足够证据时宁可少列，不得编造时间或事件。只使用输入能够支持的事实，不虚构主播"
+    "重要事件必须有能够完整支持事件含义的逐字弹幕证据，没有足够证据时宁可少列，不得编造时间或事件。"
+    "重要时间点必须覆盖标题的核心事件；若标题包含两个先后发生的独立转折，应分别收录。"
+    "事件文案只做证据的最小忠实改写，不得增加原文没有的人物、动作、数字、原因或结果；"
+    "开场如果承接上一段残局，必须如实说明是“开场承接”，不得写成本段新发生的事件。"
+    "只使用输入能够支持的事实，不虚构主播"
     "原话、比赛结果或人物。不要出现文件名、任务编号、内部路径和机械化套话，不超过1800字。"
 )
 DOTA2_METADATA_DISAMBIGUATION = (
@@ -63,8 +74,11 @@ DOTA2_METADATA_DISAMBIGUATION = (
     "电炎绝手（Snapfire），不得理解为普通老年女性。"
 )
 DEFAULT_RECORDING_COVER_AI_PROMPT = (
-    "围绕本段最核心的对局、英雄或节目效果构图，主体醒目、对比清楚、适合手机缩略图；"
-    "人物形象与指定参考图保持一致，DOTA2 英雄和技能必须符合游戏原设；"
+    "围绕本段标题的核心事件构图，封面核心文案必须自然包含主角名，不使用“主角名｜事件”"
+    "这种机械标签。主体醒目、对比清楚、适合手机缩略图；当前主播必须使用已上传的封面人物底稿，"
+    "所有主播别名都指向底稿中的同一人，不得根据昵称猜测长相、另画陌生人或按字面生成动植物。"
+    "只有在弹幕可靠提及其他主播且获得唯一匹配头像时，才可将其作为次要人物；不得替换主角或混合人脸。"
+    "DOTA2 英雄和技能必须符合游戏原设；"
     "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备，"
     "禁止自绘或仿冒装备图标。"
     "画面不要出现日期、时间、房间号、平台界面、二维码或水印。"
@@ -121,7 +135,7 @@ DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("DDC", ("DDC", "大狗", "梁发")),
     ("PIS", ("PIS", "Pis", "姚羿成")),
     ("Inflame", ("Inflame", "小书童", "何雍正")),
-    ("川神", ("川神", "叫我老陈就好了")),
+    ("川神", ("川神", "老菜", "叫我老陈就好了")),
 )
 
 
@@ -141,6 +155,147 @@ def normalize_dota2_streamer_name(streamer: str) -> str:
         if any(normalized == _compact_alias(alias) for alias in aliases):
             return canonical_name
     return original
+
+
+def recording_cover_subject_name(streamer: str, *content: str) -> str:
+    """Return the room owner's editorial name used by this segment's cover."""
+    normalized = normalize_dota2_streamer_name(streamer)
+    if not normalized or normalized == "主播":
+        return ""
+
+    owner_aliases: tuple[str, ...] = ()
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        if canonical_name == normalized:
+            owner_aliases = aliases
+            break
+
+    for value in content:
+        text = str(value or "")
+        folded = text.casefold()
+        matches: list[tuple[int, str]] = []
+        for alias in owner_aliases:
+            alias_folded = alias.casefold()
+            if re.fullmatch(r"[a-z][a-z0-9_ -]*", alias_folded):
+                found = re.search(
+                    rf"(?<![a-z0-9]){re.escape(alias_folded)}(?![a-z0-9])",
+                    folded,
+                )
+                if found:
+                    matches.append((found.start(), alias))
+            else:
+                position = folded.find(alias_folded)
+                if position >= 0:
+                    matches.append((position, alias))
+        if matches:
+            matched_alias = min(matches, key=lambda item: item[0])[1]
+            # The room name is too long for cover copy; use its stable public name.
+            if matched_alias == "叫我老陈就好了":
+                return "川神"
+            return matched_alias
+    return normalized
+
+
+def _text_mentions_name(text: str, name: str) -> bool:
+    folded_name = str(name or "").strip().casefold()
+    if not folded_name:
+        return False
+    folded_text = str(text or "").casefold()
+    if re.fullmatch(r"[a-z][a-z0-9_ -]*", folded_name):
+        return bool(re.search(
+            rf"(?<![a-z0-9]){re.escape(folded_name)}(?![a-z0-9])",
+            folded_text,
+        ))
+    return folded_name in folded_text
+
+
+def recording_cover_guest_candidates(
+    streamer: str,
+    *content: str,
+) -> list[dict[str, str]]:
+    """Return known non-owner streamer aliases explicitly present in the content."""
+    current_name = normalize_dota2_streamer_name(streamer)
+    combined = "\n".join(str(value or "") for value in content)
+    guests: list[dict[str, str]] = []
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        if canonical_name == current_name:
+            continue
+        matched = [alias for alias in aliases if _text_mentions_name(combined, alias)]
+        if not matched:
+            continue
+        mentioned_as = min(
+            matched,
+            key=lambda alias: combined.casefold().find(alias.casefold()),
+        )
+        guests.append({"name": canonical_name, "mentioned_as": mentioned_as})
+        if len(guests) >= 3:
+            break
+    return guests
+
+
+def resolve_recording_guest_avatar(
+    guest: dict[str, str],
+    cfg: dict[str, Any],
+) -> dict[str, str] | None:
+    """Resolve one mentioned streamer to a unique saved profile or Douyu result."""
+    guest_name = str(guest.get("name") or "").strip()
+    mentioned_as = str(guest.get("mentioned_as") or guest_name).strip()
+    for profile in cfg.get("_recording_profiles", []) or []:
+        if not isinstance(profile, dict):
+            continue
+        profile_name = str(profile.get("streamer_name") or "").strip()
+        if normalize_dota2_streamer_name(profile_name) != guest_name:
+            continue
+        avatar_url = str(profile.get("streamer_avatar_url") or "").strip()
+        if re.match(r"^https?://", avatar_url, re.IGNORECASE):
+            return {
+                "name": guest_name,
+                "mentioned_as": mentioned_as,
+                "avatar_url": avatar_url,
+                "source": "saved_room",
+            }
+
+    from modules.live_recorder_manager import live_recorder_manager  # type: ignore
+
+    candidates = live_recorder_manager._search_douyu_rooms(mentioned_as, 10)
+    exact = []
+    seen_room_ids: set[str] = set()
+    identity_aliases = {guest_name, mentioned_as}
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        if canonical_name == guest_name:
+            identity_aliases.update(aliases)
+            break
+    for candidate in candidates:
+        room_id = str(candidate.get("room_id") or "").strip()
+        candidate_name = str(candidate.get("name") or "").strip()
+        avatar_url = str(candidate.get("avatar_url") or "").strip()
+        if (
+            not room_id
+            or room_id in seen_room_ids
+            or not re.match(r"^https?://", avatar_url, re.IGNORECASE)
+        ):
+            continue
+        matched_identity_aliases = {
+            _compact_alias(alias)
+            for alias in identity_aliases
+            if _text_mentions_name(candidate_name, alias)
+        }
+        if not (
+            normalize_dota2_streamer_name(candidate_name) == guest_name
+            or _compact_alias(candidate_name) == _compact_alias(mentioned_as)
+            or len(matched_identity_aliases) >= 2
+        ):
+            continue
+        seen_room_ids.add(room_id)
+        exact.append(candidate)
+    if len(exact) != 1:
+        return None
+    return {
+        "name": guest_name,
+        "mentioned_as": mentioned_as,
+        "avatar_url": str(exact[0]["avatar_url"]),
+        "room_id": str(exact[0]["room_id"]),
+        "source": "douyu_api",
+    }
 
 
 def utc_now() -> str:
@@ -179,6 +334,11 @@ def resolve_path(value: str | os.PathLike[str], cfg: dict[str, Any]) -> Path:
 
 def effective_config(base: dict[str, Any], video: Path) -> dict[str, Any]:
     cfg = dict(base)
+    cfg["_recording_profiles"] = [
+        dict(profile)
+        for profile in base.get("profiles", []) or []
+        if isinstance(profile, dict)
+    ]
     cfg.pop("profiles", None)
     for profile in base.get("profiles", []) or []:
         if isinstance(profile, dict) and fnmatch.fnmatch(video.name, str(profile.get("match", ""))):
@@ -452,8 +612,8 @@ def strip_ai_timeline_lines(description: str) -> str:
 def timeline_target_range(duration_seconds: float | None) -> tuple[int, int]:
     """Return a useful highlight target scaled to the recording duration."""
     if duration_seconds is None or float(duration_seconds) <= 0:
-        return 6, 10
-    minimum = max(3, min(10, int((float(duration_seconds) + 479) // 480)))
+        return 4, 8
+    minimum = max(2, min(8, int((float(duration_seconds) + 899) // 900)))
     return minimum, min(14, minimum + 4)
 
 
@@ -574,9 +734,15 @@ def render_grounded_danmaku_timeline(
     delay_seconds: int = 8,
     duration_seconds: float | None = None,
     maximum_points: int | None = None,
+    anchor_diagnostics: dict[str, Any] | None = None,
 ) -> str:
-    """Render only timeline anchors that copy an exact XML evidence pair."""
+    """Render timeline anchors only from exact, coherent XML evidence clusters."""
     if not isinstance(timeline, list):
+        if anchor_diagnostics is not None:
+            anchor_diagnostics["timeline_anchor_details"] = []
+            anchor_diagnostics["timeline_rejection_reasons"] = {
+                "invalid_timeline": 1,
+            }
         return ""
     sampled_texts = {
         str(comment.text).strip()
@@ -585,24 +751,31 @@ def render_grounded_danmaku_timeline(
     }
     delay = max(0, min(60, int(delay_seconds or 0)))
     maximum = None if duration_seconds is None else max(0.0, float(duration_seconds))
-    verified: dict[int, str] = {}
+    verified: list[dict[str, Any]] = []
+    rejection_reasons: dict[str, int] = {}
+
+    def reject(reason: str) -> None:
+        rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
 
     for item in timeline:
         if not isinstance(item, dict):
+            reject("invalid_candidate")
             continue
         raw_evidence_texts = item.get("evidence_texts")
-        evidence_texts = (
+        evidence_texts = list(dict.fromkeys(
             [str(text or "").strip() for text in raw_evidence_texts[:3]]
             if isinstance(raw_evidence_texts, list)
             else [str(item.get("evidence_text") or "").strip()]
-        )
+        ))
         if not evidence_texts or any(
             not text or text not in sampled_texts
             for text in evidence_texts
         ):
+            reject("evidence_not_exact_sample")
             continue
         raw_keywords = item.get("evidence_keywords")
         if not isinstance(raw_keywords, list):
+            reject("missing_keywords")
             continue
         keywords = list(dict.fromkeys(
             re.sub(r"\s+", " ", str(keyword or "")).strip()
@@ -611,51 +784,69 @@ def render_grounded_danmaku_timeline(
         ))
         evidence_corpus = "\n".join(evidence_texts).casefold()
         if not keywords or any(keyword.casefold() not in evidence_corpus for keyword in keywords):
+            reject("keywords_not_supported")
             continue
-        matching_comments = [
-            comment
-            for comment in all_comments
-            if all(
-                keyword.casefold() in str(getattr(comment, "text", "")).casefold()
-                for keyword in keywords
-            )
-        ]
+        evidence_matches = sorted(
+            (
+                comment for comment in all_comments
+                if str(getattr(comment, "text", "")).strip() in evidence_texts
+            ),
+            key=lambda comment: float(comment.time),
+        )
+        matching_comments: list[Any] = []
+        for first_index, first in enumerate(evidence_matches):
+            cluster = [
+                comment for comment in evidence_matches[first_index:]
+                if float(first.time) <= float(comment.time) <= float(first.time) + 30.0
+            ]
+            cluster_texts = {
+                str(getattr(comment, "text", "")).strip()
+                for comment in cluster
+            }
+            if all(text in cluster_texts for text in evidence_texts):
+                matching_comments = cluster
+                break
         if not matching_comments:
-            # One event is often described by several adjacent reactions. Keep
-            # the anchor XML-grounded when no single comment contains every
-            # keyword by requiring the exact sampled evidence to form a short
-            # cluster that collectively contains them all.
-            evidence_matches = sorted(
-                (
-                    comment for comment in all_comments
-                    if str(getattr(comment, "text", "")).strip() in evidence_texts
-                ),
-                key=lambda comment: float(comment.time),
-            )
-            for first in evidence_matches:
-                cluster = [
-                    comment for comment in evidence_matches
-                    if float(first.time) <= float(comment.time) <= float(first.time) + 30.0
-                ]
-                cluster_text = "\n".join(
-                    str(getattr(comment, "text", "")) for comment in cluster
-                ).casefold()
-                if all(keyword.casefold() in cluster_text for keyword in keywords):
-                    matching_comments = cluster
-                    break
-        if not matching_comments:
+            reject("exact_cluster_not_found")
             continue
         event = re.sub(r"\s+", " ", str(item.get("event") or "")).strip()
         event = re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", event)
         if not event:
+            reject("missing_event")
             continue
         earliest = min(matching_comments, key=lambda comment: float(comment.time))
-        corrected = max(0, int(float(earliest.time)) - delay)
+        xml_anchor = max(0, int(float(earliest.time)))
+        corrected = max(0, xml_anchor - delay)
         if maximum is not None and corrected > maximum + 1:
+            reject("outside_recording_duration")
             continue
-        verified.setdefault(corrected, event[:120])
+        event_text = event[:120]
+        event_key = _compact_alias(event_text)
+        evidence_key = frozenset(evidence_texts)
+        duplicate = any(
+            abs(corrected - int(existing["corrected_seconds"])) <= 60
+            and (
+                event_key == existing["event_key"]
+                or bool(evidence_key.intersection(existing["evidence_key"]))
+            )
+            for existing in verified
+        )
+        if duplicate:
+            reject("duplicate_event")
+            continue
+        verified.append({
+            "corrected_seconds": corrected,
+            "xml_anchor_seconds": xml_anchor,
+            "event": event_text,
+            "event_key": event_key,
+            "evidence_key": evidence_key,
+            "evidence_count": len(evidence_texts),
+        })
 
     if not verified:
+        if anchor_diagnostics is not None:
+            anchor_diagnostics["timeline_anchor_details"] = []
+            anchor_diagnostics["timeline_rejection_reasons"] = rejection_reasons
         return ""
 
     def format_timestamp(total: int) -> str:
@@ -665,13 +856,25 @@ def render_grounded_danmaku_timeline(
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
 
-    ordered_seconds = sorted(verified)
+    ordered = sorted(verified, key=lambda item: int(item["corrected_seconds"]))
     if maximum_points is not None:
-        ordered_seconds = ordered_seconds[:max(0, int(maximum_points))]
+        ordered = ordered[:max(0, int(maximum_points))]
     lines = [
-        f"{format_timestamp(second)} {verified[second]}"
-        for second in ordered_seconds
+        f"{format_timestamp(int(item['corrected_seconds']))} {item['event']}"
+        for item in ordered
     ]
+    if anchor_diagnostics is not None:
+        anchor_diagnostics["timeline_anchor_details"] = [
+            {
+                "event": item["event"],
+                "xml_anchor": format_timestamp(int(item["xml_anchor_seconds"])),
+                "final_timestamp": format_timestamp(int(item["corrected_seconds"])),
+                "reaction_delay_seconds": delay,
+                "evidence_count": item["evidence_count"],
+            }
+            for item in ordered
+        ]
+        anchor_diagnostics["timeline_rejection_reasons"] = rejection_reasons
     if not lines:
         return ""
     return "重要时间点\n" + "\n".join(lines)
@@ -1342,7 +1545,11 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
     raise RuntimeError(f"FFmpeg 自动截取封面失败（已尝试多个时间点）: {' | '.join(errors)[-1600:]}")
 
 
-def recording_cover_headline(title: str, ai_topic: str = "") -> str:
+def recording_cover_headline(
+    title: str,
+    ai_topic: str = "",
+    streamer: str = "",
+) -> str:
     """Extract a cover-safe headline without dates, clocks or template chrome."""
     candidate = str(ai_topic or "").strip()
     if not candidate:
@@ -1356,7 +1563,12 @@ def recording_cover_headline(title: str, ai_topic: str = "") -> str:
     candidate = re.sub(r"(?:今天|今日|今晚|昨天|明天|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜)", "", candidate)
     candidate = re.sub(r"[\r\n｜|]+", " ", candidate)
     candidate = re.sub(r"\s{2,}", " ", candidate).strip(" -_｜|·")
-    return (candidate or "直播精彩内容")[:24]
+    candidate = candidate or "直播精彩内容"
+    subject_name = recording_cover_subject_name(streamer, title, ai_topic)
+    headline = candidate[:24]
+    if subject_name and not topic_mentions_streamer(headline, streamer):
+        headline = f"{subject_name}{candidate}"[:24]
+    return headline
 
 
 def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
@@ -1713,8 +1925,28 @@ def recording_cover_dota2_streamer_instruction(
     return (
         "斗鱼 Dota 2 主播昵称消歧："
         + "；".join(matched)
-        + "。这些映射只用于理解标题和事件；封面主体仍必须以当前直播间主播及上传的头像/"
-        "专用参考图为准，其他被提及选手不能取代主播成为另一张脸。"
+        + "。这些映射只用于理解标题和事件；封面主体仍必须以当前直播间的封面人物底稿为准，"
+        "其他被提及选手不能取代主播成为另一张脸。"
+    )
+
+
+def recording_cover_subject_identity_instruction(
+    streamer: str,
+    subject_name: str,
+) -> str:
+    """Lock editorial aliases to the single character in the cover base image."""
+    canonical_name = normalize_dota2_streamer_name(streamer) or str(streamer or "主播")
+    labels = dedupe_recording_tags((subject_name, canonical_name, streamer))
+    if canonical_name == "川神":
+        labels = dedupe_recording_tags(
+            (*labels, "川神", "老菜", "叫我老陈就好了")
+        )
+    joined_labels = "、".join(f"“{label}”" for label in labels if label) or "“主播”"
+    return (
+        f"封面主角身份锁定：{joined_labels}都指当前直播间的同一位主播，不是多个人物。"
+        "画面中主播只能有一人，人物外观只能依据随请求上传的封面人物底稿；"
+        "昵称只用于标题文字和身份理解，不得根据“枫哥”、“胖头”、“老菜”等昵称猜测长相、"
+        "另画陌生人，也不得按字面画成枫叶、鱼、蔬菜或拟人形象。"
     )
 
 
@@ -1760,10 +1992,17 @@ def generate_recording_cover_with_ai(
 
     ai_cfg = load_y2a_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
-    headline = recording_cover_headline(title, ai_topic)
+    cover_subject_name = recording_cover_subject_name(
+        streamer,
+        title,
+        ai_topic,
+        description,
+    )
+    headline = recording_cover_headline(title, ai_topic, streamer)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
         "ai_cover_headline": headline,
+        "ai_cover_subject_name": cover_subject_name,
         "ai_cover_excludes_time": True,
     }
     if not enabled:
@@ -1786,6 +2025,8 @@ def generate_recording_cover_with_ai(
     custom_reference_path = Path(custom_reference_value).expanduser()
     if custom_reference_value and not custom_reference_path.is_absolute():
         custom_reference_path = WORKSPACE_ROOT / custom_reference_path
+    if custom_reference_value and not custom_reference_path.is_file():
+        raise FileNotFoundError(f"封面人物底稿不存在: {custom_reference_path}")
     custom_reference = (
         (normalize_dota2_streamer_name(streamer) or streamer, custom_reference_path)
         if custom_reference_value and custom_reference_path.is_file()
@@ -1795,18 +2036,11 @@ def generate_recording_cover_with_ai(
     reference_name = reference[0] if reference else ""
     reference_kind = "custom" if custom_reference else ("dedicated" if reference else "")
     reference_paths: list[Path] = [reference[1]] if reference else []
-    avatar_url = str(cfg.get("streamer_avatar_url") or "").strip()
-    if avatar_url and not reference:
-        try:
-            avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
-            if avatar_reference not in reference_paths:
-                reference_paths.append(avatar_reference)
-            if not reference:
-                reference = (streamer or "直播间头像", avatar_reference)
-                reference_name = reference[0]
-                reference_kind = "avatar"
-        except (OSError, ValueError) as exc:
-            details["ai_cover_avatar_reference_error"] = str(exc)
+    if not reference:
+        raise ValueError(
+            f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
+            "为避免图片模型根据昵称猜错人物，已停止 AI 封面生成"
+        )
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
     elif reference_kind == "custom":
@@ -1816,10 +2050,66 @@ def generate_recording_cover_with_ai(
             "标志性配饰、主色与画风的辨识度。可以根据本段内容调整表情、动作和背景，"
             "但不得换脸、真人化或替换成其他角色。"
         )
-    elif reference_kind == "avatar":
-        reference_instruction = recording_avatar_reference_instruction(streamer)
     else:
         reference_instruction = ""
+    subject_identity_instruction = recording_cover_subject_identity_instruction(
+        streamer,
+        cover_subject_name,
+    )
+    guest_candidates = recording_cover_guest_candidates(
+        streamer,
+        title,
+        ai_topic,
+        description,
+    )
+    guest_references: list[dict[str, str]] = []
+    guest_reference_errors: list[dict[str, str]] = []
+    for guest_candidate in guest_candidates:
+        try:
+            resolved_guest = resolve_recording_guest_avatar(guest_candidate, cfg)
+            if resolved_guest is None:
+                guest_reference_errors.append({
+                    "name": guest_candidate["name"],
+                    "error": "斗鱼搜索未形成唯一精确匹配",
+                })
+                continue
+            guest_reference = download_recording_avatar_reference(
+                resolved_guest["avatar_url"],
+                cfg,
+            )
+            if guest_reference not in reference_paths:
+                reference_paths.append(guest_reference)
+            guest_references.append({
+                **resolved_guest,
+                "reference_path": str(guest_reference),
+            })
+        except Exception as exc:
+            guest_reference_errors.append({
+                "name": guest_candidate["name"],
+                "error": str(exc),
+            })
+    details["ai_cover_guest_streamers"] = guest_references
+    details["ai_cover_guest_reference_errors"] = guest_reference_errors
+    if guest_references:
+        guest_identity_instruction = (
+            "额外主播身份参考：在封面人物底稿之后上传的头像依次对应 "
+            + "；".join(
+                f"标题中的“{guest['mentioned_as']}”＝主播 {guest['name']}"
+                for guest in guest_references
+            )
+            + "。只有内容确实需要该主播出镜时才能添加，其外观必须依据对应头像；"
+            "不得与当前直播间主角的封面人物底稿混合或换脸。"
+        )
+    elif guest_candidates:
+        guest_identity_instruction = (
+            "内容提到了其他主播，但未能从已保存直播间或斗鱼接口取得唯一可靠的头像；"
+            "禁止在画面中生成或猜测该人物的脸。"
+        )
+    else:
+        guest_identity_instruction = (
+            "本次未发现需要出镜的其他主播；不要根据普通人名、弹幕用户名或职业选手外号"
+            "自行增加陌生人物。"
+        )
     dota2_instruction = recording_cover_dota2_instruction(
         title,
         ai_topic,
@@ -2053,16 +2343,21 @@ def generate_recording_cover_with_ai(
     prompt = f"""
 为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
+封面主角称呼：{cover_subject_name or streamer or "主播"}
 AI 生成的核心标题：{headline}
 内容摘要：{str(description or "")[:500]}
 
-只围绕核心标题设计画面，可将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+核心文案必须清晰保留主角称呼“{cover_subject_name or streamer or "主播"}”，称呼可以放在开头或自然融入句子，
+但不得排成“主角｜主题”的固定栏目格式。
 {composition_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
 {dota2_ability_instruction}
 {dota2_streamer_instruction}
 {streamer_expression_instruction}
+{subject_identity_instruction}
+{guest_identity_instruction}
 {reference_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
@@ -2514,10 +2809,26 @@ def generate_danmaku_metadata_with_ai(
             "timeline_target_min": timeline_minimum,
             "timeline_target_max": timeline_maximum,
             "timeline_reaction_delay_seconds": reaction_delay,
+            "timeline_anchor_policy": "exact_xml_evidence",
+            "timeline_cluster_window_seconds": 30,
             "timeline_retry_attempted": False,
         })
         payload = {
             "base_description": base_description,
+            "streamer_identity": {
+                "configured_name": str(cfg.get("streamer_name") or "").strip(),
+                "public_name": normalize_dota2_streamer_name(
+                    str(cfg.get("streamer_name") or "").strip()
+                ),
+                "editorial_names": list(dict.fromkeys(
+                    alias
+                    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS
+                    if normalize_dota2_streamer_name(
+                        str(cfg.get("streamer_name") or "").strip()
+                    ) == canonical_name
+                    for alias in (canonical_name, *aliases)
+                )),
+            },
             "comment_count": len(comments),
             "sampled_comments": format_comments_for_ai(selected),
             "sampled_comment_evidence": [
@@ -2554,22 +2865,45 @@ verified_live_context 是在 AI 之前完成的直播统计与主播同场对局
 verified_live_context.live_stats 只作为事实参考。description 严禁复制或输出“直播数据”区块、礼物、
 在线人数、英雄装备统计表；这些内容由投稿流程在最后一步独立渲染，并且只渲染一次。
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
+streamer_identity 是当前直播间主播的可靠身份；description 提到当前主播时优先使用 public_name。
+editorial_names 是同一主播可用的可靠标题名称，只能结合弹幕实际用法选择其一，不得将这些别名当成多个人。
+弹幕中确实提到的其他主播、选手或嘉宾可以写入，但必须有能明确指向该人物的原文证据；
+不得把弹幕用户名、模糊外号、英雄名或同名对象当成真实人物。涉及人物的句子必须写清“谁做了什么”。
 description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
-description 只写两至四段事件总结，不要包含“重要时间点”标题或任何手写时间。
+description 只写两至四段事件总结，主要依照 sampled_comment_evidence 从前到后的内容变化推进：
+先交代开场话题或状态，再写中段的事件发展、话题转换和观众反应，最后交代后段结果或复盘。
+不要为迎合 title_topic 把后半段事件提前，不要把不同时段的独立话题写成同一条因果链。
+不要包含“重要时间点”标题或任何手写时间。
 timeline 只选择 sampled_comment_evidence 有直接证据的事件。每项返回 event、evidence_texts
 和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
 evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
+必须先从有精确证据的 timeline 事件中选择 title_topic，并保证 timeline 至少有一条直接对应、
+完整支持标题核心事件。如果 title_topic 由两个先后发生的独立转折组成，timeline 必须分别收录，
+不得只收录铺垫或次要事件而遗漏标题落点。
 如果证据充足，timeline 应覆盖录播开头、中段和结尾，并返回 {timeline_minimum} 至
 {timeline_maximum} 个彼此不同的关键看点。适用于所有直播类型：优先选择内容推进、关键决定、
 意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
 游戏内容时，才额外考虑阵容选择、关键交锋、操作失误、局势转折和翻盘；不得把聊天、访谈、
 户外、才艺或其他直播强行描述成游戏对局。不要把同一事件拆成多条，也不要为了达到数量编造内容。
+重要事件涉及人物时，event 必须写明当前主播或被提及的其他人物“谁做了什么”；
+无法从证据确定人物时宁可写“主播”或省略该事件，不得猜测姓名。
+每条 event 必须是 evidence_texts 的最小忠实改写：主语、对象、动作、数字、原因、结果和“首波”
+“翻盘”“阵亡”等阶段性判断都必须由原文直接说明或由同一 30 秒窗口的多条证据共同支持；
+不得仅因附近讨论了相关英雄、装备或选人，就向 event 补入原文没有的动作与结果。
+一条像总结稿的超长弹幕不能独自支撑包含多个先后环节的复合 event；应拆分并寻找相邻佐证，
+找不到就只保留该原文能直接支持的最小事实。
 不要返回时间戳；程序会使用 evidence_keywords 回到完整 XML 查找第一条匹配弹幕。
-完整 XML 中必须存在一条同时包含所有关键词的弹幕，或在 30 秒内存在一组逐字复制的
-evidence_texts 共同覆盖所有关键词；否则必须省略该事件，不得用宽泛关键词拼凑结论。
+程序只使用逐字一致的 evidence_texts 回到完整 XML 定位：只有一条证据时取该原文在 XML 中的最早出现；
+有多条证据时，每条原文都必须在同一个 30 秒窗口内出现。evidence_keywords 只用于检查这些原文是否完整支持 event，
+绝不能用关键词去搜索更早的相似弹幕或推测事件时间；否则必须省略该事件。
 弹幕时间晚于画面事件：应选最早一批明确相关弹幕作为证据锚点，不要选择刷屏高峰；程序会按
 timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
-title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
+如果最早证据本身位于录制开头的反应延迟窗口内，event 必须写成“开场已处于……”或“开场承接……”，
+不得将上一段已发生的动作伪装成本段 00:00 新发生的事件。
+title_topic 是适合放进标题的自然短语，必须来自上述已收录的 timeline 核心事件；
+当前主播有可靠名称时，必须从 streamer_identity.editorial_names 中选择一个符合本段弹幕用法的名称，
+将其自然融入事件短语，位置不限；禁止输出“主播名｜事件”或“主播名：事件”这种标签式结构。
+不加书名号、不含日期和时间，最多 24 个中文字符。
 {DOTA2_METADATA_DISAMBIGUATION}
 本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
@@ -2614,6 +2948,7 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             delay_seconds=reaction_delay,
             duration_seconds=timeline_duration_seconds,
             maximum_points=timeline_maximum,
+            anchor_diagnostics=diagnostics,
         )
         verified_count = len(timeline_lines(timeline_text))
         if verified_count < timeline_minimum and len(selected) >= timeline_minimum:
@@ -2627,7 +2962,8 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
 你正在补充一份已经由程序逐条核验的直播录播时间点。当前目标至少 {timeline_minimum} 条，
 已核验 {verified_count} 条。只返回尚未覆盖的不同事件，不得复述 verified_timeline。
 每项仍必须从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，并提供能完整支持
-event 的 evidence_keywords；证据不足就少返回，绝不能编造。不要返回时间戳或正文。
+event 的 evidence_keywords；多条 evidence_texts 必须来自同一个连续 30 秒事件窗口。证据不足就少返回，
+绝不能编造。不要返回时间戳或正文。
 返回 JSON 对象：{{"timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
 """.strip()
             try:
@@ -2655,6 +2991,7 @@ event 的 evidence_keywords；证据不足就少返回，绝不能编造。不�
                     delay_seconds=reaction_delay,
                     duration_seconds=timeline_duration_seconds,
                     maximum_points=timeline_maximum,
+                    anchor_diagnostics=diagnostics,
                 )
                 verified_count = len(timeline_lines(timeline_text))
             except Exception as exc:

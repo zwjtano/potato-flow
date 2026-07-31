@@ -785,9 +785,9 @@ class LiveRecorderManager:
         except ModuleNotFoundError as exc:
             logger.warning("AI 投稿模块不完整，录制页暂时使用内置提示词摘要：%s", exc)
             return {
-                "title": "根据本段直播内容提炼核心主题，生成准确、简洁的中文标题。",
-                "description": "根据本段弹幕与直播内容生成完整中文简介，保持客观且不虚构。",
-                "cover": "根据本段核心内容生成清晰醒目的横向视频封面；DOTA2 内容应遵循游戏原设。",
+                "title": "从有弹幕证据的核心事件生成标题，将主角名自然融入句子，不使用姓名加竖线的标签格式。",
+                "description": "按弹幕时间顺序生成完整中文简介，写清可靠人物与事件，并用完整 XML 证据定位覆盖标题的重要时间点。",
+                "cover": "使用封面人物底稿生成封面，核心文案包含主角名，不得猜脸或混脸；DOTA2 内容遵循游戏原设与官方参考。",
             }
 
         return {
