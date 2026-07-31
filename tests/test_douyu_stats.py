@@ -328,10 +328,50 @@ class DouyuStatsTests(unittest.TestCase):
             self.assertNotIn("火箭", text)
             self.assertIn("高能弹幕 ×1 | 300元", text)
             self.assertIn("在线 1000~1500", text)
-            self.assertIn("影魔 最终六格(黑皇杖)", text)
+            self.assertIn("影魔｜六格：黑皇杖", text)
 
             anchor = formatter.get_game_for_cover(session)
             self.assertEqual(anchor["hero"], "影魔")
+
+    def test_formatter_omits_games_without_equipment_and_separates_categories(self):
+        stats = {
+            "online_samples": [{"unix_ts": 150, "value": 1352}],
+            "games": [
+                {
+                    "start_unix_ts": 100,
+                    "end_unix_ts": 200,
+                    "anchor_player": player(35, "狙击手"),
+                    "anchor_last_seen_unix_ts": 180,
+                },
+                {
+                    "start_unix_ts": 200,
+                    "end_unix_ts": 300,
+                    "anchor_player": {
+                        **player(2, "斧王", ["闪烁匕首", "刃甲", "相位鞋"]),
+                        "neutral": "Rattlecage",
+                        "shard": True,
+                    },
+                    "anchor_last_seen_unix_ts": 280,
+                },
+            ],
+        }
+
+        text = formatter.format_stats(stats, 100, 300)
+
+        self.assertNotIn("狙击手", text)
+        self.assertIn(
+            "🎮 斧王｜六格：闪烁匕首、刃甲、相位鞋｜中立：Rattlecage｜魔晶",
+            text,
+        )
+        self.assertNotIn("狙击手 | 斧王", text)
+
+    def test_empty_item_placeholders_are_not_persisted_or_formatted(self):
+        daemon.dota_item_map = {}
+        parsed = daemon.RoomMonitor._player_from_raw({
+            "id": 2,
+            "items": ["empty", "item_empty", "0", "item_phase_boots"],
+        })
+        self.assertEqual(parsed["items"], ["Phase Boots"])
 
     def test_formatter_does_not_guess_anchor_without_xml_evidence(self):
         stats = {

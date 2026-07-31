@@ -336,14 +336,30 @@ def format_stats(
         if not anchor:
             continue
         hero = str(anchor.get("hero") or "").strip()
-        equipment = [str(item) for item in anchor.get("items", [])[:6] if str(item)]
-        if anchor.get("neutral"):
-            equipment.append(str(anchor["neutral"]))
+        main_items = [
+            str(item).strip()
+            for item in anchor.get("items", [])[:6]
+            if str(item).strip()
+            and _normalise_text(item) not in {"empty", "unknown"}
+            and not str(item).startswith("未知(empty)")
+        ]
+        equipment_parts: list[str] = []
+        if main_items:
+            equipment_parts.append(f"六格：{'、'.join(main_items)}")
+        neutral = str(anchor.get("neutral") or "").strip()
+        if (
+            neutral
+            and _normalise_text(neutral) not in {"empty", "unknown"}
+            and not neutral.startswith("未知(empty)")
+        ):
+            equipment_parts.append(f"中立：{neutral}")
         if anchor.get("scepter"):
-            equipment.append("A杖")
+            equipment_parts.append("A杖")
         if anchor.get("shard"):
-            equipment.append("魔晶")
-        summary = f"{hero} 最终六格({','.join(equipment)})" if equipment else hero
+            equipment_parts.append("魔晶")
+        if not equipment_parts:
+            continue
+        summary = f"{hero}｜{'｜'.join(equipment_parts)}"
         if all(key in anchor for key in ("kills", "deaths", "assists")):
             summary += (
                 f" K/D/A {anchor['kills']}/{anchor['deaths']}/{anchor['assists']}"
@@ -373,7 +389,13 @@ def format_stats(
         minimum, maximum = min(values), max(values)
         lines.append(f"👥 在线 {minimum}" if minimum == maximum else f"👥 在线 {minimum}~{maximum}")
     if game_lines:
-        lines.append(f"🎮 {' | '.join(game_lines)}")
+        if len(game_lines) == 1:
+            lines.append(f"🎮 {game_lines[0]}")
+        else:
+            lines.extend(
+                f"🎮 第{index}局：{summary}"
+                for index, summary in enumerate(game_lines, start=1)
+            )
     return "\n".join(lines)
 
 
