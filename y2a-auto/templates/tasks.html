@@ -1508,6 +1508,10 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         timeline_target_met: '达到最低目标',
         timeline_shortfall: '距离最低目标还差',
         timeline_evidence_status: '时间点证据状态',
+        timeline_anchor_policy: '时间点定位规则',
+        timeline_cluster_window_seconds: '多条证据窗口（秒）',
+        timeline_anchor_details: '时间点 XML 锚点详情',
+        timeline_rejection_reasons: '时间点拒绝原因',
         timeline_reaction_delay_seconds: '时间点提前补偿（秒）',
         timeline_diagnostics_source: '时间点诊断来源',
         streamer_hero: '识别到的主播英雄',
@@ -1658,6 +1662,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         }
         if (key === 'timeline_evidence_status') {
             return value === 'sufficient' ? '证据充足' : value === 'insufficient' ? '证据不足' : value;
+        }
+        if (key === 'timeline_anchor_policy') {
+            return value === 'exact_xml_evidence' ? '完整 XML 逐字证据定位' : value;
         }
         if (key === 'timeline_diagnostics_source') {
             return value === 'regenerated_preview' ? '待确认的重新生成预览' : value;

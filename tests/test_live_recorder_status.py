@@ -301,6 +301,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("核心主题", defaults["title"])
         self.assertIn("完整中文简介", defaults["description"])
         self.assertIn("DOTA2", defaults["cover"])
+        self.assertIn("主语不必放在最前", defaults["title"])
+        self.assertIn("完整 XML", defaults["description"])
+        self.assertIn("封面人物底稿", defaults["cover"])
 
     def test_room_can_upload_and_restore_custom_cover_reference(self):
         manager = LiveRecorderManager()

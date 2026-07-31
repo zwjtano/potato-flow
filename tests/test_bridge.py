@@ -14,6 +14,13 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_default_title_prompt_integrates_subject_without_label_prefix(self):
+        prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
+
+        self.assertIn("主语不必放在最前", prompt)
+        self.assertIn("主播名｜事件", prompt)
+        self.assertIn("必须同时进入重要时间点", prompt)
+
     def test_upload_pipeline_persists_duration_before_optional_ass_stage(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
         self.assertIn('"video_duration_seconds": recording_duration_seconds', source)
@@ -25,6 +32,9 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("Valve 官方装备图标参考", prompt)
         self.assertIn("缺少官方参考时不得表现具体装备", prompt)
         self.assertIn("禁止自绘或仿冒装备图标", prompt)
+        self.assertIn("封面核心文案必须自然包含主角名", prompt)
+        self.assertIn("封面人物底稿", prompt)
+        self.assertIn("不得替换主角或混合人脸", prompt)
 
     def test_recording_tags_dedupe_repeated_streamer_aliases(self):
         self.assertEqual(
@@ -321,7 +331,9 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(diagnostics["timeline_retry_attempted"])
         self.assertFalse(diagnostics["timeline_target_met"])
         self.assertEqual(diagnostics["timeline_evidence_status"], "insufficient")
-        self.assertEqual(diagnostics["timeline_shortfall"], 7)
+        self.assertEqual(diagnostics["timeline_shortfall"], 3)
+        self.assertEqual(diagnostics["timeline_anchor_policy"], "exact_xml_evidence")
+        self.assertEqual(diagnostics["timeline_cluster_window_seconds"], 30)
 
     def test_generic_recording_intro_is_removed_from_final_body(self):
         stats = "——— 直播数据 ———\n👥 在线 8257~10000"
@@ -409,7 +421,7 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(len(bridge.timeline_lines(rendered)), 12)
 
-    def test_grounded_timeline_combines_sampled_terms_but_requires_one_xml_match(self):
+    def test_grounded_timeline_rejects_exact_evidence_spread_across_distant_events(self):
         sampled = [
             types.SimpleNamespace(time=1572.0, text="紧急情况 大狗不在"),
             types.SimpleNamespace(time=1848.0, text="大狗撤销回溯"),
@@ -419,20 +431,76 @@ class BridgeTests(unittest.TestCase):
             *sampled,
         ]
 
-        self.assertEqual(
-            bridge.render_grounded_danmaku_timeline(
-                [{
-                    "event": "大狗缺席导致选人回溯",
-                    "evidence_texts": ["紧急情况 大狗不在", "大狗撤销回溯"],
-                    "evidence_keywords": ["大狗", "不在", "回溯"],
-                }],
-                sampled,
-                comments,
-                delay_seconds=8,
-                duration_seconds=3600,
-            ),
-            "重要时间点\n26:03 大狗缺席导致选人回溯",
+        self.assertEqual(bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "大狗缺席导致选人回溯",
+                "evidence_texts": ["紧急情况 大狗不在", "大狗撤销回溯"],
+                "evidence_keywords": ["大狗", "不在", "回溯"],
+            }],
+            sampled,
+            comments,
+            delay_seconds=8,
+            duration_seconds=3600,
+        ), "")
+
+    def test_grounded_timeline_does_not_shift_to_earlier_keyword_only_comment(self):
+        exact = types.SimpleNamespace(time=729.0, text="BP顺位受到质疑")
+        comments = [
+            types.SimpleNamespace(time=300.0, text="BP和顺位要怎么选"),
+            exact,
+        ]
+
+        diagnostics = {}
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "弹幕质疑 BP 顺位",
+                "evidence_texts": ["BP顺位受到质疑"],
+                "evidence_keywords": ["BP", "顺位", "质疑"],
+            }],
+            [exact],
+            comments,
+            delay_seconds=8,
+            duration_seconds=3600,
+            anchor_diagnostics=diagnostics,
         )
+
+        self.assertEqual(rendered, "重要时间点\n12:01 弹幕质疑 BP 顺位")
+        self.assertEqual(diagnostics["timeline_anchor_details"], [{
+            "event": "弹幕质疑 BP 顺位",
+            "xml_anchor": "12:09",
+            "final_timestamp": "12:01",
+            "reaction_delay_seconds": 8,
+            "evidence_count": 1,
+        }])
+
+    def test_grounded_timeline_merges_duplicate_event_candidates(self):
+        comments = [
+            types.SimpleNamespace(time=100.0, text="盾被抢了"),
+            types.SimpleNamespace(time=112.0, text="对面抢到肉山盾"),
+        ]
+        diagnostics = {}
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [
+                {
+                    "event": "对手抢下肉山盾",
+                    "evidence_texts": ["盾被抢了"],
+                    "evidence_keywords": ["盾被", "被抢"],
+                },
+                {
+                    "event": "对手抢下肉山盾",
+                    "evidence_texts": ["对面抢到肉山盾"],
+                    "evidence_keywords": ["对面", "肉山盾"],
+                },
+            ],
+            comments,
+            comments,
+            delay_seconds=8,
+            duration_seconds=300,
+            anchor_diagnostics=diagnostics,
+        )
+
+        self.assertEqual(rendered, "重要时间点\n01:32 对手抢下肉山盾")
+        self.assertEqual(diagnostics["timeline_rejection_reasons"]["duplicate_event"], 1)
 
     def test_grounded_timeline_accepts_adjacent_exact_evidence_cluster(self):
         comments = [
@@ -456,10 +524,10 @@ class BridgeTests(unittest.TestCase):
         )
 
     def test_timeline_target_scales_with_recording_duration(self):
-        self.assertEqual(bridge.timeline_target_range(None), (6, 10))
-        self.assertEqual(bridge.timeline_target_range(1800), (4, 8))
-        self.assertEqual(bridge.timeline_target_range(3600), (8, 12))
-        self.assertEqual(bridge.timeline_target_range(7200), (10, 14))
+        self.assertEqual(bridge.timeline_target_range(None), (4, 8))
+        self.assertEqual(bridge.timeline_target_range(1800), (2, 6))
+        self.assertEqual(bridge.timeline_target_range(3600), (4, 8))
+        self.assertEqual(bridge.timeline_target_range(7200), (8, 12))
 
     def test_grounded_timeline_rejects_unverifiable_evidence(self):
         sampled = [types.SimpleNamespace(time=1268.0, text="BP顺位受到质疑")]
@@ -545,6 +613,11 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("完整 XML", prompt)
         self.assertIn("不要在简介正文中手写时间点", prompt)
         self.assertIn("不得编造时间或事件", prompt)
+        self.assertIn("按弹幕内容随直播时间的变化向前推进", prompt)
+        self.assertIn("不要为了突出标题而打乱实际顺序", prompt)
+        self.assertIn("赛后复盘", prompt)
+        self.assertIn("重要时间点必须覆盖标题的核心事件", prompt)
+        self.assertIn("事件文案只做证据的最小忠实改写", prompt)
 
     def test_timeline_prompt_is_generic_and_only_adds_game_events_conditionally(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
@@ -552,6 +625,16 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("适用于所有直播类型", source)
         self.assertIn("只有输入明确属于", source)
         self.assertIn("不得把聊天、访谈", source)
+        self.assertIn("streamer_identity", source)
+        self.assertIn("其他主播、选手或嘉宾", source)
+        self.assertIn("谁做了什么", source)
+        self.assertIn("绝不能用关键词去搜索更早", source)
+        self.assertIn("必须先从有精确证据的 timeline 事件中选择 title_topic", source)
+        self.assertIn("两个先后发生的独立转折", source)
+        self.assertIn("不得只收录铺垫或次要事件而遗漏标题落点", source)
+        self.assertIn("每条 event 必须是 evidence_texts 的最小忠实改写", source)
+        self.assertIn("一条像总结稿的超长弹幕不能独自支撑", source)
+        self.assertIn("开场承接", source)
 
     def test_profile_override_and_metadata(self):
         base = {
@@ -1616,6 +1699,7 @@ class BridgeTests(unittest.TestCase):
             "龙神": "LongDD",
             "军体拳": "Sccc",
             "叫我老陈就好了": "川神",
+            "老菜": "川神",
         }
         for alias, expected in cases.items():
             with self.subTest(alias=alias):
@@ -1623,6 +1707,140 @@ class BridgeTests(unittest.TestCase):
                     bridge.normalize_dota2_streamer_name(alias),
                     expected,
                 )
+
+    def test_cover_subject_uses_performance_alias_from_title(self):
+        self.assertEqual(
+            bridge.recording_cover_subject_name(
+                "叫我老陈就好了",
+                "被骗幻象换走后迟迟不买活，老菜把全场看急了",
+            ),
+            "老菜",
+        )
+        self.assertEqual(
+            bridge.recording_cover_subject_name(
+                "叫我老陈就好了",
+                "川神关键换位救回必输局",
+            ),
+            "川神",
+        )
+
+    def test_cover_headline_adds_detected_subject_without_column_separator(self):
+        headline = bridge.recording_cover_headline(
+            "被骗幻象换走后迟迟不买活，老菜把全场看急了",
+            "被骗换后迟迟买活",
+            "叫我老陈就好了",
+        )
+        self.assertEqual(headline, "老菜被骗换后迟迟买活")
+        self.assertNotIn("｜", headline)
+
+    def test_cover_subject_identity_locks_aliases_to_character_base(self):
+        yyf_instruction = bridge.recording_cover_subject_identity_instruction(
+            "YYF",
+            "枫哥",
+        )
+        self.assertIn("“枫哥”、“YYF”", yyf_instruction)
+        self.assertIn("同一位主播", yyf_instruction)
+        self.assertIn("主播只能有一人", yyf_instruction)
+        self.assertIn("只能依据随请求上传的封面人物底稿", yyf_instruction)
+
+        laocai_instruction = bridge.recording_cover_subject_identity_instruction(
+            "川神",
+            "老菜",
+        )
+        self.assertIn("“老菜”、“川神”、“叫我老陈就好了”", laocai_instruction)
+        self.assertIn("不得按字面画成枫叶、鱼、蔬菜", laocai_instruction)
+
+    def test_cover_guest_candidates_exclude_room_owner_aliases(self):
+        guests = bridge.recording_cover_guest_candidates(
+            "YYF",
+            "枫哥和B神一起复盘，拒绝者也来了",
+        )
+        self.assertEqual(
+            [(guest["name"], guest["mentioned_as"]) for guest in guests],
+            [("BurNIng", "B神"), ("Paparazi", "拒绝者")],
+        )
+
+    def test_guest_avatar_uses_unique_exact_douyu_search_result(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        if str(y2a_root) not in sys.path:
+            sys.path.insert(0, str(y2a_root))
+        from modules import live_recorder_manager as manager_module
+
+        candidates = [
+            {
+                "room_id": "123",
+                "name": "B神",
+                "avatar_url": "https://apic.douyucdn.cn/burning.jpg",
+            },
+            {
+                "room_id": "456",
+                "name": "B神迷弟",
+                "avatar_url": "https://apic.douyucdn.cn/fan.jpg",
+            },
+        ]
+        with patch.object(
+            manager_module.live_recorder_manager,
+            "_search_douyu_rooms",
+            return_value=candidates,
+        ) as search:
+            resolved = bridge.resolve_recording_guest_avatar(
+                {"name": "BurNIng", "mentioned_as": "B神"},
+                {"_recording_profiles": []},
+            )
+
+        self.assertEqual(resolved["room_id"], "123")
+        self.assertEqual(resolved["source"], "douyu_api")
+        search.assert_called_once_with("B神", 10)
+
+    def test_guest_avatar_accepts_two_identity_aliases_but_rejects_ambiguity(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        if str(y2a_root) not in sys.path:
+            sys.path.insert(0, str(y2a_root))
+        from modules import live_recorder_manager as manager_module
+
+        with patch.object(
+            manager_module.live_recorder_manager,
+            "_search_douyu_rooms",
+            return_value=[
+                {
+                    "room_id": "562483",
+                    "name": "拒绝者paparazi灌",
+                    "avatar_url": "https://apic.douyucdn.cn/paparazi.jpg",
+                },
+                {
+                    "room_id": "6110689",
+                    "name": "Paparazi泽",
+                    "avatar_url": "https://apic.douyucdn.cn/other.jpg",
+                },
+            ],
+        ):
+            resolved = bridge.resolve_recording_guest_avatar(
+                {"name": "Paparazi", "mentioned_as": "拒绝者"},
+                {"_recording_profiles": []},
+            )
+        self.assertEqual(resolved["room_id"], "562483")
+
+        ambiguous = [
+            {
+                "room_id": "1",
+                "name": "徐志雷BurNIng",
+                "avatar_url": "https://apic.douyucdn.cn/one.jpg",
+            },
+            {
+                "room_id": "2",
+                "name": "burning徐志雷",
+                "avatar_url": "https://apic.douyucdn.cn/two.jpg",
+            },
+        ]
+        with patch.object(
+            manager_module.live_recorder_manager,
+            "_search_douyu_rooms",
+            return_value=ambiguous,
+        ):
+            self.assertIsNone(bridge.resolve_recording_guest_avatar(
+                {"name": "BurNIng", "mentioned_as": "B神"},
+                {"_recording_profiles": []},
+            ))
 
     def test_dota2_streamer_prompt_keeps_room_owner_as_cover_subject(self):
         instruction = bridge.recording_cover_dota2_streamer_instruction(
@@ -1632,7 +1850,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("yyfyyf＝Dota 2 主播/选手 YYF", instruction)
         self.assertIn("B神＝Dota 2 主播/选手 BurNIng", instruction)
         self.assertIn("拒绝者＝Dota 2 主播/选手 Paparazi", instruction)
-        self.assertIn("封面主体仍必须以当前直播间主播", instruction)
+        self.assertIn("封面主体仍必须以当前直播间的封面人物底稿", instruction)
         self.assertIn("其他被提及选手不能取代主播", instruction)
 
     def test_yyf_cover_expression_follows_segment_performance(self):
@@ -1682,12 +1900,14 @@ class BridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
+            character_base = root / "character-base.png"
+            character_base.write_bytes(b"character-base")
             response = types.SimpleNamespace(data=[
                 types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
             ])
-            image_generate = Mock(return_value=response)
+            image_edit = Mock(return_value=response)
             client = types.SimpleNamespace(
-                images=types.SimpleNamespace(generate=image_generate)
+                images=types.SimpleNamespace(edit=image_edit, generate=Mock())
             )
             ai_module = types.ModuleType("modules.ai_enhancer")
             ai_module.get_openai_client = Mock(return_value=client)
@@ -1721,6 +1941,7 @@ class BridgeTests(unittest.TestCase):
                         "_config_dir": str(root),
                         "y2a_root": str(y2a_root),
                         "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(character_base),
                         "ai_cover_prompt": "采用低饱和蓝紫色，并突出 Roshan 团战。",
                     },
                     work_dir=work_dir,
@@ -1736,16 +1957,21 @@ class BridgeTests(unittest.TestCase):
             image_client_config["OPENAI_BASE_URL"],
             "https://images.example.com/v1",
         )
-        self.assertEqual(details["ai_cover_headline"], "新地图极限挑战")
+        self.assertEqual(details["ai_cover_headline"], "土豆新地图极限挑战")
+        self.assertEqual(details["ai_cover_subject_name"], "土豆")
         self.assertEqual(details["ai_cover_width"], 1920)
         self.assertEqual(details["ai_cover_height"], 1080)
         self.assertIn(
             "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080",
             ffmpeg_commands[0],
         )
-        prompt = image_generate.call_args.kwargs["prompt"]
+        prompt = image_edit.call_args.kwargs["prompt"]
         self.assertIn("横向 1920:1080 视频封面", prompt)
-        self.assertIn("AI 生成的核心标题：新地图极限挑战", prompt)
+        self.assertIn("AI 生成的核心标题：土豆新地图极限挑战", prompt)
+        self.assertIn("封面主角称呼：土豆", prompt)
+        self.assertIn("不得排成“主角｜主题”", prompt)
+        self.assertIn("封面主角身份锁定", prompt)
+        self.assertIn("人物外观只能依据随请求上传的封面人物底稿", prompt)
         self.assertIn("Dota 2 游戏角色消歧规则", prompt)
         self.assertIn("Dota 2 装备规则", prompt)
         self.assertIn("斗鱼 Dota 2 主播昵称规则", prompt)
@@ -1840,6 +2066,8 @@ class BridgeTests(unittest.TestCase):
             work_dir = root / "artifacts"
             item_sheet = root / "dota2-items.png"
             item_sheet.write_bytes(b"official-item-reference")
+            character_base = root / "character-base.png"
+            character_base.write_bytes(b"character-base")
             response = types.SimpleNamespace(data=[
                 types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
             ])
@@ -1879,6 +2107,7 @@ class BridgeTests(unittest.TestCase):
                         "_config_dir": str(root),
                         "y2a_root": str(y2a_root),
                         "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(character_base),
                     },
                     work_dir=work_dir,
                 )
@@ -1888,7 +2117,9 @@ class BridgeTests(unittest.TestCase):
             [item["english_name"] for item in details["ai_cover_dota2_items"]],
             ["Black King Bar", "Scythe of Vyse"],
         )
-        self.assertEqual(Path(image_edit.call_args.kwargs["image"].name), item_sheet)
+        reference_files = image_edit.call_args.kwargs["image"]
+        self.assertEqual(Path(reference_files[0].name), character_base)
+        self.assertEqual(Path(reference_files[1].name), item_sheet)
         prompt = image_edit.call_args.kwargs["prompt"]
         self.assertIn("BKB＝黑皇杖（Black King Bar）", prompt)
         self.assertIn("羊刀＝邪恶镰刀（Scythe of Vyse）", prompt)
@@ -1896,22 +2127,14 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("禁止在封面底部或任何位置生成物品栏", prompt)
         self.assertIn("不得绘制仿冒的装备图标", prompt)
 
-    def test_unknown_streamer_cover_uses_room_avatar_as_reference(self):
+    def test_unknown_streamer_avatar_cannot_replace_character_base(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
             avatar = root / "avatar.jpg"
             avatar.write_bytes(b"avatar")
-            response = types.SimpleNamespace(data=[
-                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
-            ])
-            image_edit = Mock(return_value=response)
-            image_generate = Mock()
-            client = types.SimpleNamespace(images=types.SimpleNamespace(
-                edit=image_edit,
-                generate=image_generate,
-            ))
+            client = types.SimpleNamespace(images=types.SimpleNamespace())
             ai_module = types.ModuleType("modules.ai_enhancer")
             ai_module.get_openai_client = Mock(return_value=client)
             config_module = types.ModuleType("modules.config_manager")
@@ -1932,28 +2155,22 @@ class BridgeTests(unittest.TestCase):
             }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg), patch.object(
                 bridge, "download_recording_avatar_reference", return_value=avatar
             ) as avatar_download:
-                cover, details = bridge.generate_recording_cover_with_ai(
-                    title="【直播回放】新主播｜欢乐游戏｜07-24 11:20",
-                    ai_topic="欢乐游戏",
-                    description="直播间欢乐游戏。",
-                    streamer="新主播",
-                    cfg={
-                        "_config_dir": str(root),
-                        "y2a_root": str(y2a_root),
-                        "ffmpeg": "ffmpeg",
-                        "streamer_avatar_url": "https://example.com/avatar.jpg",
-                    },
-                    work_dir=work_dir,
-                )
+                with self.assertRaisesRegex(ValueError, "未配置封面人物底稿"):
+                    bridge.generate_recording_cover_with_ai(
+                        title="【直播回放】新主播｜欢乐游戏｜07-24 11:20",
+                        ai_topic="欢乐游戏",
+                        description="直播间欢乐游戏。",
+                        streamer="新主播",
+                        cfg={
+                            "_config_dir": str(root),
+                            "y2a_root": str(y2a_root),
+                            "ffmpeg": "ffmpeg",
+                            "streamer_avatar_url": "https://example.com/avatar.jpg",
+                        },
+                        work_dir=work_dir,
+                    )
 
-        self.assertEqual(cover.name, "ai_cover.jpg")
-        self.assertEqual(details["ai_cover_reference_kind"], "avatar")
-        self.assertEqual(details["ai_cover_reference_path"], str(avatar))
-        avatar_download.assert_called_once()
-        image_edit.assert_called_once()
-        image_generate.assert_not_called()
-        self.assertIn("直播间头像", image_edit.call_args.kwargs["prompt"])
-        self.assertIn("作为封面主体底稿", image_edit.call_args.kwargs["prompt"])
+        avatar_download.assert_not_called()
 
     def test_custom_room_reference_overrides_bundled_streamer_reference(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"

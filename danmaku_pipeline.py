@@ -219,7 +219,7 @@ def burn_ass(
 
 
 def select_summary_comments(comments: list[DanmakuComment], limit: int = 400) -> list[DanmakuComment]:
-    """Deduplicate spam and sample across the whole recording for an LLM summary."""
+    """Deduplicate spam while retaining both chronology and concrete evidence."""
     limit = max(1, min(2000, int(limit)))
     unique: list[DanmakuComment] = []
     seen: dict[str, int] = {}
@@ -233,8 +233,54 @@ def select_summary_comments(comments: list[DanmakuComment], limit: int = 400) ->
             unique.append(item)
     if len(unique) <= limit:
         return unique
-    step = len(unique) / limit
-    return [unique[min(len(unique) - 1, int(math.floor(index * step)))] for index in range(limit)]
+
+    # A single fixed-stride pick can skip the one concrete line that explains a
+    # nearby reaction burst (for example "20秒买活").  Split the full
+    # recording into chronological slices and retain both the slice boundary and
+    # its most informative line.  This keeps whole-recording coverage without
+    # sacrificing rare numeric or action-specific evidence needed for grounding.
+    slot_count = max(1, limit // 2)
+    selected_indexes: set[int] = set()
+
+    def information_score(item: DanmakuComment) -> tuple[int, int]:
+        text = str(item.text or "").strip()
+        normalized = re.sub(
+            r"[^0-9a-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+",
+            "",
+            text.lower(),
+        )
+        # Precise counts, scores and durations are easy to lose because they are
+        # often much shorter than surrounding reactions, yet they are the facts
+        # a title or chapter label must not infer.
+        numeric_bonus = 48 if re.search(r"\d", normalized) else 0
+        diversity = len(set(normalized))
+        repetition_penalty = (
+            40
+            if len(normalized) >= 8 and diversity / max(1, len(normalized)) < 0.35
+            else 0
+        )
+        return (
+            min(len(normalized), 80)
+            + numeric_bonus
+            + min(diversity, 20)
+            - repetition_penalty,
+            -len(text),
+        )
+
+    for slot in range(slot_count):
+        start = int(math.floor(slot * len(unique) / slot_count))
+        end = int(math.floor((slot + 1) * len(unique) / slot_count))
+        end = max(start + 1, min(len(unique), end))
+        selected_indexes.add(start)
+        richest = max(range(start, end), key=lambda index: information_score(unique[index]))
+        selected_indexes.add(richest)
+
+    if len(selected_indexes) < limit:
+        for index in range(len(unique)):
+            selected_indexes.add(index)
+            if len(selected_indexes) >= limit:
+                break
+    return [unique[index] for index in sorted(selected_indexes)]
 
 
 def format_comments_for_ai(comments: list[DanmakuComment]) -> str:
