@@ -106,9 +106,17 @@ def _load_xml_comments_cached(
 
 
 def load_xml_comments(video_dir: str | os.PathLike[str]) -> list[tuple[float, str]]:
-    """Return absolute timestamp/text pairs from every XML in a recording dir."""
+    """Return comments only from XML files belonging to this recording dir."""
     root = Path(video_dir)
-    xml_paths = sorted(root.glob("*.xml")) if root.is_dir() else [root]
+    if root.is_dir():
+        dir_name = root.name
+        xml_paths = [
+            path
+            for path in sorted(root.glob("*.xml"))
+            if path.stem == dir_name or path.stem.startswith(f"{dir_name}_")
+        ]
+    else:
+        xml_paths = [root]
     signature: list[tuple[str, int, int]] = []
     for xml_path in xml_paths:
         try:
@@ -123,11 +131,23 @@ def recording_timeframe(
     video_dir: str | os.PathLike[str],
     comments: Optional[list[tuple[float, str]]] = None,
 ) -> tuple[float, float]:
-    """Use XML absolute timestamps as the recording boundary."""
+    """Use matching XML timestamps, then the Beijing-time directory name."""
     values = comments if comments is not None else load_xml_comments(video_dir)
     if values:
         return values[0][0], values[-1][0]
     root = Path(video_dir)
+    match = re.search(
+        r"(20\d{2}-\d{2}-\d{2})_(\d{2})-(\d{2})(?:-(\d{2}))?(?:$|_)",
+        root.name,
+    )
+    if match:
+        date_value, hour, minute, second = match.groups()
+        parsed = time.strptime(
+            f"{date_value} {hour}:{minute}:{second or '00'}",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        start_ts = time.mktime(parsed)
+        return start_ts, start_ts + 3600.0
     try:
         modified = root.stat().st_mtime
     except OSError:
@@ -265,7 +285,7 @@ def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
     comments = load_xml_comments(video_dir)
     start_ts, end_ts = recording_timeframe(video_dir, comments)
     stats = load_stats(_stats_path(video_dir))
-    selected: dict | None = None
+    best: tuple[float, dict] | None = None
     for game in _overlapping_games(stats, start_ts, end_ts):
         game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
         game_end = min(end_ts, float(game.get("end_unix_ts") or game.get("last_seen_unix_ts") or end_ts))
@@ -274,8 +294,10 @@ def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
             candidate["items"] = [
                 str(item) for item in candidate.get("items", [])[:6] if str(item)
             ]
-            selected = candidate
-    return selected
+            overlap = max(0.0, game_end - game_start)
+            if best is None or overlap > best[0]:
+                best = (overlap, candidate)
+    return best[1] if best is not None else None
 
 
 def get_identity_diagnostics(video_dir: str | os.PathLike[str]) -> dict:
