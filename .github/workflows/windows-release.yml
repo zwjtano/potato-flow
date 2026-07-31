@@ -1,0 +1,118 @@
+name: Windows portable release
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/windows-release.yml
+      - y2a-auto/**
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to receive the Windows asset
+        required: false
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: y2a-auto/requirements.lock
+
+      - name: Install application and build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r y2a-auto/requirements.lock pyinstaller==6.15.0
+
+      - name: Build portable application
+        working-directory: y2a-auto
+        run: python build-tools/build_exe.py
+
+      - name: Smoke test packaged executable
+        shell: pwsh
+        working-directory: y2a-auto
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = Join-Path $PWD 'build-tools/dist/PotatoFlow-Windows-x64'
+          $exe = Join-Path $bundle 'PotatoFlow.exe'
+          if (-not (Test-Path $exe)) { throw "Missing packaged executable: $exe" }
+
+          $process = Start-Process -FilePath $exe -WorkingDirectory $bundle -PassThru -WindowStyle Hidden
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+              Start-Sleep -Seconds 2
+              if ($process.HasExited) {
+                throw "PotatoFlow.exe exited during startup with code $($process.ExitCode)"
+              }
+              try {
+                $health = Invoke-RestMethod -Uri 'http://127.0.0.1:5001/healthz' -TimeoutSec 3
+                if ($health.status -eq 'ok' -and $health.version -eq '1.5.38') {
+                  $healthy = $true
+                  break
+                }
+              } catch {
+                Write-Host "Waiting for PotatoFlow health endpoint ($($attempt + 1)/60)..."
+              }
+            }
+            if (-not $healthy) { throw 'Packaged PotatoFlow did not become healthy in time.' }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+      - name: Create release archive and checksum
+        shell: pwsh
+        working-directory: y2a-auto
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $PWD 'build-tools/dist'
+          $bundle = Join-Path $dist 'PotatoFlow-Windows-x64'
+          $archive = Join-Path $dist 'PotatoFlow-v1.5.38-Windows-x64.zip'
+          Compress-Archive -Path "$bundle/*" -DestinationPath $archive -Force
+          $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  PotatoFlow-v1.5.38-Windows-x64.zip" | Set-Content -Path "$archive.sha256" -Encoding ascii
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PotatoFlow-v1.5.38-Windows-x64
+          path: |
+            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip
+            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload assets to GitHub Release
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          gh release upload $env:RELEASE_TAG `
+            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip `
+            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip.sha256 `
+            --clobber
