@@ -124,6 +124,7 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         self.assertNotIn('"--console"', generator)
         self.assertIn('"LICENSE.txt"', generator)
         self.assertIn('PROJECT_ROOT.parent / "LICENSE"', generator)
+        self.assertIn('"modules/bili_sdk/data"', generator)
 
 
 if __name__ == "__main__":

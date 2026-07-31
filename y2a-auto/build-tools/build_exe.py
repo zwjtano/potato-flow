@@ -26,6 +26,7 @@ def create_spec_file() -> None:
     templates = str(PROJECT_ROOT / "templates")
     static = str(PROJECT_ROOT / "static")
     fonts = str(PROJECT_ROOT / "fonts")
+    bili_sdk_data = str(PROJECT_ROOT / "modules" / "bili_sdk" / "data")
     spec = f'''# -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
@@ -34,6 +35,7 @@ datas = [
     ({templates!r}, "templates"),
     ({static!r}, "static"),
     ({fonts!r}, "fonts"),
+    ({bili_sdk_data!r}, "modules/bili_sdk/data"),
 ] + curl_datas
 hiddenimports = [
     "app",
