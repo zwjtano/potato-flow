@@ -29,6 +29,8 @@ DOTA2_DATA_URL = "https://www.douyu.com/wgapi/augmentedlive/dota2/data/get"
 FLUSH_INTERVAL = 30
 DOTA2_POLL_INTERVAL = 15
 HIGH_ENERGY_POLL_INTERVAL = 15
+GIFT_CATALOG_REFRESH_INTERVAL = 24 * 60 * 60
+UNKNOWN_GIFT_REFRESH_COOLDOWN = 60 * 60
 IGNORED_LEGACY_GIFT_IDS = {"24597"}
 DIAMOND_FAN_EVENT_TYPES = {
     "dfobc": "open",
@@ -456,6 +458,14 @@ class RoomMonitor(threading.Thread):
         self._pending_anchor_source = ""
         self._pending_count = 0
         self._restore_snapshot()
+        self._gift_event_hashes = {
+            str(item.get("event_hash") or "").strip()
+            for item in self.state.get("gift_events", [])
+            if isinstance(item, dict) and str(item.get("event_hash") or "").strip()
+        }
+        self._last_gift_catalog_refresh = time.time()
+        self._last_unknown_gift_refresh_request = 0.0
+        self._gift_catalog_refresh_requested = False
         self._ensure_gift_diagnostics()
         self._ensure_diamond_fan_state()
         self._ensure_high_energy_state()
@@ -526,14 +536,36 @@ class RoomMonitor(threading.Thread):
             "unpriced_events": 0,
             "prop_events": 0,
             "ignored_high_energy_events": 0,
+            "duplicate_messages": 0,
             "parse_errors": 0,
             "last_seen_unix_ts": None,
             "unknown_gift_ids": {},
+            "catalog_refreshes": 0,
+            "catalog_refresh_failures": 0,
+            "unknown_catalog_refresh_requests": 0,
+            "last_catalog_refresh_unix_ts": None,
+            "catalog_size": len(self.prices),
         }.items():
             diagnostics.setdefault(key, value)
         if not isinstance(diagnostics.get("unknown_gift_ids"), dict):
             diagnostics["unknown_gift_ids"] = {}
         return diagnostics
+
+    def refresh_gift_prices(self) -> bool:
+        """Refresh the room catalog without discarding a usable old snapshot."""
+        diagnostics = self._ensure_gift_diagnostics()
+        refreshed = load_gift_prices(self.room_id)
+        self._last_gift_catalog_refresh = time.time()
+        diagnostics["last_catalog_refresh_unix_ts"] = self._last_gift_catalog_refresh
+        if not refreshed:
+            diagnostics["catalog_refresh_failures"] = (
+                int(diagnostics["catalog_refresh_failures"] or 0) + 1
+            )
+            return False
+        self.prices = refreshed
+        diagnostics["catalog_refreshes"] = int(diagnostics["catalog_refreshes"] or 0) + 1
+        diagnostics["catalog_size"] = len(refreshed)
+        return True
 
     def _ensure_high_energy_state(self) -> tuple[list[dict], dict]:
         high = self.state.setdefault("high_energy", {})
@@ -676,6 +708,10 @@ class RoomMonitor(threading.Thread):
                 int(diagnostics["ignored_high_energy_events"] or 0) + 1
             )
             return
+        event_hash = str(message.get("hc") or "").strip()
+        if event_hash and event_hash in self._gift_event_hashes:
+            diagnostics["duplicate_messages"] = int(diagnostics["duplicate_messages"] or 0) + 1
+            return
         raw_count = message.get("gfcnt", "1")
         try:
             count = max(1, int(raw_count or 1))
@@ -683,6 +719,16 @@ class RoomMonitor(threading.Thread):
             diagnostics["parse_errors"] = int(diagnostics["parse_errors"] or 0) + 1
             count = 1
         info = self.prices.get(gift_id)
+        if (
+            info is None
+            and now - self._last_unknown_gift_refresh_request
+            >= UNKNOWN_GIFT_REFRESH_COOLDOWN
+        ):
+            self._gift_catalog_refresh_requested = True
+            self._last_unknown_gift_refresh_request = now
+            diagnostics["unknown_catalog_refresh_requests"] = (
+                int(diagnostics["unknown_catalog_refresh_requests"] or 0) + 1
+            )
         price_type = str((info or {}).get("price_type") or "")
         if info and not price_type and "price" in info:
             # Keep compatibility with callers that provide the old yuan map.
@@ -725,7 +771,7 @@ class RoomMonitor(threading.Thread):
             "gift_prop_flag": gift_prop_flag,
             "prop_id": prop_id,
             "skin_id": _nonnegative_int(message.get("skinid")),
-            "event_hash": str(message.get("hc") or ""),
+            "event_hash": event_hash,
             "user_level": _nonnegative_int(message.get("level")),
             "fans_level": _nonnegative_int(message.get("fl")),
             "fans_badge_name": str(message.get("bnn") or ""),
@@ -737,6 +783,8 @@ class RoomMonitor(threading.Thread):
             ),
             "price_unknown": info is None,
         })
+        if event_hash:
+            self._gift_event_hashes.add(event_hash)
         diagnostics["recorded_events"] = int(diagnostics["recorded_events"] or 0) + 1
         diagnostics["last_seen_unix_ts"] = now
 
@@ -1056,6 +1104,11 @@ class RoomMonitor(threading.Thread):
             item for item in self.state.get("gift_events", [])
             if float(item.get("unix_ts") or 0) >= cutoff
         ]
+        self._gift_event_hashes = {
+            str(item.get("event_hash") or "").strip()
+            for item in self.state.get("gift_events", [])
+            if isinstance(item, dict) and str(item.get("event_hash") or "").strip()
+        }
         high = self.state.get("high_energy", {})
         if isinstance(high, dict):
             high["details"] = [
@@ -1134,6 +1187,12 @@ class RoomMonitor(threading.Thread):
                     if time.time() - last_high_energy_poll >= HIGH_ENERGY_POLL_INTERVAL:
                         self.poll_high_energy_queue()
                         last_high_energy_poll = time.time()
+                    if self._gift_catalog_refresh_requested or (
+                        time.time() - self._last_gift_catalog_refresh
+                        >= GIFT_CATALOG_REFRESH_INTERVAL
+                    ):
+                        self._gift_catalog_refresh_requested = False
+                        self.refresh_gift_prices()
                     if time.time() - last_flush >= FLUSH_INTERVAL:
                         self.flush()
                         last_flush = time.time()
