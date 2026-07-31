@@ -2840,6 +2840,15 @@ class LiveRecorderManager:
             else:
                 duration_text = ""
             review = overrides.get(row["fingerprint"], {})
+            preview_timeline_diagnostics = review.get("timeline_diagnostics")
+            if isinstance(preview_timeline_diagnostics, dict):
+                ai_details = {
+                    **ai_details,
+                    **preview_timeline_diagnostics,
+                    "timeline_diagnostics_source": "regenerated_preview",
+                }
+                if isinstance(ai_stage, dict):
+                    ai_stage["details"] = ai_details
             cover_candidate = str(
                 review.get("cover_path")
                 or cover_details.get("ai_cover_path")

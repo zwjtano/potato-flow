@@ -427,6 +427,7 @@ def format_stats(
 
     gift_events = filter_by_timeframe(stats.get("gift_events", []), start_ts, end_ts)
     gift_totals: dict[tuple[str, int], dict[str, int | str]] = {}
+    unpriced_gifts: dict[str, int] = {}
     for event in gift_events:
         name = str(event.get("name") or "未知礼物")
         if "unit_price_cents" in event:
@@ -444,11 +445,20 @@ def format_stats(
                 or float(event.get("unit_price") or 0) * int(event.get("count") or 0)
             ) * 100))
             is_paid = unit_price_cents > 0
-        if not is_paid or unit_price_cents < 10_000:
+        if not is_paid or unit_price_cents <= 0:
+            unpriced_gifts[name] = (
+                unpriced_gifts.get(name, 0) + max(1, int(event.get("count") or 1))
+            )
             continue
         key = (name, unit_price_cents)
         summary = gift_totals.setdefault(
-            key, {"name": name, "count": 0, "total_cents": 0}
+            key,
+            {
+                "name": name,
+                "unit_price_cents": unit_price_cents,
+                "count": 0,
+                "total_cents": 0,
+            },
         )
         summary["count"] = int(summary["count"]) + int(event.get("count") or 0)
         summary["total_cents"] = int(summary["total_cents"]) + total_value_cents
@@ -501,20 +511,31 @@ def format_stats(
             )
         game_lines.append(summary)
 
-    if not gift_totals and not diamond_events and not high_events and not online and not game_lines:
+    if (
+        not gift_totals and not unpriced_gifts and not diamond_events
+        and not high_events and not online and not game_lines
+    ):
         return ""
 
     lines = ["", "——— 直播数据 ———"]
     if gift_totals:
         ordered = sorted(gift_totals.values(), key=lambda item: -int(item["total_cents"]))
         gift_text = " ".join(
-            f"{item['name']}×{item['count']}({format_yuan(int(item['total_cents']))}元)"
+            f"{item['name']}×{item['count']}"
+            f"(单价{format_yuan(int(item['unit_price_cents']))}元/"
+            f"总价{format_yuan(int(item['total_cents']))}元)"
             for item in ordered
         )
         total_cents = sum(int(item["total_cents"]) for item in ordered)
         lines.append(f"🎁 {gift_text} | 礼物价值合计 {format_yuan(total_cents)}元")
     elif diamond_events or high_events or online or game_lines:
-        lines.append("🎁 无高价值礼物(≥100元)")
+        lines.append("🎁 无已核价鱼翅礼物")
+    if unpriced_gifts:
+        unpriced_text = " ".join(
+            f"{name}×{count}"
+            for name, count in sorted(unpriced_gifts.items())
+        )
+        lines.append(f"🧩 未核价道具 {unpriced_text}")
     if diamond_events:
         diamond_parts = []
         for action, label in (("open", "开通"), ("renew", "续费")):

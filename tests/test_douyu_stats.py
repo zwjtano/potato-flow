@@ -296,6 +296,32 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(prices["7"]["price_cents"], 50000)
         self.assertEqual(prices["7"]["catalog_source"], "v2")
 
+    def test_gift_catalog_uses_v2_to_fill_missing_v5_price_for_same_id(self):
+        responses = {
+            "v5": {"error": 0, "data": {"giftList": [{
+                "id": 9, "name": "当前礼物", "priceInfo": {}, "showStatus": 1,
+            }]}},
+            "v2": {"error": 0, "data": {"giftList": [{
+                "id": 9, "name": "旧目录名",
+                "priceInfo": {"price": 10000, "priceType": "YUCHI"},
+            }]}},
+        }
+
+        with mock.patch.object(
+            daemon,
+            "_request_json",
+            side_effect=lambda url, _referer="": responses[
+                "v5" if "/v5/" in url else "v2"
+            ],
+        ):
+            gift = daemon.load_gift_prices("9999")["9"]
+
+        self.assertEqual(gift["name"], "当前礼物")
+        self.assertEqual(gift["show_status"], 1)
+        self.assertEqual(gift["price_cents"], 10000)
+        self.assertEqual(gift["catalog_source"], "v5")
+        self.assertEqual(gift["price_catalog_source"], "v2")
+
     def test_dgb_keeps_low_value_and_unknown_prop_events_for_diagnostics(self):
         monitor = daemon.RoomMonitor("9999", "主播", {
             "24677": {
@@ -335,7 +361,7 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(diagnostics["prop_events"], 1)
         self.assertEqual(diagnostics["unknown_gift_ids"], {"824": 1})
 
-    def test_formatter_filters_full_gift_stream_only_at_output(self):
+    def test_formatter_reports_all_priced_gifts_and_unpriced_props(self):
         stats = {"gift_events": [
             {
                 "unix_ts": 150, "name": "钻粉卡", "paid": True,
@@ -353,10 +379,27 @@ class DouyuStatsTests(unittest.TestCase):
 
         text = formatter.format_stats(stats, 100, 200, [])
 
-        self.assertIn("钻粉飞机×2(200元)", text)
-        self.assertIn("礼物价值合计 200元", text)
-        self.assertNotIn("钻粉卡", text)
-        self.assertNotIn("未知道具", text)
+        self.assertIn("钻粉飞机×2(单价100元/总价200元)", text)
+        self.assertIn("钻粉卡×2(单价6元/总价12元)", text)
+        self.assertIn("礼物价值合计 212元", text)
+        self.assertIn("🧩 未核价道具 未知道具×9", text)
+
+    def test_formatter_reports_unpriced_props_separately(self):
+        stats = {
+            "gift_events": [{
+                "unix_ts": 150,
+                "name": "未知道具",
+                "paid": False,
+                "unit_price_cents": 0,
+                "total_value_cents": 0,
+                "count": 3,
+            }],
+        }
+
+        text = formatter.format_stats(stats, 100, 200, [])
+
+        self.assertIn("🧩 未核价道具 未知道具×3", text)
+        self.assertNotIn("礼物价值合计", text)
 
     def test_diamond_fan_membership_events_are_separate_from_gifts(self):
         monitor = daemon.RoomMonitor("9999", "主播", {})
@@ -871,7 +914,7 @@ class DouyuStatsTests(unittest.TestCase):
             )
 
             text = formatter.get_stats_for_description(session)
-            self.assertIn("飞机×2(200元)", text)
+            self.assertIn("飞机×2(单价100元/总价200元)", text)
             self.assertNotIn("火箭", text)
             self.assertIn("高能弹幕 ×1 | 300元", text)
             self.assertIn("在线 1000~1500", text)

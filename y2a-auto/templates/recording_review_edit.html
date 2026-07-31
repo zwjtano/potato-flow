@@ -139,6 +139,19 @@
                                 </button>
                             </div>
                         </div>
+                        {% set timeline = job.review_override.timeline_diagnostics or {} %}
+                        {% if timeline %}
+                        <div class="alert {{ 'alert-success' if timeline.timeline_target_met else 'alert-warning' }} mb-4">
+                            <strong>重新生成时间点验证</strong>
+                            <div class="small mt-1">
+                                目标 {{ timeline.timeline_target_min }}–{{ timeline.timeline_target_max }} 个，
+                                XML 验证通过 {{ timeline.timeline_verified_count }} 个，
+                                淘汰或重复 {{ timeline.timeline_rejected_count }} 个；
+                                {{ '证据充足' if timeline.timeline_target_met else ('证据不足，还差 ' ~ timeline.timeline_shortfall ~ ' 个') }}。
+                                时间点已提前补偿 {{ timeline.timeline_reaction_delay_seconds }} 秒。
+                            </div>
+                        </div>
+                        {% endif %}
                         {% endif %}
                         <div class="mb-3">
                             <label for="review-title" class="form-label">视频标题</label>

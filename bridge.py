@@ -459,6 +459,7 @@ def timeline_target_range(duration_seconds: float | None) -> tuple[int, int]:
 
 _TIMELINE_HEADING = "重要时间点"
 _TIMELINE_LINE_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+\S.*$")
+_MULTIPART_HEADING_RE = re.compile(r"^【P\d+(?:｜[^\n]*)?】$")
 
 
 def timeline_lines(description: str) -> list[str]:
@@ -507,6 +508,64 @@ def fit_description_preserving_timeline(description: str, limit: int) -> str:
     return f"{fitted_prose}{separator if fitted_prose else ''}{timeline}".rstrip()
 
 
+def fit_multipart_description_preserving_sections(description: str, limit: int) -> str:
+    """Fit a multipart description while retaining every part heading."""
+    text = str(description or "").strip()
+    budget = max(0, int(limit or 0))
+    if len(text) <= budget:
+        return text
+    lines = text.splitlines()
+    heading_indexes = [
+        index for index, line in enumerate(lines)
+        if _MULTIPART_HEADING_RE.fullmatch(line.strip())
+    ]
+    if not heading_indexes:
+        return fit_description_preserving_timeline(text, budget)
+
+    intro = "\n".join(lines[:heading_indexes[0]]).strip()
+    sections: list[tuple[str, str]] = []
+    for position, start in enumerate(heading_indexes):
+        end = (
+            heading_indexes[position + 1]
+            if position + 1 < len(heading_indexes)
+            else len(lines)
+        )
+        sections.append((lines[start].strip(), "\n".join(lines[start + 1:end]).strip()))
+
+    # Headings are structural and must survive. Keep a short intro when room
+    # permits, then distribute the remaining body budget fairly; unused space
+    # from a short part is automatically available to longer parts.
+    intro = intro[: min(len(intro), 200)].rstrip()
+    piece_count = len(sections) + (1 if intro else 0)
+    structural = sum(len(heading) + 1 for heading, _body in sections)
+    structural += 2 * max(0, piece_count - 1)
+    if intro:
+        structural += len(intro)
+    body_budget = max(0, budget - structural)
+    remaining = list(range(len(sections)))
+    allocations = [0] * len(sections)
+    while remaining:
+        share = body_budget // len(remaining)
+        completed = [
+            index for index in remaining
+            if len(sections[index][1]) <= share
+        ]
+        if not completed:
+            for index in remaining:
+                allocations[index] = share
+            break
+        for index in completed:
+            allocations[index] = len(sections[index][1])
+            body_budget -= allocations[index]
+            remaining.remove(index)
+
+    pieces = [intro] if intro else []
+    for (heading, body), allocation in zip(sections, allocations):
+        fitted = fit_description_preserving_timeline(body, allocation)
+        pieces.append(f"{heading}\n{fitted}".rstrip())
+    return "\n\n".join(pieces)[:budget].rstrip()
+
+
 def render_grounded_danmaku_timeline(
     timeline: Any,
     selected_comments: list[Any],
@@ -514,6 +573,7 @@ def render_grounded_danmaku_timeline(
     *,
     delay_seconds: int = 8,
     duration_seconds: float | None = None,
+    maximum_points: int | None = None,
 ) -> str:
     """Render only timeline anchors that copy an exact XML evidence pair."""
     if not isinstance(timeline, list):
@@ -605,10 +665,15 @@ def render_grounded_danmaku_timeline(
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
 
+    ordered_seconds = sorted(verified)
+    if maximum_points is not None:
+        ordered_seconds = ordered_seconds[:max(0, int(maximum_points))]
     lines = [
         f"{format_timestamp(second)} {verified[second]}"
-        for second in sorted(verified)
+        for second in ordered_seconds
     ]
+    if not lines:
+        return ""
     return "重要时间点\n" + "\n".join(lines)
 
 
@@ -678,7 +743,15 @@ def prepend_live_stats_to_description(
 
     separator = "\n\n" if body else ""
     body_budget = max(0, limit - len(stats) - len(separator))
-    fitted_body = fit_description_preserving_timeline(body, body_budget)
+    has_multipart_sections = any(
+        _MULTIPART_HEADING_RE.fullmatch(line.strip())
+        for line in body.splitlines()
+    )
+    fitted_body = (
+        fit_multipart_description_preserving_sections(body, body_budget)
+        if has_multipart_sections
+        else fit_description_preserving_timeline(body, body_budget)
+    )
     separator = "\n\n" if fitted_body else ""
     return f"{stats}{separator}{fitted_body}".rstrip()
 
@@ -2455,6 +2528,7 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             comments,
             delay_seconds=reaction_delay,
             duration_seconds=timeline_duration_seconds,
+            maximum_points=timeline_maximum,
         )
         verified_count = len(timeline_lines(timeline_text))
         if verified_count < timeline_minimum and len(selected) >= timeline_minimum:
@@ -2495,6 +2569,7 @@ event 的 evidence_keywords；证据不足就少返回，绝不能编造。不�
                     comments,
                     delay_seconds=reaction_delay,
                     duration_seconds=timeline_duration_seconds,
+                    maximum_points=timeline_maximum,
                 )
                 verified_count = len(timeline_lines(timeline_text))
             except Exception as exc:
@@ -2524,10 +2599,23 @@ event 的 evidence_keywords；证据不足就少返回，绝不能编造。不�
             " ",
             str((result or {}).get("title_topic", "")).strip(),
         )[:28].strip()
-        return (
+        final_description = (
             fit_description_preserving_timeline(description, 1800)
             if description else base_description
-        ), title_topic
+        )
+        final_verified_count = len(timeline_lines(final_description))
+        diagnostics.update({
+            "timeline_verified_count": final_verified_count,
+            "timeline_rejected_count": max(0, len(raw_timeline) - final_verified_count),
+            "timeline_target_met": final_verified_count >= timeline_minimum,
+            "timeline_shortfall": max(0, timeline_minimum - final_verified_count),
+            "timeline_evidence_status": (
+                "sufficient"
+                if final_verified_count >= timeline_minimum
+                else "insufficient"
+            ),
+        })
+        return final_description, title_topic
     except Exception as exc:
         print(f"WARN 弹幕 AI 简介生成失败，使用原简介: {exc}", file=sys.stderr)
         return base_description, ""
