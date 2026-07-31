@@ -121,6 +121,46 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(description, "录播前缀\n\nAI 正文")
         self.assertNotIn("直播数据", description)
 
+    def test_ai_timeline_is_reanchored_to_xml_seconds_and_formatted_by_code(self):
+        package = types.ModuleType("modules")
+        package.__path__ = []
+        enhancer = types.ModuleType("modules.ai_enhancer")
+        config_manager = types.ModuleType("modules.config_manager")
+        enhancer.get_openai_client = lambda _cfg: object()
+        enhancer._request_json_object = lambda **_kwargs: {
+            "title_topic": "BP 争议",
+            "description": "正文\n\n重要时间点\n00:21 AI 手写的错误时间",
+            "timeline": [{
+                "event": "弹幕质疑 BP 顺位",
+                "evidence_text": "BP顺位受到质疑",
+                "evidence_keywords": ["BP", "顺位"],
+            }],
+        }
+        config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
+
+        with patch.dict(sys.modules, {
+            "modules": package,
+            "modules.ai_enhancer": enhancer,
+            "modules.config_manager": config_manager,
+        }):
+            description, topic = bridge.generate_danmaku_metadata_with_ai(
+                [types.SimpleNamespace(time=1268.0, text="BP顺位受到质疑")],
+                "录播前缀\n\n",
+                {
+                    "_config_dir": str(Path(bridge.__file__).resolve().parent),
+                    "ai_danmaku_summary_enabled": True,
+                    "ai_danmaku_reaction_delay_seconds": 8,
+                },
+                timeline_duration_seconds=3600,
+            )
+
+        self.assertEqual(topic, "BP 争议")
+        self.assertEqual(
+            description,
+            "录播前缀\n\n正文\n\n重要时间点\n21:00 弹幕质疑 BP 顺位",
+        )
+        self.assertNotIn("00:21", description)
+
     def test_generic_recording_intro_is_removed_from_final_body(self):
         stats = "——— 直播数据 ———\n👥 在线 8257~10000"
         description = bridge.prepend_live_stats_to_description(
@@ -143,22 +183,90 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(description, "【P1｜第一局】\n第一局正文")
 
-    def test_danmaku_timeline_compensates_for_reaction_delay(self):
-        description = (
-            "重要时间点\n"
-            "12:03 天梯分重置\n"
-            "01:00:05 团战结束"
-        )
+    def test_grounded_timeline_finds_earliest_xml_evidence_then_compensates(self):
+        sampled = [types.SimpleNamespace(time=729.0, text="39个人等你大西瓜")]
+        comments = [
+            types.SimpleNamespace(time=681.9, text="39个人等你大西瓜"),
+            *sampled,
+        ]
 
         self.assertEqual(
-            bridge.compensate_danmaku_timestamps(description, 8),
-            "重要时间点\n11:55 天梯分重置\n00:59:57 团战结束",
+            bridge.render_grounded_danmaku_timeline(
+                [{
+                    "event": "三十多人苦等开局",
+                    "evidence_text": "39个人等你大西瓜",
+                    "evidence_keywords": ["39个人", "等", "大西瓜"],
+                }],
+                sampled,
+                comments,
+                delay_seconds=8,
+                duration_seconds=3600,
+            ),
+            "重要时间点\n11:13 三十多人苦等开局",
         )
 
-    def test_danmaku_timeline_compensation_never_goes_below_zero(self):
+    def test_grounded_timeline_formats_minutes_and_hours_from_seconds(self):
+        sampled = [
+            types.SimpleNamespace(time=1268.0, text="BP顺位受到质疑"),
+            types.SimpleNamespace(time=3608.0, text="第二小时开始"),
+        ]
+        timeline = [
+            {"event": "进入第二小时", "evidence_text": "第二小时开始", "evidence_keywords": ["第二小时"]},
+            {"event": "弹幕质疑 BP 顺位", "evidence_text": "BP顺位受到质疑", "evidence_keywords": ["BP", "顺位"]},
+        ]
+
         self.assertEqual(
-            bridge.compensate_danmaku_timestamps("00:04 开场事件", 8),
-            "00:00 开场事件",
+            bridge.render_grounded_danmaku_timeline(
+                timeline,
+                sampled,
+                sampled,
+                delay_seconds=8,
+                duration_seconds=3700,
+            ),
+            "重要时间点\n21:00 弹幕质疑 BP 顺位\n01:00:00 进入第二小时",
+        )
+
+    def test_grounded_timeline_combines_sampled_terms_but_requires_one_xml_match(self):
+        sampled = [
+            types.SimpleNamespace(time=1572.0, text="紧急情况 大狗不在"),
+            types.SimpleNamespace(time=1848.0, text="大狗撤销回溯"),
+        ]
+        comments = [
+            types.SimpleNamespace(time=1571.0, text="大狗不在选人要回溯了"),
+            *sampled,
+        ]
+
+        self.assertEqual(
+            bridge.render_grounded_danmaku_timeline(
+                [{
+                    "event": "大狗缺席导致选人回溯",
+                    "evidence_texts": ["紧急情况 大狗不在", "大狗撤销回溯"],
+                    "evidence_keywords": ["大狗", "不在", "回溯"],
+                }],
+                sampled,
+                comments,
+                delay_seconds=8,
+                duration_seconds=3600,
+            ),
+            "重要时间点\n26:03 大狗缺席导致选人回溯",
+        )
+
+    def test_grounded_timeline_rejects_unverifiable_evidence(self):
+        sampled = [types.SimpleNamespace(time=1268.0, text="BP顺位受到质疑")]
+
+        self.assertEqual(
+            bridge.render_grounded_danmaku_timeline(
+                [{"event": "锁定屠夫", "evidence_text": "上屠夫了", "evidence_keywords": ["屠夫"]}],
+                sampled,
+                sampled,
+            ),
+            "",
+        )
+
+    def test_ai_written_timeline_is_discarded(self):
+        self.assertEqual(
+            bridge.strip_ai_timeline_lines("正文\n\n重要时间点\n00:21 BP\n00:01 团战"),
+            "正文",
         )
 
     def test_live_stats_stage_details_persist_visible_summary(self):
@@ -218,9 +326,8 @@ class BridgeTests(unittest.TestCase):
     def test_default_recording_description_requests_clickable_timeline(self):
         prompt = bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
         self.assertIn("内容充实", prompt)
-        self.assertIn("MM:SS", prompt)
-        self.assertIn("HH:MM:SS", prompt)
-        self.assertIn("可点击跳转", prompt)
+        self.assertIn("完整 XML", prompt)
+        self.assertIn("不要在简介正文中手写时间点", prompt)
         self.assertIn("不得编造时间或事件", prompt)
 
     def test_profile_override_and_metadata(self):
