@@ -457,6 +457,56 @@ def timeline_target_range(duration_seconds: float | None) -> tuple[int, int]:
     return minimum, min(14, minimum + 4)
 
 
+_TIMELINE_HEADING = "重要时间点"
+_TIMELINE_LINE_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+\S.*$")
+
+
+def timeline_lines(description: str) -> list[str]:
+    """Return complete, program-rendered timeline lines from a description."""
+    lines = str(description or "").splitlines()
+    try:
+        start = next(
+            index for index, line in enumerate(lines)
+            if line.strip() == _TIMELINE_HEADING
+        )
+    except StopIteration:
+        return []
+    return [line.strip() for line in lines[start + 1:] if _TIMELINE_LINE_RE.match(line.strip())]
+
+
+def fit_description_preserving_timeline(description: str, limit: int) -> str:
+    """Fit text without cutting timestamp lines, keeping verified highlights first."""
+    text = str(description or "").strip()
+    budget = max(0, int(limit or 0))
+    if len(text) <= budget:
+        return text
+    if budget <= 0:
+        return ""
+
+    points = timeline_lines(text)
+    if not points:
+        return text[:budget].rstrip()
+    heading_index = next(
+        index for index, line in enumerate(text.splitlines())
+        if line.strip() == _TIMELINE_HEADING
+    )
+    prose = "\n".join(text.splitlines()[:heading_index]).strip()
+    timeline = _TIMELINE_HEADING
+    kept: list[str] = []
+    for point in points:
+        candidate = "\n".join((_TIMELINE_HEADING, *kept, point))
+        if len(candidate) > budget:
+            break
+        kept.append(point)
+    timeline = "\n".join((_TIMELINE_HEADING, *kept)).rstrip()
+    if not prose or len(timeline) >= budget:
+        return timeline[:budget].rstrip()
+    separator = "\n\n"
+    prose_budget = max(0, budget - len(timeline) - len(separator))
+    fitted_prose = prose[:prose_budget].rstrip()
+    return f"{fitted_prose}{separator if fitted_prose else ''}{timeline}".rstrip()
+
+
 def render_grounded_danmaku_timeline(
     timeline: Any,
     selected_comments: list[Any],
@@ -593,7 +643,9 @@ def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -
     sections = []
     for heading, item in zip(headings, normalized):
         body = _multipart_summary_body(str(item.get("description") or ""))
-        sections.append(f"{heading}\n{body[:body_budget].rstrip()}")
+        sections.append(
+            f"{heading}\n{fit_description_preserving_timeline(body, body_budget)}"
+        )
     return "\n\n".join(([clean_intro] if clean_intro else []) + sections)[:1900].rstrip()
 
 
@@ -620,13 +672,15 @@ def prepend_live_stats_to_description(
     stats = str(stats_text or "").strip()
     body = strip_live_stats_from_description(description, stats)
     if not stats:
-        return body[:limit].rstrip()
+        return fit_description_preserving_timeline(body, limit)
     if len(stats) >= limit:
         return stats[:limit].rstrip()
 
     separator = "\n\n" if body else ""
     body_budget = max(0, limit - len(stats) - len(separator))
-    return f"{stats}{separator}{body[:body_budget].rstrip()}".rstrip()
+    fitted_body = fit_description_preserving_timeline(body, body_budget)
+    separator = "\n\n" if fitted_body else ""
+    return f"{stats}{separator}{fitted_body}".rstrip()
 
 
 def live_stats_stage_details(stats_text: str) -> dict[str, Any]:
@@ -2273,6 +2327,7 @@ def generate_danmaku_metadata_with_ai(
     cfg: dict[str, Any],
     grounding_context: dict[str, Any] | None = None,
     timeline_duration_seconds: float | None = None,
+    timeline_diagnostics: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """Generate a grounded description and concise title topic from danmaku."""
     if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
@@ -2292,6 +2347,17 @@ def generate_danmaku_metadata_with_ai(
         timeline_minimum, timeline_maximum = timeline_target_range(
             timeline_duration_seconds
         )
+        reaction_delay = max(
+            0,
+            min(60, int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0)),
+        )
+        diagnostics = timeline_diagnostics if timeline_diagnostics is not None else {}
+        diagnostics.update({
+            "timeline_target_min": timeline_minimum,
+            "timeline_target_max": timeline_maximum,
+            "timeline_reaction_delay_seconds": reaction_delay,
+            "timeline_retry_attempted": False,
+        })
         payload = {
             "base_description": base_description,
             "comment_count": len(comments),
@@ -2308,10 +2374,7 @@ def generate_danmaku_metadata_with_ai(
                 "minimum": timeline_minimum,
                 "maximum": timeline_maximum,
             },
-            "timestamp_reaction_delay_seconds": max(
-                0,
-                min(60, int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0)),
-            ),
+            "timestamp_reaction_delay_seconds": reaction_delay,
         }
         legacy_prompt = str(cfg.get("ai_danmaku_prompt") or "").strip()
         title_prompt = str(
@@ -2355,14 +2418,17 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
 {legacy_instruction}
 返回 JSON 对象：{{"title_topic":"...","description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
 """.strip()
+        ai_client = get_openai_client(ai_cfg)
+        model_name = str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini"))
+        thinking_enabled = bool(ai_cfg.get("OPENAI_THINKING_ENABLED", False))
         result = _request_json_object(
-            client=get_openai_client(ai_cfg),
-            model_name=str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini")),
+            client=ai_client,
+            model_name=model_name,
             system_prompt=system_prompt,
             payload=payload,
             max_tokens=2200,
             temperature=0.2,
-            thinking_enabled=bool(ai_cfg.get("OPENAI_THINKING_ENABLED", False)),
+            thinking_enabled=thinking_enabled,
             logger_obj=None,
             scene_name="biliup_danmaku_summary",
         )
@@ -2378,13 +2444,72 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             count=1,
         ).strip()
         generated_description = strip_ai_timeline_lines(generated_description)
+        raw_timeline = (
+            list((result or {}).get("timeline") or [])
+            if isinstance((result or {}).get("timeline"), list)
+            else []
+        )
         timeline_text = render_grounded_danmaku_timeline(
-            (result or {}).get("timeline"),
+            raw_timeline,
             selected,
             comments,
-            delay_seconds=int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0),
+            delay_seconds=reaction_delay,
             duration_seconds=timeline_duration_seconds,
         )
+        verified_count = len(timeline_lines(timeline_text))
+        if verified_count < timeline_minimum and len(selected) >= timeline_minimum:
+            diagnostics["timeline_retry_attempted"] = True
+            retry_payload = dict(payload)
+            retry_payload.update({
+                "verified_timeline": timeline_lines(timeline_text),
+                "timeline_shortfall": timeline_minimum - verified_count,
+            })
+            retry_prompt = f"""
+你正在补充一份已经由程序逐条核验的直播录播时间点。当前目标至少 {timeline_minimum} 条，
+已核验 {verified_count} 条。只返回尚未覆盖的不同事件，不得复述 verified_timeline。
+每项仍必须从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，并提供能完整支持
+event 的 evidence_keywords；证据不足就少返回，绝不能编造。不要返回时间戳或正文。
+返回 JSON 对象：{{"timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
+""".strip()
+            try:
+                retry_result = _request_json_object(
+                    client=ai_client,
+                    model_name=model_name,
+                    system_prompt=retry_prompt,
+                    payload=retry_payload,
+                    max_tokens=1400,
+                    temperature=0.1,
+                    thinking_enabled=thinking_enabled,
+                    logger_obj=None,
+                    scene_name="biliup_danmaku_timeline_supplement",
+                )
+                supplemental = (
+                    list((retry_result or {}).get("timeline") or [])
+                    if isinstance((retry_result or {}).get("timeline"), list)
+                    else []
+                )
+                raw_timeline.extend(supplemental)
+                timeline_text = render_grounded_danmaku_timeline(
+                    raw_timeline,
+                    selected,
+                    comments,
+                    delay_seconds=reaction_delay,
+                    duration_seconds=timeline_duration_seconds,
+                )
+                verified_count = len(timeline_lines(timeline_text))
+            except Exception as exc:
+                diagnostics["timeline_retry_error"] = str(exc)[:240]
+                print(f"WARN 弹幕时间点补充生成失败，保留首轮结果: {exc}", file=sys.stderr)
+        diagnostics.update({
+            "timeline_candidate_count": len(raw_timeline),
+            "timeline_verified_count": verified_count,
+            "timeline_rejected_count": max(0, len(raw_timeline) - verified_count),
+            "timeline_target_met": verified_count >= timeline_minimum,
+            "timeline_shortfall": max(0, timeline_minimum - verified_count),
+            "timeline_evidence_status": (
+                "sufficient" if verified_count >= timeline_minimum else "insufficient"
+            ),
+        })
         if timeline_text:
             generated_description = "\n\n".join(
                 part for part in (generated_description, timeline_text) if part
@@ -2399,7 +2524,10 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             " ",
             str((result or {}).get("title_topic", "")).strip(),
         )[:28].strip()
-        return description[:1800] if description else base_description, title_topic
+        return (
+            fit_description_preserving_timeline(description, 1800)
+            if description else base_description
+        ), title_topic
     except Exception as exc:
         print(f"WARN 弹幕 AI 简介生成失败，使用原简介: {exc}", file=sys.stderr)
         return base_description, ""
@@ -2716,12 +2844,14 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         else:
             if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
                 store.stage(key, "ai", "running", {"comment_count": len(comments)})
+                timeline_details: dict[str, Any] = {}
                 description, ai_topic = generate_danmaku_metadata_with_ai(
                     comments,
                     description,
                     cfg,
                     verified_live_context,
                     recording_duration_seconds,
+                    timeline_details,
                 )
                 title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
                 ai_details.update({
@@ -2731,6 +2861,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     "description_body": description,
                     "comment_count": len(comments),
                 })
+                ai_details.update(timeline_details)
             else:
                 reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
                 ai_details.update({

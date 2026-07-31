@@ -274,14 +274,25 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 title_prompt="突出关键英雄",
                 description_prompt="按时间顺序总结",
                 cover_prompt="使用蓝紫色",
+                reaction_delay_seconds="12",
             )
 
         self.assertEqual(saved["ai_title_prompt"], "突出关键英雄")
         self.assertEqual(saved["ai_description_prompt"], "按时间顺序总结")
         self.assertEqual(saved["ai_cover_prompt"], "使用蓝紫色")
+        self.assertEqual(saved["ai_danmaku_reaction_delay_seconds"], 12)
         persisted_rooms = atomic_json.call_args.args[1]
         self.assertNotIn("ai_title_prompt", persisted_rooms[1])
         sync_profiles.assert_called_once_with(persisted_rooms)
+
+    def test_room_reaction_delay_rejects_out_of_range_value(self):
+        manager = LiveRecorderManager()
+        with mock.patch.object(manager, "list_rooms", return_value=[dict(self.rooms[0])]):
+            with self.assertRaisesRegex(RecorderConfigError, "0 到 60 秒"):
+                manager.save_room_prompts(
+                    "aaaaaa111111",
+                    reaction_delay_seconds="61",
+                )
 
     def test_room_prompt_defaults_are_available_to_ui(self):
         defaults = LiveRecorderManager.recording_prompt_defaults()
@@ -1316,7 +1327,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_path):
-                rooms = [dict(self.rooms[0], avatar_url="https://example.com/a.jpg"), self.rooms[1]]
+                rooms = [
+                    dict(
+                        self.rooms[0],
+                        avatar_url="https://example.com/a.jpg",
+                        ai_danmaku_reaction_delay_seconds=12,
+                    ),
+                    self.rooms[1],
+                ]
                 manager._sync_bridge_profiles(rooms)
             config = json.loads(config_path.read_text(encoding="utf-8"))
 
@@ -1328,6 +1346,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(
             config["profiles"][0]["streamer_avatar_url"],
             "https://example.com/a.jpg",
+        )
+        self.assertEqual(
+            config["profiles"][0]["ai_danmaku_reaction_delay_seconds"],
+            12,
         )
         self.assertEqual(
             config["bilibili_cookies"],

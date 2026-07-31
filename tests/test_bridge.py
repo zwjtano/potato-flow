@@ -62,6 +62,27 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(description.startswith(stats))
         self.assertLessEqual(len(description), 1900)
 
+    def test_description_limit_keeps_complete_timeline_before_long_prose(self):
+        points = "\n".join(f"{index:02d}:00 看点{index}" for index in range(10))
+        description = f"{'正文' * 1000}\n\n重要时间点\n{points}"
+
+        fitted = bridge.fit_description_preserving_timeline(description, 1800)
+
+        self.assertLessEqual(len(fitted), 1800)
+        self.assertEqual(len(bridge.timeline_lines(fitted)), 10)
+        self.assertEqual(bridge.timeline_lines(fitted)[-1], "09:00 看点9")
+
+    def test_live_stats_limit_preserves_verified_timeline(self):
+        stats = "——— 直播数据 ———\n" + "统计" * 190
+        points = "\n".join(f"{index:02d}:00 看点{index}" for index in range(10))
+        body = f"{'正文' * 750}\n\n重要时间点\n{points}"
+
+        description = bridge.prepend_live_stats_to_description(body, stats)
+
+        self.assertTrue(description.startswith(stats))
+        self.assertLessEqual(len(description), 1900)
+        self.assertEqual(len(bridge.timeline_lines(description)), 10)
+
     def test_live_stats_are_not_prepended_twice_when_ai_repeats_them(self):
         stats = "——— 直播数据 ———\n🎁 狂欢飞机×2(200元)｜合计 200元\n👥 在线 8257~10000"
         ai_description = f"{stats}\n\n直播录播正文"
@@ -160,6 +181,100 @@ class BridgeTests(unittest.TestCase):
             "录播前缀\n\n正文\n\n重要时间点\n21:00 弹幕质疑 BP 顺位",
         )
         self.assertNotIn("00:21", description)
+
+    def test_ai_timeline_retries_once_when_verified_points_are_below_target(self):
+        package = types.ModuleType("modules")
+        package.__path__ = []
+        enhancer = types.ModuleType("modules.ai_enhancer")
+        config_manager = types.ModuleType("modules.config_manager")
+        enhancer.get_openai_client = lambda _cfg: object()
+        comments = [
+            types.SimpleNamespace(time=float(index * 300), text=f"事件证据{index}")
+            for index in range(1, 9)
+        ]
+        responses = iter([
+            {
+                "title_topic": "完整看点",
+                "description": "正文",
+                "timeline": [{
+                    "event": "事件1",
+                    "evidence_texts": ["事件证据1"],
+                    "evidence_keywords": ["证据1"],
+                }],
+            },
+            {
+                "timeline": [{
+                    "event": f"事件{index}",
+                    "evidence_texts": [f"事件证据{index}"],
+                    "evidence_keywords": [f"证据{index}"],
+                } for index in range(2, 9)],
+            },
+        ])
+        enhancer._request_json_object = lambda **_kwargs: next(responses)
+        config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
+        diagnostics = {}
+
+        with patch.dict(sys.modules, {
+            "modules": package,
+            "modules.ai_enhancer": enhancer,
+            "modules.config_manager": config_manager,
+        }):
+            description, _topic = bridge.generate_danmaku_metadata_with_ai(
+                comments,
+                "",
+                {
+                    "_config_dir": str(Path(bridge.__file__).resolve().parent),
+                    "ai_danmaku_summary_enabled": True,
+                    "ai_danmaku_reaction_delay_seconds": 8,
+                },
+                timeline_duration_seconds=3600,
+                timeline_diagnostics=diagnostics,
+            )
+
+        self.assertEqual(len(bridge.timeline_lines(description)), 8)
+        self.assertTrue(diagnostics["timeline_retry_attempted"])
+        self.assertTrue(diagnostics["timeline_target_met"])
+        self.assertEqual(diagnostics["timeline_verified_count"], 8)
+        self.assertEqual(diagnostics["timeline_shortfall"], 0)
+
+    def test_ai_timeline_records_insufficient_evidence_without_forcing_retry(self):
+        package = types.ModuleType("modules")
+        package.__path__ = []
+        enhancer = types.ModuleType("modules.ai_enhancer")
+        config_manager = types.ModuleType("modules.config_manager")
+        enhancer.get_openai_client = lambda _cfg: object()
+        enhancer._request_json_object = lambda **_kwargs: {
+            "title_topic": "单一看点",
+            "description": "正文",
+            "timeline": [{
+                "event": "唯一事件",
+                "evidence_texts": ["唯一证据"],
+                "evidence_keywords": ["唯一证据"],
+            }],
+        }
+        config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
+        diagnostics = {}
+
+        with patch.dict(sys.modules, {
+            "modules": package,
+            "modules.ai_enhancer": enhancer,
+            "modules.config_manager": config_manager,
+        }):
+            bridge.generate_danmaku_metadata_with_ai(
+                [types.SimpleNamespace(time=120.0, text="唯一证据")],
+                "",
+                {
+                    "_config_dir": str(Path(bridge.__file__).resolve().parent),
+                    "ai_danmaku_summary_enabled": True,
+                },
+                timeline_duration_seconds=3600,
+                timeline_diagnostics=diagnostics,
+            )
+
+        self.assertFalse(diagnostics["timeline_retry_attempted"])
+        self.assertFalse(diagnostics["timeline_target_met"])
+        self.assertEqual(diagnostics["timeline_evidence_status"], "insufficient")
+        self.assertEqual(diagnostics["timeline_shortfall"], 7)
 
     def test_generic_recording_intro_is_removed_from_final_body(self):
         stats = "——— 直播数据 ———\n👥 在线 8257~10000"

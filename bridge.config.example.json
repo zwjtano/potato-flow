@@ -29,6 +29,7 @@
   "douyu_stats_append_description": true,
   "douyu_stats_cover_context_enabled": true,
   "ai_danmaku_max_comments": 400,
+  "ai_danmaku_reaction_delay_seconds": 8,
   "stable_checks": 2,
   "stable_interval_seconds": 2,
   "profiles": [
