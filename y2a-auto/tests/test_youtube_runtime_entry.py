@@ -118,6 +118,8 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         generator = (root / "build-tools" / "build_exe.py").read_text(encoding="utf-8")
 
         self.assertIn("collect_submodules('yt_dlp')", generator)
+        self.assertIn("SPEC_PATH.write_text", generator)
+        self.assertNotIn('command.extend(("--hidden-import", module))', generator)
 
 
 if __name__ == "__main__":

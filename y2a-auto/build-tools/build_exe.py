@@ -11,31 +11,79 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
-
-
 BUILD_TOOLS = Path(__file__).resolve().parent
 PROJECT_ROOT = BUILD_TOOLS.parent
 DIST_ROOT = BUILD_TOOLS / "dist"
 BUNDLE_DIR = DIST_ROOT / "PotatoFlow-Windows-x64"
+SPEC_PATH = BUILD_TOOLS / "PotatoFlow.spec"
 FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 
 
-def _data_arg(source: str, destination: str) -> str:
-    return f"{PROJECT_ROOT / source}{os.pathsep}{destination}"
+def create_spec_file() -> None:
+    """Store the module manifest in a spec file to avoid Windows command limits."""
+    setup_path = str(BUILD_TOOLS / "setup_app.py")
+    project_root = str(PROJECT_ROOT)
+    templates = str(PROJECT_ROOT / "templates")
+    static = str(PROJECT_ROOT / "static")
+    fonts = str(PROJECT_ROOT / "fonts")
+    spec = f'''# -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+curl_datas, curl_binaries, curl_hiddenimports = collect_all("curl_cffi")
+datas = [
+    ({templates!r}, "templates"),
+    ({static!r}, "static"),
+    ({fonts!r}, "fonts"),
+] + curl_datas
+hiddenimports = [
+    "app",
+    "Cryptodome",
+    "curl_cffi",
+    "googleapiclient.discovery",
+    "PIL",
+    "qrcode.image.pil",
+] + collect_submodules('yt_dlp') + curl_hiddenimports
+
+a = Analysis(
+    [{setup_path!r}],
+    pathex=[{project_root!r}],
+    binaries=curl_binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={{}},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="PotatoFlow",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    name="PotatoFlow",
+)
+'''
+    SPEC_PATH.write_text(spec, encoding="utf-8")
 
 
 def build_executable() -> None:
     """Create a one-directory PyInstaller application."""
-    hidden_imports = [
-        "app",
-        "Cryptodome",
-        "curl_cffi",
-        "googleapiclient.discovery",
-        "PIL",
-        "qrcode.image.pil",
-        *collect_submodules('yt_dlp'),
-    ]
+    create_spec_file()
     command = [
         sys.executable,
         "-m",
@@ -50,23 +98,8 @@ def build_executable() -> None:
         str(DIST_ROOT),
         "--workpath",
         str(BUILD_TOOLS / "build"),
-        "--specpath",
-        str(BUILD_TOOLS),
-        "--paths",
-        str(PROJECT_ROOT),
-        "--collect-all",
-        "curl_cffi",
-        "--add-data",
-        _data_arg("templates", "templates"),
-        "--add-data",
-        _data_arg("static", "static"),
-        "--add-data",
-        _data_arg("fonts", "fonts"),
+        str(SPEC_PATH),
     ]
-    for module in hidden_imports:
-        command.extend(("--hidden-import", module))
-    command.append(str(BUILD_TOOLS / "setup_app.py"))
-
     subprocess.run(command, cwd=PROJECT_ROOT, check=True)
     generated = DIST_ROOT / "PotatoFlow"
     if BUNDLE_DIR.exists():
