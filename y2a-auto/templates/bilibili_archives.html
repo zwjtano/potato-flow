@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+
+{% block title %}PotatoFlow - 投稿中心{% endblock %}
+
+{% block content %}
+<div class="studio-page-header">
+    <div>
+        <div class="page-eyebrow">BILIBILI ARCHIVE CENTER</div>
+        <h1>投稿中心</h1>
+        <p>查看所选 B站账号的全部历史稿件，并用服务器上已烧录 ASS 弹幕的视频替换指定分P。</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="https://member.bilibili.com/platform/upload-manager/article" target="_blank" rel="noopener">
+        <i class="bi bi-box-arrow-up-right"></i> B站创作中心
+    </a>
+</div>
+
+<form method="get" class="card mb-4 archive-filter-card">
+    <div class="card-body row g-3 align-items-end">
+        <div class="col-lg-4">
+            <label class="form-label" for="archive-account">投稿账号</label>
+            <select class="form-select" id="archive-account" name="account_id">
+                {% for account in accounts %}
+                <option value="{{ account.id }}" {% if account.id == selected_account_id %}selected{% endif %}>
+                    {{ account.name }}{% if account.uid %} · UID {{ account.uid }}{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-lg-3">
+            <label class="form-label" for="archive-status">稿件状态</label>
+            <select class="form-select" id="archive-status" name="status">
+                <option value="all" {% if selected_status == 'all' %}selected{% endif %}>全部稿件</option>
+                <option value="pubed" {% if selected_status == 'pubed' %}selected{% endif %}>已通过</option>
+                <option value="is_pubing" {% if selected_status == 'is_pubing' %}selected{% endif %}>进行中</option>
+                <option value="not_pubed" {% if selected_status == 'not_pubed' %}selected{% endif %}>未通过</option>
+            </select>
+        </div>
+        <div class="col-lg-4">
+            <label class="form-label" for="archive-bvid">直接定位 BVID</label>
+            <input class="form-control" id="archive-bvid" name="bvid" value="{{ selected_archive.bvid if selected_archive else request.args.get('bvid', '') }}" placeholder="例如 BV1xxxxxxxxx">
+        </div>
+        <div class="col-lg-1 d-grid">
+            <button class="btn btn-primary" type="submit" aria-label="查询稿件" title="查询稿件"><i class="bi bi-search"></i></button>
+        </div>
+    </div>
+</form>
+
+{% if archive_error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill"></i> {{ archive_error }}</div>
+{% endif %}
+
+<div class="row g-4">
+    <div class="col-xl-7">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>历史稿件</span>
+                <span class="badge text-bg-light">共 {{ archives.total }} 个</span>
+            </div>
+            <div class="list-group list-group-flush archive-list">
+                {% for archive in archives.archives %}
+                <a class="list-group-item list-group-item-action archive-list-item{% if selected_archive and selected_archive.bvid == archive.bvid %} active{% endif %}"
+                   href="{{ url_for('bilibili_archives', account_id=selected_account_id, status=selected_status, page=archives.page, bvid=archive.bvid) }}">
+                    <img src="{{ archive.cover }}" alt="" loading="lazy" referrerpolicy="no-referrer">
+                    <span class="archive-list-copy">
+                        <strong>{{ archive.title or '未命名稿件' }}</strong>
+                        <small>{{ archive.bvid }} · {{ archive.state_desc or '已同步' }}</small>
+                    </span>
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+                {% else %}
+                <div class="archive-empty"><i class="bi bi-inbox"></i><span>当前筛选下没有稿件</span></div>
+                {% endfor %}
+            </div>
+            {% set total_pages = ((archives.total + archives.page_size - 1) // archives.page_size) if archives.page_size else 1 %}
+            {% if total_pages > 1 %}
+            <div class="card-footer d-flex justify-content-between align-items-center">
+                <a class="btn btn-sm btn-outline-secondary {% if archives.page <= 1 %}disabled{% endif %}"
+                   href="{{ url_for('bilibili_archives', account_id=selected_account_id, status=selected_status, page=archives.page - 1) }}">上一页</a>
+                <span class="small text-muted">{{ archives.page }} / {{ total_pages }}</span>
+                <a class="btn btn-sm btn-outline-secondary {% if archives.page >= total_pages %}disabled{% endif %}"
+                   href="{{ url_for('bilibili_archives', account_id=selected_account_id, status=selected_status, page=archives.page + 1) }}">下一页</a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-xl-5">
+        <div class="card archive-replace-card">
+            <div class="card-header">指定分P换源</div>
+            <div class="card-body">
+                {% if selected_archive %}
+                <div class="archive-selected mb-4">
+                    <img src="{{ selected_archive.cover }}" alt="" referrerpolicy="no-referrer">
+                    <div><strong>{{ selected_archive.title }}</strong><small>{{ selected_archive.bvid }} · {{ selected_archive.pages|length }}P</small></div>
+                </div>
+                <form method="post" action="{{ url_for('bilibili_archive_replace') }}" id="archive-replace-form">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="account_id" value="{{ selected_account_id }}">
+                    <input type="hidden" name="bvid" value="{{ selected_archive.bvid }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="replace-page">目标分P</label>
+                        <select class="form-select" id="replace-page" name="page_number" required>
+                            {% for page in selected_archive.pages %}
+                            <option value="{{ page.page_number }}">P{{ page.page_number }} · {{ page.title }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">只替换这一P的视频源，其他分P、标题、简介、标签和封面原样保留。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="replace-video">已烧录视频</label>
+                        <select class="form-select" id="replace-video" name="file_id" required {% if not replacement_videos %}disabled{% endif %}>
+                            {% for video in replacement_videos %}
+                            <option value="{{ video.id }}">{{ video.room_name }} · {{ video.name }} · {{ '%.2f'|format(video.size_bytes / 1024 / 1024 / 1024) }} GB</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">仅显示 ASS 烧录阶段已完成、文件仍存在且未被其他任务占用的视频。</div>
+                    </div>
+                    <div class="alert alert-warning small">
+                        <i class="bi bi-shield-exclamation"></i>
+                        换源会将新视频上传至 B站并重新提交审核。原分P的 CID 和 filename 会记录在任务结果中，但 B站提交后不保证可自动回滚。
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="confirm-bvid">二次确认</label>
+                        <input class="form-control" id="confirm-bvid" name="confirmation_bvid" autocomplete="off" placeholder="请完整输入 {{ selected_archive.bvid }}" required>
+                    </div>
+                    <button class="btn btn-danger w-100" type="submit" {% if not replacement_videos %}disabled{% endif %}>
+                        <i class="bi bi-arrow-repeat"></i> 确认进入换源队列
+                    </button>
+                </form>
+                {% else %}
+                <div class="archive-empty"><i class="bi bi-collection-play"></i><span>先从左侧选择稿件，或输入 BVID 定位</span></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>换源队列</span>
+        <small class="text-muted">B站上传全局串行</small>
+    </div>
+    <div class="table-responsive">
+        <table class="table align-middle mb-0 archive-job-table">
+            <thead><tr><th>稿件</th><th>分P</th><th>换源文件</th><th>状态</th><th>时间</th></tr></thead>
+            <tbody>
+                {% for job in replacement_jobs %}
+                <tr data-replacement-job="{{ job.id }}">
+                    <td><a href="https://www.bilibili.com/video/{{ job.bvid }}" target="_blank" rel="noopener">{{ job.bvid }}</a></td>
+                    <td>P{{ job.page_number }} · {{ job.page_title }}</td>
+                    <td class="text-break">{{ job.video_name }}</td>
+                    <td>
+                        <span class="badge archive-job-status text-bg-{{ 'success' if job.status == 'completed' else ('danger' if job.status == 'failed' else ('primary' if job.status == 'uploading' else 'secondary')) }}">{{ {'queued':'等待上传','uploading':'正在上传','submitting':'正在提交','completed':'换源已提交','failed':'换源失败'}.get(job.status, job.status) }}</span>
+                        <div class="small text-muted archive-job-progress">{% if job.progress.percent is defined %}{{ '%.1f'|format(job.progress.percent) }}%{% endif %}</div>
+                        {% if job.error %}<div class="small text-danger">{{ job.error }}</div>{% endif %}
+                    </td>
+                    <td class="small text-muted">{{ job.updated_at }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">暂无换源任务</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.archive-filter-card { border: 0; box-shadow: 0 10px 30px rgba(30, 55, 80, .08); }
+.archive-list { min-height: 420px; }
+.archive-list-item { display: grid; grid-template-columns: 112px minmax(0, 1fr) 18px; align-items: center; gap: 14px; padding: 14px 18px; border-left: 0; border-right: 0; }
+.archive-list-item img { width: 112px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: var(--bs-tertiary-bg); }
+.archive-list-copy { min-width: 0; display: grid; gap: 5px; }
+.archive-list-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-list-copy small { color: var(--bs-secondary-color); }
+.archive-list-item.active .archive-list-copy small { color: rgba(255,255,255,.78); }
+.archive-selected { display: grid; grid-template-columns: 128px minmax(0,1fr); gap: 14px; align-items: center; }
+.archive-selected img { width: 128px; aspect-ratio: 16/9; object-fit: cover; border-radius: 9px; }
+.archive-selected div { display: grid; gap: 6px; }
+.archive-selected small { color: var(--bs-secondary-color); }
+.archive-empty { min-height: 180px; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--bs-secondary-color); }
+.archive-empty i { font-size: 2rem; }
+.archive-job-table th { white-space: nowrap; }
+@media (max-width: 700px) { .archive-list-item { grid-template-columns: 88px minmax(0,1fr) 14px; padding: 12px; } .archive-list-item img { width: 88px; } }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const labels = {queued: '等待上传', uploading: '正在上传', submitting: '正在提交', completed: '换源已提交', failed: '换源失败'};
+    const classes = {queued: 'text-bg-secondary', uploading: 'text-bg-primary', submitting: 'text-bg-primary', completed: 'text-bg-success', failed: 'text-bg-danger'};
+    async function refreshReplacementJobs() {
+        const active = document.querySelector('[data-replacement-job] .text-bg-primary, [data-replacement-job] .text-bg-secondary');
+        if (!active) return;
+        try {
+            const response = await fetch('{{ url_for("bilibili_archive_replacements") }}', {headers: {'Accept': 'application/json'}});
+            const payload = await response.json();
+            (payload.jobs || []).forEach(function (job) {
+                const row = document.querySelector(`[data-replacement-job="${CSS.escape(job.id)}"]`);
+                if (!row) return;
+                const badge = row.querySelector('.archive-job-status');
+                badge.className = `badge archive-job-status ${classes[job.status] || 'text-bg-secondary'}`;
+                badge.textContent = labels[job.status] || job.status;
+                const progress = row.querySelector('.archive-job-progress');
+                progress.textContent = Number.isFinite(Number(job.progress?.percent)) ? `${Number(job.progress.percent).toFixed(1)}%` : '';
+            });
+        } catch (_error) {}
+    }
+    window.setInterval(refreshReplacementJobs, 3000);
+});
+</script>
+{% endblock %}

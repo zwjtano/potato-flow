@@ -1261,7 +1261,7 @@ class StateStore:
             )
             for stage, status in (
                 ("detect", "completed"), ("record", "completed"),
-                ("ass", "pending"), ("live_stats", "pending"),
+                ("ass", "pending"), ("burn", "pending"), ("live_stats", "pending"),
                 ("xml_identity", "pending"), ("ai", "pending"),
                 ("cover_16x9", "pending"), ("cover_4x3", "pending"),
                 ("upload", "pending"), ("cleanup", "pending"),
@@ -1299,7 +1299,7 @@ class StateStore:
             "record_only": True,
             "worker_pid": os.getpid(),
         }
-        stages = ("record", "ass", "cover", "remux", "verify", "cleanup")
+        stages = ("record", "ass", "burn", "cover", "remux", "verify", "cleanup")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -3168,6 +3168,20 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     opacity=float(cfg.get("danmaku_opacity", 0.92)),
                 )
                 if bool(cfg.get("danmaku_burn_in", False)) and not dry_run:
+                    current_stage = "burn"
+                    burn_stage_details = {
+                        "source_video_path": str(video),
+                        "ass_path": str(ass_path),
+                    }
+                    store.stage(key, "burn", "queued", burn_stage_details)
+
+                    def update_burn_queue(status: str) -> None:
+                        store.stage(
+                            key,
+                            "burn",
+                            "running" if status == "burning" else "queued",
+                            burn_stage_details,
+                        )
                     upload_video = burn_ass(
                         video,
                         ass_path,
@@ -3178,7 +3192,24 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         ),
                         preset=str(cfg.get("danmaku_encode_preset", "medium")),
                         crf=int(cfg.get("danmaku_encode_crf", 20)),
+                        queue_status_callback=update_burn_queue,
                     )
+                    store.stage(key, "burn", "completed", {
+                        "source_video_path": str(video),
+                        "ass_path": str(ass_path),
+                        "burned_video_path": str(upload_video),
+                        "burn_in": True,
+                    })
+                else:
+                    store.stage(key, "burn", "skipped", {
+                        "reason": (
+                            "试运行不转码"
+                            if dry_run and bool(cfg.get("danmaku_burn_in", False))
+                            else "直播间未开启 ASS 弹幕烧录"
+                        ),
+                        "burn_in": bool(cfg.get("danmaku_burn_in", False)),
+                    })
+                current_stage = "ass"
                 ass_details = danmaku_stage_details(video, danmaku_xml, comments, cfg)
                 ass_details.update({
                     "danmaku_xml": str(danmaku_xml),
@@ -3208,6 +3239,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     else "skipped",
                     ass_details,
                 )
+                store.stage(key, "burn", "skipped", {"reason": "XML 中没有可用弹幕"})
         else:
             store.stage(
                 key,
@@ -3218,6 +3250,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     "video_duration_seconds": recording_duration_seconds,
                 },
             )
+            store.stage(key, "burn", "skipped", {"reason": "未生成 ASS 字幕"})
 
         # Collect stable live context before AI so metadata and both cover
         # variants are grounded in the same recording and the same game.
@@ -4210,16 +4243,18 @@ def remux_record_only_flv_with_cover(
     cover: Path,
     base_cfg: dict[str, Any],
     progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+    *,
+    output_path: Path | None = None,
+    original_flv: Path | None = None,
 ) -> Path:
-    """Remux an FLV to MP4 and attach its sidecar cover without re-encoding."""
-    if video.suffix.lower() != ".flv":
-        return video
+    """Remux a recording to MP4 and attach its cover without another video encode."""
     if not cover.is_file():
         raise RuntimeError(f"内嵌封面不存在: {cover}")
 
     cfg = effective_config(base_cfg, video)
-    output = video.with_suffix(".mp4")
-    temporary = video.with_name(f".{video.stem}.potato-remux.mp4")
+    output = output_path or video.with_suffix(".mp4")
+    original = original_flv or video
+    temporary = output.with_name(f".{output.stem}.potato-remux.mp4")
     temporary.unlink(missing_ok=True)
     command = [
         str(cfg.get("ffmpeg", "ffmpeg")),
@@ -4256,7 +4291,7 @@ def remux_record_only_flv_with_cover(
         )
         if completed.returncode != 0 or not temporary.is_file() or temporary.stat().st_size <= 0:
             detail = (completed.stderr or completed.stdout or "FFmpeg 未生成 MP4").strip()
-            raise RuntimeError(f"FLV 转 MP4 失败: {detail}")
+            raise RuntimeError(f"录播封装 MP4 失败: {detail}")
         if progress_callback:
             progress_callback(
                 "remux_completed",
@@ -4303,16 +4338,19 @@ def remux_record_only_flv_with_cover(
             )
             progress_callback(
                 "cleanup_running",
-                {"original_flv": str(video), "output_path": str(output)},
+                {"original_flv": str(original), "output_path": str(output)},
             )
 
         temporary.replace(output)
-        video.unlink()
+        if video != output:
+            video.unlink(missing_ok=True)
+        if original != video and original != output:
+            original.unlink(missing_ok=True)
         if progress_callback:
             progress_callback(
                 "cleanup_completed",
                 {
-                    "original_flv": str(video),
+                    "original_flv": str(original),
                     "final_video_path": str(output),
                     "original_flv_deleted": True,
                 },
@@ -4455,6 +4493,7 @@ def main(argv: list[str] | None = None) -> int:
                 ok = False
                 continue
             current_stage = "ass"
+            burned_temporary = path.with_name(f".{path.stem}.potato-burn.mp4")
             try:
                 store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml)})
                 ass_path = generate_record_only_ass(path, cfg, received_paths)
@@ -4466,6 +4505,48 @@ def main(argv: list[str] | None = None) -> int:
                     "completed",
                     {"danmaku_xml": str(danmaku_xml), "ass_path": str(ass_path)},
                 )
+
+                burn_enabled = bool(record_cfg.get("danmaku_burn_in", False))
+                remux_source = path
+                if burn_enabled:
+                    current_stage = "burn"
+                    burn_stage_details = {
+                        "source_video_path": str(path),
+                        "ass_path": str(ass_path),
+                    }
+                    store.stage(key, "burn", "queued", burn_stage_details)
+
+                    def update_burn_queue(status: str) -> None:
+                        store.stage(
+                            key,
+                            "burn",
+                            "running" if status == "burning" else "queued",
+                            burn_stage_details,
+                        )
+                    remux_source = burn_ass(
+                        path,
+                        ass_path,
+                        burned_temporary,
+                        ffmpeg=str(record_cfg.get("ffmpeg", "ffmpeg")),
+                        fonts_dir=resolve_path(
+                            str(record_cfg.get("danmaku_fonts_dir", "y2a-auto/fonts")),
+                            record_cfg,
+                        ),
+                        preset=str(record_cfg.get("danmaku_encode_preset", "medium")),
+                        crf=int(record_cfg.get("danmaku_encode_crf", 20)),
+                        queue_status_callback=update_burn_queue,
+                    )
+                    store.stage(key, "burn", "completed", {
+                        "source_video_path": str(path),
+                        "ass_path": str(ass_path),
+                        "burned_video_path": str(remux_source),
+                        "burn_in": True,
+                    })
+                else:
+                    store.stage(key, "burn", "skipped", {
+                        "reason": "直播间未开启 ASS 弹幕烧录",
+                        "burn_in": False,
+                    })
 
                 current_stage = "cover"
                 store.stage(key, "cover", "running")
@@ -4503,10 +4584,12 @@ def main(argv: list[str] | None = None) -> int:
                     {"source_flv": str(path), "cover_path": str(cover_path)},
                 )
                 final_video = remux_record_only_flv_with_cover(
-                    path,
+                    remux_source,
                     cover_path,
-                    cfg,
+                    record_cfg,
                     progress_callback=update_remux_progress,
+                    output_path=path.with_suffix(".mp4"),
+                    original_flv=path,
                 )
                 if final_video != path:
                     store.exclude_recording(final_video, str(args.room_id))
@@ -4519,6 +4602,8 @@ def main(argv: list[str] | None = None) -> int:
                     "ass_path": str(ass_path),
                     "cover_path": str(cover_path),
                     "attached_pic": 1,
+                    "danmaku_burn_in": burn_enabled,
+                    "burned_video_path": str(final_video) if burn_enabled else None,
                     "original_flv_deleted": final_video != path,
                     "video_duration_seconds": video_duration_seconds(
                         final_video,
@@ -4535,6 +4620,7 @@ def main(argv: list[str] | None = None) -> int:
                     result=result,
                 )
             except Exception as exc:
+                burned_temporary.unlink(missing_ok=True)
                 store.stage(key, current_stage, "failed", error=str(exc))
                 store.finish(key, "failed", error=str(exc))
                 emit_recording_task_result_notification(

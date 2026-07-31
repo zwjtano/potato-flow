@@ -1523,6 +1523,104 @@ def live_recording_job_review(fingerprint):
     )
 
 
+@app.route('/bilibili-archives')
+@login_required
+def bilibili_archives():
+    accounts = live_recorder_manager.bilibili_archive_accounts()
+    requested_account = str(request.args.get('account_id') or '').strip()
+    account_ids = {str(account.get('id') or '') for account in accounts}
+    selected_account_id = (
+        requested_account if requested_account in account_ids
+        else (str(accounts[0].get('id') or '') if accounts else '')
+    )
+    allowed_statuses = {'all', 'pubed', 'is_pubing', 'not_pubed'}
+    selected_status = str(request.args.get('status') or 'pubed').strip()
+    if selected_status not in allowed_statuses:
+        selected_status = 'pubed'
+    try:
+        page = max(1, int(request.args.get('page') or 1))
+    except (TypeError, ValueError):
+        page = 1
+    archives = {'archives': [], 'page': page, 'page_size': 20, 'total': 0}
+    archive_error = ''
+    if selected_account_id:
+        try:
+            archives = live_recorder_manager.bilibili_archives(
+                selected_account_id,
+                page=page,
+                status=selected_status,
+            )
+        except RecorderConfigError as exc:
+            archive_error = str(exc)
+    selected_bvid = str(request.args.get('bvid') or '').strip()
+    selected_archive = None
+    if selected_account_id and selected_bvid:
+        try:
+            selected_archive = live_recorder_manager.bilibili_archive_detail(
+                selected_account_id,
+                selected_bvid,
+            )
+        except RecorderConfigError as exc:
+            archive_error = str(exc)
+    return render_template(
+        'bilibili_archives.html',
+        accounts=accounts,
+        selected_account_id=selected_account_id,
+        selected_status=selected_status,
+        archives=archives,
+        archive_error=archive_error,
+        selected_archive=selected_archive,
+        replacement_videos=live_recorder_manager.burned_replacement_videos(200),
+        replacement_jobs=live_recorder_manager.archive_replacement_jobs(30),
+    )
+
+
+@app.route('/bilibili-archives/replace', methods=['POST'])
+@login_required
+def bilibili_archive_replace():
+    account_id = str(request.form.get('account_id') or '').strip()
+    bvid = str(request.form.get('bvid') or '').strip()
+    try:
+        result = live_recorder_manager.start_archive_source_replacement(
+            account_id=account_id,
+            bvid=bvid,
+            page_number=request.form.get('page_number'),
+            file_id=str(request.form.get('file_id') or '').strip(),
+            confirmation_bvid=str(request.form.get('confirmation_bvid') or '').strip(),
+        )
+        flash(
+            f"{result['bvid']} 的 P{result['page_number']} 已进入换源队列，"
+            f"视频：{result['video_name']}。",
+            'success',
+        )
+    except RecorderConfigError as exc:
+        flash(str(exc), 'danger')
+    return redirect(url_for(
+        'bilibili_archives',
+        account_id=account_id,
+        bvid=bvid,
+    ))
+
+
+@app.route('/bilibili-archives/replacements')
+@login_required
+def bilibili_archive_replacements():
+    public_jobs = []
+    for job in live_recorder_manager.archive_replacement_jobs(30):
+        public_jobs.append({
+            key: job.get(key)
+            for key in (
+                'id', 'account_id', 'account_name', 'bvid', 'page_number',
+                'video_name', 'status', 'progress', 'error', 'created_at',
+                'updated_at', 'completed_at',
+            )
+        })
+    return jsonify({
+        'ok': True,
+        'jobs': public_jobs,
+    })
+
+
 @app.route('/live-recording/files')
 @login_required
 def live_recording_files():
@@ -1589,6 +1687,9 @@ def live_recording_save_room():
             ),
             record_only=_coerce_checkbox_value(
                 request.form.get('record_only', 'off')
+            ),
+            danmaku_burn_in=_coerce_checkbox_value(
+                request.form.get('danmaku_burn_in', 'off')
             ),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
         )
@@ -1697,6 +1798,9 @@ def live_recording_room_recording_settings(room_id):
             ),
             record_only=_coerce_checkbox_value(
                 request.form.get('record_only', 'off')
+            ),
+            danmaku_burn_in=_coerce_checkbox_value(
+                request.form.get('danmaku_burn_in', 'off')
             ),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
         )
