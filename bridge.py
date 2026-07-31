@@ -1329,7 +1329,6 @@ class StateStore:
                     now,
                 ),
             )
-            db.execute("DELETE FROM upload_stages WHERE fingerprint = ?", (key,))
             for stage in stages:
                 completed = stage == "record" and danmaku_xml is not None
                 details = None
@@ -1347,7 +1346,26 @@ class StateStore:
                     """INSERT INTO upload_stages
                        (fingerprint, stage, status, details_json, error,
                         started_at, finished_at, updated_at)
-                       VALUES (?, ?, ?, ?, NULL, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, NULL, ?, ?, ?)
+                       ON CONFLICT(fingerprint, stage) DO UPDATE SET
+                         status=CASE
+                           WHEN upload_stages.status='completed' THEN upload_stages.status
+                           ELSE excluded.status
+                         END,
+                         details_json=CASE
+                           WHEN upload_stages.status='completed' THEN upload_stages.details_json
+                           ELSE excluded.details_json
+                         END,
+                         error=NULL,
+                         started_at=CASE
+                           WHEN upload_stages.status='completed' THEN upload_stages.started_at
+                           ELSE excluded.started_at
+                         END,
+                         finished_at=CASE
+                           WHEN upload_stages.status='completed' THEN upload_stages.finished_at
+                           ELSE excluded.finished_at
+                         END,
+                         updated_at=excluded.updated_at""",
                     (
                         key,
                         stage,
@@ -4513,59 +4531,92 @@ def main(argv: list[str] | None = None) -> int:
                 ok = False
                 continue
             current_stage = "ass"
-            burned_temporary = path.with_name(f".{path.stem}.potato-burn.mp4")
+            burned_output = path.with_suffix(".mp4")
+            if burned_output == path:
+                burned_output = path.with_name(f"{path.stem}.danmaku.mp4")
             try:
-                store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml)})
-                ass_path = generate_record_only_ass(path, cfg, received_paths)
-                if ass_path is None:
-                    raise RuntimeError("弹幕 XML 为空或无有效弹幕，未生成 ASS 字幕")
-                store.stage(
-                    key,
-                    "ass",
-                    "completed",
-                    {"danmaku_xml": str(danmaku_xml), "ass_path": str(ass_path)},
-                )
+                ass_state = store.stage_state(key, "ass")
+                ass_candidate = Path(str(ass_state.get("details", {}).get("ass_path") or ""))
+                if (
+                    ass_state.get("status") == "completed"
+                    and ass_candidate.is_file()
+                    and ass_candidate.stat().st_size > 0
+                ):
+                    ass_path = ass_candidate
+                    store.stage(key, "ass", "completed", {
+                        **ass_state.get("details", {}),
+                        "reused_on_retry": True,
+                    })
+                else:
+                    store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml)})
+                    ass_path = generate_record_only_ass(path, cfg, received_paths)
+                    if ass_path is None:
+                        raise RuntimeError("弹幕 XML 为空或无有效弹幕，未生成 ASS 字幕")
+                    store.stage(
+                        key,
+                        "ass",
+                        "completed",
+                        {"danmaku_xml": str(danmaku_xml), "ass_path": str(ass_path)},
+                    )
 
                 burn_enabled = bool(record_cfg.get("danmaku_burn_in", False))
                 remux_source = path
                 if burn_enabled:
                     current_stage = "burn"
-                    burn_stage_details = {
-                        "source_video_path": str(path),
-                        "ass_path": str(ass_path),
-                    }
-                    store.stage(key, "burn", "queued", burn_stage_details)
+                    burn_state = store.stage_state(key, "burn")
+                    burn_candidate = Path(str(
+                        burn_state.get("details", {}).get("burned_video_path") or ""
+                    ))
+                    if (
+                        burn_state.get("status") == "completed"
+                        and burn_candidate.is_file()
+                        and burn_candidate.stat().st_size > 0
+                    ):
+                        remux_source = burn_candidate
+                        store.stage(key, "burn", "completed", {
+                            **burn_state.get("details", {}),
+                            "reused_on_retry": True,
+                        })
+                    else:
+                        burn_stage_details = {
+                            "source_video_path": str(path),
+                            "ass_path": str(ass_path),
+                        }
+                        store.stage(key, "burn", "queued", burn_stage_details)
 
-                    def update_burn_queue(status: str) -> None:
-                        store.stage(
-                            key,
-                            "burn",
-                            "running" if status == "burning" else "queued",
-                            burn_stage_details,
+                        def update_burn_queue(status: str) -> None:
+                            store.stage(
+                                key,
+                                "burn",
+                                "running" if status == "burning" else "queued",
+                                burn_stage_details,
+                            )
+
+                        def update_burn_progress(progress: dict[str, Any]) -> None:
+                            burn_stage_details.update(progress)
+                            store.stage(key, "burn", "running", burn_stage_details)
+                        remux_source = burn_ass(
+                            path,
+                            ass_path,
+                            burned_output,
+                            ffmpeg=str(record_cfg.get("ffmpeg", "ffmpeg")),
+                            fonts_dir=resolve_path(
+                                str(record_cfg.get("danmaku_fonts_dir", "y2a-auto/fonts")),
+                                record_cfg,
+                            ),
+                            preset=str(record_cfg.get("danmaku_encode_preset", "medium")),
+                            crf=int(record_cfg.get("danmaku_encode_crf", 20)),
+                            queue_status_callback=update_burn_queue,
+                            progress_callback=update_burn_progress,
                         )
-
-                    def update_burn_progress(progress: dict[str, Any]) -> None:
-                        burn_stage_details.update(progress)
-                        store.stage(key, "burn", "running", burn_stage_details)
-                    remux_source = burn_ass(
-                        path,
-                        ass_path,
-                        burned_temporary,
-                        ffmpeg=str(record_cfg.get("ffmpeg", "ffmpeg")),
-                        fonts_dir=resolve_path(
-                            str(record_cfg.get("danmaku_fonts_dir", "y2a-auto/fonts")),
-                            record_cfg,
-                        ),
-                        preset=str(record_cfg.get("danmaku_encode_preset", "medium")),
-                        crf=int(record_cfg.get("danmaku_encode_crf", 20)),
-                        queue_status_callback=update_burn_queue,
-                        progress_callback=update_burn_progress,
-                    )
-                    store.stage(key, "burn", "completed", {
-                        **burn_stage_details,
-                        "burned_video_path": str(remux_source),
-                        "burn_in": True,
-                    })
+                        store.stage(key, "burn", "completed", {
+                            **burn_stage_details,
+                            "burned_video_path": str(remux_source),
+                            "burn_in": True,
+                            "visible_output": True,
+                        })
+                    if remux_source != path:
+                        store.exclude_recording(remux_source, str(args.room_id))
                 else:
                     store.stage(key, "burn", "skipped", {
                         "reason": "直播间未开启 ASS 弹幕烧录",
@@ -4573,14 +4624,29 @@ def main(argv: list[str] | None = None) -> int:
                     })
 
                 current_stage = "cover"
-                store.stage(key, "cover", "running")
-                cover_path = generate_record_only_cover(path, cfg)
-                store.stage(
-                    key,
-                    "cover",
-                    "completed",
-                    {"ai_cover_path": str(cover_path)},
-                )
+                cover_state = store.stage_state(key, "cover")
+                cover_candidate = Path(str(
+                    cover_state.get("details", {}).get("ai_cover_path") or ""
+                ))
+                if (
+                    cover_state.get("status") == "completed"
+                    and cover_candidate.is_file()
+                    and cover_candidate.stat().st_size > 0
+                ):
+                    cover_path = cover_candidate
+                    store.stage(key, "cover", "completed", {
+                        **cover_state.get("details", {}),
+                        "reused_on_retry": True,
+                    })
+                else:
+                    store.stage(key, "cover", "running")
+                    cover_path = generate_record_only_cover(path, cfg)
+                    store.stage(
+                        key,
+                        "cover",
+                        "completed",
+                        {"ai_cover_path": str(cover_path)},
+                    )
 
                 def update_remux_progress(
                     event: str,
@@ -4644,7 +4710,8 @@ def main(argv: list[str] | None = None) -> int:
                     result=result,
                 )
             except Exception as exc:
-                burned_temporary.unlink(missing_ok=True)
+                if current_stage == "burn":
+                    burned_output.unlink(missing_ok=True)
                 store.stage(key, current_stage, "failed", error=str(exc))
                 store.finish(key, "failed", error=str(exc))
                 emit_recording_task_result_notification(
