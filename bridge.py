@@ -425,13 +425,46 @@ def recording_part_title(video: Path, index: int, topic: str = "") -> str:
     return f"{clock} {clean_topic[:60]}"[:80]
 
 
-def _multipart_summary_body(description: str) -> str:
+def strip_recording_intro(description: str) -> str:
+    """Remove the generic AI/template lead-in from a recording summary."""
     return re.sub(
         r"^直播录播[：:].*?[。.!！]\s*",
         "",
         str(description or "").strip(),
         count=1,
     ).strip()
+
+
+def compensate_danmaku_timestamps(description: str, delay_seconds: int = 8) -> str:
+    """Move AI timeline anchors earlier to compensate for viewer reaction lag."""
+    delay = max(0, min(60, int(delay_seconds or 0)))
+    if not delay:
+        return str(description or "")
+
+    pattern = re.compile(r"(?m)^(?P<prefix>\s*)(?P<stamp>\d{1,2}:\d{2}(?::\d{2})?)(?=\s)")
+
+    def replace(match: re.Match[str]) -> str:
+        parts = [int(value) for value in match.group("stamp").split(":")]
+        if len(parts) == 2:
+            total = parts[0] * 60 + parts[1]
+            width = 2
+        else:
+            total = parts[0] * 3600 + parts[1] * 60 + parts[2]
+            width = 3
+        corrected = max(0, total - delay)
+        if width == 2 and corrected < 3600:
+            stamp = f"{corrected // 60:02d}:{corrected % 60:02d}"
+        else:
+            hours, remainder = divmod(corrected, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            stamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{match.group('prefix')}{stamp}"
+
+    return pattern.sub(replace, str(description or ""))
+
+
+def _multipart_summary_body(description: str) -> str:
+    return strip_recording_intro(description)
 
 
 def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -> str:
@@ -442,7 +475,7 @@ def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -
     ]
     normalized.sort(key=lambda item: int(item.get("part_number") or 0))
     if not normalized:
-        return str(intro or "").strip()[:1900]
+        return strip_recording_intro(intro)[:1900]
 
     headings = []
     for item in normalized:
@@ -455,7 +488,7 @@ def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -
             fields.append(recorded_at)
         headings.append(f"【{'｜'.join(fields)}】")
 
-    clean_intro = str(intro or "").strip()
+    clean_intro = strip_recording_intro(intro)
     overhead = len(clean_intro) + sum(len(item) + 2 for item in headings)
     body_budget = max(80, (1850 - overhead) // max(1, len(normalized)))
     sections = []
@@ -465,6 +498,20 @@ def render_multipart_description(parts: list[dict[str, Any]], intro: str = "") -
     return "\n\n".join(([clean_intro] if clean_intro else []) + sections)[:1900].rstrip()
 
 
+def strip_live_stats_from_description(description: str, stats_text: str) -> str:
+    """Return the editorial body without pipeline-owned live statistics."""
+    stats = str(stats_text or "").strip()
+    body = strip_recording_intro(description)
+    if not stats:
+        return body
+
+    # Old tasks and model responses may contain one or more canonical copies.
+    # Keep this migration tolerant so retrying a historical task repairs it.
+    while body == stats or body.startswith(f"{stats}\n"):
+        body = body[len(stats):].lstrip()
+    return strip_recording_intro(body)
+
+
 def prepend_live_stats_to_description(
     description: str,
     stats_text: str,
@@ -472,7 +519,7 @@ def prepend_live_stats_to_description(
 ) -> str:
     """Put live statistics first while keeping the archive description in range."""
     stats = str(stats_text or "").strip()
-    body = str(description or "").strip()
+    body = strip_live_stats_from_description(description, stats)
     if not stats:
         return body[:limit].rstrip()
     if len(stats) >= limit:
@@ -2147,6 +2194,10 @@ def generate_danmaku_metadata_with_ai(
             "comment_count": len(comments),
             "sampled_comments": format_comments_for_ai(selected),
             "verified_live_context": grounding_context or {},
+            "timestamp_reaction_delay_seconds": max(
+                0,
+                min(60, int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0)),
+            ),
         }
         legacy_prompt = str(cfg.get("ai_danmaku_prompt") or "").strip()
         title_prompt = str(
@@ -2160,12 +2211,16 @@ def generate_danmaku_metadata_with_ai(
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；英雄、装备和 KDA
 只能使用其中已经确认的数据，禁止从弹幕、标题或常识猜测，且不得把其他对局的数据混入本段。
+verified_live_context.live_stats 只作为事实参考。description 严禁复制或输出“直播数据”区块、礼物、
+在线人数、英雄装备统计表；这些内容由投稿流程在最后一步独立渲染，并且只渲染一次。
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
 description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
 description 先用两至四段按事件发展总结主要内容，再添加“重要时间点”。
 重要事件每行必须严格写成“MM:SS 事件说明”或“HH:MM:SS 事件说明”，行首不要添加项目符号、
 括号或其他字符，以便哔哩哔哩识别为可点击时间跳转。时间必须依据 sampled_comments 中已有的
 时间戳并尽量贴近对应弹幕证据；若信息不足则减少条目，禁止为了凑数编造时间或事件。
+弹幕时间晚于画面事件：应选最早一批明确相关弹幕作为证据锚点，不要选择刷屏高峰；程序会按
+timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
 title_topic 是适合放进标题的自然短语，不加书名号、不含日期和主播名，最多 18 个中文字符。
 {DOTA2_METADATA_DISAMBIGUATION}
 本直播间的标题要求：{title_prompt}
@@ -2184,12 +2239,20 @@ title_topic 是适合放进标题的自然短语，不加书名号、不含日�
             scene_name="biliup_danmaku_summary",
         )
         generated_description = str((result or {}).get("description", "")).strip()
+        generated_description = strip_live_stats_from_description(
+            generated_description,
+            str((grounding_context or {}).get("live_stats") or ""),
+        )
         generated_description = re.sub(
             r"^直播录播[：:].*?[。.!！]\s*",
             "",
             generated_description,
             count=1,
         ).strip()
+        generated_description = compensate_danmaku_timestamps(
+            generated_description,
+            int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0),
+        )
         description = (
             f"{base_description}{generated_description}"
             if generated_description
@@ -2395,8 +2458,6 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         current_stage = "live_stats"
         if not stats_enabled:
             store.stage(key, "live_stats", "skipped", {"reason": "斗鱼直播数据统计已关闭", "outcome": "disabled"})
-        elif not append_stats_enabled:
-            store.stage(key, "live_stats", "skipped", {"reason": "直播数据追加到简介已关闭", "outcome": "disabled"})
         else:
             store.stage(key, "live_stats", "running", {"description_before_length": len(description)})
             try:
@@ -2467,14 +2528,28 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             retry
             and prior_ai_stage.get("status") in {"completed", "skipped"}
             and prior_ai_details.get("title")
-            and prior_ai_details.get("description")
+            and (
+                prior_ai_details.get("description_body")
+                or prior_ai_details.get("description")
+            )
         )
         partition = str(cfg.get("bilibili_partition_id", "")).strip()
         metadata_automation: dict[str, Any] = {}
         if reuse_ai:
             ai_details = dict(prior_ai_details)
             title = str(ai_details.get("title") or title)
-            description = str(ai_details.get("description") or description)
+            # New tasks persist the editorial body separately. For old tasks,
+            # migrate the previously composed description back to a clean body
+            # before the one and only submission composition step below.
+            description = strip_live_stats_from_description(
+                str(
+                    ai_details.get("description_body")
+                    or ai_details.get("description")
+                    or description
+                ),
+                stats_text,
+            )
+            ai_details["description_body"] = description
             ai_topic = str(ai_details.get("title_topic") or "")
             previous_tags = ai_details.get("final_tags")
             if isinstance(previous_tags, list):
@@ -2507,11 +2582,17 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
                     "title": title,
                     "description": description,
+                    "description_body": description,
                     "comment_count": len(comments),
                 })
             else:
                 reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
-                ai_details.update({"reason": reason, "title": title, "description": description})
+                ai_details.update({
+                    "reason": reason,
+                    "title": title,
+                    "description": description,
+                    "description_body": description,
+                })
 
             if not dry_run and not existing_submission:
                 store.stage(key, "ai", "running", ai_details)
@@ -2569,7 +2650,10 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         if review_override:
             title = str(review_override.get("title") or title).strip()
-            description = str(review_override.get("description") or description).strip()
+            description = strip_live_stats_from_description(
+                str(review_override.get("description") or description),
+                stats_text,
+            )
             part_description = description
             override_tags = review_override.get("tags")
             if isinstance(override_tags, list):
@@ -2619,6 +2703,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 recording_intro,
             )
 
+        description_body = strip_live_stats_from_description(description, stats_text)
+        description = description_body
         ai_details.update({
             "title_topic": part_topic,
             "part_title": part_generated_title,
@@ -2626,6 +2712,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "page_title": page_title,
             "title": title,
             "description": description,
+            "description_body": description_body,
             "final_tags": tags,
             "selected_partition_id": partition or None,
         })
@@ -2732,59 +2819,39 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "live_stats"
         append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
-        if live_stats_prepared:
-            if stats_text:
+        if live_stats_prepared and stats_text:
+            description_body = strip_live_stats_from_description(
+                description_body,
+                stats_text,
+            )
+            if append_stats_enabled:
                 description = prepend_live_stats_to_description(description, stats_text)
                 ai_details["stats_appended"] = True
                 ai_details["stats_prepended"] = True
                 ai_details["stats_position"] = "start"
-                ai_details["description"] = description
                 print("[bridge] 预先整理的直播统计数据已置于简介开头", file=sys.stderr)
-        elif not stats_enabled:
-            store.stage(key, "live_stats", "skipped", {
-                "reason": "斗鱼直播数据统计已关闭",
-                "outcome": "disabled",
-            })
-        elif not append_stats_enabled:
-            store.stage(key, "live_stats", "skipped", {
-                "reason": "直播数据追加到简介已关闭",
-                "outcome": "disabled",
+            else:
+                description = description_body
+                ai_details["stats_appended"] = False
+                ai_details["stats_prepended"] = False
+                ai_details["stats_position"] = None
+            store.stage(key, "live_stats", "completed", {
+                "stats_appended": append_stats_enabled,
+                "stats_prepended": append_stats_enabled,
+                "stats_position": "start" if append_stats_enabled else None,
+                "description_length": len(description),
+                **live_stats_stage_details(stats_text),
             })
         else:
-            store.stage(key, "live_stats", "running", {
-                "description_before_length": len(description),
-            })
-            try:
-                from modules.douyu_stats_formatter import get_stats_for_description  # type: ignore
+            description = description_body
+            ai_details["stats_appended"] = False
+            ai_details["stats_prepended"] = False
+            ai_details["stats_position"] = None
 
-                stats_text = get_stats_for_description(str(video.parent))
-                if stats_text:
-                    description = prepend_live_stats_to_description(description, stats_text)
-                    ai_details["stats_appended"] = True
-                    ai_details["stats_prepended"] = True
-                    ai_details["stats_position"] = "start"
-                    ai_details["description"] = description
-                    store.stage(key, "live_stats", "completed", {
-                        "stats_appended": True,
-                        "stats_prepended": True,
-                        "stats_position": "start",
-                        "description_length": len(description),
-                        **live_stats_stage_details(stats_text),
-                    })
-                    print("[bridge] 直播统计数据已置于简介开头", file=sys.stderr)
-                else:
-                    store.stage(key, "live_stats", "skipped", {
-                        "reason": "本次录播时间内没有匹配的直播数据",
-                        "outcome": "no_data",
-                    })
-            except Exception as exc:
-                store.stage(key, "live_stats", "warning", {
-                    "reason": "直播数据整理失败，但不阻断投稿",
-                    "outcome": "failed_non_blocking",
-                }, error=str(exc))
-                print(f"[bridge] 直播统计数据追加失败(不影响投稿): {exc}", file=sys.stderr)
-        # Keep the AI stage's persisted description identical to the final
-        # description sent to Bilibili after optional statistics are appended.
+        # Persist both representations. Retries always reuse description_body;
+        # description is the exact value sent to Bilibili and shown in details.
+        ai_details["description_body"] = description_body
+        ai_details["description"] = description
         store.stage(key, "ai", ai_stage_status, ai_details)
 
         current_stage = "cover_16x9"
@@ -2865,7 +2932,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 generated_cover, cover_generation = generate_recording_cover_with_ai(
                     title=title,
                     ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
-                    description=description,
+                    description=description_body,
                     streamer=recording_metadata_values(video, cfg)["streamer"],
                     cfg=cfg,
                     work_dir=work_dir,
@@ -2955,7 +3022,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 generated_cover43, cover43_details = generate_recording_cover_with_ai(
                     title=title,
                     ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
-                    description=description,
+                    description=description_body,
                     streamer=recording_metadata_values(video, cfg)["streamer"],
                     cfg=cfg,
                     work_dir=work_dir,

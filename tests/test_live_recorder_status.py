@@ -1330,6 +1330,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("streamer_shard: '已有魔晶'", tasks)
         self.assertGreaterEqual(bridge_source.count('"streamer_neutral"'), 2)
 
+    def test_recording_cover_refreshes_when_pipeline_exposes_generated_image(self):
+        tasks = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+
+        self.assertIn('data-recording-cover-available="{{ 1 if job.cover_available else 0 }}"', tasks)
+        self.assertIn('data-recording-cover-version="{{ job.cover_updated_at }}"', tasks)
+        self.assertIn("scheduleRecordingCoverRefresh(jobId)", tasks)
+        self.assertIn("await refreshTasksData(true)", tasks)
+
     def test_pipeline_jobs_expose_unified_task_metadata(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

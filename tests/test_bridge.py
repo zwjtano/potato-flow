@@ -52,7 +52,7 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(
             description,
-            "【直播信息】\n峰值人气：123 万\n\n直播录播：YYF《休赛期改名狂欢》。",
+            "【直播信息】\n峰值人气：123 万",
         )
 
     def test_live_stats_take_priority_when_description_reaches_limit(self):
@@ -61,6 +61,105 @@ class BridgeTests(unittest.TestCase):
 
         self.assertTrue(description.startswith(stats))
         self.assertLessEqual(len(description), 1900)
+
+    def test_live_stats_are_not_prepended_twice_when_ai_repeats_them(self):
+        stats = "——— 直播数据 ———\n🎁 狂欢飞机×2(200元)｜合计 200元\n👥 在线 8257~10000"
+        ai_description = f"{stats}\n\n直播录播正文"
+
+        description = bridge.prepend_live_stats_to_description(ai_description, stats)
+
+        self.assertEqual(description, ai_description)
+        self.assertEqual(description.count("——— 直播数据 ———"), 1)
+
+    def test_existing_duplicate_live_stats_are_collapsed_on_retry(self):
+        stats = "——— 直播数据 ———\n🎁 狂欢飞机×2(200元)｜合计 200元\n👥 在线 8257~10000"
+        duplicated = f"{stats}\n\n{stats}\n\n直播录播正文"
+
+        description = bridge.prepend_live_stats_to_description(duplicated, stats)
+
+        self.assertEqual(description, f"{stats}\n\n直播录播正文")
+        self.assertEqual(description.count("——— 直播数据 ———"), 1)
+
+    def test_live_stats_can_be_removed_from_persisted_submission_description(self):
+        stats = "——— 直播数据 ———\n🎁 飞机×1(100元) | 合计 100元"
+        persisted = f"{stats}\n\n{stats}\n\nAI 正文"
+
+        self.assertEqual(
+            bridge.strip_live_stats_from_description(persisted, stats),
+            "AI 正文",
+        )
+
+    def test_ai_live_stats_context_is_grounding_only(self):
+        stats = "——— 直播数据 ———\n👥 在线 8257~10000"
+        package = types.ModuleType("modules")
+        package.__path__ = []
+        enhancer = types.ModuleType("modules.ai_enhancer")
+        config_manager = types.ModuleType("modules.config_manager")
+        enhancer.get_openai_client = lambda _cfg: object()
+        enhancer._request_json_object = lambda **_kwargs: {
+            "title_topic": "测试主题",
+            "description": f"{stats}\n\nAI 正文",
+        }
+        config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
+
+        with patch.dict(sys.modules, {
+            "modules": package,
+            "modules.ai_enhancer": enhancer,
+            "modules.config_manager": config_manager,
+        }):
+            description, topic = bridge.generate_danmaku_metadata_with_ai(
+                [types.SimpleNamespace(time=1.0, text="测试弹幕")],
+                "录播前缀\n\n",
+                {
+                    "_config_dir": str(Path(bridge.__file__).resolve().parent),
+                    "ai_danmaku_summary_enabled": True,
+                },
+                {"live_stats": stats},
+            )
+
+        self.assertEqual(topic, "测试主题")
+        self.assertEqual(description, "录播前缀\n\nAI 正文")
+        self.assertNotIn("直播数据", description)
+
+    def test_generic_recording_intro_is_removed_from_final_body(self):
+        stats = "——— 直播数据 ———\n👥 在线 8257~10000"
+        description = bridge.prepend_live_stats_to_description(
+            "直播录播：YYF。正文从这里开始。",
+            stats,
+        )
+
+        self.assertEqual(description, f"{stats}\n\n正文从这里开始。")
+        self.assertNotIn("直播录播：YYF。", description)
+
+    def test_generic_recording_intro_is_removed_from_multipart_description(self):
+        description = bridge.render_multipart_description(
+            [{
+                "part_number": 1,
+                "title_topic": "第一局",
+                "description": "直播录播：YYF。第一局正文",
+            }],
+            "直播录播：YYF。",
+        )
+
+        self.assertEqual(description, "【P1｜第一局】\n第一局正文")
+
+    def test_danmaku_timeline_compensates_for_reaction_delay(self):
+        description = (
+            "重要时间点\n"
+            "12:03 天梯分重置\n"
+            "01:00:05 团战结束"
+        )
+
+        self.assertEqual(
+            bridge.compensate_danmaku_timestamps(description, 8),
+            "重要时间点\n11:55 天梯分重置\n00:59:57 团战结束",
+        )
+
+    def test_danmaku_timeline_compensation_never_goes_below_zero(self):
+        self.assertEqual(
+            bridge.compensate_danmaku_timestamps("00:04 开场事件", 8),
+            "00:00 开场事件",
+        )
 
     def test_live_stats_stage_details_persist_visible_summary(self):
         stats = "——— 直播数据 ———\n👥 在线 547~957"
@@ -698,7 +797,8 @@ class BridgeTests(unittest.TestCase):
             store.claim(key, video, "bilibili")
             store.stage(key, "ai", "completed", {
                 "title": "已生成标题",
-                "description": "已生成简介",
+                "description": "——— 直播数据 ———\n\n已生成正文",
+                "description_body": "已生成正文",
                 "title_topic": "已生成主题",
                 "final_tags": ["直播", "DOTA2"],
                 "selected_partition_id": "129",
@@ -750,7 +850,7 @@ class BridgeTests(unittest.TestCase):
                 self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
 
             self.assertEqual(uploads[0]["title"], "已生成标题")
-            self.assertEqual(uploads[0]["description"], "已生成简介")
+            self.assertEqual(uploads[0]["description"], "已生成正文")
             self.assertEqual(uploads[0]["tags"], ["直播", "DOTA2"])
             self.assertEqual(uploads[0]["partition_id"], "129")
             self.assertEqual(uploads[0]["task_id"], key[:12])

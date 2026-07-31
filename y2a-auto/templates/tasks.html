@@ -127,7 +127,9 @@
                     <tbody>
                     {% for job in recording_jobs %}
                         {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
-                        <tr class="recording-task-row status-{{ job.status }}" data-recording-job-id="{{ job.id }}">
+                        <tr class="recording-task-row status-{{ job.status }}" data-recording-job-id="{{ job.id }}"
+                            data-recording-cover-available="{{ 1 if job.cover_available else 0 }}"
+                            data-recording-cover-version="{{ job.cover_updated_at }}">
                             <td>
                                 <div class="recording-video-cell">
                                     {% if job.cover_available %}
@@ -259,7 +261,9 @@
             <div class="d-md-none recording-task-cards">
             {% for job in recording_jobs %}
                 {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
-                <article class="recording-task-card status-{{ job.status }}" data-recording-job-id="{{ job.id }}">
+                <article class="recording-task-card status-{{ job.status }}" data-recording-job-id="{{ job.id }}"
+                         data-recording-cover-available="{{ 1 if job.cover_available else 0 }}"
+                         data-recording-cover-version="{{ job.cover_updated_at }}">
                     <div class="d-flex justify-content-between gap-3">
                         <div class="recording-video-cell min-w-0">
                             {% if job.cover_available %}
@@ -2042,8 +2046,19 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             ? Math.max(0, Math.min(100, Math.floor(completedStages * 100 / totalStages)))
             : 0;
         const uploadText = String(job.upload_progress_text || formatRecordingUploadProgress(job.upload_progress));
+        const coverAvailable = job.cover_available ? '1' : '0';
+        const coverVersion = String(job.cover_updated_at || '');
 
         document.querySelectorAll(`[data-recording-job-id="${escapedJobId}"]`).forEach(root => {
+            if (
+                root.dataset.recordingCoverAvailable !== coverAvailable ||
+                (coverAvailable === '1' && root.dataset.recordingCoverVersion !== coverVersion)
+            ) {
+                root.dataset.recordingCoverAvailable = coverAvailable;
+                root.dataset.recordingCoverVersion = coverVersion;
+                scheduleRecordingCoverRefresh(jobId);
+            }
+
             Array.from(root.classList)
                 .filter(name => name.startsWith('status-'))
                 .forEach(name => root.classList.remove(name));
@@ -2077,6 +2092,20 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                 updateTaskDateTimes(node);
             });
         });
+    }
+
+    const recordingCoverRefreshes = new Set();
+
+    function scheduleRecordingCoverRefresh(jobId) {
+        if (!jobId || recordingCoverRefreshes.has(jobId)) return;
+        recordingCoverRefreshes.add(jobId);
+        window.setTimeout(async () => {
+            try {
+                await refreshTasksData(true);
+            } finally {
+                recordingCoverRefreshes.delete(jobId);
+            }
+        }, 0);
     }
 
     async function refreshRecordingUploadMetrics() {
