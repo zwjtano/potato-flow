@@ -40,6 +40,14 @@ jobs:
           cache: pip
           cache-dependency-path: y2a-auto/requirements.lock
 
+      - name: Read release metadata
+        id: release_meta
+        shell: pwsh
+        run: |
+          $version = python -c "import sys; sys.path.insert(0, 'y2a-auto'); from version import __version__; print(__version__)"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "archive=PotatoFlow-v$version-Windows-x64.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Install application and build dependencies
         shell: pwsh
         run: |
@@ -75,7 +83,7 @@ jobs:
               }
               try {
                 $health = Invoke-RestMethod -Uri 'http://127.0.0.1:5001/healthz' -TimeoutSec 3
-                if ($health.status -eq 'ok' -and $health.version -eq '1.5.38') {
+                if ($health.status -eq 'ok' -and $health.version -eq '${{ steps.release_meta.outputs.version }}') {
                   $healthy = $true
                   break
                 }
@@ -95,18 +103,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $dist = Join-Path $PWD 'build-tools/dist'
           $bundle = Join-Path $dist 'PotatoFlow-Windows-x64'
-          $archive = Join-Path $dist 'PotatoFlow-v1.5.38-Windows-x64.zip'
+          $archiveName = '${{ steps.release_meta.outputs.archive }}'
+          $archive = Join-Path $dist $archiveName
           Compress-Archive -Path "$bundle/*" -DestinationPath $archive -Force
           $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  PotatoFlow-v1.5.38-Windows-x64.zip" | Set-Content -Path "$archive.sha256" -Encoding ascii
+          "$hash  $archiveName" | Set-Content -Path "$archive.sha256" -Encoding ascii
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PotatoFlow-v1.5.38-Windows-x64
+          name: PotatoFlow-v${{ steps.release_meta.outputs.version }}-Windows-x64
           path: |
-            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip
-            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip.sha256
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }}
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }}.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -118,6 +127,6 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           gh release upload $env:RELEASE_TAG `
-            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip `
-            y2a-auto/build-tools/dist/PotatoFlow-v1.5.38-Windows-x64.zip.sha256 `
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }} `
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }}.sha256 `
             --clobber

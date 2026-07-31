@@ -76,7 +76,7 @@
                     </summary>
                     <div class="archive-message-previews">
                         {% if category.error %}<div class="small text-warning">{{ category.error }}</div>{% endif %}
-                        {% for item in category.items or [] %}
+                        {% for item in category.get('items', []) %}
                         <div class="archive-message-preview">
                             {% if item.user_avatar %}<img src="{{ item.user_avatar }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% endif %}
                             <span><strong>{{ item.user_name }}</strong><small>{{ item.text or '无文字内容' }}</small></span>

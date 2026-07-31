@@ -2518,6 +2518,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("复制 BV 号", template)
         self.assertIn("CID {{ page.cid", template)
         self.assertIn("评论与回复", template)
+        self.assertIn("category.get('items', [])", template)
+        self.assertNotIn("category.items or []", template)
         self.assertIn("确认点击后立即发布到 B站", template)
         self.assertIn("B站消息中心", template)
         self.assertIn("评论 · 私信 · 点赞 · 通知", template)

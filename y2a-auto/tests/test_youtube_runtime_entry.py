@@ -125,6 +125,9 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         self.assertIn('"LICENSE.txt"', generator)
         self.assertIn('PROJECT_ROOT.parent / "LICENSE"', generator)
         self.assertIn('"modules/bili_sdk/data"', generator)
+        self.assertIn('PROJECT_ROOT / "version.py"', generator)
+        self.assertIn('f"title PotatoFlow v{app_version}', generator)
+        self.assertNotIn("PotatoFlow v1.5.38", generator)
 
 
 if __name__ == "__main__":
