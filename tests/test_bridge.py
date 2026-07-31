@@ -83,6 +83,30 @@ class BridgeTests(unittest.TestCase):
         self.assertLessEqual(len(description), 1900)
         self.assertEqual(len(bridge.timeline_lines(description)), 10)
 
+    def test_live_stats_limit_preserves_every_multipart_section(self):
+        parts = []
+        for part_number in (1, 2):
+            points = "\n".join(
+                f"{index:02d}:00 P{part_number}看点{index}"
+                for index in range(10)
+            )
+            parts.append({
+                "part_number": part_number,
+                "title_topic": f"第{part_number}段",
+                "recorded_at": "07-31",
+                "description": f"{'正文' * 500}\n\n重要时间点\n{points}",
+            })
+        body = bridge.render_multipart_description(parts, "总简介")
+        stats = "——— 直播数据 ———\n" + "统计" * 90
+
+        description = bridge.prepend_live_stats_to_description(body, stats)
+
+        self.assertLessEqual(len(description), 1900)
+        self.assertIn("【P1｜第1段｜07-31】", description)
+        self.assertIn("【P2｜第2段｜07-31】", description)
+        self.assertEqual(description.count("重要时间点"), 2)
+        self.assertEqual(len(bridge.timeline_lines(description)), 20)
+
     def test_live_stats_are_not_prepended_twice_when_ai_repeats_them(self):
         stats = "——— 直播数据 ———\n🎁 狂欢飞机×2(200元)｜合计 200元\n👥 在线 8257~10000"
         ai_description = f"{stats}\n\n直播录播正文"
@@ -340,6 +364,27 @@ class BridgeTests(unittest.TestCase):
             ),
             "重要时间点\n21:00 弹幕质疑 BP 顺位\n01:00:00 进入第二小时",
         )
+
+    def test_grounded_timeline_enforces_configured_maximum(self):
+        comments = [
+            types.SimpleNamespace(time=float(index * 100), text=f"证据{index}")
+            for index in range(1, 21)
+        ]
+        timeline = [{
+            "event": f"事件{index}",
+            "evidence_texts": [f"证据{index}"],
+            "evidence_keywords": [f"证据{index}"],
+        } for index in range(1, 21)]
+
+        rendered = bridge.render_grounded_danmaku_timeline(
+            timeline,
+            comments,
+            comments,
+            duration_seconds=3600,
+            maximum_points=12,
+        )
+
+        self.assertEqual(len(bridge.timeline_lines(rendered)), 12)
 
     def test_grounded_timeline_combines_sampled_terms_but_requires_one_xml_match(self):
         sampled = [

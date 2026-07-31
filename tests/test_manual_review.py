@@ -121,6 +121,12 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn("封面人物底稿", live_template)
         self.assertIn("保存 AI 设置", live_template)
 
+        review_template = (
+            ROOT / "y2a-auto" / "templates" / "recording_review_edit.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn("重新生成时间点验证", review_template)
+        self.assertIn("timeline.timeline_verified_count", review_template)
+
     def test_recording_detail_explains_every_pipeline_status_in_text(self):
         tasks_template = (
             ROOT / "y2a-auto" / "templates" / "tasks.html"

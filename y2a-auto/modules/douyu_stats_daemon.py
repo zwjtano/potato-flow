@@ -253,7 +253,7 @@ def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
                 if not isinstance(gift, dict):
                     continue
                 gift_id = str(gift.get("id") or "").strip()
-                if not gift_id or gift_id == "0" or gift_id in prices:
+                if not gift_id or gift_id == "0":
                     continue
                 price_info = gift.get("priceInfo", {})
                 if not isinstance(price_info, dict):
@@ -261,6 +261,26 @@ def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
                 price_type = str(price_info.get("priceType") or "")
                 raw_price = _nonnegative_int(price_info.get("price"))
                 price_cents = raw_price if price_type == "YUCHI" else 0
+                existing = prices.get(gift_id)
+                if existing is not None:
+                    # v5 remains authoritative for current name and visibility,
+                    # while v2 may fill a genuinely absent v5 cash price for the
+                    # same ID. Never replace an explicit non-YUCHI currency.
+                    if (
+                        source == "v2"
+                        and not str(existing.get("price_type") or "")
+                        and _nonnegative_int(existing.get("raw_price")) == 0
+                        and price_type == "YUCHI"
+                        and price_cents > 0
+                    ):
+                        existing.update({
+                            "price": price_cents / 100,
+                            "price_cents": price_cents,
+                            "raw_price": raw_price,
+                            "price_type": price_type,
+                            "price_catalog_source": "v2",
+                        })
+                    continue
                 prices[gift_id] = {
                     "name": str(gift.get("name") or ""),
                     "price": price_cents / 100,
@@ -268,6 +288,7 @@ def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
                     "raw_price": raw_price,
                     "price_type": price_type,
                     "catalog_source": source,
+                    "price_catalog_source": source,
                     "show_status": _nonnegative_int(gift.get("showStatus")),
                 }
         except Exception as exc:
@@ -709,6 +730,11 @@ class RoomMonitor(threading.Thread):
             "fans_level": _nonnegative_int(message.get("fl")),
             "fans_badge_name": str(message.get("bnn") or ""),
             "catalog_source": str((info or {}).get("catalog_source") or ""),
+            "price_catalog_source": str(
+                (info or {}).get("price_catalog_source")
+                or (info or {}).get("catalog_source")
+                or ""
+            ),
             "price_unknown": info is None,
         })
         diagnostics["recorded_events"] = int(diagnostics["recorded_events"] or 0) + 1
