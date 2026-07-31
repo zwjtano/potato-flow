@@ -83,6 +83,29 @@ class BridgeTests(unittest.TestCase):
         self.assertLessEqual(len(description), 1900)
         self.assertEqual(len(bridge.timeline_lines(description)), 10)
 
+    def test_oversized_gift_stats_keep_timeline_and_complete_gift_entries(self):
+        gifts = " ".join(
+            f"礼物{index}×1(单价5元/总价5元)"
+            for index in range(160)
+        )
+        stats = (
+            f"——— 直播数据 ———\n🎁 {gifts} | 礼物价值合计 800元\n"
+            "👥 在线 15000~23000"
+        )
+        points = "\n".join(f"{index:02d}:00 看点{index}" for index in range(10))
+        body = f"{'正文' * 1000}\n\n重要时间点\n{points}"
+
+        description = bridge.prepend_live_stats_to_description(body, stats)
+
+        self.assertLessEqual(len(description), 1900)
+        self.assertEqual(len(bridge.timeline_lines(description)), 10)
+        gift_line = next(
+            line for line in description.splitlines() if line.startswith("🎁 ")
+        )
+        self.assertIn("礼物价值合计 800元", gift_line)
+        self.assertIn("另", gift_line)
+        self.assertNotRegex(gift_line, r"单价[^()]*$")
+
     def test_live_stats_limit_preserves_every_multipart_section(self):
         parts = []
         for part_number in (1, 2):

@@ -728,6 +728,72 @@ def strip_live_stats_from_description(description: str, stats_text: str) -> str:
     return strip_recording_intro(body)
 
 
+_GIFT_STATS_ENTRY_RE = re.compile(
+    r"\S+×\d+\(单价[^()]*?元/总价[^()]*?元\)"
+)
+
+
+def _fit_gift_stats_line(line: str, limit: int) -> str:
+    """Shorten a generated gift line only between complete gift entries."""
+    budget = max(0, int(limit or 0))
+    text = str(line or "").strip()
+    if len(text) <= budget:
+        return text
+    if budget <= 0:
+        return ""
+
+    detail, separator, total = text.partition(" | ")
+    entries = _GIFT_STATS_ENTRY_RE.findall(detail)
+    suffix = f" | {total}" if separator else ""
+    if not entries:
+        compact = f"🎁 礼物明细过长{suffix}"
+        return compact if len(compact) <= budget else ""
+
+    for kept_count in range(len(entries), 0, -1):
+        omitted = len(entries) - kept_count
+        marker = f" …（另{omitted}种）" if omitted else ""
+        candidate = f"🎁 {' '.join(entries[:kept_count])}{marker}{suffix}"
+        if len(candidate) <= budget:
+            return candidate
+    compact = f"🎁 共{len(entries)}种已核价礼物{suffix}"
+    return compact if len(compact) <= budget else ""
+
+
+def _fit_live_stats(stats_text: str, limit: int) -> str:
+    """Fit statistics by complete lines and complete generated gift entries."""
+    text = str(stats_text or "").strip()
+    budget = max(0, int(limit or 0))
+    if len(text) <= budget:
+        return text
+    if budget <= 0:
+        return ""
+
+    lines = text.splitlines()
+    gift_index = next(
+        (index for index, line in enumerate(lines) if line.startswith("🎁 ")),
+        None,
+    )
+    if gift_index is not None:
+        other_lines = lines[:gift_index] + lines[gift_index + 1:]
+        other_text = "\n".join(other_lines)
+        gift_budget = budget - len(other_text) - (1 if other_text else 0)
+        fitted_gift = _fit_gift_stats_line(lines[gift_index], gift_budget)
+        if fitted_gift:
+            fitted_lines = list(lines)
+            fitted_lines[gift_index] = fitted_gift
+            candidate = "\n".join(fitted_lines)
+            if len(candidate) <= budget:
+                return candidate
+
+    kept: list[str] = []
+    for line in lines:
+        candidate = "\n".join((*kept, line))
+        if len(candidate) > budget:
+            continue
+        kept.append(line)
+    return "\n".join(kept).rstrip()
+
+
 def prepend_live_stats_to_description(
     description: str,
     stats_text: str,
@@ -738,8 +804,27 @@ def prepend_live_stats_to_description(
     body = strip_live_stats_from_description(description, stats)
     if not stats:
         return fit_description_preserving_timeline(body, limit)
-    if len(stats) >= limit:
-        return stats[:limit].rstrip()
+
+    points = timeline_lines(body)
+    if points:
+        timeline_headings = max(1, sum(
+            1 for line in body.splitlines() if line.strip() == _TIMELINE_HEADING
+        ))
+        multipart_headings = [
+            line.strip() for line in body.splitlines()
+            if _MULTIPART_HEADING_RE.fullmatch(line.strip())
+        ]
+        priority_length = (
+            sum(len(point) + 1 for point in points)
+            + timeline_headings * (len(_TIMELINE_HEADING) + 2)
+            + sum(len(heading) + 2 for heading in multipart_headings)
+        )
+        body_reserve = min(max(0, limit - 200), priority_length)
+    else:
+        body_reserve = 0
+
+    stats_budget = max(0, limit - body_reserve - (2 if body else 0))
+    stats = _fit_live_stats(stats, stats_budget)
 
     separator = "\n\n" if body else ""
     body_budget = max(0, limit - len(stats) - len(separator))

@@ -361,6 +361,59 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(diagnostics["prop_events"], 1)
         self.assertEqual(diagnostics["unknown_gift_ids"], {"824": 1})
 
+    def test_dgb_deduplicates_repeated_event_hash(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {
+            "1": {
+                "name": "飞机", "price": 100, "price_cents": 10000,
+                "price_type": "YUCHI", "catalog_source": "v5",
+            },
+        })
+        message = {
+            "gfid": "1", "gfn": "飞机", "gfcnt": "1",
+            "uid": "42", "hc": "same-event",
+        }
+
+        monitor.handle_dgb(message)
+        monitor.handle_dgb(message)
+
+        self.assertEqual(len(monitor.state["gift_events"]), 1)
+        self.assertEqual(monitor.state["gift_events"][0]["total_value_cents"], 10000)
+        diagnostics = monitor.state["gift_diagnostics"]
+        self.assertEqual(diagnostics["messages"], 2)
+        self.assertEqual(diagnostics["recorded_events"], 1)
+        self.assertEqual(diagnostics["duplicate_messages"], 1)
+
+    def test_gift_catalog_refresh_replaces_only_with_nonempty_catalog(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {
+            "1": {"name": "旧礼物", "price_cents": 100},
+        })
+        refreshed = {
+            "2": {"name": "新礼物", "price_cents": 200},
+        }
+
+        with mock.patch.object(daemon, "load_gift_prices", return_value=refreshed):
+            self.assertTrue(monitor.refresh_gift_prices())
+        self.assertEqual(monitor.prices, refreshed)
+        self.assertEqual(monitor.state["gift_diagnostics"]["catalog_refreshes"], 1)
+
+        with mock.patch.object(daemon, "load_gift_prices", return_value={}):
+            self.assertFalse(monitor.refresh_gift_prices())
+        self.assertEqual(monitor.prices, refreshed)
+        self.assertEqual(monitor.state["gift_diagnostics"]["catalog_refresh_failures"], 1)
+
+    def test_unknown_gift_requests_one_rate_limited_catalog_refresh(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {})
+
+        with mock.patch.object(daemon.time, "time", return_value=10000):
+            monitor.handle_dgb({"gfid": "unknown-1", "gfcnt": "1"})
+            monitor.handle_dgb({"gfid": "unknown-2", "gfcnt": "1"})
+
+        self.assertTrue(monitor._gift_catalog_refresh_requested)
+        self.assertEqual(
+            monitor.state["gift_diagnostics"]["unknown_catalog_refresh_requests"],
+            1,
+        )
+
     def test_formatter_reports_all_priced_gifts_and_unpriced_props(self):
         stats = {"gift_events": [
             {
