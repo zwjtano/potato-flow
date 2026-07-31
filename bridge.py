@@ -1511,6 +1511,8 @@ def generate_recording_cover_with_ai(
                 f"{', '.join(tooltip_items)}。"
                 "只能表现这份列表中的主装备，数量不得超过列表数量；不得额外添加第七件装备。"
                 "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
+                "禁止在封面底部或任何位置生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
+                "装备只可作为角色造型与场景语义参考，不得绘制仿冒的装备图标。"
             )
         else:
             dota2_item_instruction = ""
@@ -2412,6 +2414,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         "danmaku_xml": str(danmaku_xml or ""), "comment_count": len(comments),
                         **identity_diagnostics, "streamer_hero": str(anchor.get("hero") or ""),
                         "streamer_items": [str(item) for item in anchor.get("items", [])[:6] if str(item)],
+                        "streamer_neutral": str(anchor.get("neutral") or ""),
+                        "streamer_scepter": bool(anchor.get("scepter")),
+                        "streamer_shard": bool(anchor.get("shard")),
                         "equipment_snapshot_unix_ts": float(anchor.get("equipment_snapshot_unix_ts") or 0),
                         "identity_source": str(anchor.get("identity_source") or ""),
                         "kills": anchor.get("kills"), "deaths": anchor.get("deaths"),
@@ -2662,6 +2667,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         "streamer_items": [
                             str(item) for item in anchor.get("items", [])[:6] if str(item)
                         ],
+                        "streamer_neutral": str(anchor.get("neutral") or ""),
+                        "streamer_scepter": bool(anchor.get("scepter")),
+                        "streamer_shard": bool(anchor.get("shard")),
                         "equipment_snapshot_unix_ts": float(
                             anchor.get("equipment_snapshot_unix_ts") or 0
                         ),

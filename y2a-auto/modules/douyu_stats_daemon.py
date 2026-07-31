@@ -323,7 +323,7 @@ class RoomMonitor(threading.Thread):
     @classmethod
     def _item_name(cls, raw_item: object) -> str:
         item_key = str(raw_item or "")
-        if not item_key or item_key == "0":
+        if item_key.casefold() in {"", "0", "empty", "item_empty", "unknown"}:
             return ""
         mapped = str(dota_item_map.get(item_key) or "")
         if mapped and not mapped.startswith("item_"):
@@ -344,12 +344,12 @@ class RoomMonitor(threading.Thread):
             "id": hero_id,
             "hero": dota_hero_map.get(hero_id, f"未知({hero_id})"),
             "items": [
-                cls._item_name(item)
+                item_name
                 # Douyu's player renders the six main inventory slots
                 # with items.slice(0, 6). Backpack slots are deliberately
                 # excluded from the final equipment snapshot.
                 for item in raw_player.get("items", [])[:6]
-                if str(item) not in {"", "0"}
+                if (item_name := cls._item_name(item))
             ],
             "neutral": cls._item_name(raw_player.get("neutral")),
             "scepter": bool(raw_player.get("aghanims_scepter", False)),
