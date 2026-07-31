@@ -1313,6 +1313,18 @@ class LiveRecorderStatusTests(unittest.TestCase):
         )
         self.assertIn("{{ job.progress_label }}", tasks)
 
+    def test_recording_details_show_partition_names_and_hide_empty_ai_fields(self):
+        tasks = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("bilibili_partition_names=_build_bilibili_partition_name_map()", app_source)
+        self.assertIn("const recordingPartitionNames = {{ bilibili_partition_names | tojson }};", tasks)
+        self.assertIn("recordingPartitionNames[String(value)]", tasks)
+        self.assertIn("Math.round(confidence * 100)", tasks)
+        self.assertIn("rule_fallback: '规则兜底'", tasks)
+        self.assertIn("shouldShowRecordingDetail", tasks)
+        self.assertIn("unverified_hero_description_removed: '已清理未验证英雄描述'", tasks)
+
     def test_pipeline_jobs_expose_unified_task_metadata(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

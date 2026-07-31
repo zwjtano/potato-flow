@@ -243,7 +243,7 @@
                                     <button type="button" class="btn btn-sm btn-outline-secondary recording-pause-btn" data-job-id="{{ job.id }}"><i class="bi bi-pause-fill"></i> 暂停</button>
                                     {% endif %}
                                     <button type="button" class="btn btn-sm btn-outline-danger"
-                                            data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}"
+                                            data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}" data-task-source="recording"
                                             onclick="confirmDelete(this.dataset.taskId, this.dataset.taskTitle, 'recording')">
                                         <i class="bi bi-trash3"></i> 删除
                                     </button>
@@ -323,7 +323,7 @@
                         {% if job.pausable %}<button type="button" class="btn btn-sm btn-outline-secondary recording-pause-btn" data-job-id="{{ job.id }}"><i class="bi bi-pause-fill"></i> 暂停</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="recording-bvid-link"><span>BV号</span>{{ job.bvid }}</a>{% endif %}
                         <button type="button" class="btn btn-sm btn-outline-danger"
-                                data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}"
+                                data-task-id="{{ job.id }}" data-task-title="{{ job.title or job.video_name }}" data-task-source="recording"
                                 onclick="confirmDelete(this.dataset.taskId, this.dataset.taskTitle, 'recording')">
                             <i class="bi bi-trash3"></i> 删除
                         </button>
@@ -1471,6 +1471,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         dry_run: '待投稿',
         paused: '已暂停',
     };
+    const recordingPartitionNames = {{ bilibili_partition_names | tojson }};
     const recordingDetailLabels = {
         reason: '处理说明',
         video_path: '录播文件',
@@ -1534,6 +1535,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         cover_for_partition_ai: '分区推荐读取封面',
         partition_cover_path: '分区参考封面',
         metadata_automation_error: '投稿信息自动化错误',
+        unverified_hero_topic_removed: '已移除未验证英雄主题',
+        unverified_hero_description_removed: '已清理未验证英雄描述',
+        unverified_hero_tags_removed: '已移除未验证英雄标签',
         part_title: '本分P标题',
         part_description: '本分P简介',
         page_title: 'B站分P名称',
@@ -1574,6 +1578,8 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         tags: '投稿标签',
         bilibili: 'B站投稿结果',
         description_comment: '简介评论结果',
+        stats_position: '直播数据位置',
+        stats_prepended: '直播数据置于开头',
         worker_pid: '上传进程 PID',
         deleted: '已删除文件',
         failed: '清理失败文件',
@@ -1608,6 +1614,22 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     }
 
     function formatRecordingDetailValue(key, value) {
+        if (key === 'selected_partition_id' || key === 'recommended_partition_id' || key === 'partition_id') {
+            return recordingPartitionNames[String(value)] || String(value ?? '—');
+        }
+        if (key === 'partition_alternatives' && Array.isArray(value)) {
+            return value.map(item => recordingPartitionNames[String(item)] || String(item)).join('、');
+        }
+        if (key === 'partition_confidence') {
+            const confidence = Number(value);
+            return Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : value;
+        }
+        if (key === 'partition_source') {
+            return ({ai: 'AI 推荐', fixed: '固定分区', rule_fallback: '规则兜底'})[value] || value;
+        }
+        if (key === 'stats_position') {
+            return value === 'start' ? '简介开头' : value;
+        }
         if (key === 'danmaku_integrity') {
             return value === 'suspected_incomplete' ? '疑似不完整' : value === 'ok' ? '正常' : value;
         }
@@ -1626,6 +1648,19 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         return String(value ?? '—');
     }
 
+    function shouldShowRecordingDetail(key, value) {
+        if (key === 'partition_confidence' && (value === null || value === undefined || value === '')) {
+            return false;
+        }
+        if (key === 'partition_alternatives' && Array.isArray(value) && value.length === 0) {
+            return false;
+        }
+        if (key.startsWith('unverified_hero_')) {
+            return Array.isArray(value) ? value.length > 0 : Boolean(value);
+        }
+        return true;
+    }
+
     function formatRecordingUploadProgress(progress) {
         if (!progress || typeof progress !== 'object') return '';
         const uploaded = Number(progress.uploaded_bytes || 0);
@@ -1641,7 +1676,10 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
 
     function renderRecordingDetailFields(details) {
         return Object.entries(details)
-            .filter(([detailKey]) => detailKey !== 'upload_progress')
+            .filter(([detailKey, value]) => (
+                detailKey !== 'upload_progress'
+                && shouldShowRecordingDetail(detailKey, value)
+            ))
             .map(([detailKey, value]) => `
                 <div class="recording-detail-field">
                     <dt>${escapeRecordingDetail(recordingDetailLabels[detailKey] || detailKey)}</dt>
@@ -2401,7 +2439,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                 confirmDelete(
                     this.dataset.taskId,
                     this.dataset.taskTitle,
-                    this.closest('.recording-task-row, .recording-task-card') ? 'recording' : 'standard'
+                    this.dataset.taskSource || 'standard'
                 );
             };
         });

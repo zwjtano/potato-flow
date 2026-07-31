@@ -1887,6 +1887,22 @@ def _build_bilibili_partition_mapping():
     return id_mapping
 
 
+def _build_bilibili_partition_name_map():
+    """Return a flat partition-id to display-name map for dynamic task details."""
+    names = {}
+    for parent in _get_bilibili_zone_data():
+        if not isinstance(parent, dict):
+            continue
+        for partition in (parent, *(parent.get('sub') or [])):
+            if not isinstance(partition, dict):
+                continue
+            partition_id = partition.get('tid')
+            partition_name = str(partition.get('name') or '').strip()
+            if partition_id not in (None, 0, '0') and partition_name:
+                names[str(partition_id)] = partition_name
+    return names
+
+
 def get_partition_name(partition_id, upload_target='bilibili'):
     """根据 Bilibili 分区 ID 获取名称。"""
     if not partition_id:
@@ -2352,6 +2368,7 @@ def tasks():
                          queue_summary=queue_summary,
                          queue_filter=queue_filter,
                          source_filter=source_filter,
+                         bilibili_partition_names=_build_bilibili_partition_name_map(),
                          bilibili_accounts=normalize_accounts(config),
                          bilibili_default_account_id=default_account_id(config))
 
