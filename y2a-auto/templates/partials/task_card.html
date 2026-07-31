@@ -93,6 +93,6 @@
         {% endif %}
         {% if capabilities.pausable %}<form method="post" action="{{ url_for('pause_task_route', task_id=task.id) }}" class="m-0"><button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pause-fill"></i> 暂停</button></form>{% endif %}
         <a href="{{ url_for('edit_task', task_id=task.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i> 编辑</a>
-        <button type="button" class="btn btn-sm btn-outline-danger" data-task-id="{{ task.id }}" data-task-title="{{ display_title }}" onclick="confirmDelete(this.dataset.taskId, this.dataset.taskTitle)"><i class="bi bi-trash3"></i> 删除</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" data-task-id="{{ task.id }}" data-task-title="{{ display_title }}" data-task-source="standard" onclick="confirmDelete(this.dataset.taskId, this.dataset.taskTitle, this.dataset.taskSource)"><i class="bi bi-trash3"></i> 删除</button>
     </div>
 </article>

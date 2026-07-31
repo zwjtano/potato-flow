@@ -20,6 +20,17 @@ from tests.test_security_boundaries import app_module  # noqa: E402
 
 
 class TaskLifecyclePolicyTests(unittest.TestCase):
+    def test_delete_buttons_keep_explicit_task_source_after_event_rebind(self):
+        tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        row_source = (Y2A_ROOT / "templates" / "partials" / "task_row.html").read_text(encoding="utf-8")
+        card_source = (Y2A_ROOT / "templates" / "partials" / "task_card.html").read_text(encoding="utf-8")
+
+        self.assertIn("this.dataset.taskSource || 'standard'", tasks_source)
+        self.assertNotIn("this.closest('.recording-task-row, .recording-task-card')", tasks_source)
+        self.assertIn('data-task-source="recording"', tasks_source)
+        self.assertIn('data-task-source="standard"', row_source)
+        self.assertIn('data-task-source="standard"', card_source)
+
     def test_youtube_capabilities_are_consistent(self):
         self.assertTrue(youtube_task_capabilities("uploading")["pausable"])
         self.assertTrue(youtube_task_capabilities("uploading")["active"])
