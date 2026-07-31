@@ -120,6 +120,8 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         self.assertIn("collect_submodules('yt_dlp')", generator)
         self.assertIn("SPEC_PATH.write_text", generator)
         self.assertNotIn('command.extend(("--hidden-import", module))', generator)
+        self.assertNotIn('"--onedir"', generator)
+        self.assertNotIn('"--console"', generator)
 
 
 if __name__ == "__main__":
