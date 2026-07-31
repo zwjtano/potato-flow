@@ -58,14 +58,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $bundle = Join-Path $PWD 'build-tools/dist/PotatoFlow-Windows-x64'
           $exe = Join-Path $bundle 'PotatoFlow.exe'
+          $stdoutLog = Join-Path $bundle 'smoke-stdout.log'
+          $stderrLog = Join-Path $bundle 'smoke-stderr.log'
           if (-not (Test-Path $exe)) { throw "Missing packaged executable: $exe" }
 
-          $process = Start-Process -FilePath $exe -WorkingDirectory $bundle -PassThru -WindowStyle Hidden
+          $process = Start-Process -FilePath $exe -WorkingDirectory $bundle -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
           try {
             $healthy = $false
             for ($attempt = 0; $attempt -lt 60; $attempt++) {
               Start-Sleep -Seconds 2
               if ($process.HasExited) {
+                if (Test-Path $stdoutLog) { Write-Host '--- PotatoFlow stdout ---'; Get-Content $stdoutLog }
+                if (Test-Path $stderrLog) { Write-Host '--- PotatoFlow stderr ---'; Get-Content $stderrLog }
                 throw "PotatoFlow.exe exited during startup with code $($process.ExitCode)"
               }
               try {
