@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -157,20 +158,26 @@ def find_gplv3_license(extract_dir: Path) -> Path | None:
 
 
 def create_portable_files() -> None:
+    version_source = (PROJECT_ROOT / "version.py").read_text(encoding="utf-8")
+    version_match = re.search(r'^__version__ = "([^"]+)"$', version_source, re.MULTILINE)
+    if not version_match:
+        raise RuntimeError("Unable to read PotatoFlow version from version.py")
+    app_version = version_match.group(1)
+
     for name in ("config", "cookies", "db", "downloads", "logs", "recordings", "temp"):
         (BUNDLE_DIR / name).mkdir(parents=True, exist_ok=True)
 
     (BUNDLE_DIR / "start.bat").write_text(
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
-        "title PotatoFlow v1.5.38\r\n"
+        f"title PotatoFlow v{app_version}\r\n"
         "start \"\" http://127.0.0.1:5001\r\n"
         "PotatoFlow.exe\r\n"
         "if errorlevel 1 pause\r\n",
         encoding="utf-8-sig",
     )
     (BUNDLE_DIR / "README.txt").write_text(
-        "PotatoFlow v1.5.38 Windows x64 portable\n\n"
+        f"PotatoFlow v{app_version} Windows x64 portable\n\n"
         "1. Extract the complete ZIP archive to a writable directory.\n"
         "2. Double-click start.bat.\n"
         "3. Open http://127.0.0.1:5001 in a browser.\n\n"
