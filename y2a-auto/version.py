@@ -1,4 +1,4 @@
 """Potato Flow release metadata shown by the Web UI."""
 
-__version__ = "1.5.29"
+__version__ = "1.5.30"
 __author__ = "zwjtano"
