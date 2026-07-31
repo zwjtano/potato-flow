@@ -1165,7 +1165,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         self.assertEqual(
             config["title_template"],
-            "{streamer}｜{ai_topic}｜{date}｜【直播回放】",
+            "{streamer}｜{ai_topic}｜{date}",
         )
         self.assertEqual(config["profiles"][0]["streamer_name"], "开播主播")
         self.assertEqual(
@@ -1224,7 +1224,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         self.assertEqual(
             config["title_template"],
-            "{streamer}｜{ai_topic}｜{date}｜【直播回放】",
+            "{streamer}｜{ai_topic}｜{date}",
         )
 
     def test_bridge_profiles_migrate_legacy_description_and_enable_pinned_comment(self):
@@ -1363,7 +1363,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     ),
                 )
                 for stage in ("detect", "record", "ass", "ai", "upload"):
-                    details = {"title": "【直播回放】Alice｜测试主题｜2026-07-23"} if stage == "upload" else {}
+                    details = (
+                        {"video_duration_seconds": 647.4}
+                        if stage == "ass"
+                        else {"title": "【直播回放】Alice｜测试主题｜2026-07-23"}
+                        if stage == "upload"
+                        else {}
+                    )
                     db.execute(
                         "INSERT INTO upload_stages VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (
@@ -1399,6 +1405,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(jobs[0]["completed_stages"], 5)
         self.assertEqual(jobs[0]["progress_label"], "全部处理完成")
         self.assertEqual(jobs[0]["title"], "【直播回放】Alice｜测试主题｜2026-07-23")
+        self.assertEqual(jobs[0]["duration_seconds"], 647)
+        self.assertEqual(jobs[0]["duration_text"], "10:47")
         self.assertEqual(persisted_display_id, "BL-ALICE-0723-001")
 
     def test_pipeline_display_ids_use_stable_daily_sequence(self):
@@ -1900,6 +1908,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("refreshRecordingUploadMetrics", tasks_source)
         self.assertIn("recording-task-cover", tasks_source)
         self.assertIn("recording-cover-trigger", tasks_source)
+        self.assertIn("recording-cover-duration", tasks_source)
+        self.assertIn("job.duration_text", tasks_source)
+        self.assertIn("font-variant-numeric: tabular-nums", tasks_source)
         self.assertIn('id="recordingCoverPreviewModal"', tasks_source)
         self.assertIn("live_recording_job_cover", tasks_source)
         self.assertNotIn("url_for('live_recording', job=job.id)", tasks_source)
