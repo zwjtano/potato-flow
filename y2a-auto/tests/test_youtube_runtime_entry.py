@@ -122,6 +122,8 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         self.assertNotIn('command.extend(("--hidden-import", module))', generator)
         self.assertNotIn('"--onedir"', generator)
         self.assertNotIn('"--console"', generator)
+        self.assertIn('"LICENSE.txt"', generator)
+        self.assertIn('PROJECT_ROOT.parent / "LICENSE"', generator)
 
 
 if __name__ == "__main__":

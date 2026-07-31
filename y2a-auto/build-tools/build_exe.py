@@ -116,7 +116,7 @@ def install_ffmpeg() -> None:
 
     ffmpeg = next(extract_dir.rglob("ffmpeg.exe"), None)
     ffprobe = next(extract_dir.rglob("ffprobe.exe"), None)
-    license_file = next((path for path in extract_dir.rglob("*") if path.is_file() and path.name in {"COPYING.GPLv3", "LICENSE.GPLv3", "GPLv3.txt"}), None)
+    license_file = find_gplv3_license(extract_dir)
     if not ffmpeg or not ffprobe or not license_file:
         raise RuntimeError("Downloaded FFmpeg archive is missing binaries or GPLv3 license text")
 
@@ -127,6 +127,31 @@ def install_ffmpeg() -> None:
     shutil.copy2(license_file, target / "FFMPEG_GPLv3.txt")
     subprocess.run([target / "ffmpeg.exe", "-version"], check=True)
     subprocess.run([target / "ffprobe.exe", "-version"], check=True)
+
+
+def find_gplv3_license(extract_dir: Path) -> Path | None:
+    """Return a verified GPLv3 text from FFmpeg or the GPLv3 project license."""
+    expected_names = {
+        "COPYING.GPLv3",
+        "LICENSE.GPLv3",
+        "GPLv3.txt",
+        "LICENSE.txt",
+        "COPYING",
+    }
+    candidates = [
+        path
+        for path in extract_dir.rglob("*")
+        if path.is_file() and path.name in expected_names
+    ]
+    candidates.append(PROJECT_ROOT.parent / "LICENSE")
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if "GNU GENERAL PUBLIC LICENSE" in text and "Version 3" in text:
+            return path
+    return None
 
 
 def create_portable_files() -> None:
