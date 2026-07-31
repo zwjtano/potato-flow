@@ -118,6 +118,13 @@ class YouTubeRuntimeEntryTests(unittest.TestCase):
         generator = (root / "build-tools" / "build_exe.py").read_text(encoding="utf-8")
 
         self.assertIn("collect_submodules('yt_dlp')", generator)
+        self.assertIn("SPEC_PATH.write_text", generator)
+        self.assertNotIn('command.extend(("--hidden-import", module))', generator)
+        self.assertNotIn('"--onedir"', generator)
+        self.assertNotIn('"--console"', generator)
+        self.assertIn('"LICENSE.txt"', generator)
+        self.assertIn('PROJECT_ROOT.parent / "LICENSE"', generator)
+        self.assertIn('"modules/bili_sdk/data"', generator)
 
 
 if __name__ == "__main__":

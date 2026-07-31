@@ -1,6 +1,6 @@
 # PotatoFlow（土豆录播姬）
 
-PotatoFlow 是一个面向 Linux 的直播录制、弹幕处理、AI 内容生成和哔哩哔哩投稿工具。录制、文件管理、任务队列、人工审核和系统设置集中在同一个 WebUI，对外只使用一个服务端口。
+PotatoFlow 是一个面向 Linux 和 Windows 的直播录制、弹幕处理、AI 内容生成和哔哩哔哩投稿工具。录制、文件管理、任务队列、人工审核和系统设置集中在同一个 WebUI，对外只使用一个服务端口。
 
 [图文文档](https://zwjtano.github.io/potato-flow/) · [最新版本](https://github.com/zwjtano/potato-flow/releases/latest) · [问题反馈](https://github.com/zwjtano/potato-flow/issues)
 
@@ -13,10 +13,12 @@ PotatoFlow 是一个面向 Linux 的直播录制、弹幕处理、AI 内容生�
 | 视频投稿 | 仅哔哩哔哩 |
 | 投稿引擎 | 内置 Biliup |
 | YouTube | 视频下载、频道与关键词监控、字幕和 AI 处理 |
-| 部署方式 | Docker，或 Ubuntu / Debian 原生安装 |
+| 部署方式 | Docker、Ubuntu / Debian 原生安装，或 Windows 10/11 x64 便携版 |
 | Web 端口 | 默认 `5001` |
 
 当前不烧录录播弹幕，也不向 B站逐条导入原生弹幕。系统保留原视频画质，并生成独立 ASS 字幕文件。
+
+Windows 用户可从 [GitHub Release](https://github.com/zwjtano/potato-flow/releases/latest) 下载 Windows x64 便携包，完整解压到可写目录后双击 `start.bat`，再访问 <http://127.0.0.1:5001>。便携包已包含 FFmpeg，无需预装 Python。
 
 ## 录播流程
 
