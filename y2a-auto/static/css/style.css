@@ -3103,6 +3103,12 @@ html[data-theme="dark"] .app-theme-toggle {
 }
 html[data-theme="dark"] .app-theme-toggle:hover { color: #f2b84b; border-color: #4a6075; background: #1c2835; }
 html[data-theme="dark"] .app-mobile-header { color: var(--studio-text); border-bottom-color: var(--studio-border); background: var(--studio-sidebar); }
+html[data-theme="dark"] #mobileNav {
+    color: var(--studio-text);
+    border-right-color: var(--studio-border);
+    background-color: var(--studio-sidebar);
+}
+html[data-theme="dark"] #mobileNav .offcanvas-header { border-bottom: 1px solid var(--studio-border); }
 
 html[data-theme="dark"] .studio-page-header,
 html[data-theme="dark"] .home-product-card,

@@ -109,6 +109,7 @@ class OverviewDashboardTests(unittest.TestCase):
             'html[data-theme="dark"] .room-setting-number',
             'html[data-theme="dark"] .engine-state.is-stopped small',
             'html[data-theme="dark"] .engine-icon',
+            'html[data-theme="dark"] #mobileNav',
         ):
             self.assertIn(selector, STYLE_SOURCE)
 
