@@ -651,6 +651,33 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(tags, ["alice"])
         self.assertEqual(cfg["source_url"], "https://x")
 
+    def test_profile_avatar_uses_exact_recording_room_match(self):
+        base = {
+            "profiles": [
+                {
+                    "match": "*叫我老陈就好了_*",
+                    "streamer_name": "叫我老陈就好了",
+                    "streamer_avatar_url": "https://example.com/laochen.jpg",
+                },
+                {
+                    "match": "*其他主播_*",
+                    "streamer_name": "其他主播",
+                    "streamer_avatar_url": "https://example.com/other.jpg",
+                },
+            ],
+        }
+
+        cfg = bridge.effective_config(
+            base,
+            Path("叫我老陈就好了_冲击第三冠！_2026-08-01_05-26.flv"),
+        )
+
+        self.assertEqual(cfg["streamer_name"], "叫我老陈就好了")
+        self.assertEqual(
+            cfg["streamer_avatar_url"],
+            "https://example.com/laochen.jpg",
+        )
+
     def test_default_recording_title_uses_streamer_ai_topic_and_date(self):
         with tempfile.TemporaryDirectory() as temp:
             video = Path(temp) / "妮可罗宾_45ecd12026-07-23_09-45-06_中韩流行.flv"
@@ -2180,14 +2207,21 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("禁止在封面底部或任何位置生成物品栏", prompt)
         self.assertIn("不得绘制仿冒的装备图标", prompt)
 
-    def test_unknown_streamer_avatar_cannot_replace_character_base(self):
+    def test_unknown_streamer_uses_room_avatar_as_character_base(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
             avatar = root / "avatar.jpg"
             avatar.write_bytes(b"avatar")
-            client = types.SimpleNamespace(images=types.SimpleNamespace())
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_edit = Mock(return_value=response)
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=image_edit,
+                generate=Mock(),
+            ))
             ai_module = types.ModuleType("modules.ai_enhancer")
             ai_module.get_openai_client = Mock(return_value=client)
             config_module = types.ModuleType("modules.config_manager")
@@ -2208,22 +2242,56 @@ class BridgeTests(unittest.TestCase):
             }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg), patch.object(
                 bridge, "download_recording_avatar_reference", return_value=avatar
             ) as avatar_download:
-                with self.assertRaisesRegex(ValueError, "未配置封面人物底稿"):
-                    bridge.generate_recording_cover_with_ai(
-                        title="【直播回放】新主播｜欢乐游戏｜07-24 11:20",
-                        ai_topic="欢乐游戏",
-                        description="直播间欢乐游戏。",
-                        streamer="新主播",
-                        cfg={
-                            "_config_dir": str(root),
-                            "y2a_root": str(y2a_root),
-                            "ffmpeg": "ffmpeg",
-                            "streamer_avatar_url": "https://example.com/avatar.jpg",
-                        },
-                        work_dir=work_dir,
-                    )
+                _, details = bridge.generate_recording_cover_with_ai(
+                    title="【直播回放】新主播｜欢乐游戏｜07-24 11:20",
+                    ai_topic="欢乐游戏",
+                    description="直播间欢乐游戏。",
+                    streamer="新主播",
+                    cfg={
+                        "_config_dir": str(root),
+                        "y2a_root": str(y2a_root),
+                        "ffmpeg": "ffmpeg",
+                        "streamer_avatar_url": "https://example.com/avatar.jpg",
+                    },
+                    work_dir=work_dir,
+                )
 
-        avatar_download.assert_not_called()
+        avatar_download.assert_called_once()
+        self.assertEqual(
+            avatar_download.call_args.args[0],
+            "https://example.com/avatar.jpg",
+        )
+        self.assertEqual(details["ai_cover_reference_kind"], "avatar")
+        self.assertEqual(details["ai_cover_reference_path"], str(avatar))
+        self.assertEqual(Path(image_edit.call_args.kwargs["image"].name), avatar)
+        self.assertIn("直播间头像", image_edit.call_args.kwargs["prompt"])
+        self.assertIn("不要替换成无关人物或角色", image_edit.call_args.kwargs["prompt"])
+
+    def test_unknown_streamer_without_room_avatar_still_stops_cover_generation(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        ai_module = types.ModuleType("modules.ai_enhancer")
+        ai_module.get_openai_client = Mock()
+        config_module = types.ModuleType("modules.config_manager")
+        config_module.load_config = Mock(return_value={
+            "AI_GENERATE_RECORDING_COVER": True,
+            "OPENAI_API_KEY": "test-key",
+        })
+        with tempfile.TemporaryDirectory() as temp, patch.dict(sys.modules, {
+            "modules.ai_enhancer": ai_module,
+            "modules.config_manager": config_module,
+        }):
+            with self.assertRaisesRegex(ValueError, "未获取到该直播间头像"):
+                bridge.generate_recording_cover_with_ai(
+                    title="新主播欢乐游戏",
+                    ai_topic="欢乐游戏",
+                    description="直播间欢乐游戏。",
+                    streamer="新主播",
+                    cfg={
+                        "_config_dir": temp,
+                        "y2a_root": str(y2a_root),
+                    },
+                    work_dir=Path(temp) / "artifacts",
+                )
 
     def test_custom_room_reference_overrides_bundled_streamer_reference(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"

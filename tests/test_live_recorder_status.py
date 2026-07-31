@@ -675,6 +675,38 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("bili_qn: 25000", content)
         self.assertIn(f'bili_cookie_file: "{normalized_path}"', content)
 
+    def test_config_maps_room_resolution_to_each_platform_quality_override(self):
+        manager = LiveRecorderManager()
+        rooms = [
+            {**self.rooms[1], "recording_quality": "2160p"},
+            {**self.rooms[0], "recording_quality": "1080p"},
+            {
+                "id": "cccccc333333",
+                "name": "抖音主播",
+                "url": "https://live.douyin.com/300",
+                "platform": "douyin",
+                "recording_quality": "720p",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "biliup.yaml"
+            with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
+                    mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
+                    mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
+                    mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
+                    mock.patch.object(recorder_module, "RECORDER_RUNTIME_DIR", root / "run" / "engine"), \
+                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "_douyin_cookie_header", return_value=""), \
+                    mock.patch.object(manager, "_sync_bridge_profiles"):
+                manager.sync_configs(rooms)
+
+            content = config_path.read_text(encoding="utf-8")
+
+        self.assertIn("      bili_qn: 20000", content)
+        self.assertIn("      douyu_rate: 4", content)
+        self.assertIn('      douyin_quality: "sd"', content)
+
     def test_config_uploads_segments_as_independent_videos_by_default(self):
         manager = LiveRecorderManager()
         room = {
@@ -737,6 +769,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(room["multipart_enabled"])
         self.assertFalse(room["record_only"])
         self.assertFalse(room["danmaku_burn_in"])
+        self.assertEqual(room["recording_quality"], "source")
 
     def test_room_recording_settings_are_saved_per_room(self):
         manager = LiveRecorderManager()
@@ -754,6 +787,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 segment_minutes="90",
                 multipart_enabled=True,
                 danmaku_burn_in=True,
+                recording_quality="1080p",
             )
 
         self.assertEqual(state, "saved")
@@ -762,6 +796,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(room["multipart_enabled"])
         self.assertFalse(room["record_only"])
         self.assertTrue(room["danmaku_burn_in"])
+        self.assertEqual(room["recording_quality"], "1080p")
         persisted_rooms = atomic_json.call_args_list[0].args[1]
         self.assertNotIn("segment_minutes", persisted_rooms[1])
         sync_configs.assert_called_once_with(persisted_rooms)
@@ -893,6 +928,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     multipart_enabled=True,
                     record_only=True,
                     danmaku_burn_in=True,
+                    recording_quality="720p",
                 )
 
         self.assertTrue(room["segment_enabled"])
@@ -900,6 +936,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(room["record_only"])
         self.assertFalse(room["multipart_enabled"])
         self.assertTrue(room["danmaku_burn_in"])
+        self.assertEqual(room["recording_quality"], "720p")
 
     def test_search_rooms_returns_douyu_candidates(self):
         manager = LiveRecorderManager()
@@ -2405,6 +2442,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('name="multipart_enabled"', source)
         self.assertIn('name="record_only"', source)
         self.assertIn('name="danmaku_burn_in"', source)
+        self.assertIn('name="recording_quality"', source)
+        self.assertIn("最高 2160p", source)
         self.assertIn('value="{{ room.segment_minutes }}"', source)
         self.assertIn("整场直播不分段", source)
         self.assertNotIn("按 2.5 GB 自动分段", source)
@@ -2421,6 +2460,11 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('name="multipart_enabled"', live_source)
         self.assertIn('name="record_only"', live_source)
         self.assertIn('name="danmaku_burn_in"', live_source)
+        self.assertIn('name="recording_quality"', live_source)
+        self.assertIn("录制分辨率", live_source)
+        self.assertIn('data-role="recording-quality-state"', live_source)
+        self.assertNotIn("已烧录弹幕", live_source)
+        self.assertIn("· 烧录弹幕", live_source)
         self.assertIn("烧录 ASS 弹幕进视频", live_source)
         self.assertIn("分 P 投稿", live_source)
         self.assertIn("不分 P 投稿", live_source)
@@ -2466,8 +2510,83 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("二次确认", template)
         self.assertIn("仅显示 ASS 烧录阶段已完成", template)
         self.assertIn("/bilibili-archives/replace", app_source)
+        self.assertIn("/bilibili-archives/update", app_source)
+        self.assertIn("/bilibili-archives/reply", app_source)
+        self.assertIn("编辑稿件信息", template)
+        self.assertIn("不改动封面、视频源或分P", template)
+        self.assertIn("筛选当前页的标题或 BVID", template)
+        self.assertIn("复制 BV 号", template)
+        self.assertIn("CID {{ page.cid", template)
+        self.assertIn("评论与回复", template)
+        self.assertIn("确认点击后立即发布到 B站", template)
+        self.assertIn("B站消息中心", template)
+        self.assertIn("评论 · 私信 · 点赞 · 通知", template)
+        self.assertIn("message_overview", app_source)
         self.assertIn("https://member.bilibili.com/x/web/archives", uploader_source)
         self.assertIn("https://member.bilibili.com/x/vu/web/edit", uploader_source)
+
+    def test_recording_stage_order_matches_real_burn_pipeline(self):
+        source = (Y2A_ROOT / "modules" / "live_recorder_manager.py").read_text(
+            encoding="utf-8"
+        )
+        template = (Y2A_ROOT / "templates" / "tasks.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            '"record", "ass", "burn", "cover", "remux", "verify", "cleanup"',
+            source,
+        )
+        self.assertIn(
+            '"detect", "record", "ass", "burn", "live_stats"',
+            source,
+        )
+        self.assertIn("已烧录视频完成封装且校验通过后", template)
+        self.assertIn("formatRecordingBurnProgress", template)
+        self.assertIn("预计剩余", template)
+        self.assertIn("recording-burn-live", template)
+
+    def test_historical_archive_metadata_update_preserves_video_scope(self):
+        manager = LiveRecorderManager()
+        uploader = mock.Mock()
+        uploader.update_uploaded_metadata.return_value = (
+            True,
+            {"bvid": "BV1test0000", "metadata_updated": True},
+        )
+        with mock.patch.object(
+            manager,
+            "bilibili_archive_detail",
+            return_value={
+                "aid": 123,
+                "bvid": "BV1test0000",
+                "cover": "https://example.com/cover.jpg",
+            },
+        ), mock.patch.object(
+            manager,
+            "_bilibili_archive_uploader",
+            return_value=({"id": "main"}, uploader),
+        ):
+            result = manager.update_bilibili_archive_metadata(
+                account_id="main",
+                bvid="BV1test0000",
+                title="新标题",
+                description="新简介",
+                tags=["DOTA2", "直播录播"],
+                partition_id="171",
+            )
+
+        self.assertTrue(result["metadata_updated"])
+        uploader.update_uploaded_metadata.assert_called_once_with(
+            result={
+                "aid": 123,
+                "bvid": "BV1test0000",
+                "cover_url": "https://example.com/cover.jpg",
+            },
+            title="新标题",
+            description="新简介",
+            tags=["DOTA2", "直播录播"],
+            partition_id="171",
+        )
 
     def test_delete_room_button_is_enabled_while_worker_runs(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")

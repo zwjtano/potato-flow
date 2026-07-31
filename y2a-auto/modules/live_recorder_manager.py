@@ -64,6 +64,33 @@ LEGACY_RECORDING_DESCRIPTION_TEMPLATES = {
     "直播录播：{stem}",
 }
 DEFAULT_RECORDING_SEGMENT_MINUTES = 60
+DEFAULT_RECORDING_QUALITY = "source"
+RECORDING_QUALITY_LABELS = {
+    "source": "原画",
+    "2160p": "最高 2160p",
+    "1080p": "最高 1080p",
+    "720p": "最高 720p",
+}
+RECORDING_QUALITY_OVERRIDES = {
+    "bilibili": {
+        "source": ("bili_qn", 25000),
+        "2160p": ("bili_qn", 20000),
+        "1080p": ("bili_qn", 400),
+        "720p": ("bili_qn", 250),
+    },
+    "douyu": {
+        "source": ("douyu_rate", 0),
+        "2160p": ("douyu_rate", 0),
+        "1080p": ("douyu_rate", 4),
+        "720p": ("douyu_rate", 3),
+    },
+    "douyin": {
+        "source": ("douyin_quality", "origin"),
+        "2160p": ("douyin_quality", "uhd"),
+        "1080p": ("douyin_quality", "hd"),
+        "720p": ("douyin_quality", "sd"),
+    },
+}
 AUTO_UPLOAD_RETRY_DELAY_SECONDS = 5 * 60
 AUTO_UPLOAD_RETRY_MAX_RETRIES = 3
 RECORDING_NOTIFICATION_POLL_SECONDS = 2
@@ -772,6 +799,7 @@ class LiveRecorderManager:
             room.setdefault("multipart_enabled", False)
             room.setdefault("record_only", False)
             room.setdefault("danmaku_burn_in", False)
+            room.setdefault("recording_quality", DEFAULT_RECORDING_QUALITY)
             room.setdefault("bilibili_account_id", "")
             room.setdefault("ai_danmaku_reaction_delay_seconds", 8)
         return rooms
@@ -1002,6 +1030,7 @@ class LiveRecorderManager:
                 "segment_minutes": cls._room_segment_minutes(room),
                 "record_only": bool(room.get("record_only", False)),
                 "danmaku_burn_in": bool(room.get("danmaku_burn_in", False)),
+                "recording_quality": cls._room_recording_quality(room),
                 "multipart_enabled": bool(
                     not room.get("record_only", False)
                     and room.get("segment_enabled", True)
@@ -1531,6 +1560,7 @@ class LiveRecorderManager:
         multipart_enabled: bool,
         record_only: bool,
         danmaku_burn_in: bool = False,
+        recording_quality: str = DEFAULT_RECORDING_QUALITY,
         bilibili_account_id: str = "",
     ) -> dict[str, Any]:
         try:
@@ -1547,6 +1577,9 @@ class LiveRecorderManager:
             ),
             "record_only": bool(record_only),
             "danmaku_burn_in": bool(danmaku_burn_in),
+            "recording_quality": LiveRecorderManager._normalize_recording_quality(
+                recording_quality
+            ),
             "bilibili_account_id": str(bilibili_account_id or "").strip(),
         }
 
@@ -1559,6 +1592,7 @@ class LiveRecorderManager:
         multipart_enabled: bool | None = None,
         record_only: bool | None = None,
         danmaku_burn_in: bool | None = None,
+        recording_quality: str | None = None,
         bilibili_account_id: str | None = None,
     ) -> dict[str, Any]:
         resolved = self.resolve_room(url)
@@ -1570,6 +1604,7 @@ class LiveRecorderManager:
                 multipart_enabled,
                 record_only,
                 danmaku_burn_in,
+                recording_quality,
                 bilibili_account_id,
             )
         )
@@ -1587,6 +1622,11 @@ class LiveRecorderManager:
                 record_only=False if record_only is None else record_only,
                 danmaku_burn_in=(
                     False if danmaku_burn_in is None else danmaku_burn_in
+                ),
+                recording_quality=(
+                    DEFAULT_RECORDING_QUALITY
+                    if recording_quality is None
+                    else recording_quality
                 ),
                 bilibili_account_id=bilibili_account_id or "",
             )
@@ -1623,6 +1663,7 @@ class LiveRecorderManager:
                             "multipart_enabled": False,
                             "record_only": False,
                             "danmaku_burn_in": False,
+                            "recording_quality": DEFAULT_RECORDING_QUALITY,
                         }
                     ),
                 }
@@ -1808,6 +1849,29 @@ class LiveRecorderManager:
         except (TypeError, ValueError):
             return DEFAULT_RECORDING_SEGMENT_MINUTES
 
+    @staticmethod
+    def _normalize_recording_quality(value: Any) -> str:
+        quality = str(value or DEFAULT_RECORDING_QUALITY).strip().lower()
+        if quality not in RECORDING_QUALITY_LABELS:
+            raise RecorderConfigError("录制分辨率不受支持")
+        return quality
+
+    @classmethod
+    def _room_recording_quality(cls, room: dict[str, Any]) -> str:
+        try:
+            return cls._normalize_recording_quality(room.get("recording_quality"))
+        except RecorderConfigError:
+            return DEFAULT_RECORDING_QUALITY
+
+    @classmethod
+    def _room_recording_quality_override(
+        cls, room: dict[str, Any]
+    ) -> tuple[str, int | str] | None:
+        platform = str(room.get("platform") or "").strip().lower()
+        return RECORDING_QUALITY_OVERRIDES.get(platform, {}).get(
+            cls._room_recording_quality(room)
+        )
+
     @classmethod
     def _room_segment_time(cls, room: dict[str, Any]) -> str | None:
         if not bool(room.get("segment_enabled", True)):
@@ -1834,6 +1898,7 @@ class LiveRecorderManager:
         multipart_enabled: bool,
         record_only: bool = False,
         danmaku_burn_in: bool = False,
+        recording_quality: str = DEFAULT_RECORDING_QUALITY,
         bilibili_account_id: str = "",
     ) -> tuple[dict[str, Any], str]:
         """Save per-room segmentation/upload mode and safely rotate active files."""
@@ -1860,6 +1925,9 @@ class LiveRecorderManager:
                 "multipart_enabled": bool(multipart_enabled and segment_enabled),
                 "record_only": bool(record_only),
                 "danmaku_burn_in": bool(danmaku_burn_in),
+                "recording_quality": self._normalize_recording_quality(
+                    recording_quality
+                ),
                 "bilibili_account_id": str(bilibili_account_id or "").strip(),
             })
             if (room["record_only"] or not room["multipart_enabled"]) and not target_recording:
@@ -1956,6 +2024,7 @@ class LiveRecorderManager:
             segment_time = self._room_segment_time(room)
             record_only = bool(room.get("record_only", False))
             multipart_enabled = self.room_multipart_enabled(room)
+            quality_override = self._room_recording_quality_override(room)
             bridge_base = [
                 _yaml_string(str(APP_ROOT / ".venv" / "bin" / "python")),
                 _yaml_string(str(WORKSPACE_ROOT / "bridge.py")),
@@ -1977,9 +2046,19 @@ class LiveRecorderManager:
                 "    override:",
                 f"      segment_time: {_yaml_string(segment_time) if segment_time else 'null'}",
                 "      file_size: null",
+            ]
+            if quality_override:
+                quality_key, quality_value = quality_override
+                rendered_quality = (
+                    _yaml_string(quality_value)
+                    if isinstance(quality_value, str)
+                    else str(quality_value)
+                )
+                room_lines.append(f"      {quality_key}: {rendered_quality}")
+            room_lines.extend([
                 "    segment_processor:",
                 f"      - run: {_yaml_string(segment_command)}",
-            ]
+            ])
             if multipart_enabled:
                 finalize_command = " ".join([
                     *bridge_base,
@@ -2076,6 +2155,7 @@ class LiveRecorderManager:
                     room.get("ai_danmaku_reaction_delay_seconds", 8) or 0
                 ),
                 "danmaku_burn_in": bool(room.get("danmaku_burn_in", False)),
+                "recording_quality": self._room_recording_quality(room),
                 "bilibili_account_id": str(account["id"]),
                 "bilibili_account_name": str(account["name"]),
                 "bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path"))),
@@ -2776,9 +2856,11 @@ class LiveRecorderManager:
         allowed_cover_root = self._recording_file_roots()["artifacts"].resolve()
         allowed_recordings_root = self._recording_file_roots()["recordings"].resolve()
         stage_orders = {
-            "record_only": ("record", "ass", "cover", "remux", "verify", "cleanup"),
+            "record_only": (
+                "record", "ass", "burn", "cover", "remux", "verify", "cleanup",
+            ),
             "bilibili": (
-                "detect", "record", "ass", "live_stats", "xml_identity", "ai",
+                "detect", "record", "ass", "burn", "live_stats", "xml_identity", "ai",
                 "cover", "cover_16x9", "cover_4x3", "upload", "cleanup",
             ),
         }
@@ -3672,6 +3754,80 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
     def bilibili_archive_detail(self, account_id: str, bvid: str) -> dict[str, Any]:
         _account, uploader = self._bilibili_archive_uploader(account_id)
         ok, result = uploader.archive_detail(bvid)
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        return result
+
+    def update_bilibili_archive_metadata(
+        self,
+        *,
+        account_id: str,
+        bvid: str,
+        title: str,
+        description: str,
+        tags: list[str],
+        partition_id: str,
+    ) -> dict[str, Any]:
+        """Update metadata for any owned historical archive without touching pages."""
+        clean_bvid = str(bvid or "").strip()
+        detail = self.bilibili_archive_detail(account_id, clean_bvid)
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.update_uploaded_metadata(
+            result={
+                "aid": detail.get("aid"),
+                "bvid": clean_bvid,
+                "cover_url": detail.get("cover"),
+            },
+            title=title,
+            description=description,
+            tags=tags,
+            partition_id=partition_id,
+        )
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        return result
+
+    def bilibili_archive_comments(
+        self,
+        account_id: str,
+        bvid: str,
+        *,
+        aid: Any = None,
+    ) -> dict[str, Any]:
+        resolved_aid = int(aid or 0)
+        if resolved_aid <= 0:
+            detail = self.bilibili_archive_detail(account_id, bvid)
+            resolved_aid = int(detail.get("aid") or 0)
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.archive_comments(aid=resolved_aid)
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        return result
+
+    def reply_to_bilibili_archive_comment(
+        self,
+        *,
+        account_id: str,
+        bvid: str,
+        root_rpid: str,
+        parent_rpid: str,
+        message: str,
+    ) -> dict[str, Any]:
+        detail = self.bilibili_archive_detail(account_id, bvid)
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.reply_to_archive_comment(
+            aid=int(detail.get("aid") or 0),
+            root_rpid=root_rpid,
+            parent_rpid=parent_rpid,
+            message=message,
+        )
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        return result
+
+    def bilibili_message_overview(self, account_id: str) -> dict[str, Any]:
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.message_overview()
         if not ok or not isinstance(result, dict):
             raise RecorderConfigError(str(result))
         return result

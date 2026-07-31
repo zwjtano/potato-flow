@@ -45,6 +45,50 @@ class _FakeApi:
     def result(self):
         async def resolve():
             self.__class__.calls.append(self)
+            if self.url.endswith("/x/v2/reply/main"):
+                return {
+                    "cursor": {"is_end": True},
+                    "replies": [{
+                        "rpid": 9001,
+                        "ctime": 123456,
+                        "like": 7,
+                        "rcount": 1,
+                        "member": {
+                            "uname": "观众甲",
+                            "avatar": "https://example.com/avatar.jpg",
+                        },
+                        "content": {"message": "主评论"},
+                        "replies": [{
+                            "rpid": 9002,
+                            "ctime": 123457,
+                            "like": 1,
+                            "member": {"uname": "观众乙", "avatar": ""},
+                            "content": {"message": "子回复"},
+                        }],
+                    }],
+                }
+            if self.url.endswith("/x/v2/reply/add"):
+                return {"reply": {"rpid": 9003}}
+            if self.url.endswith("/x/msgfeed/reply"):
+                return {"items": [{
+                    "user": {"nickname": "评论者", "avatar": "reply.jpg"},
+                    "item": {"source_content": "新评论"},
+                    "reply_time": 123,
+                }], "unread": 2}
+            if self.url.endswith("/session_svr/get_sessions"):
+                return {"session_list": [{
+                    "account_info": {"name": "私信用户", "pic_url": "dm.jpg"},
+                    "last_msg": {"content": '{"content":"你好"}', "timestamp": 124},
+                    "unread_count": 3,
+                }]}
+            if self.url.endswith("/x/msgfeed/like"):
+                return {"items": [{
+                    "user": {"nickname": "点赞用户"},
+                    "item": {"title": "点赞了你的视频"},
+                    "like_time": 125,
+                }], "unread": 4}
+            if self.url.endswith("/x/msgfeed/sys-msg"):
+                return {"items": [{"title": "系统通知", "content": "稿件已通过", "ctime": 126}]}
             if self.url.endswith("/x/web/archives"):
                 return {
                     "page": {"pn": 1, "ps": 20, "count": 1},
@@ -187,6 +231,99 @@ class PublishedMetadataEditorTests(unittest.TestCase):
         self.assertEqual(result["archives"][0]["bvid"], "BV1test0000")
         archives_call = next(call for call in _FakeApi.calls if call.url.endswith("/x/web/archives"))
         self.assertEqual(archives_call.params["status"], "all")
+
+    def test_archive_detail_exposes_editable_metadata_and_exact_pages(self):
+        uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+        with (
+            patch.object(bilibili_uploader, "configure_bilibili_runtime"),
+            patch.object(
+                bilibili_uploader,
+                "load_credential_from_file",
+                return_value=_Credential(),
+            ),
+            patch.object(
+                bilibili_uploader,
+                "validate_credential_remote",
+                return_value=(True, "ok"),
+            ),
+            patch.object(bilibili_uploader, "Api", _FakeApi),
+        ):
+            ok, result = uploader.archive_detail("BV1test0000")
+
+        self.assertTrue(ok)
+        self.assertEqual(result["description"], "旧简介")
+        self.assertEqual(result["partition_id"], "171")
+        self.assertEqual(result["tags"], ["DOTA2", "直播录播"])
+        self.assertEqual(
+            [(page["page_number"], page["cid"]) for page in result["pages"]],
+            [(1, 1), (2, 2)],
+        )
+
+    def test_archive_comments_can_be_read_and_manually_replied_to(self):
+        _FakeApi.calls = []
+        uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+        with (
+            patch.object(bilibili_uploader, "configure_bilibili_runtime"),
+            patch.object(
+                bilibili_uploader,
+                "load_credential_from_file",
+                return_value=_Credential(),
+            ),
+            patch.object(
+                bilibili_uploader,
+                "validate_credential_remote",
+                return_value=(True, "ok"),
+            ),
+            patch.object(bilibili_uploader, "Api", _FakeApi),
+        ):
+            comments_ok, comments = uploader.archive_comments(aid=123)
+            reply_ok, reply = uploader.reply_to_archive_comment(
+                aid=123,
+                root_rpid="9001",
+                parent_rpid="9002",
+                message=" 谢谢支持 ",
+            )
+
+        self.assertTrue(comments_ok)
+        self.assertEqual(
+            [item["rpid"] for item in comments["comments"]],
+            ["9001", "9002"],
+        )
+        self.assertEqual(comments["comments"][1]["root_rpid"], "9001")
+        self.assertTrue(reply_ok)
+        self.assertEqual(reply, {"rpid": "9003", "message": "谢谢支持"})
+        reply_call = next(
+            call for call in _FakeApi.calls if call.url.endswith("/x/v2/reply/add")
+        )
+        self.assertEqual(reply_call.data["root"], 9001)
+        self.assertEqual(reply_call.data["parent"], 9002)
+
+    def test_message_overview_covers_reply_private_like_and_system(self):
+        uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+        with (
+            patch.object(bilibili_uploader, "configure_bilibili_runtime"),
+            patch.object(
+                bilibili_uploader,
+                "load_credential_from_file",
+                return_value=_Credential(),
+            ),
+            patch.object(
+                bilibili_uploader,
+                "validate_credential_remote",
+                return_value=(True, "ok"),
+            ),
+            patch.object(bilibili_uploader, "Api", _FakeApi),
+        ):
+            ok, overview = uploader.message_overview()
+
+        self.assertTrue(ok)
+        categories = overview["categories"]
+        self.assertEqual(set(categories), {"reply", "private", "like", "system"})
+        self.assertEqual(categories["reply"]["unread_count"], 2)
+        self.assertEqual(categories["private"]["unread_count"], 3)
+        self.assertEqual(categories["private"]["items"][0]["text"], "你好")
+        self.assertEqual(categories["like"]["unread_count"], 4)
+        self.assertEqual(categories["system"]["items"][0]["text"], "稿件已通过")
 
     def test_replace_source_uploads_one_page_and_preserves_all_other_pages(self):
         class ReplacementUploader:

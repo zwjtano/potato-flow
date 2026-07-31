@@ -9,9 +9,16 @@
         <h1>投稿中心</h1>
         <p>查看所选 B站账号的全部历史稿件，并用服务器上已烧录 ASS 弹幕的视频替换指定分P。</p>
     </div>
-    <a class="btn btn-outline-secondary" href="https://member.bilibili.com/platform/upload-manager/article" target="_blank" rel="noopener">
-        <i class="bi bi-box-arrow-up-right"></i> B站创作中心
-    </a>
+    <div class="d-flex flex-wrap gap-2">
+        {% if selected_archive %}
+        <a class="btn btn-outline-primary" href="https://www.bilibili.com/video/{{ selected_archive.bvid }}" target="_blank" rel="noopener">
+            <i class="bi bi-play-btn"></i> 打开稿件
+        </a>
+        {% endif %}
+        <a class="btn btn-outline-secondary" href="https://member.bilibili.com/platform/upload-manager/article" target="_blank" rel="noopener">
+            <i class="bi bi-box-arrow-up-right"></i> B站创作中心
+        </a>
+    </div>
 </div>
 
 <form method="get" class="card mb-4 archive-filter-card">
@@ -49,6 +56,47 @@
 <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill"></i> {{ archive_error }}</div>
 {% endif %}
 
+<div class="card mb-4 archive-message-center">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>B站消息中心</span>
+        <small class="text-muted">评论 · 私信 · 点赞 · 通知</small>
+    </div>
+    <div class="card-body">
+        {% if message_overview_error %}
+        <div class="alert alert-warning small">{{ message_overview_error }}</div>
+        {% endif %}
+        <div class="row g-3">
+            {% for category_key in ('reply', 'private', 'like', 'system') %}
+            {% set category = message_overview.categories.get(category_key, {}) %}
+            <div class="col-md-6 col-xl-3">
+                <details class="archive-message-category">
+                    <summary>
+                        <span class="archive-message-icon"><i class="bi {{ {'reply':'bi-chat-left-text','private':'bi-envelope','like':'bi-hand-thumbs-up','system':'bi-bell'}.get(category_key) }}"></i></span>
+                        <span><strong>{{ category.label or {'reply':'评论与回复','private':'私信','like':'收到的赞','system':'系统通知'}.get(category_key) }}</strong><small>{{ category.unread_count or 0 }} 条未读</small></span>
+                    </summary>
+                    <div class="archive-message-previews">
+                        {% if category.error %}<div class="small text-warning">{{ category.error }}</div>{% endif %}
+                        {% for item in category.items or [] %}
+                        <div class="archive-message-preview">
+                            {% if item.user_avatar %}<img src="{{ item.user_avatar }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% endif %}
+                            <span><strong>{{ item.user_name }}</strong><small>{{ item.text or '无文字内容' }}</small></span>
+                            {% if item.unread_count %}<b>{{ item.unread_count }}</b>{% endif %}
+                        </div>
+                        {% else %}
+                        {% if not category.error %}<div class="small text-muted">暂无消息预览</div>{% endif %}
+                        {% endfor %}
+                        <a class="btn btn-sm btn-outline-primary w-100" href="{{ category.external_url or 'https://message.bilibili.com/' }}" target="_blank" rel="noopener">
+                            打开 B站消息中心
+                        </a>
+                    </div>
+                </details>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="form-text mt-3">稿件评论可在选中稿件后直接回复；私信、点赞和系统通知提供最新预览，处理时会打开 B站官方消息中心。</div>
+    </div>
+</div>
+
 <div class="row g-4">
     <div class="col-xl-7">
         <div class="card h-100">
@@ -56,9 +104,15 @@
                 <span>历史稿件</span>
                 <span class="badge text-bg-light">共 {{ archives.total }} 个</span>
             </div>
+            <div class="archive-local-search border-bottom">
+                <i class="bi bi-funnel"></i>
+                <input id="archive-local-filter" class="form-control form-control-sm" type="search" placeholder="筛选当前页的标题或 BVID">
+                <span id="archive-filter-count" class="small text-muted"></span>
+            </div>
             <div class="list-group list-group-flush archive-list">
                 {% for archive in archives.archives %}
                 <a class="list-group-item list-group-item-action archive-list-item{% if selected_archive and selected_archive.bvid == archive.bvid %} active{% endif %}"
+                   data-archive-search="{{ (archive.title ~ ' ' ~ archive.bvid)|lower }}"
                    href="{{ url_for('bilibili_archives', account_id=selected_account_id, status=selected_status, page=archives.page, bvid=archive.bvid) }}">
                     <img src="{{ archive.cover }}" alt="" loading="lazy" referrerpolicy="no-referrer">
                     <span class="archive-list-copy">
@@ -85,6 +139,115 @@
     </div>
 
     <div class="col-xl-5">
+        {% if selected_archive %}
+        <div class="card mb-4 archive-detail-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>稿件详情</span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-bvid="{{ selected_archive.bvid }}">
+                    <i class="bi bi-clipboard"></i> 复制 BV 号
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="archive-selected mb-3">
+                    <img src="{{ selected_archive.cover }}" alt="" referrerpolicy="no-referrer">
+                    <div>
+                        <strong>{{ selected_archive.title or '未命名稿件' }}</strong>
+                        <small>{{ selected_archive.bvid }} · {{ selected_archive.state_desc or '已同步' }} · {{ selected_archive.pages|length }}P</small>
+                    </div>
+                </div>
+                <div class="archive-page-list">
+                    {% for page in selected_archive.pages %}
+                    <div><strong>P{{ page.page_number }}</strong><span>{{ page.title }}</span><small>CID {{ page.cid or '未返回' }}</small></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">编辑稿件信息</div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('bilibili_archive_update') }}" id="archive-metadata-form">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="account_id" value="{{ selected_account_id }}">
+                    <input type="hidden" name="bvid" value="{{ selected_archive.bvid }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="archive-edit-title">标题</label>
+                        <input class="form-control" id="archive-edit-title" name="title" maxlength="80" value="{{ selected_archive.title }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="archive-edit-description">简介</label>
+                        <textarea class="form-control" id="archive-edit-description" name="description" rows="6" maxlength="2000">{{ selected_archive.description }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="archive-edit-tags">标签</label>
+                        <input class="form-control" id="archive-edit-tags" name="tags" value="{{ selected_archive.tags|join(',') }}" placeholder="用逗号分隔，最多 6 个" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="archive-edit-partition">分区</label>
+                        <select class="form-select" id="archive-edit-partition" name="partition_id" required>
+                            <option value="">-- 请选择 B站分区 --</option>
+                            {% for category in bilibili_id_mapping %}
+                            <optgroup label="{{ category.category }}">
+                                {% for partition in category.partitions %}
+                                <option value="{{ partition.id }}" {% if selected_archive.partition_id == partition.id %}selected{% endif %}>{{ partition.name }} ({{ partition.id }})</option>
+                                {% for sub in partition.sub_partitions %}
+                                <option value="{{ sub.id }}" {% if selected_archive.partition_id == sub.id %}selected{% endif %}>&nbsp;&nbsp;└ {{ sub.name }} ({{ sub.id }})</option>
+                                {% endfor %}
+                                {% endfor %}
+                            </optgroup>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="alert alert-info small"><i class="bi bi-shield-check"></i> 只更新标题、简介、标签和分区，不改动封面、视频源或分P。</div>
+                    <button class="btn btn-primary w-100" type="submit"><i class="bi bi-cloud-arrow-up"></i> 同步信息到 B站</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mb-4 archive-comments-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>评论与回复</span>
+                <small class="text-muted">最新 {{ archive_comments.comments|length }} 条</small>
+            </div>
+            <div class="card-body archive-comments-list">
+                {% if archive_comments_error %}
+                <div class="alert alert-warning small mb-0">{{ archive_comments_error }}</div>
+                {% endif %}
+                {% for comment in archive_comments.comments %}
+                <article class="archive-comment{% if comment.is_child %} archive-comment-child{% endif %}">
+                    <img src="{{ comment.user_avatar }}" alt="" loading="lazy" referrerpolicy="no-referrer">
+                    <div class="archive-comment-copy">
+                        <div class="d-flex justify-content-between gap-2">
+                            <strong>{{ comment.user_name }}</strong>
+                            <small class="text-muted" data-unix-time="{{ comment.created_at }}"></small>
+                        </div>
+                        <p>{{ comment.message }}</p>
+                        <div class="small text-muted mb-2"><i class="bi bi-hand-thumbs-up"></i> {{ comment.like_count }}{% if comment.reply_count %} · {{ comment.reply_count }} 条回复{% endif %}</div>
+                        <details>
+                            <summary>回复这条评论</summary>
+                            <form method="post" action="{{ url_for('bilibili_archive_reply') }}" class="mt-2">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                                <input type="hidden" name="account_id" value="{{ selected_account_id }}">
+                                <input type="hidden" name="bvid" value="{{ selected_archive.bvid }}">
+                                <input type="hidden" name="root_rpid" value="{{ comment.root_rpid }}">
+                                <input type="hidden" name="parent_rpid" value="{{ comment.parent_rpid }}">
+                                <textarea class="form-control form-control-sm" name="message" rows="3" maxlength="1000" placeholder="回复 @{{ comment.user_name }}" required></textarea>
+                                <label class="form-check mt-2 small">
+                                    <input class="form-check-input" type="checkbox" name="confirm_reply" value="1" required>
+                                    <span class="form-check-label">确认点击后立即发布到 B站</span>
+                                </label>
+                                <button class="btn btn-sm btn-primary mt-2" type="submit"><i class="bi bi-reply"></i> 发布回复</button>
+                            </form>
+                        </details>
+                    </div>
+                </article>
+                {% else %}
+                {% if not archive_comments_error %}<div class="archive-empty"><i class="bi bi-chat-left-text"></i><span>暂无可回复的评论</span></div>{% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card archive-replace-card">
             <div class="card-header">指定分P换源</div>
             <div class="card-body">
@@ -168,7 +331,22 @@
 {% block extra_css %}
 <style>
 .archive-filter-card { border: 0; box-shadow: 0 10px 30px rgba(30, 55, 80, .08); }
+.archive-message-category { height: 100%; border: 1px solid var(--bs-border-color); border-radius: 11px; background: var(--bs-body-bg); overflow: hidden; }
+.archive-message-category > summary { display: grid; grid-template-columns: 36px minmax(0,1fr); gap: 10px; align-items: center; padding: 12px; cursor: pointer; list-style: none; }
+.archive-message-category > summary::-webkit-details-marker { display: none; }
+.archive-message-category > summary span:nth-child(2) { display: grid; gap: 2px; }
+.archive-message-category > summary small { color: var(--bs-secondary-color); }
+.archive-message-icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 10px; color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
+.archive-message-previews { display: grid; gap: 9px; padding: 0 12px 12px; }
+.archive-message-preview { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 7px; align-items: center; }
+.archive-message-preview img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.archive-message-preview span { display: grid; min-width: 0; }
+.archive-message-preview strong, .archive-message-preview small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-message-preview small { color: var(--bs-secondary-color); }
+.archive-message-preview b { min-width: 20px; padding: 1px 5px; color: #fff; border-radius: 999px; background: var(--bs-danger); text-align: center; font-size: .7rem; }
 .archive-list { min-height: 420px; }
+.archive-local-search { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 9px; padding: 10px 14px; }
+.archive-local-search .form-control { border: 0; box-shadow: none; background: transparent; }
 .archive-list-item { display: grid; grid-template-columns: 112px minmax(0, 1fr) 18px; align-items: center; gap: 14px; padding: 14px 18px; border-left: 0; border-right: 0; }
 .archive-list-item img { width: 112px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: var(--bs-tertiary-bg); }
 .archive-list-copy { min-width: 0; display: grid; gap: 5px; }
@@ -179,6 +357,18 @@
 .archive-selected img { width: 128px; aspect-ratio: 16/9; object-fit: cover; border-radius: 9px; }
 .archive-selected div { display: grid; gap: 6px; }
 .archive-selected small { color: var(--bs-secondary-color); }
+.archive-page-list { display: grid; gap: 8px; max-height: 220px; overflow: auto; }
+.archive-page-list > div { display: grid; grid-template-columns: 36px minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--bs-tertiary-bg); }
+.archive-page-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-page-list small { color: var(--bs-secondary-color); }
+.archive-comments-list { display: grid; gap: 14px; max-height: 640px; overflow: auto; }
+.archive-comment { display: grid; grid-template-columns: 38px minmax(0,1fr); gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--bs-border-color); }
+.archive-comment:last-child { padding-bottom: 0; border-bottom: 0; }
+.archive-comment > img { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; background: var(--bs-tertiary-bg); }
+.archive-comment-child { margin-left: 28px; }
+.archive-comment-copy { min-width: 0; }
+.archive-comment-copy p { margin: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.archive-comment-copy summary { color: var(--bs-primary); cursor: pointer; font-size: .875rem; }
 .archive-empty { min-height: 180px; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--bs-secondary-color); }
 .archive-empty i { font-size: 2rem; }
 .archive-job-table th { white-space: nowrap; }
@@ -189,6 +379,50 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    const filterInput = document.getElementById('archive-local-filter');
+    const archiveItems = Array.from(document.querySelectorAll('[data-archive-search]'));
+    const filterCount = document.getElementById('archive-filter-count');
+    function filterArchives() {
+        const keyword = (filterInput?.value || '').trim().toLocaleLowerCase();
+        let visible = 0;
+        archiveItems.forEach(function (item) {
+            const matched = !keyword || (item.dataset.archiveSearch || '').includes(keyword);
+            item.classList.toggle('d-none', !matched);
+            if (matched) visible += 1;
+        });
+        if (filterCount) filterCount.textContent = keyword ? `${visible}/${archiveItems.length}` : '';
+    }
+    filterInput?.addEventListener('input', filterArchives);
+    document.querySelectorAll('[data-copy-bvid]').forEach(function (button) {
+        button.addEventListener('click', async function () {
+            const bvid = button.dataset.copyBvid || '';
+            try {
+                await navigator.clipboard.writeText(bvid);
+                button.innerHTML = '<i class="bi bi-check2"></i> 已复制';
+            } catch (_error) {
+                const temporary = document.createElement('textarea');
+                temporary.value = bvid;
+                temporary.setAttribute('readonly', '');
+                temporary.style.position = 'fixed';
+                temporary.style.opacity = '0';
+                document.body.appendChild(temporary);
+                temporary.select();
+                const copied = document.execCommand('copy');
+                temporary.remove();
+                button.innerHTML = copied
+                    ? '<i class="bi bi-check2"></i> 已复制'
+                    : '<i class="bi bi-exclamation-circle"></i> 复制失败';
+            }
+        });
+    });
+    document.querySelectorAll('[data-unix-time]').forEach(function (node) {
+        const timestamp = Number(node.dataset.unixTime || 0);
+        if (!timestamp) return;
+        node.textContent = new Intl.DateTimeFormat('zh-CN', {
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+        }).format(new Date(timestamp * 1000));
+    });
     const labels = {queued: '等待上传', uploading: '正在上传', submitting: '正在提交', completed: '换源已提交', failed: '换源失败'};
     const classes = {queued: 'text-bg-secondary', uploading: 'text-bg-primary', submitting: 'text-bg-primary', completed: 'text-bg-success', failed: 'text-bg-danger'};
     async function refreshReplacementJobs() {
