@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import struct
 import threading
@@ -25,14 +26,28 @@ DOTA2_HEROES_URL = "https://wconf.douyucdn.cn/resource/node/config/dota2_wiki_ne
 DOTA2_ITEMS_URL = "https://wconf.douyucdn.cn/resource/node/config/dota2_wiki_items.json"
 DOTA2_OFFICIAL_ITEMS_URL = "https://www.dota2.com/datafeed/itemlist?language=schinese"
 DOTA2_DATA_URL = "https://www.douyu.com/wgapi/augmentedlive/dota2/data/get"
-HIGH_ENERGY_GFID = "24597"
 FLUSH_INTERVAL = 30
 DOTA2_POLL_INTERVAL = 15
+HIGH_ENERGY_POLL_INTERVAL = 15
+IGNORED_LEGACY_GIFT_IDS = {"24597"}
+DIAMOND_FAN_EVENT_TYPES = {
+    "dfobc": "open",
+    "dfrbc": "renew",
+    "odfpbc": "open",
+    "rdfpbc": "renew",
+}
 RETENTION_SECONDS = 48 * 60 * 60
 STABLE_SNAPSHOT_COUNT = 3
 TZ = timezone(timedelta(hours=8))
 STREAM_METADATA_DIR = ".potato-flow"
 STATS_FILENAME = "douyu-stats.json"
+HIGH_ENERGY_QUEUE_URL = (
+    "https://www.douyu.com/japi/revenuenc/web/voiceDanmu/play/queryQueue?rid={room_id}"
+)
+GIFT_CATALOG_URLS = (
+    ("v5", "https://gift.douyucdn.cn/api/gift/v5/web/base/list?rid={room_id}"),
+    ("v2", "https://gift.douyucdn.cn/api/gift/v2/web/list?rid={room_id}"),
+)
 
 dota_hero_map: dict[str, str] = {}
 dota_item_map: dict[str, str] = {}
@@ -113,22 +128,158 @@ def _request_json(url: str, referer: str = "") -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
-    url = f"https://gift.douyucdn.cn/api/gift/v2/web/list?rid={room_id}"
+def decode_high_energy_records(value: object) -> list[dict]:
+    """Decode Douyu's nested GSON/JSON high-energy record collection."""
+    if isinstance(value, dict):
+        nested = value.get("recordList")
+        if nested is not None:
+            return decode_high_energy_records(nested)
+        return [value]
+    if isinstance(value, list):
+        records: list[dict] = []
+        for item in value:
+            records.extend(decode_high_energy_records(item))
+        return records
+    if not isinstance(value, str) or not value.strip():
+        return []
+
+    text = value.strip()
     try:
-        data = _request_json(url, f"https://www.douyu.com/{room_id}")
-        prices: dict[str, dict[str, object]] = {}
-        for gift in data.get("data", {}).get("giftList", []):
-            price = gift.get("priceInfo", {})
-            value = float(price.get("price") or 0) / 100 if price.get("priceType") == "YUCHI" else 0
-            prices[str(gift.get("id") or 0)] = {
-                "name": str(gift.get("name") or ""),
-                "price": value,
-            }
-        return prices
-    except Exception as exc:
-        print(f"[stats] 礼物配置加载失败({room_id}): {exc}", flush=True)
-        return {}
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is not None and parsed != value:
+        return decode_high_energy_records(parsed)
+
+    # The outer STT decoder restores @AS to '/' and @S to '/'. Douyu GSON
+    # arrays therefore arrive here as nested STT objects separated by '//'.
+    if "@=" in text or "@A=" in text:
+        nested_items = re.split(r"//(?=[^/@]{1,64}@A?=)", text)
+        records = [
+            stt_decode(item.replace("@A", "@").replace("@S", "/"))
+            for item in nested_items
+            if item.strip()
+        ]
+        return [record for record in records if record]
+    return []
+
+
+def _epoch_seconds(value: object, fallback: float) -> float:
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if timestamp > 10_000_000_000:
+        timestamp /= 1000
+    return timestamp if timestamp > 0 else fallback
+
+
+def _nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(float(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def normalize_high_energy_record(record: dict, source: str, now: float | None = None) -> dict | None:
+    """Convert a voiceDanmu record to the persisted PotatoFlow contract."""
+    event_id = str(record.get("voiceRecordId") or record.get("vrId") or "").strip()
+    if not event_id:
+        return None
+
+    observed_at = time.time() if now is None else now
+    timestamp_source = "observed_at"
+    accepted_unix_ts = 0.0
+    for candidate in ("acptime", "acceptTime", "createTime", "ctime"):
+        if record.get(candidate) not in (None, ""):
+            accepted_unix_ts = _epoch_seconds(record.get(candidate), 0)
+            if accepted_unix_ts:
+                timestamp_source = candidate
+                break
+    unix_ts = accepted_unix_ts or observed_at
+    if "realPrice" in record and record.get("realPrice") not in (None, ""):
+        raw_price = record.get("realPrice")
+    else:
+        raw_price = record.get("price")
+    price_cents = _nonnegative_int(raw_price)
+
+    result = {
+        "event_id": event_id,
+        "unix_ts": unix_ts,
+        "accepted_unix_ts": accepted_unix_ts or None,
+        "observed_unix_ts": observed_at,
+        "timestamp_source": timestamp_source,
+        "ts": datetime.fromtimestamp(unix_ts, TZ).strftime("%H:%M:%S"),
+        "user": str(record.get("userNick") or record.get("un") or ""),
+        "amount": price_cents / 100,
+        "price_cents": price_cents,
+        "listed_price_cents": _nonnegative_int(record.get("price")),
+        "hover_seconds": _nonnegative_int(record.get("hoverTime") or record.get("stime")),
+        "expire_unix_ts": _epoch_seconds(
+            record.get("expireV2At") or record.get("etimeV2"),
+            0,
+        ),
+        "source": source,
+        "sources": [source],
+    }
+    content = str(
+        record.get("content")
+        or record.get("text")
+        or record.get("danmuContent")
+        or record.get("voiceText")
+        or ""
+    ).strip()
+    if content:
+        result["content"] = content
+    return result
+
+
+def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
+    """Load the current web catalog first, then retain v2-only special gifts."""
+    prices: dict[str, dict[str, object]] = {}
+    loaded_sources: list[str] = []
+    errors: list[str] = []
+    referer = f"https://www.douyu.com/{room_id}"
+    for source, template in GIFT_CATALOG_URLS:
+        try:
+            response = _request_json(template.format(room_id=room_id), referer)
+            if int(response.get("error") or 0) != 0:
+                raise ValueError(str(response.get("msg") or "unknown error"))
+            gifts = response.get("data", {}).get("giftList", [])
+            if not isinstance(gifts, list):
+                raise ValueError("giftList is not a list")
+            loaded_sources.append(source)
+            for gift in gifts:
+                if not isinstance(gift, dict):
+                    continue
+                gift_id = str(gift.get("id") or "").strip()
+                if not gift_id or gift_id == "0" or gift_id in prices:
+                    continue
+                price_info = gift.get("priceInfo", {})
+                if not isinstance(price_info, dict):
+                    price_info = {}
+                price_type = str(price_info.get("priceType") or "")
+                raw_price = _nonnegative_int(price_info.get("price"))
+                price_cents = raw_price if price_type == "YUCHI" else 0
+                prices[gift_id] = {
+                    "name": str(gift.get("name") or ""),
+                    "price": price_cents / 100,
+                    "price_cents": price_cents,
+                    "raw_price": raw_price,
+                    "price_type": price_type,
+                    "catalog_source": source,
+                    "show_status": _nonnegative_int(gift.get("showStatus")),
+                }
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+    if errors:
+        print(
+            f"[stats] 礼物配置部分加载失败({room_id}): {'; '.join(errors)}",
+            flush=True,
+        )
+    if not loaded_sources:
+        print(f"[stats] 礼物配置全部加载失败({room_id})", flush=True)
+    return prices
 
 
 def load_dota2_maps() -> None:
@@ -227,7 +378,43 @@ class RoomMonitor(threading.Thread):
             "streamer": streamer,
             "started_at": datetime.now(TZ).isoformat(),
             "gift_events": [],
-            "high_energy": {"details": []},
+            "gift_diagnostics": {
+                "messages": 0,
+                "recorded_events": 0,
+                "priced_events": 0,
+                "unpriced_events": 0,
+                "prop_events": 0,
+                "ignored_high_energy_events": 0,
+                "parse_errors": 0,
+                "last_seen_unix_ts": None,
+                "unknown_gift_ids": {},
+            },
+            "diamond_fans": {
+                "events": [],
+                "diagnostics": {
+                    "messages": 0,
+                    "recorded_events": 0,
+                    "open_events": 0,
+                    "renew_events": 0,
+                    "multi_month_events": 0,
+                    "duplicate_messages": 0,
+                    "ignored_other_room_events": 0,
+                    "parse_errors": 0,
+                    "last_seen_unix_ts": None,
+                },
+            },
+            "high_energy": {
+                "details": [],
+                "diagnostics": {
+                    "socket_messages": 0,
+                    "socket_records": 0,
+                    "queue_polls": 0,
+                    "queue_records": 0,
+                    "parse_errors": 0,
+                    "last_seen_unix_ts": None,
+                    "last_queue_error": "",
+                },
+            },
             "online_samples": [],
             "games": [],
             "active_game": None,
@@ -248,6 +435,9 @@ class RoomMonitor(threading.Thread):
         self._pending_anchor_source = ""
         self._pending_count = 0
         self._restore_snapshot()
+        self._ensure_gift_diagnostics()
+        self._ensure_diamond_fan_state()
+        self._ensure_high_energy_state()
         diagnostics = self.state.setdefault("tooltip_diagnostics", {})
         if isinstance(diagnostics, dict):
             for key, value in {
@@ -284,7 +474,8 @@ class RoomMonitor(threading.Thread):
         if previous.get("schema_version") != 2 or str(previous.get("room_id")) != self.room_id:
             return
         for key in (
-            "started_at", "gift_events", "high_energy", "online_samples",
+            "started_at", "gift_events", "gift_diagnostics", "diamond_fans",
+            "high_energy", "online_samples",
             "games", "active_game", "tooltip_diagnostics",
         ):
             if key in previous:
@@ -302,32 +493,298 @@ class RoomMonitor(threading.Thread):
     def stop(self) -> None:
         self._stop_event.set()
 
+    def _ensure_gift_diagnostics(self) -> dict:
+        diagnostics = self.state.setdefault("gift_diagnostics", {})
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+            self.state["gift_diagnostics"] = diagnostics
+        for key, value in {
+            "messages": 0,
+            "recorded_events": 0,
+            "priced_events": 0,
+            "unpriced_events": 0,
+            "prop_events": 0,
+            "ignored_high_energy_events": 0,
+            "parse_errors": 0,
+            "last_seen_unix_ts": None,
+            "unknown_gift_ids": {},
+        }.items():
+            diagnostics.setdefault(key, value)
+        if not isinstance(diagnostics.get("unknown_gift_ids"), dict):
+            diagnostics["unknown_gift_ids"] = {}
+        return diagnostics
+
+    def _ensure_high_energy_state(self) -> tuple[list[dict], dict]:
+        high = self.state.setdefault("high_energy", {})
+        if not isinstance(high, dict):
+            high = {}
+            self.state["high_energy"] = high
+        details = high.setdefault("details", [])
+        if not isinstance(details, list):
+            details = []
+            high["details"] = details
+        diagnostics = high.setdefault("diagnostics", {})
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+            high["diagnostics"] = diagnostics
+        for key, value in {
+            "socket_messages": 0,
+            "socket_records": 0,
+            "queue_polls": 0,
+            "queue_records": 0,
+            "duplicate_records": 0,
+            "parse_errors": 0,
+            "last_seen_unix_ts": None,
+            "last_queue_error": "",
+        }.items():
+            diagnostics.setdefault(key, value)
+        return details, diagnostics
+
+    def _ensure_diamond_fan_state(self) -> tuple[list[dict], dict]:
+        diamond = self.state.setdefault("diamond_fans", {})
+        if not isinstance(diamond, dict):
+            diamond = {}
+            self.state["diamond_fans"] = diamond
+        events = diamond.setdefault("events", [])
+        if not isinstance(events, list):
+            events = []
+            diamond["events"] = events
+        diagnostics = diamond.setdefault("diagnostics", {})
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+            diamond["diagnostics"] = diagnostics
+        for key, value in {
+            "messages": 0,
+            "recorded_events": 0,
+            "open_events": 0,
+            "renew_events": 0,
+            "multi_month_events": 0,
+            "duplicate_messages": 0,
+            "ignored_other_room_events": 0,
+            "parse_errors": 0,
+            "last_seen_unix_ts": None,
+        }.items():
+            diagnostics.setdefault(key, value)
+        return events, diagnostics
+
+    def _record_high_energy(self, record: dict, source: str, now: float | None = None) -> bool:
+        details, diagnostics = self._ensure_high_energy_state()
+        event = normalize_high_energy_record(record, source, now)
+        if not event:
+            diagnostics["parse_errors"] = int(diagnostics["parse_errors"] or 0) + 1
+            return False
+        event_id = event["event_id"]
+        existing = next(
+            (item for item in details if str(item.get("event_id") or "") == event_id),
+            None,
+        )
+        if existing is not None:
+            diagnostics["duplicate_records"] = int(diagnostics["duplicate_records"] or 0) + 1
+            sources = existing.setdefault("sources", [existing.get("source")])
+            if source not in sources:
+                sources.append(source)
+            # A queue record may lack acptime. If a later socket copy carries
+            # the official acceptance time, promote it over the observation
+            # timestamp while preserving the first-seen time separately.
+            if (
+                existing.get("timestamp_source") == "observed_at"
+                and event.get("timestamp_source") != "observed_at"
+            ):
+                for key in ("unix_ts", "accepted_unix_ts", "timestamp_source", "ts"):
+                    existing[key] = event[key]
+            observed_values = [
+                float(value) for value in (
+                    existing.get("observed_unix_ts"), event.get("observed_unix_ts")
+                ) if value not in (None, "")
+            ]
+            if observed_values:
+                existing["observed_unix_ts"] = min(observed_values)
+            # The HTTP queue often contains the richer nickname/content copy.
+            for key, value in event.items():
+                if key in {"unix_ts", "accepted_unix_ts", "timestamp_source", "ts", "observed_unix_ts", "source", "sources"}:
+                    continue
+                if key not in existing or existing.get(key) in (None, "", 0):
+                    existing[key] = value
+            return False
+        details.append(event)
+        diagnostics["last_seen_unix_ts"] = event["unix_ts"]
+        return True
+
+    def handle_voice_trlt(self, message: dict[str, str]) -> None:
+        """Handle the dedicated paid high-energy barrage socket message."""
+        _details, diagnostics = self._ensure_high_energy_state()
+        diagnostics["socket_messages"] = int(diagnostics["socket_messages"] or 0) + 1
+        if str(message.get("mtype") or "") not in {"1", "2"}:
+            return
+        records = decode_high_energy_records(message.get("list", ""))
+        if not records and message.get("list"):
+            diagnostics["parse_errors"] = int(diagnostics["parse_errors"] or 0) + 1
+            return
+        diagnostics["socket_records"] = int(diagnostics["socket_records"] or 0) + len(records)
+        for record in records:
+            self._record_high_energy(record, "voice_trlt")
+
+    def poll_high_energy_queue(self) -> None:
+        """Backfill approved high-energy messages that remain in the display queue."""
+        _details, diagnostics = self._ensure_high_energy_state()
+        diagnostics["queue_polls"] = int(diagnostics["queue_polls"] or 0) + 1
+        try:
+            response = _request_json(
+                HIGH_ENERGY_QUEUE_URL.format(room_id=self.room_id),
+                f"https://www.douyu.com/{self.room_id}",
+            )
+            if int(response.get("error") or 0) != 0:
+                raise ValueError(str(response.get("msg") or "unknown error"))
+            records = decode_high_energy_records(response.get("data", []))
+            diagnostics["queue_records"] = int(diagnostics["queue_records"] or 0) + len(records)
+            diagnostics["last_queue_error"] = ""
+            for record in records:
+                self._record_high_energy(record, "query_queue")
+        except Exception as exc:
+            diagnostics["last_queue_error"] = str(exc)[:300]
+
     def handle_dgb(self, message: dict[str, str]) -> None:
         now = time.time()
-        gift_id = message.get("gfid", "0")
-        count = max(1, int(message.get("gfcnt", "1") or 1))
-        user = message.get("nn", "")
-        if gift_id == HIGH_ENERGY_GFID:
-            details = self.state["high_energy"]["details"]  # type: ignore[index]
-            details.append({
-                "unix_ts": now,
-                "ts": datetime.now(TZ).strftime("%H:%M:%S"),
-                "user": user,
-                "amount": count,
-            })
+        diagnostics = self._ensure_gift_diagnostics()
+        diagnostics["messages"] = int(diagnostics["messages"] or 0) + 1
+        gift_id = str(message.get("gfid") or "0")
+        # 24597 was an obsolete guess for high-energy barrage purchases.
+        # The current product is collected exclusively through voiceDanmu.
+        if gift_id in IGNORED_LEGACY_GIFT_IDS:
+            diagnostics["ignored_high_energy_events"] = (
+                int(diagnostics["ignored_high_energy_events"] or 0) + 1
+            )
             return
+        raw_count = message.get("gfcnt", "1")
+        try:
+            count = max(1, int(raw_count or 1))
+        except (TypeError, ValueError):
+            diagnostics["parse_errors"] = int(diagnostics["parse_errors"] or 0) + 1
+            count = 1
         info = self.prices.get(gift_id)
-        if not info or float(info.get("price") or 0) < 100:
-            return
-        unit_price = int(float(info.get("price") or 0))
+        price_type = str((info or {}).get("price_type") or "")
+        if info and not price_type and "price" in info:
+            # Keep compatibility with callers that provide the old yuan map.
+            price_type = "YUCHI"
+        if info and "price_cents" in info:
+            unit_price_cents = _nonnegative_int(info.get("price_cents"))
+        else:
+            unit_price_cents = _nonnegative_int(float((info or {}).get("price") or 0) * 100)
+        is_priced = price_type == "YUCHI" and unit_price_cents > 0
+        prop_id = _nonnegative_int(message.get("pid"))
+        gift_prop_flag = _nonnegative_int(message.get("gpf"))
+        if gift_prop_flag or prop_id:
+            diagnostics["prop_events"] = int(diagnostics["prop_events"] or 0) + 1
+        if is_priced:
+            diagnostics["priced_events"] = int(diagnostics["priced_events"] or 0) + 1
+        else:
+            diagnostics["unpriced_events"] = int(diagnostics["unpriced_events"] or 0) + 1
+        if info is None:
+            unknown = diagnostics["unknown_gift_ids"]
+            if gift_id in unknown or len(unknown) < 100:
+                unknown[gift_id] = int(unknown.get(gift_id) or 0) + 1
+        unit_price = unit_price_cents / 100
+        total_value_cents = unit_price_cents * count
         self.state["gift_events"].append({  # type: ignore[union-attr]
             "unix_ts": now,
+            "ts": datetime.fromtimestamp(now, TZ).strftime("%H:%M:%S"),
             "gift_id": gift_id,
-            "name": str(message.get("gfn") or info.get("name") or "未知礼物"),
+            "name": str(message.get("gfn") or (info or {}).get("name") or "未知礼物"),
+            "user_id": str(message.get("uid") or ""),
+            "user": str(message.get("nn") or ""),
+            "price_type": price_type,
+            "paid": is_priced,
+            "unit_price_cents": unit_price_cents,
             "unit_price": unit_price,
             "count": count,
-            "total_value": unit_price * count,
+            "total_value_cents": total_value_cents,
+            "total_value": total_value_cents / 100,
+            "hits": _nonnegative_int(message.get("hits")),
+            "batch_count": _nonnegative_int(message.get("bcnt")),
+            "gift_prop_flag": gift_prop_flag,
+            "prop_id": prop_id,
+            "skin_id": _nonnegative_int(message.get("skinid")),
+            "event_hash": str(message.get("hc") or ""),
+            "user_level": _nonnegative_int(message.get("level")),
+            "fans_level": _nonnegative_int(message.get("fl")),
+            "fans_badge_name": str(message.get("bnn") or ""),
+            "catalog_source": str((info or {}).get("catalog_source") or ""),
+            "price_unknown": info is None,
         })
+        diagnostics["recorded_events"] = int(diagnostics["recorded_events"] or 0) + 1
+        diagnostics["last_seen_unix_ts"] = now
+
+    def handle_diamond_fan(self, message_type: str, message: dict[str, str]) -> None:
+        """Record Diamond Fan membership actions without treating them as gifts."""
+        events, diagnostics = self._ensure_diamond_fan_state()
+        diagnostics["messages"] = int(diagnostics["messages"] or 0) + 1
+        action = DIAMOND_FAN_EVENT_TYPES.get(message_type)
+        if not action:
+            diagnostics["parse_errors"] = int(diagnostics["parse_errors"] or 0) + 1
+            return
+
+        # The multi-month broadcasts use drid for the destination room, while
+        # the room-local forms normally use rid. Cross-room broadcasts must not
+        # become statistics for every room connected to the same chat group.
+        target_room = str(message.get("drid") or message.get("rid") or "").strip()
+        if target_room and target_room != self.room_id:
+            diagnostics["ignored_other_room_events"] = (
+                int(diagnostics["ignored_other_room_events"] or 0) + 1
+            )
+            return
+
+        months = _nonnegative_int(
+            message.get("mn") or message.get("mnum") or message.get("month")
+        ) or 1
+        now = time.time()
+        unix_ts = _epoch_seconds(
+            message.get("acptime") or message.get("ct") or message.get("ctime"),
+            now,
+        )
+        event = {
+            "unix_ts": unix_ts,
+            "ts": datetime.fromtimestamp(unix_ts, TZ).strftime("%H:%M:%S"),
+            "source_type": message_type,
+            "action": action,
+            "months": months,
+            "user_id": str(message.get("uid") or ""),
+            "user": str(message.get("nn") or message.get("sn") or ""),
+            "room_id": target_room or self.room_id,
+            "diamond_level": _nonnegative_int(
+                message.get("dfl") or message.get("dflevel") or message.get("level")
+            ),
+            "event_id": str(message.get("id") or message.get("hc") or ""),
+            "broadcast": message_type in {"odfpbc", "rdfpbc"},
+            "sources": [message_type],
+        }
+        duplicate = next((
+            item for item in reversed(events)
+            if item.get("action") == action
+            and str(item.get("user_id") or "") == event["user_id"]
+            and str(item.get("room_id") or "") == event["room_id"]
+            and int(item.get("months") or 1) == months
+            and abs(float(item.get("unix_ts") or 0) - unix_ts) <= 3
+        ), None)
+        if duplicate is not None:
+            sources = duplicate.setdefault("sources", [duplicate.get("source_type")])
+            if message_type not in sources:
+                sources.append(message_type)
+            duplicate["broadcast"] = bool(duplicate.get("broadcast")) or event["broadcast"]
+            if duplicate.get("source_type") in {"odfpbc", "rdfpbc"} and not event["broadcast"]:
+                duplicate["source_type"] = message_type
+            diagnostics["duplicate_messages"] = (
+                int(diagnostics["duplicate_messages"] or 0) + 1
+            )
+            return
+        events.append(event)
+        diagnostics["recorded_events"] = int(diagnostics["recorded_events"] or 0) + 1
+        action_key = f"{action}_events"
+        diagnostics[action_key] = int(diagnostics[action_key] or 0) + 1
+        if months > 1:
+            diagnostics["multi_month_events"] = (
+                int(diagnostics["multi_month_events"] or 0) + 1
+            )
+        diagnostics["last_seen_unix_ts"] = unix_ts
 
     def handle_oni(self, message: dict[str, str]) -> None:
         raw = message.get("un", "")
@@ -579,6 +1036,12 @@ class RoomMonitor(threading.Thread):
                 item for item in high.get("details", [])
                 if float(item.get("unix_ts") or 0) >= cutoff
             ]
+        diamond = self.state.get("diamond_fans", {})
+        if isinstance(diamond, dict):
+            diamond["events"] = [
+                item for item in diamond.get("events", [])
+                if float(item.get("unix_ts") or 0) >= cutoff
+            ]
         self.state["online_samples"] = [  # type: ignore[index]
             item for item in self.state.get("online_samples", [])
             if float(item.get("unix_ts") or 0) >= cutoff
@@ -616,6 +1079,7 @@ class RoomMonitor(threading.Thread):
                 pending = b""
                 last_message = time.time()
                 last_dota_poll = 0.0
+                last_high_energy_poll = 0.0
                 while not self._stop_event.is_set():
                     if time.time() - heartbeat_sent > 40:
                         send_heartbeat(sock)
@@ -630,6 +1094,10 @@ class RoomMonitor(threading.Thread):
                     for message_type, message, _raw in messages:
                         if message_type == "dgb":
                             self.handle_dgb(message)
+                        elif message_type in DIAMOND_FAN_EVENT_TYPES:
+                            self.handle_diamond_fan(message_type, message)
+                        elif message_type == "voice_trlt":
+                            self.handle_voice_trlt(message)
                         elif message_type == "oni":
                             self.handle_oni(message)
                         elif message_type == "type_tooltips":
@@ -637,6 +1105,9 @@ class RoomMonitor(threading.Thread):
                     if time.time() - last_dota_poll >= DOTA2_POLL_INTERVAL:
                         self.poll_dota2_data()
                         last_dota_poll = time.time()
+                    if time.time() - last_high_energy_poll >= HIGH_ENERGY_POLL_INTERVAL:
+                        self.poll_high_energy_queue()
+                        last_high_energy_poll = time.time()
                     if time.time() - last_flush >= FLUSH_INTERVAL:
                         self.flush()
                         last_flush = time.time()

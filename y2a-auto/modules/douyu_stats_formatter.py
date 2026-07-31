@@ -334,18 +334,44 @@ def format_stats(
     xml_comments: Optional[list[tuple[float, str]]] = None,
 ) -> str:
     """Format events that overlap exactly one recording timeframe."""
+    def format_yuan(cents: int) -> str:
+        if cents % 100 == 0:
+            return str(cents // 100)
+        return f"{cents / 100:.2f}".rstrip("0").rstrip(".")
+
     gift_events = filter_by_timeframe(stats.get("gift_events", []), start_ts, end_ts)
     gift_totals: dict[tuple[str, int], dict[str, int | str]] = {}
     for event in gift_events:
         name = str(event.get("name") or "未知礼物")
-        unit_price = int(event.get("unit_price") or 0)
-        key = (name, unit_price)
-        summary = gift_totals.setdefault(key, {"name": name, "count": 0, "total": 0})
+        if "unit_price_cents" in event:
+            unit_price_cents = int(event.get("unit_price_cents") or 0)
+            total_value_cents = int(
+                event.get("total_value_cents")
+                or unit_price_cents * int(event.get("count") or 0)
+            )
+            is_paid = bool(event.get("paid"))
+        else:
+            # Schema-v2 snapshots written before full gift collection used yuan.
+            unit_price_cents = int(round(float(event.get("unit_price") or 0) * 100))
+            total_value_cents = int(round(float(
+                event.get("total_value")
+                or float(event.get("unit_price") or 0) * int(event.get("count") or 0)
+            ) * 100))
+            is_paid = unit_price_cents > 0
+        if not is_paid or unit_price_cents < 10_000:
+            continue
+        key = (name, unit_price_cents)
+        summary = gift_totals.setdefault(
+            key, {"name": name, "count": 0, "total_cents": 0}
+        )
         summary["count"] = int(summary["count"]) + int(event.get("count") or 0)
-        summary["total"] = int(summary["total"]) + int(event.get("total_value") or 0)
+        summary["total_cents"] = int(summary["total_cents"]) + total_value_cents
 
     high_events = filter_by_timeframe(
         stats.get("high_energy", {}).get("details", []), start_ts, end_ts
+    )
+    diamond_events = filter_by_timeframe(
+        stats.get("diamond_fans", {}).get("events", []), start_ts, end_ts
     )
     online = filter_by_timeframe(stats.get("online_samples", []), start_ts, end_ts)
 
@@ -389,22 +415,37 @@ def format_stats(
             )
         game_lines.append(summary)
 
-    if not gift_totals and not high_events and not online and not game_lines:
+    if not gift_totals and not diamond_events and not high_events and not online and not game_lines:
         return ""
 
     lines = ["", "——— 直播数据 ———"]
     if gift_totals:
-        ordered = sorted(gift_totals.values(), key=lambda item: -int(item["total"]))
+        ordered = sorted(gift_totals.values(), key=lambda item: -int(item["total_cents"]))
         gift_text = " ".join(
-            f"{item['name']}×{item['count']}({item['total']}元)" for item in ordered
+            f"{item['name']}×{item['count']}({format_yuan(int(item['total_cents']))}元)"
+            for item in ordered
         )
-        lines.append(f"🎁 {gift_text} | 合计 {sum(int(item['total']) for item in ordered)}元")
-    elif high_events or online or game_lines:
+        total_cents = sum(int(item["total_cents"]) for item in ordered)
+        lines.append(f"🎁 {gift_text} | 礼物价值合计 {format_yuan(total_cents)}元")
+    elif diamond_events or high_events or online or game_lines:
         lines.append("🎁 无高价值礼物(≥100元)")
+    if diamond_events:
+        diamond_parts = []
+        for action, label in (("open", "开通"), ("renew", "续费")):
+            selected = [item for item in diamond_events if item.get("action") == action]
+            if selected:
+                months = sum(max(1, int(item.get("months") or 1)) for item in selected)
+                diamond_parts.append(f"{label}{len(selected)}次/{months}个月")
+        if diamond_parts:
+            lines.append(f"💎 钻粉 {' '.join(diamond_parts)}")
     if high_events:
+        high_total_cents = sum(
+            int(item.get("price_cents") or round(float(item.get("amount") or 0) * 100))
+            for item in high_events
+        )
         lines.append(
             f"💬 高能弹幕 ×{len(high_events)} | "
-            f"{sum(int(item.get('amount') or 0) for item in high_events)}元"
+            f"{format_yuan(high_total_cents)}元"
         )
     if online:
         values = [int(item.get("value") or 0) for item in online]
