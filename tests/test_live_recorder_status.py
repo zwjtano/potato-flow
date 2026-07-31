@@ -2054,6 +2054,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         settings_source = (Y2A_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
         live_source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
         app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
+        style_source = (Y2A_ROOT / "static" / "css" / "style.css").read_text(encoding="utf-8")
 
         self.assertNotIn('name="RECORDING_MULTIPART_ENABLED"', settings_source)
         self.assertIn('name="segment_enabled"', live_source)
@@ -2066,6 +2067,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("multipart?.addEventListener('change', syncState)", live_source)
         self.assertIn("仅录制，不自动投稿", live_source)
         self.assertIn("live_recording_room_recording_settings", app_source)
+        self.assertIn("font-size: 14px !important", style_source)
+        self.assertIn("margin-right: clamp(24px, 5vw, 90px)", style_source)
+        self.assertIn("grid-template-columns: 32px minmax(0, 1fr) auto 16px", style_source)
 
     def test_record_only_ui_hides_upload_account_identity(self):
         live_source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")

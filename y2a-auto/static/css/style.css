@@ -191,7 +191,16 @@ html[data-theme="dark"] .app-restart-required { color: #fbbf24; }
     min-width: 0;
     align-items: center;
 }
-.room-recording-summary-meta { gap: 12px; }
+.room-recording-summary-meta {
+    justify-content: center;
+    gap: 16px;
+    margin-right: clamp(24px, 5vw, 90px);
+}
+.room-recording-settings-card .room-recording-summary-meta > .badge {
+    padding: 7px 12px;
+    font-size: 14px;
+    line-height: 1.2;
+}
 html:not([data-theme="dark"]) .room-recording-settings-card > summary { background: #fff; }
 html:not([data-theme="dark"]) .room-recording-settings-card > summary:hover { background: #f3f8fc; }
 html:not([data-theme="dark"]) .room-recording-settings-card > summary > span:nth-child(2) > strong { color: #172536; }
@@ -203,21 +212,21 @@ html:not([data-theme="dark"]) .room-recording-settings-card .room-recording-summ
     font-weight: 700;
 }
 .room-recording-summary-account {
-    max-width: 150px;
-    gap: 7px;
+    max-width: 190px;
+    gap: 9px;
     color: #526274;
 }
 .room-recording-summary-account > strong {
     overflow: hidden;
     color: inherit !important;
-    font-size: 11px !important;
+    font-size: 14px !important;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .room-recording-summary-avatar {
     display: grid;
-    width: 26px;
-    height: 26px;
+    width: 32px;
+    height: 32px;
     flex: 0 0 auto;
     place-items: center;
     overflow: hidden;
@@ -580,8 +589,12 @@ html[data-theme="dark"] .delete-room-modal .btn-light:hover { color: #fff; borde
     .selected-room-title a { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .runtime-metrics { grid-template-columns: 1fr 1fr; }
     .room-ai-prompts-card > summary { grid-template-columns: 32px minmax(0, 1fr) 16px; padding: 14px; }
+    .room-recording-settings-card > summary { grid-template-columns: 32px minmax(0, 1fr) auto 16px; gap: 10px; }
     .room-ai-prompts-card > summary .badge { display: none; }
-    .room-recording-summary-account { max-width: 110px; }
+    .room-recording-summary-meta { margin-right: 0; }
+    .room-recording-summary-account { max-width: 110px; gap: 7px; }
+    .room-recording-summary-account > strong { font-size: 12px !important; }
+    .room-recording-summary-avatar { width: 28px; height: 28px; }
     .room-ai-prompts-form { padding-right: 14px; padding-left: 14px; }
     .room-reference-editor { grid-template-columns: 1fr; }
     .room-reference-preview { min-height: 160px; }
