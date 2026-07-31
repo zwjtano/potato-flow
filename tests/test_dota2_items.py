@@ -27,6 +27,43 @@ class Dota2ItemsTests(unittest.TestCase):
         matches = dota2_items.match_dota2_items("最后补一把血辣")
         self.assertEqual([match.item.english_name for match in matches], ["Bloodthorn"])
 
+    def test_streamer_item_aliases_resolve_to_official_items(self):
+        cases = {
+            "秘法": "Arcane Boots",
+            "鞋子": "Boots of Speed",
+            "瓶子": "Bottle",
+            "小蓝": "Clarity",
+            "情趣外衣": "Craggy Coat",
+            "大药": "Healing Salve",
+            "小莲": "Healing Lotus",
+            "挑战": "Hood of Defiance",
+            "打野爪": "Iron Talon",
+            "法克": "Mage Slayer",
+            "大魔棒": "Magic Wand",
+            "小魔棒": "Magic Stick",
+            "小勋章": "Medallion of Courage",
+            "假眼": "Observer Ward",
+            "真眼": "Sentry Ward",
+            "补刀斧": "Quelling Blade",
+            "天鹰戒": "Ring of Aquila",
+            "回五": "Ring of Health",
+            "铲子": "Scrying Shovel",
+            "吃树": "Tango",
+            "经验书": "Tome of Knowledge",
+            "绿鞋": "Tranquil Boots",
+            "tp": "Town Portal Scroll",
+        }
+        for alias, expected in cases.items():
+            with self.subTest(alias=alias):
+                matches = dota2_items.match_dota2_items(f"主播出了{alias}")
+                self.assertEqual(matches[0].item.english_name, expected)
+
+        shared = dota2_items.match_dota2_items("树之祭祀（共享）")
+        self.assertEqual(shared[0].item.english_name, "Tango (Shared)")
+
+    def test_removed_item_aliases_no_longer_resolve(self):
+        self.assertEqual(dota2_items.match_dota2_items("刀甲和小炮"), [])
+
     def test_ambiguous_single_characters_do_not_trigger_items(self):
         matches = dota2_items.match_dota2_items(
             "他跳上高台开雾后捡到一块盾牌。"

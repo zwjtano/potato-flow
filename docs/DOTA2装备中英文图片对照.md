@@ -1,6 +1,6 @@
 # DOTA 2 装备中英文名与官方图片对照
 
-> 生成时间：2026-07-31 11:36:02 +0800
+> 生成时间：2026-07-31 11:54:09 +0800
 > 数据来源：[Dota 2 官方简体中文物品数据](https://www.dota2.com/datafeed/itemlist?language=schinese)
 > 图片来源：Valve Dota 2 官方 CDN
 > 共收录 408 件具有中英文名称且官方图片可访问的物品；图纸类条目已排除。
@@ -21,7 +21,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/courier.png" alt="Animal Courier" width="88"> | 动物信使 |  | Animal Courier | 45 | `item_courier` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/apex.png" alt="Apex" width="88"> | 极 |  | Apex | 366 | `item_apex` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/arcane_blink.png" alt="Arcane Blink" width="88"> | 秘奥闪光 | 智力跳、蓝跳 | Arcane Blink | 604 | `item_arcane_blink` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/arcane_boots.png" alt="Arcane Boots" width="88"> | 奥术鞋 |  | Arcane Boots | 180 | `item_arcane_boots` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/arcane_boots.png" alt="Arcane Boots" width="88"> | 奥术鞋 | 秘法 | Arcane Boots | 180 | `item_arcane_boots` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/arcane_ring.png" alt="Arcane Ring" width="88"> | 奥术指环 |  | Arcane Ring | 349 | `item_arcane_ring` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/force_field.png" alt="Arcanist&#x27;s Armor" width="88"> | 秘术师铠甲 |  | Arcanist's Armor | 829 | `item_force_field` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/armlet.png" alt="Armlet of Mordiggian" width="88"> | 莫尔迪基安的臂章 | 臂章 | Armlet of Mordiggian | 151 | `item_armlet` |
@@ -38,7 +38,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/belt_of_strength.png" alt="Belt of Strength" width="88"> | 力量腰带 |  | Belt of Strength | 17 | `item_belt_of_strength` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/black_grimoire.png" alt="Black Grimoire (Warlock)" width="88"> | Black Grimoire (Warlock) |  | Black Grimoire (Warlock) | 1440 | `item_black_grimoire` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/black_king_bar.png" alt="Black King Bar" width="88"> | 黑皇杖 | BKB、黑皇 | Black King Bar | 116 | `item_black_king_bar` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/blade_mail.png" alt="Blade Mail" width="88"> | 刃甲 | 刀甲 | Blade Mail | 127 | `item_blade_mail` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/blade_mail.png" alt="Blade Mail" width="88"> | 刃甲 | 反甲 | Blade Mail | 127 | `item_blade_mail` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/blade_of_alacrity.png" alt="Blade of Alacrity" width="88"> | 欢欣之刃 |  | Blade of Alacrity | 22 | `item_blade_of_alacrity` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/blades_of_attack.png" alt="Blades of Attack" width="88"> | 攻击之爪 |  | Blades of Attack | 2 | `item_blades_of_attack` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/black_powder_bag.png" alt="Blast Rig" width="88"> | 雷火弹 |  | Blast Rig | 834 | `item_black_powder_bag` |
@@ -51,10 +51,10 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/book_of_shadows.png" alt="Book of Shadows" width="88"> | 暗影邪典 |  | Book of Shadows | 677 | `item_book_of_shadows` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/demonicon.png" alt="Book of the Dead" width="88"> | 冥灵书 |  | Book of the Dead | 370 | `item_demonicon` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/boots_of_bearing.png" alt="Boots of Bearing" width="88"> | 宽容之靴 | 大鼓、宽容鞋 | Boots of Bearing | 931 | `item_boots_of_bearing` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/boots.png" alt="Boots of Speed" width="88"> | 速度之靴 |  | Boots of Speed | 29 | `item_boots` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/boots.png" alt="Boots of Speed" width="88"> | 速度之靴 | 鞋、鞋子 | Boots of Speed | 29 | `item_boots` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/travel_boots.png" alt="Boots of Travel" width="88"> | 远行鞋 | 飞鞋、旅行鞋 | Boots of Travel | 48 | `item_travel_boots` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/travel_boots_2.png" alt="Boots of Travel 2" width="88"> | 远行鞋 |  | Boots of Travel 2 | 220 | `item_travel_boots_2` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/bottle.png" alt="Bottle" width="88"> | 魔瓶 |  | Bottle | 41 | `item_bottle` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/bottle.png" alt="Bottle" width="88"> | 魔瓶 | 瓶子 | Bottle | 41 | `item_bottle` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_boundless.png" alt="Boundless" width="88"> | 无边 |  | Boundless | 1590 | `item_enhancement_boundless` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/bracer.png" alt="Bracer" width="88"> | 护腕 |  | Bracer | 73 | `item_bracer` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_brawny.png" alt="Brawny" width="88"> | 壮实 |  | Brawny | 1585 | `item_enhancement_brawny` |
@@ -70,7 +70,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/cheese.png" alt="Cheese" width="88"> | 奶酪 |  | Cheese | 33 | `item_cheese` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/chipped_vest.png" alt="Chipped Vest" width="88"> | 碎裂背心 |  | Chipped Vest | 565 | `item_chipped_vest` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/circlet.png" alt="Circlet" width="88"> | 圆环 |  | Circlet | 20 | `item_circlet` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/clarity.png" alt="Clarity" width="88"> | 净化药水 |  | Clarity | 38 | `item_clarity` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/clarity.png" alt="Clarity" width="88"> | 净化药水 | 小蓝 | Clarity | 38 | `item_clarity` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/claymore.png" alt="Claymore" width="88"> | 大剑 |  | Claymore | 5 | `item_claymore` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/cloak.png" alt="Cloak" width="88"> | 抗魔斗篷 |  | Cloak | 31 | `item_cloak` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/cloak_of_flames.png" alt="Cloak of Flames" width="88"> | 火焰斗篷 |  | Cloak of Flames | 574 | `item_cloak_of_flames` |
@@ -78,13 +78,13 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/conjurers_catalyst.png" alt="Conjurer&#x27;s Catalyst" width="88"> | 咒术师触媒 |  | Conjurer's Catalyst | 1864 | `item_conjurers_catalyst` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/consecrated_wraps.png" alt="Consecrated Wraps" width="88"> | 圣化护服 |  | Consecrated Wraps | 1854 | `item_consecrated_wraps` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/cornucopia.png" alt="Cornucopia" width="88"> | 丰饶之环 |  | Cornucopia | 1125 | `item_cornucopia` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/craggy_coat.png" alt="Craggy Coat" width="88"> | 崎岖外衣 |  | Craggy Coat | 298 | `item_craggy_coat` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/craggy_coat.png" alt="Craggy Coat" width="88"> | 崎岖外衣 | 情趣外衣 | Craggy Coat | 298 | `item_craggy_coat` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/crellas_crozier.png" alt="Crella&#x27;s Crozier" width="88"> | 克莱拉牧杖 |  | Crella's Crozier | 1856 | `item_crellas_crozier` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/crimson_guard.png" alt="Crimson Guard" width="88"> | 赤红甲 | 赤红、赤甲 | Crimson Guard | 242 | `item_crimson_guard` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/crippling_crossbow.png" alt="Crippling Crossbow" width="88"> | 致残之弩 |  | Crippling Crossbow | 1601 | `item_crippling_crossbow` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/crown.png" alt="Crown" width="88"> | 王冠 |  | Crown | 261 | `item_crown` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_crude.png" alt="Crude" width="88"> | 粗暴 |  | Crude | 1589 | `item_enhancement_crude` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/lesser_crit.png" alt="Crystalys" width="88"> | 水晶剑 | 小炮 | Crystalys | 149 | `item_lesser_crit` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/lesser_crit.png" alt="Crystalys" width="88"> | 水晶剑 |  | Crystalys | 149 | `item_lesser_crit` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/greater_crit.png" alt="Daedalus" width="88"> | 代达罗斯之殇 | 大炮、代达罗斯 | Daedalus | 141 | `item_greater_crit` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/dagger_of_ristul.png" alt="Dagger of Ristul" width="88"> | 瑞斯图尔尖匕 |  | Dagger of Ristul | 1077 | `item_dagger_of_ristul` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/dagon.png" alt="Dagon" width="88"> | 达贡之神力 | 大根、红杖 | Dagon | 104 | `item_dagon` |
@@ -170,8 +170,8 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/harpoon.png" alt="Harpoon" width="88"> | 鱼叉 |  | Harpoon | 939 | `item_harpoon` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/havoc_hammer.png" alt="Havoc Hammer" width="88"> | 浩劫巨锤 |  | Havoc Hammer | 364 | `item_havoc_hammer` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/headdress.png" alt="Headdress" width="88"> | 恢复头巾 |  | Headdress | 94 | `item_headdress` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/famango.png" alt="Healing Lotus" width="88"> | 疗伤莲花 |  | Healing Lotus | 4204 | `item_famango` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/flask.png" alt="Healing Salve" width="88"> | 治疗药膏 |  | Healing Salve | 39 | `item_flask` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/famango.png" alt="Healing Lotus" width="88"> | 疗伤莲花 | 小莲 | Healing Lotus | 4204 | `item_famango` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/flask.png" alt="Healing Salve" width="88"> | 治疗药膏 | 大药 | Healing Salve | 39 | `item_flask` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/heart.png" alt="Heart of Tarrasque" width="88"> | 恐鳌之心 | 龙心、大心 | Heart of Tarrasque | 114 | `item_heart` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/heavens_halberd.png" alt="Heaven&#x27;s Halberd" width="88"> | 天堂之戟 | 天堂、天堂戟 | Heaven's Halberd | 210 | `item_heavens_halberd` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/helm_of_iron_will.png" alt="Helm of Iron Will" width="88"> | 铁意头盔 |  | Helm of Iron Will | 6 | `item_helm_of_iron_will` |
@@ -179,7 +179,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/helm_of_the_overlord.png" alt="Helm of the Overlord" width="88"> | 统御头盔 | 大支配、统御 | Helm of the Overlord | 635 | `item_helm_of_the_overlord` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/helm_of_the_undying.png" alt="Helm of the Undying" width="88"> | 不朽尸王的头盔 |  | Helm of the Undying | 327 | `item_helm_of_the_undying` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/holy_locket.png" alt="Holy Locket" width="88"> | 圣洁吊坠 | 奶坠、圣洁 | Holy Locket | 269 | `item_holy_locket` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/hood_of_defiance.png" alt="Hood of Defiance" width="88"> | 挑战头巾 | 挑战头 | Hood of Defiance | 131 | `item_hood_of_defiance` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/hood_of_defiance.png" alt="Hood of Defiance" width="88"> | 挑战头巾 | 挑战头、挑战 | Hood of Defiance | 131 | `item_hood_of_defiance` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_hulking.png" alt="Hulking" width="88"> | 笨重 |  | Hulking | 1866 | `item_enhancement_hulking` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/hurricane_pike.png" alt="Hurricane Pike" width="88"> | 飓风长戟 | 大推推、飓风长矛 | Hurricane Pike | 263 | `item_hurricane_pike` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/hydras_breath.png" alt="Hydra&#x27;s Breath" width="88"> | 怪蛇之息 |  | Hydra's Breath | 1858 | `item_hydras_breath` |
@@ -189,7 +189,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/imp_claw.png" alt="Imp Claw" width="88"> | 魔童之爪 |  | Imp Claw | 334 | `item_imp_claw` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/infused_raindrop.png" alt="Infused Raindrops" width="88"> | 凝魂之露 |  | Infused Raindrops | 265 | `item_infused_raindrop` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/branches.png" alt="Iron Branch" width="88"> | 铁树枝干 |  | Iron Branch | 16 | `item_branches` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/iron_talon.png" alt="Iron Talon" width="88"> | 寒铁钢爪 |  | Iron Talon | 239 | `item_iron_talon` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/iron_talon.png" alt="Iron Talon" width="88"> | 寒铁钢爪 | 打野爪 | Iron Talon | 239 | `item_iron_talon` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/foragers_stats.png" alt="Ironwood Nut" width="88"> | 铁树坚果 |  | Ironwood Nut | 1870 | `item_foragers_stats` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ironwood_tree.png" alt="Ironwood Tree" width="88"> | 铁树之木 |  | Ironwood Tree | 304 | `item_ironwood_tree` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/javelin.png" alt="Javelin" width="88"> | 标枪 |  | Javelin | 7 | `item_javelin` |
@@ -207,10 +207,10 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/lotus_orb.png" alt="Lotus Orb" width="88"> | 清莲宝珠 | 莲花、莲花球 | Lotus Orb | 226 | `item_lotus_orb` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/madstone_bundle.png" alt="Madstone Bundle" width="88"> | 狂石包 |  | Madstone Bundle | 1609 | `item_madstone_bundle` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/maelstrom.png" alt="Maelstrom" width="88"> | 漩涡 | 小电锤、电锤 | Maelstrom | 166 | `item_maelstrom` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mage_slayer.png" alt="Mage Slayer" width="88"> | 法师克星 | 法师杀手 | Mage Slayer | 598 | `item_mage_slayer` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mage_slayer.png" alt="Mage Slayer" width="88"> | 法师克星 | 法师杀手、法克 | Mage Slayer | 598 | `item_mage_slayer` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/panic_button.png" alt="Magic Lamp" width="88"> | 神妙明灯 |  | Magic Lamp | 365 | `item_panic_button` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/magic_stick.png" alt="Magic Stick" width="88"> | 魔棒 |  | Magic Stick | 34 | `item_magic_stick` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/magic_wand.png" alt="Magic Wand" width="88"> | 魔杖 |  | Magic Wand | 36 | `item_magic_wand` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/magic_stick.png" alt="Magic Stick" width="88"> | 魔棒 | 小魔棒 | Magic Stick | 34 | `item_magic_stick` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/magic_wand.png" alt="Magic Wand" width="88"> | 魔杖 | 大魔棒 | Magic Wand | 36 | `item_magic_wand` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/magnifying_monocle.png" alt="Magnifying Monocle" width="88"> | 放大单片镜 |  | Magnifying Monocle | 1607 | `item_magnifying_monocle` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mana_draught.png" alt="Mana Draught" width="88"> | 魔力药水 |  | Mana Draught | 1599 | `item_mana_draught` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mango_tree.png" alt="Mango Tree" width="88"> | 芒果树 |  | Mango Tree | 328 | `item_mango_tree` |
@@ -219,7 +219,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mantle.png" alt="Mantle of Intelligence" width="88"> | 智力斗篷 |  | Mantle of Intelligence | 15 | `item_mantle` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/martyrs_plate.png" alt="Martyr&#x27;s Plate" width="88"> | 烈士鳞甲 |  | Martyr's Plate | 2192 | `item_martyrs_plate` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mask_of_madness.png" alt="Mask of Madness" width="88"> | 疯狂面具 | 疯脸、疯面 | Mask of Madness | 172 | `item_mask_of_madness` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/medallion_of_courage.png" alt="Medallion of Courage" width="88"> | 勇气勋章 |  | Medallion of Courage | 187 | `item_medallion_of_courage` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/medallion_of_courage.png" alt="Medallion of Courage" width="88"> | 勇气勋章 | 勋章、小勋章 | Medallion of Courage | 187 | `item_medallion_of_courage` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mekansm.png" alt="Mekansm" width="88"> | 梅肯斯姆 | 梅肯 | Mekansm | 79 | `item_mekansm` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/muertas_gun.png" alt="Mercy &amp; Grace" width="88"> | 仁慈与恩泽 |  | Mercy &amp; Grace | 1090 | `item_muertas_gun` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/metamorphic_mandible.png" alt="Metamorphic Mandible" width="88"> | 变态上颚 |  | Metamorphic Mandible | 1719 | `item_metamorphic_mandible` |
@@ -245,7 +245,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/nullifier.png" alt="Nullifier" width="88"> | 否决坠饰 | 否决、否决挂件 | Nullifier | 225 | `item_nullifier` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/oblivion_staff.png" alt="Oblivion Staff" width="88"> | 空明杖 |  | Oblivion Staff | 67 | `item_oblivion_staff` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ward_dispenser.png" alt="Observer and Sentry Wards" width="88"> | 侦察·岗哨守卫 |  | Observer and Sentry Wards | 218 | `item_ward_dispenser` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ward_observer.png" alt="Observer Ward" width="88"> | 侦察守卫 |  | Observer Ward | 42 | `item_ward_observer` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ward_observer.png" alt="Observer Ward" width="88"> | 侦察守卫 | 假眼 | Observer Ward | 42 | `item_ward_observer` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/occult_bracelet.png" alt="Occult Bracelet" width="88"> | 玄奥手镯 |  | Occult Bracelet | 947 | `item_occult_bracelet` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ocean_heart.png" alt="Ocean Heart" width="88"> | 海洋之心 |  | Ocean Heart | 354 | `item_ocean_heart` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/octarine_core.png" alt="Octarine Core" width="88"> | 玲珑心 | 减CD球、玲珑 | Octarine Core | 235 | `item_octarine_core` |
@@ -286,7 +286,7 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/pupils_gift.png" alt="Pupil&#x27;s Gift" width="88"> | 学徒之礼 |  | Pupil's Gift | 306 | `item_pupils_gift` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/pyrrhic_cloak.png" alt="Pyrrhic Cloak" width="88"> | 皮洛士斗篷 |  | Pyrrhic Cloak | 1608 | `item_pyrrhic_cloak` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/quarterstaff.png" alt="Quarterstaff" width="88"> | 短棍 |  | Quarterstaff | 10 | `item_quarterstaff` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/quelling_blade.png" alt="Quelling Blade" width="88"> | 压制之刃 |  | Quelling Blade | 11 | `item_quelling_blade` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/quelling_blade.png" alt="Quelling Blade" width="88"> | 压制之刃 | 补刀斧 | Quelling Blade | 11 | `item_quelling_blade` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_quickened.png" alt="Quickened" width="88"> | 迅速 |  | Quickened | 1577 | `item_enhancement_quickened` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/quickening_charm.png" alt="Quickening Charm" width="88"> | 加速护符 |  | Quickening Charm | 289 | `item_quickening_charm` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/quicksilver_amulet.png" alt="Quicksilver Amulet" width="88"> | 银闪护符 |  | Quicksilver Amulet | 686 | `item_quicksilver_amulet` |
@@ -299,9 +299,9 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_restorative.png" alt="Restorative" width="88"> | 滋补 |  | Restorative | 1649 | `item_enhancement_restorative` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/revenants_brooch.png" alt="Revenant&#x27;s Brooch" width="88"> | 英灵胸针 |  | Revenant's Brooch | 911 | `item_revenants_brooch` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/riftshadow_prism.png" alt="Riftshadow Prism" width="88"> | 影墟棱晶 |  | Riftshadow Prism | 1718 | `item_riftshadow_prism` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_aquila.png" alt="Ring of Aquila" width="88"> | 天鹰之戒 |  | Ring of Aquila | 212 | `item_ring_of_aquila` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_aquila.png" alt="Ring of Aquila" width="88"> | 天鹰之戒 | 天鹰戒 | Ring of Aquila | 212 | `item_ring_of_aquila` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_basilius.png" alt="Ring of Basilius" width="88"> | 王者之戒 |  | Ring of Basilius | 88 | `item_ring_of_basilius` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_health.png" alt="Ring of Health" width="88"> | 治疗指环 |  | Ring of Health | 56 | `item_ring_of_health` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_health.png" alt="Ring of Health" width="88"> | 治疗指环 | 回5、回五 | Ring of Health | 56 | `item_ring_of_health` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_protection.png" alt="Ring of Protection" width="88"> | 守护指环 |  | Ring of Protection | 12 | `item_ring_of_protection` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_regen.png" alt="Ring of Regen" width="88"> | 回复戒指 |  | Ring of Regen | 27 | `item_ring_of_regen` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ring_of_tarrasque.png" alt="Ring of Tarrasque" width="88"> | 恐鳌之戒 |  | Ring of Tarrasque | 279 | `item_ring_of_tarrasque` |
@@ -323,12 +323,12 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/sange.png" alt="Sange" width="88"> | 散华 |  | Sange | 162 | `item_sange` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/sange_and_yasha.png" alt="Sange and Yasha" width="88"> | 散夜对剑 | 双刀、散夜 | Sange and Yasha | 154 | `item_sange_and_yasha` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/satanic.png" alt="Satanic" width="88"> | 撒旦之邪力 | 撒旦 | Satanic | 156 | `item_satanic` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ofrenda_shovel.png" alt="Scrying Shovel" width="88"> | 占卜之铲 |  | Scrying Shovel | 4301 | `item_ofrenda_shovel` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ofrenda_shovel.png" alt="Scrying Shovel" width="88"> | 占卜之铲 | 铲子 | Scrying Shovel | 4301 | `item_ofrenda_shovel` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/sheepstick.png" alt="Scythe of Vyse" width="88"> | 邪恶镰刀 | 羊刀、妖术杖 | Scythe of Vyse | 96 | `item_sheepstick` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/searing_signet.png" alt="Searing Signet" width="88"> | 炽热纹章 |  | Searing Signet | 1604 | `item_searing_signet` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/seeds_of_serenity.png" alt="Seeds of Serenity" width="88"> | 宁静种籽 |  | Seeds of Serenity | 945 | `item_seeds_of_serenity` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/seer_stone.png" alt="Seer Stone" width="88"> | 先哲之石 |  | Seer Stone | 294 | `item_seer_stone` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ward_sentry.png" alt="Sentry Ward" width="88"> | 岗哨守卫 |  | Sentry Ward | 43 | `item_ward_sentry` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/ward_sentry.png" alt="Sentry Ward" width="88"> | 岗哨守卫 | 真眼 | Sentry Ward | 43 | `item_ward_sentry` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/serrated_shiv.png" alt="Serrated Shiv" width="88"> | 锯齿短刀 |  | Serrated Shiv | 1605 | `item_serrated_shiv` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/shadow_amulet.png" alt="Shadow Amulet" width="88"> | 暗影护符 |  | Shadow Amulet | 215 | `item_shadow_amulet` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/invis_sword.png" alt="Shadow Blade" width="88"> | 影刃 | 隐刀 | Shadow Blade | 152 | `item_invis_sword` |
@@ -356,8 +356,8 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/desolator_2.png" alt="Stygian Desolator" width="88"> | 寂灭 |  | Stygian Desolator | 292 | `item_desolator_2` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/swift_blink.png" alt="Swift Blink" width="88"> | 迅疾闪光 | 敏捷跳、绿跳 | Swift Blink | 603 | `item_swift_blink` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/talisman_of_evasion.png" alt="Talisman of Evasion" width="88"> | 闪避护符 |  | Talisman of Evasion | 32 | `item_talisman_of_evasion` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tango.png" alt="Tango" width="88"> | 树之祭祀 |  | Tango | 44 | `item_tango` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tango_single.png" alt="Tango (Shared)" width="88"> | 树之祭祀（共享） |  | Tango (Shared) | 241 | `item_tango_single` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tango.png" alt="Tango" width="88"> | 树之祭祀 | 吃树 | Tango | 44 | `item_tango` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tango_single.png" alt="Tango (Shared)" width="88"> | 树之祭祀（共享） | 吃树 | Tango (Shared) | 241 | `item_tango_single` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/spy_gadget.png" alt="Telescope" width="88"> | 望远镜 |  | Telescope | 336 | `item_spy_gadget` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/the_leveller.png" alt="The Leveller" width="88"> | 平世剑 |  | The Leveller | 379 | `item_the_leveller` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_thick.png" alt="Thick" width="88"> | 厚重 |  | Thick | 1650 | `item_enhancement_thick` |
@@ -374,11 +374,11 @@
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_titanic.png" alt="Titanic" width="88"> | 巨神 |  | Titanic | 1597 | `item_enhancement_titanic` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/mutation_tombstone.png" alt="Tombstone" width="88"> | 墓碑 |  | Tombstone | 1028 | `item_mutation_tombstone` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tome_of_aghanim.png" alt="Tome of Aghanim" width="88"> | 阿哈利姆之书 |  | Tome of Aghanim | 307 | `item_tome_of_aghanim` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tome_of_knowledge.png" alt="Tome of Knowledge" width="88"> | 知识之书 |  | Tome of Knowledge | 257 | `item_tome_of_knowledge` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tome_of_knowledge.png" alt="Tome of Knowledge" width="88"> | 知识之书 | 经验书 | Tome of Knowledge | 257 | `item_tome_of_knowledge` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/foragers_mana.png" alt="Tomo&#x27;kan Ringcap" width="88"> | 托莫干伞盖 |  | Tomo'kan Ringcap | 1871 | `item_foragers_mana` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/enhancement_tough.png" alt="Tough" width="88"> | 坚强 |  | Tough | 1586 | `item_enhancement_tough` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tpscroll.png" alt="Town Portal Scroll" width="88"> | 回城卷轴 |  | Town Portal Scroll | 46 | `item_tpscroll` |
-| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tranquil_boots.png" alt="Tranquil Boots" width="88"> | 静谧之鞋 |  | Tranquil Boots | 214 | `item_tranquil_boots` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tpscroll.png" alt="Town Portal Scroll" width="88"> | 回城卷轴 | TP、tp | Town Portal Scroll | 46 | `item_tpscroll` |
+| <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/tranquil_boots.png" alt="Tranquil Boots" width="88"> | 静谧之鞋 | 绿鞋 | Tranquil Boots | 214 | `item_tranquil_boots` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/trickster_cloak.png" alt="Trickster Cloak" width="88"> | 欺诈师斗篷 |  | Trickster Cloak | 571 | `item_trickster_cloak` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/trident.png" alt="Trident" width="88"> | 三元重戟 |  | Trident | 369 | `item_trident` |
 | <img src="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/trusty_shovel.png" alt="Trusty Shovel" width="88"> | 可靠铁铲 |  | Trusty Shovel | 356 | `item_trusty_shovel` |
