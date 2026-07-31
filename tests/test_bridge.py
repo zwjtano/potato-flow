@@ -14,6 +14,13 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_default_cover_prompt_requires_official_dota2_item_references(self):
+        prompt = bridge.DEFAULT_RECORDING_COVER_AI_PROMPT
+
+        self.assertIn("Valve 官方装备图标参考", prompt)
+        self.assertIn("缺少官方参考时不得表现具体装备", prompt)
+        self.assertIn("禁止自绘或仿冒装备图标", prompt)
+
     def test_recording_tags_dedupe_repeated_streamer_aliases(self):
         self.assertEqual(
             bridge.dedupe_recording_tags(["yyfyyf", "YYF", "直播回放"]),
