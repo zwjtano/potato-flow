@@ -2961,11 +2961,7 @@ class LiveRecorderManager:
                 if auto_retry_at
                 else None
             )
-            upload_progress = (
-                upload_details.get("upload_progress")
-                if upload_stage.get("status") == "running"
-                else None
-            )
+            upload_progress = upload_details.get("upload_progress")
             upload_progress = upload_progress if isinstance(upload_progress, dict) else None
             upload_progress_text = ""
             if upload_progress:
@@ -2977,12 +2973,21 @@ class LiveRecorderManager:
                     or 0
                 )
                 eta = upload_progress.get("eta_seconds")
-                if total_bytes > 0 and speed > 0 and eta is not None:
+                peak_speed = float(
+                    upload_progress.get("peak_speed_bytes_per_second")
+                    or upload_details.get("peak_speed_bytes_per_second")
+                    or speed
+                    or 0
+                )
+                if upload_stage.get("status") == "running" and total_bytes > 0 and speed > 0 and eta is not None:
                     upload_progress_text = (
                         f"已经上传：{uploaded / 1024 / 1024:.1f}MB/{total_bytes / 1024 / 1024:.1f}MB　"
                         f"当前速度：{speed / 1024 / 1024:.1f}MB/s　"
+                        f"最高速度：{peak_speed / 1024 / 1024:.1f}MB/s　"
                         f"剩余时间：{float(eta):.1f}秒"
                     )
+                elif peak_speed > 0:
+                    upload_progress_text = f"最高上传速度：{peak_speed / 1024 / 1024:.1f}MB/s"
             capabilities = recording_task_capabilities(job_status)
             jobs.append({
                 "id": row["fingerprint"],

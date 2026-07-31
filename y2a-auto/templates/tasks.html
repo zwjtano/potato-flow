@@ -127,7 +127,7 @@
                     <tbody>
                     {% for job in recording_jobs %}
                         {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
-                        <tr class="recording-task-row status-{{ job.status }}">
+                        <tr class="recording-task-row status-{{ job.status }}" data-recording-job-id="{{ job.id }}">
                             <td>
                                 <div class="recording-video-cell">
                                     {% if job.cover_available %}
@@ -181,7 +181,7 @@
                                 </div>
                                 {% endif %}
                             </td>
-                            <td class="text-center">
+                            <td class="text-center" data-recording-status>
                                 {% if job.status == 'completed' %}
                                 <span class="badge rounded-pill text-bg-success">已完成</span>
                                 {% elif job.status == 'failed' %}
@@ -199,8 +199,8 @@
                             <td>
                                 <button type="button" class="recording-progress-trigger" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
                                 <div class="d-flex justify-content-between gap-2 small mb-1">
-                                    <span class="recording-progress-current">{{ job.progress_label }}</span>
-                                    <span class="text-muted">{{ progress }}%</span>
+                                    <span class="recording-progress-current" data-recording-progress-label>{{ job.progress_label }}</span>
+                                    <span class="text-muted" data-recording-progress-percent>{{ progress }}%</span>
                                 </div>
                                 <div class="progress progress-thin" role="progressbar" aria-label="录播处理进度" aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
                                     <div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div>
@@ -218,7 +218,7 @@
                                 <small class="recording-progress-hint">点击查看每一步详情</small>
                                 </button>
                             </td>
-                            <td class="text-center"><span class="task-datetime" data-datetime="{{ job.updated_at }}">{{ job.updated_at }}</span></td>
+                            <td class="text-center"><span class="task-datetime" data-recording-updated data-datetime="{{ job.updated_at }}">{{ job.updated_at }}</span></td>
                             <td class="text-end">
                                 <div class="recording-task-actions">
                                     {% if job.bvid %}
@@ -259,7 +259,7 @@
             <div class="d-md-none recording-task-cards">
             {% for job in recording_jobs %}
                 {% set progress = ((job.completed_stages * 100) // job.total_stages) if job.total_stages else 0 %}
-                <article class="recording-task-card status-{{ job.status }}">
+                <article class="recording-task-card status-{{ job.status }}" data-recording-job-id="{{ job.id }}">
                     <div class="d-flex justify-content-between gap-3">
                         <div class="recording-video-cell min-w-0">
                             {% if job.cover_available %}
@@ -295,18 +295,18 @@
                                 {% endif %}
                             </div>
                         </div>
-                        {% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
+                        <span data-recording-status>{% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
                         {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-danger">{{ '本地处理失败' if job.record_only else '投稿失败 · 待人工审核' }}</span>
                         {% elif job.status == 'dry_run' %}<span class="badge rounded-pill text-bg-warning">待投稿</span>
                         {% elif job.status == 'video_uploaded' %}<span class="badge rounded-pill text-bg-info">导入弹幕中</span>
                         {% elif job.status == 'paused' %}<span class="badge rounded-pill text-bg-secondary">已暂停</span>
-                        {% else %}<span class="badge rounded-pill text-bg-primary">处理中</span>{% endif %}
+                        {% else %}<span class="badge rounded-pill text-bg-primary">处理中</span>{% endif %}</span>
                     </div>
                     <button type="button" class="recording-progress-trigger mt-3" data-job-id="{{ job.id }}" aria-label="查看“{{ job.title or job.video_name }}”任务详情">
                         <div class="recording-progress-mobile-head">
-                            <span class="recording-progress-current">{{ job.progress_label }}</span>
-                            <span class="recording-progress-count">{{ job.completed_stages }}/{{ job.total_stages }} 步</span>
-                            <span class="recording-progress-percent">{{ progress }}%</span>
+                            <span class="recording-progress-current" data-recording-progress-label>{{ job.progress_label }}</span>
+                            <span class="recording-progress-count" data-recording-progress-count>{{ job.completed_stages }}/{{ job.total_stages }} 步</span>
+                            <span class="recording-progress-percent" data-recording-progress-percent>{{ progress }}%</span>
                         </div>
                         <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
                         <span class="recording-upload-live{% if not job.upload_progress_text %} d-none{% endif %}"
@@ -1590,6 +1590,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         deleted: '已删除文件',
         failed: '清理失败文件',
         upload_progress: '实时上传',
+        peak_speed_bytes_per_second: '最高上传速度（字节/秒）',
     };
     const recordingStageSkipReasons = {
         ass: '没有找到可用的弹幕 XML、弹幕为空，或当前直播间未启用弹幕处理。',
@@ -1678,9 +1679,12 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             progress.speed_bytes_per_second || progress.speed_bytes_per_sec || 0
         );
         const eta = Number(progress.eta_seconds);
-        if (!(total > 0) || !(speed > 0) || !Number.isFinite(eta)) return '';
+        const peakSpeed = Number(progress.peak_speed_bytes_per_second || speed || 0);
         const mb = value => (value / 1024 / 1024).toFixed(1);
-        return `已经上传：${mb(uploaded)}MB/${mb(total)}MB　当前速度：${mb(speed)}MB/s　剩余时间：${Math.max(0, eta).toFixed(1)}秒`;
+        if (total > 0 && speed > 0 && Number.isFinite(eta)) {
+            return `已经上传：${mb(uploaded)}MB/${mb(total)}MB　当前速度：${mb(speed)}MB/s　最高速度：${mb(peakSpeed)}MB/s　剩余时间：${Math.max(0, eta).toFixed(1)}秒`;
+        }
+        return peakSpeed > 0 ? `最高上传速度：${mb(peakSpeed)}MB/s` : '';
     }
 
     function renderRecordingDetailFields(details) {
@@ -1799,7 +1803,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                 : details.danmaku_integrity === 'suspected_incomplete'
                     ? 'XML 疑似不完整'
                     : (recordingStageStatusNames[status] || status);
-            return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" ${open ? 'open' : ''}>
+            return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" data-stage-key="${escapeRecordingDetail(key)}" ${open ? 'open' : ''}>
                 <summary>
                     <span class="recording-detail-stage-icon"><i class="bi ${escapeRecordingDetail(meta.icon)}"></i></span>
                     <span class="recording-detail-stage-title">
@@ -1859,7 +1863,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         bilibili.classList.toggle('d-none', !job.bvid);
     }
 
-    async function loadRecordingJobDetail(jobId, showLoading = false) {
+    async function loadRecordingJobDetail(jobId, showLoading = false, preserveView = false) {
         if (!jobId || recordingDetailRequestInFlight) return;
         const modal = document.getElementById('recordingJobDetailModal');
         const body = modal?.querySelector('[data-role="recording-detail-body"]');
@@ -1876,7 +1880,22 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '任务详情读取失败');
             if (activeRecordingDetailJobId !== jobId) return;
+            const previousScrollTop = preserveView ? body.scrollTop : 0;
+            const openStageKeys = preserveView
+                ? new Set(Array.from(body.querySelectorAll('.recording-detail-stage[open][data-stage-key]')).map(node => node.dataset.stageKey))
+                : null;
+            const logWasOpen = preserveView && Boolean(body.querySelector('.recording-detail-log[open]'));
             renderRecordingJobDetail(result);
+            if (preserveView) {
+                body.querySelectorAll('.recording-detail-stage[data-stage-key]').forEach(node => {
+                    node.open = openStageKeys.has(node.dataset.stageKey);
+                });
+                const log = body.querySelector('.recording-detail-log');
+                if (log) log.open = logWasOpen;
+                window.requestAnimationFrame(() => {
+                    body.scrollTop = previousScrollTop;
+                });
+            }
         } catch (error) {
             if (activeRecordingDetailJobId === jobId) {
                 body.innerHTML = `<div class="recording-detail-loading text-danger"><i class="bi bi-exclamation-triangle"></i> ${escapeRecordingDetail(error.message)}</div>`;
@@ -1896,7 +1915,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
 
     function refreshActiveRecordingDetail() {
         if (!activeRecordingDetailJobId) return;
-        loadRecordingJobDetail(activeRecordingDetailJobId);
+        loadRecordingJobDetail(activeRecordingDetailJobId, false, true);
     }
 
     let activeStandardTaskDetailId = '';
@@ -2001,6 +2020,65 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
 
     let recordingUploadMetricsInFlight = false;
 
+    function recordingStatusMarkup(job) {
+        const status = String(job?.status || 'processing');
+        if (status === 'completed') return '<span class="badge rounded-pill text-bg-success">已完成</span>';
+        if (status === 'failed') {
+            return `<span class="badge rounded-pill text-bg-danger">${job?.record_only ? '本地处理失败' : '投稿失败 · 待人工审核'}</span>`;
+        }
+        if (status === 'dry_run') return '<span class="badge rounded-pill text-bg-warning">待投稿</span>';
+        if (status === 'video_uploaded') return '<span class="badge rounded-pill text-bg-info">导入弹幕中</span>';
+        if (status === 'paused') return '<span class="badge rounded-pill text-bg-secondary">已暂停</span>';
+        return '<span class="badge rounded-pill text-bg-primary">处理中</span>';
+    }
+
+    function applyRecordingJobProgress(job) {
+        const jobId = String(job?.id || '');
+        if (!jobId) return;
+        const escapedJobId = escapeTaskIdForSelector(jobId);
+        const totalStages = Number(job.total_stages || 0);
+        const completedStages = Number(job.completed_stages || 0);
+        const percent = totalStages > 0
+            ? Math.max(0, Math.min(100, Math.floor(completedStages * 100 / totalStages)))
+            : 0;
+        const uploadText = String(job.upload_progress_text || formatRecordingUploadProgress(job.upload_progress));
+
+        document.querySelectorAll(`[data-recording-job-id="${escapedJobId}"]`).forEach(root => {
+            Array.from(root.classList)
+                .filter(name => name.startsWith('status-'))
+                .forEach(name => root.classList.remove(name));
+            root.classList.add(`status-${String(job.status || 'processing')}`);
+
+            root.querySelectorAll('[data-recording-status]').forEach(node => {
+                node.innerHTML = recordingStatusMarkup(job);
+            });
+            root.querySelectorAll('[data-recording-progress-label]').forEach(node => {
+                node.textContent = job.progress_label || '正在处理任务';
+            });
+            root.querySelectorAll('[data-recording-progress-count]').forEach(node => {
+                node.textContent = `${completedStages}/${totalStages} 步`;
+            });
+            root.querySelectorAll('[data-recording-progress-percent]').forEach(node => {
+                node.textContent = `${percent}%`;
+            });
+            root.querySelectorAll('.progress-bar[data-pct]').forEach(node => {
+                node.dataset.pct = String(percent);
+                node.classList.toggle('bg-danger', job.status === 'failed');
+                node.classList.toggle('bg-success', job.status === 'completed');
+                updateProgressBars(node);
+            });
+            root.querySelectorAll('[data-recording-upload-live]').forEach(node => {
+                node.textContent = uploadText;
+                node.classList.toggle('d-none', !uploadText);
+            });
+            root.querySelectorAll('[data-recording-updated]').forEach(node => {
+                if (!job.updated_at) return;
+                node.dataset.datetime = job.updated_at;
+                updateTaskDateTimes(node);
+            });
+        });
+    }
+
     async function refreshRecordingUploadMetrics() {
         const metricsNodes = document.querySelectorAll('[data-recording-upload-live]');
         if (!metricsNodes.length || recordingUploadMetricsInFlight || document.hidden) return;
@@ -2013,14 +2091,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             if (!response.ok) return;
             const payload = await response.json();
             const jobs = new Map((payload.jobs || []).map(job => [String(job.id || ''), job]));
-            metricsNodes.forEach(node => {
-                const job = jobs.get(String(node.dataset.jobId || ''));
-                const text = formatRecordingUploadProgress(job?.upload_progress);
-                node.textContent = text;
-                node.classList.toggle('d-none', !text);
-            });
+            jobs.forEach(applyRecordingJobProgress);
         } catch (error) {
-            console.debug('读取 B站实时上传数据失败', error);
+            console.debug('读取录播任务实时进度失败', error);
         } finally {
             recordingUploadMetricsInFlight = false;
         }
@@ -2742,6 +2815,8 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
 
         refreshRecordingUploadMetrics();
         setInterval(refreshRecordingUploadMetrics, 1000);
+        setInterval(refreshActiveRecordingDetail, 2000);
+        initTasksEventStream();
         setInterval(updateTaskDateTimes, 60000);
     });
 </script>

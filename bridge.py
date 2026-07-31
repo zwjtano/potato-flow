@@ -71,7 +71,9 @@ DEFAULT_RECORDING_COVER_AI_PROMPT = (
 )
 WORKSPACE_ROOT = Path(__file__).resolve().parent
 YYF_COVER_REFERENCE = WORKSPACE_ROOT / "assets" / "streamer-references" / "yyf.png"
-YYF_STREAMER_ALIASES = {"yyf", "yyfyyf", "月夜枫", "枫哥", "姜岑"}
+YYF_STREAMER_ALIASES = {
+    "yyf", "yyfyyf", "月夜枫", "枫哥", "峰哥", "姜岑", "FG", "胖头", "胖头鱼"
+}
 GUOXIAOGUO_COVER_REFERENCE = (
     WORKSPACE_ROOT / "assets" / "streamer-references" / "guoxiaoguo.png"
 )
@@ -86,6 +88,8 @@ DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "枫哥",
             "峰哥",
             "姜岑",
+            "FG",
+            "胖头",
             "胖头鱼",
             "石佛",
             "僵尸王",
@@ -3050,15 +3054,28 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         result = previous.get("bilibili")
         uploader = None
         uploaded_now = False
+        peak_upload_speed = 0.0
+        final_upload_progress: dict[str, Any] | None = None
         if not isinstance(result, dict) or not result.get("bvid"):
             uploader = BilibiliUploader(cookie_file=str(cookie))
 
             def _on_upload_progress(progress: dict) -> None:
+                nonlocal peak_upload_speed, final_upload_progress
+                current_speed = float(
+                    progress.get("speed_bytes_per_second")
+                    or progress.get("speed_bytes_per_sec")
+                    or 0
+                )
+                peak_upload_speed = max(peak_upload_speed, current_speed)
+                final_upload_progress = {
+                    **progress,
+                    "peak_speed_bytes_per_second": peak_upload_speed,
+                }
                 store.stage(
                     key,
                     "upload",
                     "running",
-                    {**upload_stage_details, "upload_progress": progress},
+                    {**upload_stage_details, "upload_progress": final_upload_progress},
                 )
 
             def _on_upload_queue_status(status: str) -> None:
@@ -3140,6 +3157,15 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 status=session_status if retry else "open",
             )
 
+        completed_upload_progress = (
+            {
+                **final_upload_progress,
+                "speed_bytes_per_second": 0,
+                "eta_seconds": 0,
+            }
+            if final_upload_progress
+            else None
+        )
         store.stage(key, "upload", "completed", {
             "title": title, "description": description, "cover": str(cover),
             "cover43": str(cover43) if cover43 else None,
@@ -3150,6 +3176,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             "page_title": page_title,
             "part_title": part_generated_title,
             "part_description": part_description,
+            "upload_progress": completed_upload_progress,
+            "peak_speed_bytes_per_second": peak_upload_speed or None,
         })
         # The upload result is durable, but the task has not reached its
         # terminal state until the configured source cleanup has finished.

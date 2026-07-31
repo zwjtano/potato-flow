@@ -1582,6 +1582,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                                     "uploaded_bytes": 50 * 1024 * 1024,
                                     "total_bytes": 100 * 1024 * 1024,
                                     "speed_bytes_per_sec": 5 * 1024 * 1024,
+                                    "peak_speed_bytes_per_second": 8 * 1024 * 1024,
                                     "eta_seconds": 10,
                                     "percent": 50,
                                 }
@@ -1596,6 +1597,57 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 job = manager.pipeline_jobs()[0]
 
         self.assertIn("当前速度：5.0MB/s", job["upload_progress_text"])
+        self.assertIn("最高速度：8.0MB/s", job["upload_progress_text"])
+
+    def test_completed_pipeline_job_keeps_peak_upload_speed(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            fingerprint = "b" * 64
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                timestamp = "2026-07-31T05:00:00+00:00"
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'completed', 1, '{}', NULL, ?, ?)",
+                    (fingerprint, "/data/recordings/test.flv", timestamp, timestamp),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'completed', ?, NULL, ?, ?, ?)",
+                    (
+                        fingerprint,
+                        json.dumps({
+                            "upload_progress": {
+                                "uploaded_bytes": 100 * 1024 * 1024,
+                                "total_bytes": 100 * 1024 * 1024,
+                                "speed_bytes_per_second": 3 * 1024 * 1024,
+                                "peak_speed_bytes_per_second": 12 * 1024 * 1024,
+                                "eta_seconds": 0,
+                            },
+                            "peak_speed_bytes_per_second": 12 * 1024 * 1024,
+                        }),
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[]):
+                job = manager.pipeline_jobs()[0]
+
+        self.assertEqual(job["upload_progress_text"], "最高上传速度：12.0MB/s")
 
     def test_upload_queue_positions_and_paused_job_can_be_deleted(self):
         manager = LiveRecorderManager()
@@ -1901,11 +1953,18 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("完整任务日志", tasks_source)
         self.assertIn("已经上传：", tasks_source)
         self.assertIn("当前速度：", tasks_source)
+        self.assertIn("最高速度：", tasks_source)
+        self.assertIn("最高上传速度：", tasks_source)
         self.assertIn("剩余时间：", tasks_source)
         self.assertIn("data-recording-upload-live", tasks_source)
         self.assertIn("5 分钟后自动重试投稿", tasks_source)
         self.assertIn("auto_retry_scheduled", tasks_source)
         self.assertIn("refreshRecordingUploadMetrics", tasks_source)
+        self.assertIn("applyRecordingJobProgress", tasks_source)
+        self.assertIn('data-recording-job-id="{{ job.id }}"', tasks_source)
+        self.assertIn("setInterval(refreshActiveRecordingDetail, 2000)", tasks_source)
+        self.assertIn("previousScrollTop", tasks_source)
+        self.assertIn("openStageKeys", tasks_source)
         self.assertIn("recording-task-cover", tasks_source)
         self.assertIn("recording-cover-trigger", tasks_source)
         self.assertIn("recording-cover-duration", tasks_source)

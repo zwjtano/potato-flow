@@ -158,6 +158,22 @@ class BridgeTests(unittest.TestCase):
             )
         self.assertEqual(title, "主播｜深夜歌回｜07-23 09:45")
 
+    def test_yyf_alias_at_start_of_topic_avoids_repeated_streamer_prefix(self):
+        aliases = ("FG", "胖头", "胖头鱼")
+        for alias in aliases:
+            with self.subTest(alias=alias), tempfile.TemporaryDirectory() as temp:
+                video = Path(temp) / "yyfyyf_陪伴每一天_2026-07-31_12-00.flv"
+                video.write_bytes(b"video")
+                title, _, _ = bridge.render_metadata(
+                    video,
+                    {
+                        "title_template": bridge.DEFAULT_TITLE_TEMPLATE,
+                        "streamer_name": "yyfyyf",
+                    },
+                    ai_topic=f"{alias}天梯翻盘",
+                )
+            self.assertEqual(title, f"{alias}天梯翻盘｜07-31 12:00")
+
     def test_current_filename_uses_recording_start_time_not_finalize_time(self):
         with tempfile.TemporaryDirectory() as temp:
             video = Path(temp) / "果小果是个弟弟_c3bc3d_备战宝可梦_2026-07-24_13-00.flv"
@@ -1155,6 +1171,9 @@ class BridgeTests(unittest.TestCase):
 
     def test_dota2_streamer_aliases_use_stable_public_names(self):
         cases = {
+            "FG": "YYF",
+            "胖头": "YYF",
+            "胖头鱼": "YYF",
             "B神": "BurNIng",
             "八师傅": "xiao8",
             "小明鞭": "Faith_bian",
