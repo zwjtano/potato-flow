@@ -14,6 +14,11 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_upload_pipeline_persists_duration_before_optional_ass_stage(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertIn('"video_duration_seconds": recording_duration_seconds', source)
+        self.assertIn('recording_duration_seconds = video_duration_seconds(', source)
+
     def test_default_cover_prompt_requires_official_dota2_item_references(self):
         prompt = bridge.DEFAULT_RECORDING_COVER_AI_PROMPT
 

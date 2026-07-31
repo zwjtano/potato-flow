@@ -2277,11 +2277,16 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         if isinstance(existing_submission, dict)
         else 1
     )
+    recording_duration_seconds = video_duration_seconds(
+        video,
+        str(cfg.get("ffprobe", "ffprobe")),
+    )
     store.finish(key, "processing", {
         **prior_result,
         "worker_pid": os.getpid(),
         "multipart_session": session_key or None,
         "part_number": part_number,
+        "video_duration_seconds": recording_duration_seconds,
     })
     work_dir = store.path.parent / "artifacts" / key[:16]
     current_stage = "ass"
@@ -2367,7 +2372,15 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     ass_details,
                 )
         else:
-            store.stage(key, "ass", "skipped", {"reason": "未找到弹幕 XML 或弹幕处理未启用"})
+            store.stage(
+                key,
+                "ass",
+                "skipped",
+                {
+                    "reason": "未找到弹幕 XML 或弹幕处理未启用",
+                    "video_duration_seconds": recording_duration_seconds,
+                },
+            )
 
         # Collect stable live context before AI so metadata and both cover
         # variants are grounded in the same recording and the same game.
