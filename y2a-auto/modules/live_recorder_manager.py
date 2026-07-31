@@ -3229,6 +3229,10 @@ class LiveRecorderManager:
                 "part_description": ai_details.get("part_description") or "",
                 "live_title": values.get("live_title") or "",
             }
+            regenerated_live_stats = ""
+            append_regenerated_live_stats = bool(
+                bridge_config.get("douyu_stats_append_description", True)
+            )
             title_prompt = str(
                 bridge_config.get("ai_title_prompt")
                 or bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
@@ -3247,7 +3251,113 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 返回 JSON：{{"title_topic":"...","description":"..."}}。
 """.strip()
             generated: dict[str, Any] = {}
-            if selected & {"title", "description"}:
+            if "description" in selected:
+                ass_stage = next(
+                    (stage for stage in job.get("stages", []) if stage.get("key") == "ass"),
+                    {},
+                )
+                ass_details = ass_stage.get("details") if isinstance(ass_stage, dict) else {}
+                ass_details = ass_details if isinstance(ass_details, dict) else {}
+                danmaku_xml = Path(str(ass_details.get("danmaku_xml") or ""))
+                if not danmaku_xml.is_file():
+                    raise RecorderConfigError(
+                        "原始弹幕 XML 不存在，无法重新生成可验证的可点击时间点"
+                    )
+                comments = bridge.parse_biliup_xml(danmaku_xml)
+                if not comments:
+                    raise RecorderConfigError(
+                        "原始弹幕 XML 没有可用弹幕，无法重新生成可点击时间点"
+                    )
+                live_stats_stage = next(
+                    (stage for stage in job.get("stages", []) if stage.get("key") == "live_stats"),
+                    {},
+                )
+                live_stats_details = (
+                    live_stats_stage.get("details")
+                    if isinstance(live_stats_stage, dict)
+                    else {}
+                )
+                live_stats_details = (
+                    live_stats_details
+                    if isinstance(live_stats_details, dict)
+                    else {}
+                )
+                regenerated_live_stats = str(
+                    live_stats_details.get("stats_summary") or ""
+                ).strip()
+                if (
+                    not regenerated_live_stats
+                    and bool(bridge_config.get("douyu_stats_enabled", True))
+                ):
+                    try:
+                        from .douyu_stats_formatter import get_stats_for_description
+
+                        regenerated_live_stats = str(
+                            get_stats_for_description(str(video_path.parent)) or ""
+                        ).strip()
+                    except Exception:
+                        # Historical tasks may no longer have their statistics
+                        # snapshot. Timeline regeneration can still proceed.
+                        regenerated_live_stats = ""
+                identity_stage = next(
+                    (stage for stage in job.get("stages", []) if stage.get("key") == "xml_identity"),
+                    {},
+                )
+                identity_details = (
+                    identity_stage.get("details")
+                    if isinstance(identity_stage, dict)
+                    else {}
+                )
+                identity_details = identity_details if isinstance(identity_details, dict) else {}
+                grounding_context: dict[str, Any] = {
+                    "live_stats": regenerated_live_stats,
+                }
+                game_context = {
+                    key: identity_details.get(source_key)
+                    for key, source_key in (
+                        ("hero", "streamer_hero"),
+                        ("items", "streamer_items"),
+                        ("neutral", "streamer_neutral"),
+                        ("scepter", "streamer_scepter"),
+                        ("shard", "streamer_shard"),
+                        ("kills", "kills"),
+                        ("deaths", "deaths"),
+                        ("assists", "assists"),
+                        ("kda", "kda"),
+                        ("identity_source", "identity_source"),
+                    )
+                    if identity_details.get(source_key) not in (None, "", [])
+                }
+                if game_context:
+                    grounding_context["game"] = game_context
+                result_details = job.get("result")
+                result_details = result_details if isinstance(result_details, dict) else {}
+                duration_seconds = (
+                    result_details.get("video_duration_seconds")
+                    or ass_details.get("video_duration_seconds")
+                    or job.get("duration_seconds")
+                )
+                generated_description, grounded_title_topic = (
+                    bridge.generate_danmaku_metadata_with_ai(
+                        comments,
+                        "",
+                        bridge_config,
+                        grounding_context,
+                        float(duration_seconds) if duration_seconds is not None else None,
+                    )
+                )
+                if not re.search(
+                    r"(?m)^\d{1,2}:\d{2}(?::\d{2})?\s+\S",
+                    generated_description,
+                ):
+                    raise RecorderConfigError(
+                        "AI 未生成任何通过 XML 校验的可点击时间点，已保留原简介"
+                    )
+                generated = {
+                    "title_topic": grounded_title_topic,
+                    "description": generated_description,
+                }
+            elif "title" in selected:
                 generated_result = _request_json_object(
                     client=get_openai_client(app_config),
                     model_name=str(app_config.get("OPENAI_MODEL_NAME") or "gpt-4o-mini"),
@@ -3269,7 +3379,26 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     or ""
                 ).strip(),
             )[:28].strip()
-            generated_description = str(generated.get("description") or "").strip()[:1800]
+            generated_description = str(generated.get("description") or "").strip()
+            if (
+                "description" in selected
+                and regenerated_live_stats
+                and append_regenerated_live_stats
+            ):
+                generated_description = bridge.prepend_live_stats_to_description(
+                    generated_description,
+                    regenerated_live_stats,
+                    limit=1900,
+                )
+            else:
+                generated_description = generated_description[:1800]
+            if "description" in selected and not re.search(
+                r"(?m)^\d{1,2}:\d{2}(?::\d{2})?\s+\S",
+                generated_description,
+            ):
+                raise RecorderConfigError(
+                    "直播数据合成后未保留可点击时间点，已保留原简介"
+                )
 
             title = current_title
             description = current_description

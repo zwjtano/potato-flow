@@ -439,12 +439,13 @@ def strip_ai_timeline_lines(description: str) -> str:
     """Keep AI prose but discard model-formatted timestamps and headings."""
     lines = str(description or "").splitlines()
     timestamp_line = re.compile(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s+")
-    kept = [
-        line
-        for line in lines
-        if not timestamp_line.match(line)
-        and not re.fullmatch(r"\s*重要时间点\s*[：:]?\s*", line)
-    ]
+    section_heading = re.compile(r"\s*重要(?:时间点|事件)\s*[：:]?\s*")
+    kept: list[str] = []
+    for line in lines:
+        if section_heading.fullmatch(line):
+            break
+        if not timestamp_line.match(line):
+            kept.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
