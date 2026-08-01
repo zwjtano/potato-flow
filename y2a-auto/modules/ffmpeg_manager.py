@@ -23,7 +23,7 @@ import requests
 from shutil import which as _which
 
 from .config_manager import load_config
-from .utils import get_app_root_dir
+from .utils import get_app_root_dir, get_resource_root_dir
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def _resolve_from_location(location: Optional[str], tool: str) -> Optional[str]:
 
 
 def _bundled_candidates(tool: str) -> list[str]:
-    base_dir = os.path.join(get_app_root_dir(), 'ffmpeg')
+    base_dir = os.path.join(get_resource_root_dir(), 'ffmpeg')
     names = _binary_variants(tool)
     candidates: list[str] = []
 
@@ -122,7 +122,7 @@ def _windows_ffmpeg_download_url() -> tuple[str, str]:
 
 
 def get_windows_ffmpeg_manual_setup_message(app_root: Optional[str] = None) -> str:
-    root_dir = app_root or get_app_root_dir()
+    root_dir = app_root or get_resource_root_dir()
     ffmpeg_dir = os.path.join(root_dir, 'ffmpeg')
     ffmpeg_exe = os.path.join(ffmpeg_dir, 'ffmpeg.exe')
     ffprobe_exe = os.path.join(ffmpeg_dir, 'ffprobe.exe')
@@ -169,7 +169,7 @@ def download_ffmpeg_bundled(
         log_obj.debug("Skipping ffmpeg auto-download on non-Windows platform")
         return None
 
-    app_root = get_app_root_dir()
+    app_root = get_resource_root_dir()
     target_dir = os.path.join(app_root, 'ffmpeg')
     os.makedirs(target_dir, exist_ok=True)
 

@@ -283,6 +283,9 @@ html:not([data-theme="dark"]) .room-recording-settings-card .room-recording-summ
 .room-ai-prompts-actions > span { color: #79828e; font-size: 10px; }
 .room-recording-settings-form { display: grid; gap: 15px; padding: 20px; color: #26384a; border-top: 1px solid #d9e3ec; background: #f5f9fc; }
 .room-recording-setting-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.room-danmaku-overrides { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px; border: 1px solid #d9e7f5; border-radius: 10px; background: #fff; transition: opacity .15s ease; }
+.room-danmaku-overrides label { display: grid; gap: 5px; color: #506176; font-size: 12px; }
+.room-danmaku-overrides.is-disabled { opacity: .5; }
 .room-recording-setting-option, .room-recording-duration { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 15px; border: 1px solid #d5e0ea; border-radius: 10px; background: #fff; }
 .room-recording-setting-option > span:last-child, .room-recording-duration > span:first-child { min-width: 0; }
 .room-recording-setting-option strong, .room-recording-duration strong { display: block; color: #223246; font-size: 12px; }
@@ -573,6 +576,7 @@ html[data-theme="dark"] .delete-room-modal .btn-light:hover { color: #fff; borde
     .runtime-metrics > div:nth-child(-n+2) { border-bottom: 1px solid var(--studio-border); }
     .room-prompt-grid { grid-template-columns: 1fr; }
     .room-recording-setting-grid { grid-template-columns: 1fr; }
+    .room-danmaku-overrides { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 767.98px) {
@@ -3406,6 +3410,8 @@ html[data-theme="dark"] .room-recording-settings-note {
     border-color: #315b7d;
     background: #172f46;
 }
+html[data-theme="dark"] .room-danmaku-overrides { background: #111a24; border-color: #29394b; }
+html[data-theme="dark"] .room-danmaku-overrides label { color: #aebed0; }
 html[data-theme="dark"] .room-recording-duration-input .form-control,
 html[data-theme="dark"] .room-setting-number {
     color: #63dafb;

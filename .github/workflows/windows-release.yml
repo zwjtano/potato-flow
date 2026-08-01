@@ -1,15 +1,18 @@
-name: Windows portable release
+name: Windows installer release
 
 on:
   pull_request:
     branches: [main]
     paths:
       - .github/workflows/windows-release.yml
+      - danmaku_pipeline.py
+      - bridge.py
+      - bridge.config.example.json
       - y2a-auto/**
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag to receive the Windows asset
+        description: Existing release tag to receive the Windows installer
         required: false
         type: string
   release:
@@ -19,13 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-portable-${{ github.ref }}
+  group: windows-installer-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-windows:
+  build-windows-installer:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: write
 
@@ -46,7 +49,7 @@ jobs:
         run: |
           $version = python -c "import sys; sys.path.insert(0, 'y2a-auto'); from version import __version__; print(__version__)"
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "archive=PotatoFlow-v$version-Windows-x64.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "installer=PotatoFlow-v$version-Windows-x64-Setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Install application and build dependencies
         shell: pwsh
@@ -55,71 +58,80 @@ jobs:
           python -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r y2a-auto/requirements.lock pyinstaller==6.15.0
 
-      - name: Build portable application
+      - name: Build Windows desktop installer
         working-directory: y2a-auto
         run: python build-tools/build_exe.py
 
-      - name: Smoke test packaged executable
+      - name: Smoke test packaged server mode
         shell: pwsh
         working-directory: y2a-auto
         run: |
           $ErrorActionPreference = 'Stop'
-          $bundle = Join-Path $PWD 'build-tools/dist/PotatoFlow-Windows-x64'
+          $bundle = Join-Path $PWD 'build-tools/dist/PotatoFlow'
           $exe = Join-Path $bundle 'PotatoFlow.exe'
-          $stdoutLog = Join-Path $bundle 'smoke-stdout.log'
-          $stderrLog = Join-Path $bundle 'smoke-stderr.log'
-          if (-not (Test-Path $exe)) { throw "Missing packaged executable: $exe" }
-
-          $process = Start-Process -FilePath $exe -WorkingDirectory $bundle -PassThru -WindowStyle Hidden `
-            -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+          $env:LOCALAPPDATA = Join-Path $PWD 'build-tools/smoke-localappdata'
+          $process = Start-Process -FilePath $exe -ArgumentList '--server-only' -WorkingDirectory $bundle -PassThru -WindowStyle Hidden
           try {
             $healthy = $false
-            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            for ($attempt = 0; $attempt -lt 90; $attempt++) {
               Start-Sleep -Seconds 2
-              if ($process.HasExited) {
-                if (Test-Path $stdoutLog) { Write-Host '--- PotatoFlow stdout ---'; Get-Content $stdoutLog }
-                if (Test-Path $stderrLog) { Write-Host '--- PotatoFlow stderr ---'; Get-Content $stderrLog }
-                throw "PotatoFlow.exe exited during startup with code $($process.ExitCode)"
-              }
+              if ($process.HasExited) { throw "PotatoFlow.exe exited with code $($process.ExitCode)" }
               try {
                 $health = Invoke-RestMethod -Uri 'http://127.0.0.1:5001/healthz' -TimeoutSec 3
                 if ($health.status -eq 'ok' -and $health.version -eq '${{ steps.release_meta.outputs.version }}') {
                   $healthy = $true
                   break
                 }
-              } catch {
-                Write-Host "Waiting for PotatoFlow health endpoint ($($attempt + 1)/60)..."
-              }
+              } catch { Write-Host "Waiting for health endpoint ($($attempt + 1)/90)..." }
             }
-            if (-not $healthy) { throw 'Packaged PotatoFlow did not become healthy in time.' }
+            if (-not $healthy) { throw 'Packaged server mode did not become healthy.' }
+            $config = Join-Path $env:LOCALAPPDATA 'PotatoFlow/config/config.json'
+            if (-not (Test-Path $config)) { throw "Installed data root was not used: $config" }
           } finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
 
-      - name: Create release archive and checksum
+      - name: Silent install and uninstall smoke test
         shell: pwsh
         working-directory: y2a-auto
         run: |
           $ErrorActionPreference = 'Stop'
           $dist = Join-Path $PWD 'build-tools/dist'
-          $bundle = Join-Path $dist 'PotatoFlow-Windows-x64'
-          $archiveName = '${{ steps.release_meta.outputs.archive }}'
-          $archive = Join-Path $dist $archiveName
-          Compress-Archive -Path "$bundle/*" -DestinationPath $archive -Force
-          $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $archiveName" | Set-Content -Path "$archive.sha256" -Encoding ascii
+          $setup = Join-Path $dist '${{ steps.release_meta.outputs.installer }}'
+          $installDir = Join-Path $PWD 'build-tools/installed/PotatoFlow'
+          if (-not (Test-Path $setup)) { throw "Missing installer: $setup" }
+          $install = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$installDir" -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)" }
+          $installedExe = Join-Path $installDir 'PotatoFlow.exe'
+          if (-not (Test-Path $installedExe)) { throw 'Installed executable is missing.' }
+          $uninstaller = Join-Path $installDir 'unins000.exe'
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)" }
+          $dataRoot = Join-Path $env:LOCALAPPDATA 'PotatoFlow'
+          if (-not (Test-Path $dataRoot)) { throw 'Uninstall unexpectedly removed user data.' }
+
+      - name: Verify installer checksum
+        shell: pwsh
+        working-directory: y2a-auto
+        run: |
+          $dist = Join-Path $PWD 'build-tools/dist'
+          $installerName = '${{ steps.release_meta.outputs.installer }}'
+          $installer = Join-Path $dist $installerName
+          $checksum = (Get-Content "$installer.sha256" -Raw).Trim().Split(' ')[0]
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($checksum -ne $actual) { throw 'Installer SHA-256 mismatch.' }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PotatoFlow-v${{ steps.release_meta.outputs.version }}-Windows-x64
+          name: PotatoFlow-v${{ steps.release_meta.outputs.version }}-Windows-x64-Setup
           path: |
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }}
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }}.sha256
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }}
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload assets to GitHub Release
+      - name: Upload installer to GitHub Release
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         shell: pwsh
         env:
@@ -127,6 +139,6 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           gh release upload $env:RELEASE_TAG `
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }} `
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.archive }}.sha256 `
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }} `
+            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256 `
             --clobber

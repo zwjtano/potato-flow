@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional
 from .bilibili_auth import load_cookie_dict
 from .biliup_line_manager import SUPPORTED_LINES
 from .config_manager import load_config
-from .utils import get_app_root_dir, get_app_subdir
+from .utils import get_app_root_dir, get_app_subdir, get_resource_root_dir
 
 
 RESULT_PREFIX = "POTATOFLOW_RESULT="
@@ -30,7 +30,7 @@ def _biliup_binary() -> str:
     configured = str(os.environ.get("BILIUP_BIN") or "").strip()
     candidates = [
         configured,
-        os.path.join(get_app_root_dir(), "upstream-biliup", "target", "release", "biliup"),
+        os.path.join(get_resource_root_dir(), "upstream-biliup", "target", "release", "biliup"),
         "biliup",
     ]
     for candidate in candidates:

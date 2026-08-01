@@ -4,6 +4,14 @@
 import os
 import sys
 
+
+def get_resource_root_dir():
+    """Return the read-only application resource root."""
+    if getattr(sys, 'frozen', False):
+        internal = getattr(sys, '_MEIPASS', '')
+        return os.path.realpath(internal or os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 def get_app_root_dir():
     """
     获取应用根目录，兼容开发环境和打包环境
@@ -11,7 +19,10 @@ def get_app_root_dir():
     Returns:
         str: 应用根目录路径
     """
-    if getattr(sys, 'frozen', False):
+    configured_data_root = str(os.environ.get('POTATOFLOW_DATA_DIR') or '').strip()
+    if configured_data_root:
+        app_root = os.path.abspath(os.path.expanduser(configured_data_root))
+    elif getattr(sys, 'frozen', False):
         # 在PyInstaller打包环境中
         # sys.executable 指向的是实际的可执行文件
         app_root = os.path.dirname(sys.executable)

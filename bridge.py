@@ -3198,7 +3198,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     height=height,
                     font_name=str(cfg.get("danmaku_font_name", "Noto Sans CJK SC")),
                     font_size=int(cfg.get("danmaku_font_size", 42)),
-                    duration=float(cfg.get("danmaku_duration_seconds", 9)),
+                    duration=float(cfg.get("danmaku_duration_seconds", 10)),
                     opacity=float(cfg.get("danmaku_opacity", 0.92)),
                 )
                 if bool(cfg.get("danmaku_burn_in", False)) and not dry_run:
@@ -3230,6 +3230,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         ),
                         preset=str(cfg.get("danmaku_encode_preset", "medium")),
                         crf=int(cfg.get("danmaku_encode_crf", 20)),
+                        encoder=str(cfg.get("danmaku_encoder", "cpu")),
                         queue_status_callback=update_burn_queue,
                         progress_callback=update_burn_progress,
                     )
@@ -4230,7 +4231,7 @@ def generate_record_only_ass(
         height=height,
         font_name=str(cfg.get("danmaku_font_name", "Noto Sans CJK SC")),
         font_size=int(cfg.get("danmaku_font_size", 42)),
-        duration=float(cfg.get("danmaku_duration_seconds", 9)),
+        duration=float(cfg.get("danmaku_duration_seconds", 10)),
         opacity=float(cfg.get("danmaku_opacity", 0.92)),
     )
     legacy_path = video.with_suffix(".ass")
@@ -4606,6 +4607,7 @@ def main(argv: list[str] | None = None) -> int:
                             ),
                             preset=str(record_cfg.get("danmaku_encode_preset", "medium")),
                             crf=int(record_cfg.get("danmaku_encode_crf", 20)),
+                            encoder=str(record_cfg.get("danmaku_encoder", "cpu")),
                             queue_status_callback=update_burn_queue,
                             progress_callback=update_burn_progress,
                         )

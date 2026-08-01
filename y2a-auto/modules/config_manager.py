@@ -178,6 +178,16 @@ DEFAULT_CONFIG = {
     "VIDEO_ENCODER": "auto",  # auto/cpu/nvidia/intel/amd - 自动检测或指定编码器
     "VIDEO_CUSTOM_PARAMS_ENABLED": False,  # 是否启用自定义转码参数
     "VIDEO_CUSTOM_PARAMS": "",  # 自定义 FFmpeg 视频编码参数（启用自定义参数时使用）
+    # ASS 弹幕与烧录（全局默认，直播间可整组覆盖）
+    "DANMAKU_DURATION_SECONDS": 10.0,
+    "DANMAKU_FONT_SIZE": 42,
+    "DANMAKU_OPACITY": 0.92,
+    "DANMAKU_ENCODER": "cpu",  # auto/cpu/nvidia/intel/amd
+    "DANMAKU_ENCODE_PRESET": "medium",
+    "DANMAKU_ENCODE_QUALITY": 20,
+    # Windows 桌面壳专用；非桌面启动时不改变原有绑定。
+    "DESKTOP_ALLOW_LAN": False,
+    "DESKTOP_START_WITH_WINDOWS": False,
     # 语音识别（无字幕转写）
     "SPEECH_RECOGNITION_ENABLED": False,  # 启用语音识别生成字幕
     "SPEECH_RECOGNITION_PROVIDER": "whisper",  # whisper（OpenAI兼容）
@@ -465,6 +475,24 @@ def update_config(new_config):
                 else:
                     logger.warning("无效的视频编码器配置值，已回退为 auto")
                     current_config[key] = 'auto'
+            elif key == 'DANMAKU_ENCODER':
+                encoder_value = str(new_config[key]).lower().strip()
+                current_config[key] = (
+                    encoder_value
+                    if encoder_value in ('auto', 'cpu', 'nvidia', 'intel', 'amd')
+                    else 'cpu'
+                )
+            elif key == 'DANMAKU_DURATION_SECONDS':
+                current_config[key] = max(1.0, min(30.0, float(new_config[key])))
+            elif key == 'DANMAKU_FONT_SIZE':
+                current_config[key] = max(12, min(120, int(new_config[key])))
+            elif key == 'DANMAKU_OPACITY':
+                current_config[key] = max(0.1, min(1.0, float(new_config[key])))
+            elif key == 'DANMAKU_ENCODE_QUALITY':
+                current_config[key] = max(0, min(51, int(new_config[key])))
+            elif key == 'DANMAKU_ENCODE_PRESET':
+                preset = str(new_config[key] or '').strip().lower()
+                current_config[key] = preset[:24] or 'medium'
             elif key == 'UPLOAD_TARGET_DEFAULT':
                 current_config[key] = 'bilibili'
             elif key == 'YOUTUBE_DOWNLOAD_QUALITY_MODE':

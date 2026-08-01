@@ -769,6 +769,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(room["multipart_enabled"])
         self.assertFalse(room["record_only"])
         self.assertFalse(room["danmaku_burn_in"])
+        self.assertTrue(room["danmaku_settings_inherit"])
         self.assertEqual(room["recording_quality"], "source")
 
     def test_room_recording_settings_are_saved_per_room(self):
@@ -801,6 +802,28 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertNotIn("segment_minutes", persisted_rooms[1])
         sync_configs.assert_called_once_with(persisted_rooms)
         clear_session.assert_not_called()
+
+    def test_room_can_override_global_danmaku_settings_as_a_group(self):
+        manager = LiveRecorderManager()
+        rooms = [dict(item) for item in self.rooms]
+        with mock.patch.object(manager, "list_rooms", return_value=rooms), mock.patch.object(
+            manager, "_pid", return_value=None
+        ), mock.patch.object(manager, "sync_configs"), mock.patch.object(
+            manager, "_write_control_state"
+        ), mock.patch.object(recorder_module, "_atomic_json"):
+            room, _state = manager.save_room_recording_settings(
+                "aaaaaa111111", segment_enabled=True, segment_minutes=60,
+                multipart_enabled=False, danmaku_settings_inherit=False,
+                danmaku_duration_seconds=10, danmaku_font_size=42,
+                danmaku_opacity=0.92, danmaku_encoder="nvidia",
+                danmaku_encode_preset="p5", danmaku_encode_quality=20,
+            )
+
+        self.assertFalse(room["danmaku_settings_inherit"])
+        self.assertEqual(room["danmaku_duration_seconds"], 10)
+        self.assertEqual(room["danmaku_encoder"], "nvidia")
+        self.assertEqual(room["danmaku_encode_preset"], "p5")
+        self.assertEqual(room["danmaku_encode_crf"], 20)
 
     def test_recording_setting_change_safely_rotates_an_active_segment(self):
         manager = LiveRecorderManager()
@@ -2460,6 +2483,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('name="multipart_enabled"', live_source)
         self.assertIn('name="record_only"', live_source)
         self.assertIn('name="danmaku_burn_in"', live_source)
+        self.assertIn('name="danmaku_settings_inherit"', live_source)
+        self.assertIn('name="danmaku_duration_seconds"', live_source)
+        self.assertIn('name="danmaku_encoder"', live_source)
         self.assertIn('name="recording_quality"', live_source)
         self.assertIn("录制分辨率", live_source)
         self.assertIn('data-role="recording-quality-state"', live_source)

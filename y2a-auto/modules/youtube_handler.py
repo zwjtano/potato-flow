@@ -17,7 +17,7 @@ from modules.config_manager import (
     normalize_youtube_download_quality_mode,
 )
 from logging.handlers import RotatingFileHandler
-from .utils import get_app_subdir, get_app_root_dir
+from .utils import get_app_subdir, get_app_root_dir, get_resource_root_dir
 from .ffmpeg_manager import get_ffmpeg_path, is_ffmpeg_usable
 from .cookiecloud import try_cookiecloud_youtube_sync
 from shutil import which as _which
@@ -33,7 +33,7 @@ _YOUTUBE_USER_AGENT = (
     '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 )
 _INTERNAL_YT_DLP_FLAG = '--y2a-internal-yt-dlp'
-_YT_DLP_UNAVAILABLE_MESSAGE = '本地 yt-dlp 不可用，请重新安装依赖或重新下载完整便携包。'
+_YT_DLP_UNAVAILABLE_MESSAGE = '本地 yt-dlp 不可用，请重新安装依赖或重新安装完整 PotatoFlow。'
 
 
 class YtDlpUnavailableError(RuntimeError):
@@ -383,7 +383,7 @@ def merge_streams_with_ffmpeg(task_dir: str, ffmpeg_path: str | None = None, log
         candidates.append(path_ffmpeg)
 
     # 最后尝试项目内置目录（防止绝对路径因为被移动而失效）
-    bundled = os.path.join(get_app_root_dir(), 'ffmpeg', 'ffmpeg.exe' if os.name == 'nt' else 'ffmpeg')
+    bundled = os.path.join(get_resource_root_dir(), 'ffmpeg', 'ffmpeg.exe' if os.name == 'nt' else 'ffmpeg')
     if bundled not in candidates:
         candidates.append(bundled)
 

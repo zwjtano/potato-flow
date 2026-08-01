@@ -28,22 +28,39 @@ from urllib.request import Request, urlopen
 
 from .path_policy import atomic_write_text, ensure_directory, safe_path_component
 from .task_lifecycle import recording_task_capabilities
+from .utils import get_app_root_dir, get_resource_root_dir
 
-APP_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = Path(get_resource_root_dir())
 WORKSPACE_ROOT = APP_ROOT.parent
-CONFIG_DIR = APP_ROOT / "config"
-RECORDINGS_DIR = WORKSPACE_ROOT / "docker-data" / "recordings"
+DATA_ROOT = Path(get_app_root_dir())
+CONFIG_DIR = DATA_ROOT / "config"
+RECORDINGS_DIR = (
+    DATA_ROOT / "recordings"
+    if str(os.environ.get("POTATOFLOW_DATA_DIR") or "").strip()
+    else WORKSPACE_ROOT / "docker-data" / "recordings"
+)
 ROOMS_PATH = CONFIG_DIR / "live_recorders.json"
 BILIUP_CONFIG_PATH = CONFIG_DIR / "biliup.generated.yaml"
-BRIDGE_CONFIG_PATH = WORKSPACE_ROOT / "bridge.config.json"
-BRIDGE_CONFIG_EXAMPLE = WORKSPACE_ROOT / "bridge.config.example.json"
-LOG_PATH = APP_ROOT / "logs" / "biliup-recorder.log"
-PID_PATH = APP_ROOT / "temp" / "biliup-recorder.pid"
-STATUS_PATH = APP_ROOT / "temp" / "biliup-recorder-status.json"
-CONTROL_PATH = APP_ROOT / "temp" / "biliup-recorder-control.json"
-RELOAD_PATH = APP_ROOT / "temp" / "biliup-recorder-reload.json"
-RECORDER_RUNTIME_DIR = APP_ROOT / "temp" / "recorder-engine"
-ROOM_REFERENCE_DIR = WORKSPACE_ROOT / ".bridge" / "room-references"
+BRIDGE_CONFIG_PATH = (
+    DATA_ROOT / "bridge.config.json"
+    if str(os.environ.get("POTATOFLOW_DATA_DIR") or "").strip()
+    else WORKSPACE_ROOT / "bridge.config.json"
+)
+BRIDGE_CONFIG_EXAMPLE = next(
+    (
+        candidate
+        for candidate in (APP_ROOT / "bridge.config.example.json", WORKSPACE_ROOT / "bridge.config.example.json")
+        if candidate.is_file()
+    ),
+    WORKSPACE_ROOT / "bridge.config.example.json",
+)
+LOG_PATH = DATA_ROOT / "logs" / "biliup-recorder.log"
+PID_PATH = DATA_ROOT / "temp" / "biliup-recorder.pid"
+STATUS_PATH = DATA_ROOT / "temp" / "biliup-recorder-status.json"
+CONTROL_PATH = DATA_ROOT / "temp" / "biliup-recorder-control.json"
+RELOAD_PATH = DATA_ROOT / "temp" / "biliup-recorder-reload.json"
+RECORDER_RUNTIME_DIR = DATA_ROOT / "temp" / "recorder-engine"
+ROOM_REFERENCE_DIR = DATA_ROOT / ".bridge" / "room-references"
 FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
 RECORDING_FILE_SUFFIXES = {
     ".mp4": "video", ".flv": "video", ".mkv": "video", ".webm": "video",
@@ -115,6 +132,12 @@ logger = logging.getLogger("live_recorder_manager")
 
 class RecorderConfigError(ValueError):
     pass
+
+
+def _bridge_command_base() -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--y2a-internal-bridge"]
+    return [str(APP_ROOT / ".venv" / "bin" / "python"), str(WORKSPACE_ROOT / "bridge.py")]
 
 
 def recordings_dir(value: Any = None) -> Path:
@@ -799,6 +822,7 @@ class LiveRecorderManager:
             room.setdefault("multipart_enabled", False)
             room.setdefault("record_only", False)
             room.setdefault("danmaku_burn_in", False)
+            room.setdefault("danmaku_settings_inherit", True)
             room.setdefault("recording_quality", DEFAULT_RECORDING_QUALITY)
             room.setdefault("bilibili_account_id", "")
             room.setdefault("ai_danmaku_reaction_delay_seconds", 8)
@@ -1898,6 +1922,13 @@ class LiveRecorderManager:
         multipart_enabled: bool,
         record_only: bool = False,
         danmaku_burn_in: bool = False,
+        danmaku_settings_inherit: bool = True,
+        danmaku_duration_seconds: Any = 10,
+        danmaku_font_size: Any = 42,
+        danmaku_opacity: Any = 0.92,
+        danmaku_encoder: str = "cpu",
+        danmaku_encode_preset: str = "medium",
+        danmaku_encode_quality: Any = 20,
         recording_quality: str = DEFAULT_RECORDING_QUALITY,
         bilibili_account_id: str = "",
     ) -> tuple[dict[str, Any], str]:
@@ -1909,6 +1940,24 @@ class LiveRecorderManager:
         if segment_enabled and not 1 <= minutes <= 1440:
             raise RecorderConfigError("分段时长必须在 1 到 1440 分钟之间")
         minutes = max(1, min(1440, minutes or DEFAULT_RECORDING_SEGMENT_MINUTES))
+        try:
+            duration = float(danmaku_duration_seconds)
+            font_size = int(danmaku_font_size)
+            opacity = float(danmaku_opacity)
+            quality = int(danmaku_encode_quality)
+        except (TypeError, ValueError) as exc:
+            raise RecorderConfigError("弹幕烧录参数必须是有效数值") from exc
+        if not 1 <= duration <= 30:
+            raise RecorderConfigError("弹幕飘屏时间必须在 1 到 30 秒之间")
+        if not 12 <= font_size <= 120:
+            raise RecorderConfigError("弹幕字号必须在 12 到 120 之间")
+        if not 0.1 <= opacity <= 1:
+            raise RecorderConfigError("弹幕透明度必须在 0.10 到 1.00 之间")
+        if not 0 <= quality <= 51:
+            raise RecorderConfigError("编码质量值必须在 0 到 51 之间")
+        encoder = str(danmaku_encoder or "cpu").strip().lower()
+        if encoder not in {"auto", "cpu", "nvidia", "intel", "amd"}:
+            raise RecorderConfigError("不支持的弹幕烧录编码器")
 
         with self._lock:
             rooms = self.list_rooms()
@@ -1925,11 +1974,26 @@ class LiveRecorderManager:
                 "multipart_enabled": bool(multipart_enabled and segment_enabled),
                 "record_only": bool(record_only),
                 "danmaku_burn_in": bool(danmaku_burn_in),
+                "danmaku_settings_inherit": bool(danmaku_settings_inherit),
                 "recording_quality": self._normalize_recording_quality(
                     recording_quality
                 ),
                 "bilibili_account_id": str(bilibili_account_id or "").strip(),
             })
+            for key in (
+                "danmaku_duration_seconds", "danmaku_font_size", "danmaku_opacity",
+                "danmaku_encoder", "danmaku_encode_preset", "danmaku_encode_crf",
+            ):
+                room.pop(key, None)
+            if not room["danmaku_settings_inherit"]:
+                room.update({
+                    "danmaku_duration_seconds": duration,
+                    "danmaku_font_size": font_size,
+                    "danmaku_opacity": opacity,
+                    "danmaku_encoder": encoder,
+                    "danmaku_encode_preset": str(danmaku_encode_preset or "medium").strip().lower()[:24] or "medium",
+                    "danmaku_encode_crf": quality,
+                })
             if (room["record_only"] or not room["multipart_enabled"]) and not target_recording:
                 self._clear_stale_multipart_session(room_id)
             _atomic_json(ROOMS_PATH, rooms)
@@ -2026,8 +2090,7 @@ class LiveRecorderManager:
             multipart_enabled = self.room_multipart_enabled(room)
             quality_override = self._room_recording_quality_override(room)
             bridge_base = [
-                _yaml_string(str(APP_ROOT / ".venv" / "bin" / "python")),
-                _yaml_string(str(WORKSPACE_ROOT / "bridge.py")),
+                *(_yaml_string(value) for value in _bridge_command_base()),
                 "--config",
                 _yaml_string(str(BRIDGE_CONFIG_PATH)),
             ]
@@ -2127,6 +2190,18 @@ class LiveRecorderManager:
         from .config_manager import load_config
 
         app_config = load_config()
+        config["danmaku_duration_seconds"] = float(
+            app_config.get("DANMAKU_DURATION_SECONDS", 10) or 10
+        )
+        config["danmaku_font_size"] = int(app_config.get("DANMAKU_FONT_SIZE", 42) or 42)
+        config["danmaku_opacity"] = float(app_config.get("DANMAKU_OPACITY", 0.92) or 0.92)
+        config["danmaku_encoder"] = str(app_config.get("DANMAKU_ENCODER", "cpu") or "cpu")
+        config["danmaku_encode_preset"] = str(
+            app_config.get("DANMAKU_ENCODE_PRESET", "medium") or "medium"
+        )
+        config["danmaku_encode_crf"] = int(
+            app_config.get("DANMAKU_ENCODE_QUALITY", 20) or 20
+        )
         config["douyu_stats_enabled"] = bool(
             app_config.get("DOUYU_STATS_ENABLED", True)
         )
@@ -2160,6 +2235,13 @@ class LiveRecorderManager:
                 "bilibili_account_name": str(account["name"]),
                 "bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path"))),
             }
+            if not bool(room.get("danmaku_settings_inherit", True)):
+                for key in (
+                    "danmaku_duration_seconds", "danmaku_font_size", "danmaku_opacity",
+                    "danmaku_encoder", "danmaku_encode_preset", "danmaku_encode_crf",
+                ):
+                    if key in room:
+                        profile[key] = room[key]
             custom_reference_name = Path(
                 str(room.get("cover_reference_file") or "")
             ).name
@@ -2427,8 +2509,7 @@ class LiveRecorderManager:
         with log_path.open("a", encoding="utf-8") as log_handle:
             for video, room_id in candidates:
                 command = [
-                    sys.executable,
-                    str(WORKSPACE_ROOT / "bridge.py"),
+                    *_bridge_command_base(),
                     "--config",
                     str(BRIDGE_CONFIG_PATH),
                     "ingest",
@@ -4369,7 +4450,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             if artifact_dir.is_dir():
                 shutil.rmtree(artifact_dir, ignore_errors=True)
 
-        log_path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
+        log_path = DATA_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
         try:
             log_path.unlink()
         except FileNotFoundError:
@@ -4507,11 +4588,10 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         video = Path(job["video_path"])
         if not video.is_file():
             raise RecorderConfigError("原始录播文件已不存在，无法重试")
-        log_path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
+        log_path = DATA_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         command = [
-            sys.executable,
-            str(WORKSPACE_ROOT / "bridge.py"),
+            *_bridge_command_base(),
             "--config",
             str(BRIDGE_CONFIG_PATH),
         ]

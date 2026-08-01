@@ -16,6 +16,7 @@ from danmaku_pipeline import (
     parse_biliup_xml,
     select_summary_comments,
     danmaku_burn_slot,
+    probe_encoding_capabilities,
 )
 
 
@@ -29,6 +30,57 @@ SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 class DanmakuPipelineTests(unittest.TestCase):
+    def test_encoder_probe_prefers_configured_available_backend(self):
+        def fake_run(command, **_kwargs):
+            encoder = command[command.index("-c:v") + 1]
+            available = encoder in {"libx264", "h264_qsv"}
+            return types.SimpleNamespace(
+                returncode=0 if available else 1,
+                stdout="",
+                stderr="" if available else "encoder unavailable",
+            )
+
+        with patch("danmaku_pipeline.subprocess.run", side_effect=fake_run):
+            result = probe_encoding_capabilities(
+                "test-ffmpeg-qsv", preferred="intel", force_refresh=True
+            )
+
+        self.assertEqual(result["recommendation"]["id"], "intel")
+        self.assertEqual(result["recommendation"]["quality_name"], "global_quality")
+
+    def test_hardware_burn_failure_falls_back_to_cpu_medium_crf20(self):
+        commands = []
+
+        class FakeProcess:
+            def __init__(self, command, **_kwargs):
+                commands.append(command)
+                encoder = command[command.index("-c:v") + 1]
+                self.returncode = 1 if encoder == "h264_nvenc" else 0
+                if self.returncode == 0:
+                    Path(command[-1]).write_bytes(b"cpu-fallback")
+                self.stdout = io.StringIO("")
+                self.stderr = io.StringIO("nvenc failed" if self.returncode else "")
+
+            def wait(self):
+                return self.returncode
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video, ass, output = root / "clip.flv", root / "clip.ass", root / "clip.mp4"
+            video.write_bytes(b"video")
+            ass.write_text("[Script Info]", encoding="utf-8")
+            updates = []
+            with patch(
+                "danmaku_pipeline.subprocess.run",
+                return_value=types.SimpleNamespace(returncode=0, stdout="0\n", stderr=""),
+            ), patch("danmaku_pipeline.subprocess.Popen", FakeProcess):
+                burn_ass(video, ass, output, encoder="nvidia", preset="p5", crf=18, progress_callback=updates.append)
+
+        self.assertTrue(any(item.get("encoder_fallback") for item in updates))
+        self.assertEqual(commands[-1][commands[-1].index("-c:v") + 1], "libx264")
+        self.assertIn("medium", commands[-1])
+        self.assertIn("20", commands[-1])
+
     def test_burn_reports_percent_speed_and_eta(self):
         class FakeProcess:
             def __init__(self, command, **_kwargs):
