@@ -149,6 +149,21 @@ class SecurityBoundaryTests(unittest.TestCase):
             {"AUTO_MODE_ENABLED": "off", "NOTIFY_ENABLED": "off"},
         )
 
+    def test_windows_desktop_mode_requires_windows_and_desktop_launcher(self):
+        with patch.dict(
+            app_module.os.environ,
+            {"POTATOFLOW_DESKTOP_MODE": "1"},
+            clear=False,
+        ), patch.object(app_module.sys, "platform", "win32"):
+            self.assertTrue(app_module._is_windows_desktop_mode())
+
+        with patch.dict(
+            app_module.os.environ,
+            {"POTATOFLOW_DESKTOP_MODE": "1"},
+            clear=False,
+        ), patch.object(app_module.sys, "platform", "linux"):
+            self.assertFalse(app_module._is_windows_desktop_mode())
+
 
 if __name__ == "__main__":
     unittest.main()

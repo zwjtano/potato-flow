@@ -239,6 +239,12 @@ def _desktop_request_authorized() -> bool:
     return bool(token and secrets.compare_digest(token, supplied) and request.remote_addr in {'127.0.0.1', '::1'})
 
 
+def _is_windows_desktop_mode() -> bool:
+    """Keep Windows-only controls out of Docker and Linux deployments."""
+    enabled = str(os.environ.get('POTATOFLOW_DESKTOP_MODE') or '').strip().lower()
+    return sys.platform == 'win32' and enabled in {'1', 'true', 'yes'}
+
+
 @app.route('/api/desktop/status')
 def desktop_status():
     if not _desktop_request_authorized():
@@ -977,6 +983,9 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
     try:
         report('saving_config', '正在保存配置', '正在校验并写入设置。')
         form_data.pop('save_operation_id', None)
+        if not _is_windows_desktop_mode():
+            form_data.pop('DESKTOP_ALLOW_LAN', None)
+            form_data.pop('DESKTOP_START_WITH_WINDOWS', None)
 
         new_password = form_data.get('new_password')
         confirm_password = form_data.get('confirm_password')
@@ -1012,8 +1021,6 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'SUBTITLE_MAX_LINE_LENGTH_ENABLED', 'SUBTITLE_MAX_LINES_ENABLED',
             'SUBTITLE_QC_ENABLED',
             'FFMPEG_AUTO_DOWNLOAD', 'WHISPER_TRANSLATE',
-            'VIDEO_CUSTOM_PARAMS_ENABLED',
-            'DESKTOP_ALLOW_LAN', 'DESKTOP_START_WITH_WINDOWS',
             'VOXTRAL_DIARIZE',
             'NOTIFY_ENABLED',
             'NOTIFY_EVENT_TASK_ADDED',
@@ -1034,6 +1041,8 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'COOKIECLOUD_ENABLED',
             'COOKIECLOUD_ALLOW_PLAINTEXT_EXPORT',
         ]
+        if _is_windows_desktop_mode():
+            checkboxes.extend(('DESKTOP_ALLOW_LAN', 'DESKTOP_START_WITH_WINDOWS'))
         for checkbox in SPEECH_PIPELINE_CHECKBOXES:
             if checkbox not in checkboxes:
                 checkboxes.append(checkbox)
@@ -3853,6 +3862,7 @@ def settings():
         bilibili_partition_mapping=bilibili_partition_mapping,
         builtin_prompts=builtin_prompts,
         recordings_path=str(recordings_dir()),
+        windows_desktop_mode=_is_windows_desktop_mode(),
     )
 
 

@@ -14,6 +14,12 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_title_prompt_rejects_vague_marketing_conclusions(self):
+        prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
+
+        self.assertIn("出装引争议", prompt)
+        self.assertIn("必须直接写清具体动作", prompt)
+
     def test_default_title_prompt_integrates_subject_without_label_prefix(self):
         prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
 
@@ -64,6 +70,31 @@ class BridgeTests(unittest.TestCase):
             description,
             "【直播信息】\n峰值人气：123 万",
         )
+
+    def test_game_stats_are_first_and_audience_stats_are_last(self):
+        stats = (
+            "——— 直播数据 ———\n"
+            "🎁 飞机×1(单价100元/总价100元) | 礼物价值合计 100元\n"
+            "👥 在线 1000~1500\n"
+            "🎮 噬魂鬼｜六格：力量手套、相位鞋 K/D/A 8/2/10 KDA 9"
+        )
+
+        description = bridge.append_live_stats_to_description(
+            "正文\n\n重要时间点\n00:21 YYF小狗四拳套出门",
+            stats,
+        )
+
+        self.assertTrue(description.startswith(
+            "——— 对局数据 ———\n🎮 噬魂鬼｜六格：力量手套、相位鞋"
+        ))
+        self.assertIn("\n正文\n\n重要时间点\n00:21 YYF小狗四拳套出门\n", description)
+        self.assertTrue(description.endswith(
+            "——— 直播数据 ———\n"
+            "🎁 飞机×1(单价100元/总价100元) | 礼物价值合计 100元\n"
+            "👥 在线 1000~1500"
+        ))
+        self.assertEqual(bridge.strip_live_stats_from_description(description, stats),
+                         "正文\n\n重要时间点\n00:21 YYF小狗四拳套出门")
 
     def test_live_stats_are_last_when_description_reaches_limit(self):
         stats = "【直播信息】\n" + "统计" * 20
@@ -146,7 +177,7 @@ class BridgeTests(unittest.TestCase):
 
         description = bridge.append_live_stats_to_description(ai_description, stats)
 
-        self.assertEqual(description, f"直播录播正文\n\n{stats}")
+        self.assertEqual(description, f"直播录播正文\n{stats}")
         self.assertEqual(description.count("——— 直播数据 ———"), 1)
 
     def test_existing_duplicate_live_stats_are_collapsed_on_retry(self):
@@ -155,7 +186,7 @@ class BridgeTests(unittest.TestCase):
 
         description = bridge.append_live_stats_to_description(duplicated, stats)
 
-        self.assertEqual(description, f"直播录播正文\n\n{stats}")
+        self.assertEqual(description, f"直播录播正文\n{stats}")
         self.assertEqual(description.count("——— 直播数据 ———"), 1)
 
     def test_live_stats_can_be_removed_from_persisted_submission_description(self):
@@ -348,7 +379,7 @@ class BridgeTests(unittest.TestCase):
             stats,
         )
 
-        self.assertEqual(description, f"正文从这里开始。\n\n{stats}")
+        self.assertEqual(description, f"正文从这里开始。\n{stats}")
         self.assertNotIn("直播录播：YYF。", description)
 
     def test_generic_recording_intro_is_removed_from_multipart_description(self):
@@ -1809,6 +1840,19 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(headline, "YYF蓝猫残局送人头转小黑复健失败")
         self.assertNotIn("直播精彩内容", headline)
         self.assertNotIn("08-01", headline)
+
+    def test_vague_title_topic_uses_closest_verified_timeline_event(self):
+        topic = bridge.recording_title_topic_from_timeline(
+            "YYF绝活小狗出装引争议",
+            (
+                "重要时间点\n"
+                "00:21 YYF操刀小狗带4个拳套出门，弹幕讨论其出装与对线压力\n"
+                "31:08 YYF赛后复盘上一局失误"
+            ),
+        )
+
+        self.assertEqual(topic, "YYF操刀小狗带4个拳套出门")
+        self.assertFalse(bridge.recording_title_topic_is_vague(topic))
 
     def test_recording_cover_hero_must_match_reviewed_title(self):
         self.assertTrue(
