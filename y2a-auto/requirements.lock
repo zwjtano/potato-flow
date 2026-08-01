@@ -24,3 +24,5 @@ cryptography==46.0.7
 pycryptodomex==3.23.0
 qrcode==8.2
 yarl==1.22.0
+pywebview==5.4; sys_platform == "win32"
+pystray==0.19.5; sys_platform == "win32"

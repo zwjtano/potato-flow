@@ -8,6 +8,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,6 +22,132 @@ except ImportError:  # pragma: no cover - production runs on Linux/macOS
 
 
 _BURN_THREAD_LOCK = threading.Lock()
+_ENCODER_PROBE_LOCK = threading.Lock()
+_ENCODER_PROBE_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
+ENCODER_PROFILES: dict[str, dict[str, Any]] = {
+    "cpu": {
+        "label": "CPU（libx264）",
+        "ffmpeg_encoder": "libx264",
+        "preset": "medium",
+        "quality_name": "CRF",
+        "quality": 20,
+        "presets": ("veryfast", "faster", "fast", "medium", "slow", "slower"),
+    },
+    "nvidia": {
+        "label": "NVIDIA（NVENC）",
+        "ffmpeg_encoder": "h264_nvenc",
+        "preset": "p5",
+        "quality_name": "CQ",
+        "quality": 20,
+        "presets": ("p1", "p2", "p3", "p4", "p5", "p6", "p7"),
+    },
+    "intel": {
+        "label": "Intel（QSV）",
+        "ffmpeg_encoder": "h264_qsv",
+        "preset": "medium",
+        "quality_name": "global_quality",
+        "quality": 20,
+        "presets": ("veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"),
+    },
+    "amd": {
+        "label": "AMD（AMF）",
+        "ffmpeg_encoder": "h264_amf",
+        "preset": "balanced",
+        "quality_name": "CQP",
+        "quality": 20,
+        "presets": ("speed", "balanced", "quality"),
+    },
+}
+
+
+def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
+    profile = ENCODER_PROFILES.get(backend, ENCODER_PROFILES["cpu"])
+    selected_preset = str(preset or profile["preset"])
+    if selected_preset not in profile["presets"]:
+        selected_preset = str(profile["preset"])
+    value = str(max(0, min(51, int(quality))))
+    if backend == "nvidia":
+        return ["-c:v", "h264_nvenc", "-preset", selected_preset, "-cq", value, "-b:v", "0"]
+    if backend == "intel":
+        return ["-c:v", "h264_qsv", "-preset", selected_preset, "-global_quality", value]
+    if backend == "amd":
+        return [
+            "-c:v", "h264_amf", "-quality", selected_preset, "-rc", "cqp",
+            "-qp_i", value, "-qp_p", value,
+        ]
+    return ["-c:v", "libx264", "-preset", selected_preset, "-crf", value]
+
+
+def probe_encoding_capabilities(
+    ffmpeg: str = "ffmpeg",
+    *,
+    preferred: str = "auto",
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Probe H.264 encoders with a tiny real encode and return a safe recommendation."""
+    preferred = str(preferred or "auto").strip().lower()
+    if preferred not in {"auto", *ENCODER_PROFILES}:
+        preferred = "auto"
+    cache_key = (str(ffmpeg), preferred)
+    now = time.monotonic()
+    with _ENCODER_PROBE_LOCK:
+        cached = _ENCODER_PROBE_CACHE.get(cache_key)
+        if not force_refresh and cached and now - cached[0] < 300:
+            return dict(cached[1])
+
+    capabilities: list[dict[str, Any]] = []
+    for backend, profile in ENCODER_PROFILES.items():
+        command = [
+            str(ffmpeg), "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+            "-i", "color=c=black:s=64x64:d=0.12", "-frames:v", "1",
+            *_encoder_video_args(backend, str(profile["preset"]), int(profile["quality"])),
+            "-an", "-f", "null", "-",
+        ]
+        available = False
+        error = ""
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+            available = result.returncode == 0
+            if not available:
+                error = str(result.stderr or result.stdout or "").strip()[-800:]
+        except (OSError, subprocess.SubprocessError) as exc:
+            error = str(exc)
+        capabilities.append({
+            "id": backend,
+            "label": profile["label"],
+            "available": available,
+            "ffmpeg_encoder": profile["ffmpeg_encoder"],
+            "preset": profile["preset"],
+            "quality_name": profile["quality_name"],
+            "quality": profile["quality"],
+            "error": error,
+        })
+
+    available_ids = {item["id"] for item in capabilities if item["available"]}
+    if preferred != "auto" and preferred in available_ids:
+        selected = preferred
+        reason = "已验证当前配置指定的编码器可用"
+    else:
+        selected = next(
+            (backend for backend in ("nvidia", "intel", "amd", "cpu") if backend in available_ids),
+            "cpu",
+        )
+        reason = "按实际 FFmpeg 编码测试选择，CPU 始终作为保底"
+    recommendation = next(
+        (dict(item) for item in capabilities if item["id"] == selected),
+        {"id": "cpu", **ENCODER_PROFILES["cpu"]},
+    )
+    recommendation["reason"] = reason
+    payload = {
+        "preferred": preferred,
+        "capabilities": capabilities,
+        "recommendation": recommendation,
+        "cached_seconds": 300,
+    }
+    with _ENCODER_PROBE_LOCK:
+        _ENCODER_PROBE_CACHE[cache_key] = (now, payload)
+    return dict(payload)
 
 
 @contextmanager
@@ -235,6 +362,7 @@ def burn_ass(
     fonts_dir: Path | None = None,
     preset: str = "medium",
     crf: int = 20,
+    encoder: str = "cpu",
     queue_status_callback: Callable[[str], None] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> Path:
@@ -243,10 +371,20 @@ def burn_ass(
         video_filter = f"subtitles=filename='{_filter_path(ass_path)}'"
         if fonts_dir and fonts_dir.is_dir():
             video_filter += f":fontsdir='{_filter_path(fonts_dir)}'"
+        selected_encoder = str(encoder or "cpu").strip().lower()
+        if selected_encoder == "auto":
+            selected_encoder = str(
+                probe_encoding_capabilities(ffmpeg).get("recommendation", {}).get("id") or "cpu"
+            )
+        if selected_encoder not in ENCODER_PROFILES:
+            selected_encoder = "cpu"
+        profile = ENCODER_PROFILES[selected_encoder]
+        selected_preset = str(preset or profile["preset"])
+        if selected_preset not in profile["presets"]:
+            selected_preset = str(profile["preset"])
         base_command = [
             ffmpeg, "-hide_banner", "-loglevel", "warning", "-y", "-i", str(video),
-            "-vf", video_filter, "-c:v", "libx264",
-            "-preset", str(preset), "-crf", str(max(0, min(51, int(crf)))),
+            "-vf", video_filter,
         ]
         duration_seconds = 0.0
         ffprobe = "ffprobe"
@@ -269,8 +407,8 @@ def burn_ass(
         except (OSError, ValueError, subprocess.SubprocessError):
             duration_seconds = 0.0
 
-        def encode(audio_args: list[str]) -> tuple[int, str]:
-            command = base_command + audio_args + [
+        def encode(video_args: list[str], audio_args: list[str]) -> tuple[int, str]:
+            command = base_command + video_args + audio_args + [
                 "-movflags", "+faststart", "-progress", "pipe:1", "-nostats",
                 str(output),
             ]
@@ -317,6 +455,12 @@ def burn_ass(
                             "duration_seconds": duration_seconds,
                             "encode_speed": encode_speed,
                             "eta_seconds": eta_seconds,
+                            "encoder_requested": str(encoder or "cpu"),
+                            "encoder_used": selected_encoder,
+                            "ffmpeg_encoder": profile["ffmpeg_encoder"],
+                            "preset": selected_preset,
+                            "quality_name": profile["quality_name"],
+                            "quality": max(0, min(51, int(crf))),
                         })
                     except Exception:
                         pass
@@ -324,12 +468,36 @@ def burn_ass(
             stderr = process.stderr.read() if process.stderr is not None else ""
             return process.wait(), stderr
 
-        returncode, stderr = encode(["-c:a", "copy"])
-        if returncode != 0:
+        def encode_with_audio_retry(video_args: list[str]) -> tuple[int, str]:
+            returncode, stderr = encode(video_args, ["-c:a", "copy"])
+            if returncode == 0:
+                return returncode, stderr
             # Opus and a few live codecs cannot be stream-copied into MP4. Retry
             # with AAC while keeping the expensive video encode settings intact.
             output.unlink(missing_ok=True)
-            returncode, stderr = encode(["-c:a", "aac", "-b:a", "192k"])
+            return encode(video_args, ["-c:a", "aac", "-b:a", "192k"])
+
+        video_args = _encoder_video_args(selected_encoder, selected_preset, crf)
+        returncode, stderr = encode_with_audio_retry(video_args)
+        if returncode != 0 and selected_encoder != "cpu":
+            hardware_error = stderr.strip()[-1200:]
+            output.unlink(missing_ok=True)
+            if progress_callback:
+                progress_callback({
+                    "encoder_fallback": True,
+                    "warning": "硬件编码失败，本次任务已自动回退到 CPU libx264 / medium / CRF 20",
+                    "encoder_fallback_from": selected_encoder,
+                    "encoder_fallback_to": "cpu",
+                    "encoder_fallback_error": hardware_error,
+                    "encoder_used": "cpu",
+                    "ffmpeg_encoder": "libx264",
+                    "preset": "medium",
+                    "quality_name": "CRF",
+                    "quality": 20,
+                })
+            returncode, stderr = encode_with_audio_retry(
+                _encoder_video_args("cpu", "medium", 20)
+            )
         if returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
             detail = stderr.strip()[-2000:]
             raise RuntimeError(f"FFmpeg 烧录 ASS 失败: {detail}")

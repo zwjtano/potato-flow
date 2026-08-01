@@ -238,6 +238,18 @@
                             </span>
                             <span><strong>烧录 ASS 弹幕进视频</strong><small>默认关闭。开启后用 FFmpeg 转码，将弹幕永久写入画面，同时保留外置 ASS。</small></span>
                         </label>
+                        <label class="room-recording-setting-option">
+                            <span class="room-setting-switch"><input type="checkbox" name="danmaku_settings_inherit" value="on" data-role="danmaku-settings-inherit" {% if room.danmaku_settings_inherit|default(true) %}checked{% endif %}><span></span></span>
+                            <span><strong>继承全局 ASS 设置</strong><small>默认开启；关闭后下方参数只对这个直播间生效。</small></span>
+                        </label>
+                        <div class="room-danmaku-overrides" data-role="danmaku-overrides">
+                            <label><span>飘屏秒数</span><input class="form-control" name="danmaku_duration_seconds" type="number" min="1" max="30" step="0.5" value="{{ room.danmaku_duration_seconds|default(danmaku_defaults.duration) }}"></label>
+                            <label><span>字号</span><input class="form-control" name="danmaku_font_size" type="number" min="12" max="120" value="{{ room.danmaku_font_size|default(danmaku_defaults.font_size) }}"></label>
+                            <label><span>透明度</span><input class="form-control" name="danmaku_opacity" type="number" min="0.1" max="1" step="0.01" value="{{ room.danmaku_opacity|default(danmaku_defaults.opacity) }}"></label>
+                            <label><span>编码器</span><select class="form-select" name="danmaku_encoder">{% set room_encoder = room.danmaku_encoder|default(danmaku_defaults.encoder) %}<option value="auto" {% if room_encoder == 'auto' %}selected{% endif %}>自动推荐</option><option value="cpu" {% if room_encoder == 'cpu' %}selected{% endif %}>CPU</option><option value="nvidia" {% if room_encoder == 'nvidia' %}selected{% endif %}>NVIDIA</option><option value="intel" {% if room_encoder == 'intel' %}selected{% endif %}>Intel</option><option value="amd" {% if room_encoder == 'amd' %}selected{% endif %}>AMD</option></select></label>
+                            <label><span>预设</span><input class="form-control" name="danmaku_encode_preset" maxlength="24" value="{{ room.danmaku_encode_preset|default(danmaku_defaults.preset) }}"></label>
+                            <label><span>质量值</span><input class="form-control" name="danmaku_encode_quality" type="number" min="0" max="51" value="{{ room.danmaku_encode_crf|default(danmaku_defaults.quality) }}"></label>
+                        </div>
                     </div>
                     <div class="room-recording-settings-note">
                         <i class="bi bi-stars"></i>
@@ -1001,6 +1013,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const recordOnly = form.querySelector('[data-role="record-only"]');
         const accountField = form.querySelector('[data-role="bilibili-account-field"]');
         const accountInput = accountField?.querySelector('input[name="bilibili_account_id"]');
+        const inheritDanmaku = form.querySelector('[data-role="danmaku-settings-inherit"]');
+        const danmakuOverrides = form.querySelector('[data-role="danmaku-overrides"]');
         const syncState = () => {
             const active = Boolean(enabled?.checked);
             const recordOnlyActive = Boolean(recordOnly?.checked);
@@ -1017,10 +1031,16 @@ document.addEventListener('DOMContentLoaded', function () {
             accountField?.classList.toggle('d-none', recordOnlyActive);
             accountField?.setAttribute('aria-hidden', recordOnlyActive ? 'true' : 'false');
             if (accountInput) accountInput.disabled = recordOnlyActive;
+            if (danmakuOverrides) {
+                const inherited = Boolean(inheritDanmaku?.checked);
+                danmakuOverrides.classList.toggle('is-disabled', inherited);
+                danmakuOverrides.querySelectorAll('input, select').forEach(node => { node.disabled = inherited; });
+            }
         };
         enabled?.addEventListener('change', syncState);
         multipart?.addEventListener('change', syncState);
         recordOnly?.addEventListener('change', syncState);
+        inheritDanmaku?.addEventListener('change', syncState);
         syncState();
     });
     async function refreshLiveStatus() {

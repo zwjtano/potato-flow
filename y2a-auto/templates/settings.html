@@ -316,6 +316,34 @@
                                     </div>
 
                                     <div class="col-12">
+                                        <article class="settings-card" id="danmaku-burn-settings">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">ASS DANMAKU</span>
+                                                    <h4>ASS 弹幕与烧录</h4>
+                                                </div>
+                                                <span class="settings-status-badge" id="danmaku-encoder-badge">CPU 安全默认</span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3">
+                                                    <div class="col-md-3"><label class="form-label" for="danmaku-duration">飘屏时间（秒）</label><input class="form-control" id="danmaku-duration" name="DANMAKU_DURATION_SECONDS" type="number" min="1" max="30" step="0.5" value="{{ config.get('DANMAKU_DURATION_SECONDS', 10) }}"><p class="help-text mb-0">越小飘过屏幕越快，默认 10 秒。</p></div>
+                                                    <div class="col-md-3"><label class="form-label" for="danmaku-font-size">字号</label><input class="form-control" id="danmaku-font-size" name="DANMAKU_FONT_SIZE" type="number" min="12" max="120" step="1" value="{{ config.get('DANMAKU_FONT_SIZE', 42) }}"></div>
+                                                    <div class="col-md-3"><label class="form-label" for="danmaku-opacity">透明度</label><input class="form-control" id="danmaku-opacity" name="DANMAKU_OPACITY" type="number" min="0.1" max="1" step="0.01" value="{{ config.get('DANMAKU_OPACITY', 0.92) }}"></div>
+                                                    <div class="col-md-3"><label class="form-label" for="danmaku-quality">质量值</label><input class="form-control" id="danmaku-quality" name="DANMAKU_ENCODE_QUALITY" type="number" min="0" max="51" step="1" value="{{ config.get('DANMAKU_ENCODE_QUALITY', 20) }}"><p class="help-text mb-0">CPU 为 CRF，硬件编码自动映射 CQ/CQP。</p></div>
+                                                    <div class="col-md-4"><label class="form-label" for="danmaku-encoder">烧录编码器</label><select class="form-select" id="danmaku-encoder" name="DANMAKU_ENCODER"><option value="auto" {% if config.get('DANMAKU_ENCODER') == 'auto' %}selected{% endif %}>自动使用已验证推荐</option><option value="cpu" {% if config.get('DANMAKU_ENCODER', 'cpu') == 'cpu' %}selected{% endif %}>CPU（libx264）</option><option value="nvidia" {% if config.get('DANMAKU_ENCODER') == 'nvidia' %}selected{% endif %}>NVIDIA（NVENC）</option><option value="intel" {% if config.get('DANMAKU_ENCODER') == 'intel' %}selected{% endif %}>Intel（QSV）</option><option value="amd" {% if config.get('DANMAKU_ENCODER') == 'amd' %}selected{% endif %}>AMD（AMF）</option></select></div>
+                                                    <div class="col-md-4"><label class="form-label" for="danmaku-preset">编码预设</label><input class="form-control" id="danmaku-preset" name="DANMAKU_ENCODE_PRESET" maxlength="24" value="{{ config.get('DANMAKU_ENCODE_PRESET', 'medium') }}"></div>
+                                                    <div class="col-md-4 d-flex align-items-end"><button class="btn btn-outline-primary w-100" id="detect-danmaku-encoder" type="button"><i class="bi bi-cpu"></i> 检测并推荐</button></div>
+                                                </div>
+                                                <div class="alert alert-light border mt-3 mb-0" id="danmaku-encoder-result">硬件编码失败时，当前任务自动回退 CPU medium / CRF 20，不改动已保存设置。</div>
+                                                <div class="row g-3 mt-2">
+                                                    <div class="col-md-6"><label class="checkbox-label"><input type="checkbox" name="DESKTOP_ALLOW_LAN" {% if config.get('DESKTOP_ALLOW_LAN', False) %}checked{% endif %}> Windows 桌面版允许局域网访问</label><p class="help-text mb-0">默认仅本机 127.0.0.1，修改后下次启动生效。</p></div>
+                                                    <div class="col-md-6"><label class="checkbox-label"><input type="checkbox" name="DESKTOP_START_WITH_WINDOWS" {% if config.get('DESKTOP_START_WITH_WINDOWS', False) %}checked{% endif %}> Windows 登录后自动启动</label><p class="help-text mb-0">默认关闭，仅影响当前 Windows 用户。</p></div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
                                         <article class="settings-card">
                                             <div class="settings-card-header">
                                                 <div>
@@ -3875,6 +3903,47 @@ document.addEventListener('DOMContentLoaded', function () {
             document.body.appendChild(form);
             form.submit();
         });
+    });
+});
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const button = document.getElementById('detect-danmaku-encoder');
+    if (!button) return;
+    const result = document.getElementById('danmaku-encoder-result');
+    const badge = document.getElementById('danmaku-encoder-badge');
+    button.addEventListener('click', async function () {
+        button.disabled = true;
+        result.textContent = '正在用短时实际编码检测 CPU 和显卡能力……';
+        try {
+            const response = await fetch('/api/encoding-capabilities?purpose=danmaku&refresh=1', {headers: {'Accept': 'application/json'}});
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '编码器检测失败');
+            const recommendation = data.recommendation || {};
+            const states = (data.capabilities || []).map(function (item) {
+                return `${item.label}: ${item.available ? '可用' : '不可用'}`;
+            }).join('；');
+            result.replaceChildren();
+            const text = document.createElement('span');
+            text.textContent = `推荐 ${recommendation.label || recommendation.id}：${recommendation.ffmpeg_encoder} / ${recommendation.preset} / ${recommendation.quality_name} ${recommendation.quality}。${recommendation.reason || ''} ${states}`;
+            const apply = document.createElement('button');
+            apply.type = 'button';
+            apply.className = 'btn btn-sm btn-primary ms-2';
+            apply.textContent = '应用推荐';
+            apply.addEventListener('click', function () {
+                document.getElementById('danmaku-encoder').value = recommendation.id || 'cpu';
+                document.getElementById('danmaku-preset').value = recommendation.preset || 'medium';
+                document.getElementById('danmaku-quality').value = recommendation.quality == null ? 20 : recommendation.quality;
+                badge.textContent = '已应用推荐，请保存设置';
+            });
+            result.append(text, apply);
+            badge.textContent = `${recommendation.label || '已检测'}可用`;
+        } catch (error) {
+            result.textContent = error.message + '；可继续使用 CPU medium / CRF 20。';
+            badge.textContent = 'CPU 安全默认';
+        } finally {
+            button.disabled = false;
+        }
     });
 });
 </script>

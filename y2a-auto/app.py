@@ -8,6 +8,7 @@ import mimetypes
 import re
 import shutil
 import secrets
+import sys
 import time
 import uuid
 import threading
@@ -109,6 +110,7 @@ from modules.bilibili_accounts import (
 )
 
 app = Flask(__name__)
+_desktop_server = None
 app.secret_key = os.urandom(24)  # 用于flash消息
 
 _CSRF_SESSION_KEY = '_potatoflow_csrf_token'
@@ -229,6 +231,38 @@ def healthz():
         'status': 'ok',
         'version': __version__,
     })
+
+
+def _desktop_request_authorized() -> bool:
+    token = str(os.environ.get('POTATOFLOW_DESKTOP_TOKEN') or '')
+    supplied = str(request.headers.get('X-PotatoFlow-Desktop-Token') or '')
+    return bool(token and secrets.compare_digest(token, supplied) and request.remote_addr in {'127.0.0.1', '::1'})
+
+
+@app.route('/api/desktop/status')
+def desktop_status():
+    if not _desktop_request_authorized():
+        return jsonify({'error': 'forbidden'}), 403
+    rooms = live_recorder_manager.rooms_with_status()
+    return jsonify({
+        'recording': any(bool(item.get('runtime', {}).get('recording')) for item in rooms),
+        'rooms': [
+            str(item.get('name') or '')
+            for item in rooms
+            if bool(item.get('runtime', {}).get('recording'))
+        ],
+    })
+
+
+@app.route('/api/desktop/shutdown', methods=['POST'])
+def desktop_shutdown():
+    if not _desktop_request_authorized():
+        return jsonify({'error': 'forbidden'}), 403
+    server = _desktop_server
+    if server is None:
+        return jsonify({'ok': False}), 503
+    threading.Thread(target=server.shutdown, daemon=True, name='desktop-shutdown').start()
+    return jsonify({'ok': True})
 
 
 ALLOWED_COVER_EXTENSIONS = {
@@ -979,6 +1013,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'SUBTITLE_QC_ENABLED',
             'FFMPEG_AUTO_DOWNLOAD', 'WHISPER_TRANSLATE',
             'VIDEO_CUSTOM_PARAMS_ENABLED',
+            'DESKTOP_ALLOW_LAN', 'DESKTOP_START_WITH_WINDOWS',
             'VOXTRAL_DIARIZE',
             'NOTIFY_ENABLED',
             'NOTIFY_EVENT_TASK_ADDED',
@@ -1099,6 +1134,23 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
         if 'SUBTITLE_FONT_NAME' in form_data:
             form_data['SUBTITLE_FONT_NAME'] = str(form_data['SUBTITLE_FONT_NAME']).strip()
 
+        danmaku_ranges = {
+            'DANMAKU_DURATION_SECONDS': (float, 1, 30, '弹幕飘屏时间'),
+            'DANMAKU_FONT_SIZE': (int, 12, 120, '弹幕字号'),
+            'DANMAKU_OPACITY': (float, 0.1, 1.0, '弹幕透明度'),
+            'DANMAKU_ENCODE_QUALITY': (int, 0, 51, '编码质量值'),
+        }
+        for field, (converter, lower, upper, label) in danmaku_ranges.items():
+            if field not in form_data:
+                continue
+            try:
+                value = converter(form_data[field])
+            except (TypeError, ValueError) as exc:
+                raise RecorderConfigError(f'{label}必须是数字') from exc
+            if not lower <= value <= upper:
+                raise RecorderConfigError(f'{label}必须在 {lower} 到 {upper} 之间')
+            form_data[field] = value
+
         if 'RECORDINGS_PATH' in form_data:
             requested_recordings_path = str(form_data.get('RECORDINGS_PATH') or 'docker-data/recordings').strip()
             validate_recordings_dir(requested_recordings_path)
@@ -1106,6 +1158,17 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
         _persist_settings_uploads(form_data, uploads)
         updated_config = update_config(form_data)
+        if any(field.startswith('DANMAKU_') for field in form_data):
+            try:
+                live_recorder_manager.sync_configs()
+            except RecorderConfigError as exc:
+                _append_settings_message(messages, 'warning', f'ASS 设置已保存，但录制配置同步失败：{exc}')
+        if {'DESKTOP_START_WITH_WINDOWS', 'DESKTOP_ALLOW_LAN'} & set(form_data):
+            try:
+                from modules.desktop_runtime import sync_windows_startup
+                sync_windows_startup(bool(updated_config.get('DESKTOP_START_WITH_WINDOWS')))
+            except Exception as exc:
+                logger.warning("Windows 开机启动设置同步失败: %s", exc)
         recordings_path_changed = (
             str(updated_config.get('RECORDINGS_PATH') or 'docker-data/recordings').strip()
             != previous_recordings_path
@@ -1245,6 +1308,19 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             'final_detail': final_detail,
             'final_level': final_level,
         }
+    except RecorderConfigError as e:
+        logger.warning("保存设置校验失败: %s", e)
+        public_message = str(e)
+        _append_settings_message(messages, 'danger', public_message)
+        return {
+            'success': False,
+            'messages': messages,
+            'updated_config': None,
+            'final_stage': 'failed',
+            'final_message': '保存设置失败',
+            'final_detail': public_message,
+            'final_level': 'error',
+        }
     except Exception as e:
         logger.exception("保存设置失败: %s", e)
         public_message = '保存设置失败，请查看服务日志。'
@@ -1353,6 +1429,14 @@ def live_recording():
         selected_room_id=selected_room_id,
         bilibili_accounts=normalize_accounts(config),
         bilibili_default_account_id=default_account_id(config),
+        danmaku_defaults={
+            'duration': config.get('DANMAKU_DURATION_SECONDS', 10),
+            'font_size': config.get('DANMAKU_FONT_SIZE', 42),
+            'opacity': config.get('DANMAKU_OPACITY', 0.92),
+            'encoder': config.get('DANMAKU_ENCODER', 'cpu'),
+            'preset': config.get('DANMAKU_ENCODE_PRESET', 'medium'),
+            'quality': config.get('DANMAKU_ENCODE_QUALITY', 20),
+        },
     )
 
 
@@ -1371,6 +1455,35 @@ def _live_recording_room_query(room_id: str) -> str:
 @login_required
 def live_recording_status():
     return jsonify(live_recorder_manager.live_status_payload())
+
+
+@app.route('/api/encoding-capabilities')
+@login_required
+def encoding_capabilities():
+    purpose = str(request.args.get('purpose') or 'danmaku').strip().lower()
+    if purpose != 'danmaku':
+        return jsonify({'error': '不支持的编码检测用途'}), 400
+    try:
+        project_root = Path(__file__).resolve().parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        from danmaku_pipeline import probe_encoding_capabilities
+        from modules.youtube_handler import get_ffmpeg_path
+
+        config = load_config()
+        ffmpeg = get_ffmpeg_path(logger=logger) or 'ffmpeg'
+        result = probe_encoding_capabilities(
+            ffmpeg,
+            preferred=str(config.get('VIDEO_ENCODER') or 'auto'),
+            force_refresh=_coerce_checkbox_value(request.args.get('refresh', 'off')),
+        )
+        result['purpose'] = purpose
+        result['ffmpeg'] = str(ffmpeg)
+        result['configured_encoder'] = str(config.get('DANMAKU_ENCODER') or 'cpu')
+        return jsonify(result)
+    except Exception as exc:
+        logger.exception("检测弹幕烧录编码器失败: %s", exc)
+        return jsonify({'error': '编码器检测失败，已保留 CPU 安全方案'}), 500
 
 
 @app.route('/live-recording/jobs')
@@ -1882,6 +1995,15 @@ def live_recording_room_recording_settings(room_id):
             danmaku_burn_in=_coerce_checkbox_value(
                 request.form.get('danmaku_burn_in', 'off')
             ),
+            danmaku_settings_inherit=_coerce_checkbox_value(
+                request.form.get('danmaku_settings_inherit', 'off')
+            ),
+            danmaku_duration_seconds=request.form.get('danmaku_duration_seconds', '10'),
+            danmaku_font_size=request.form.get('danmaku_font_size', '42'),
+            danmaku_opacity=request.form.get('danmaku_opacity', '0.92'),
+            danmaku_encoder=request.form.get('danmaku_encoder', 'cpu'),
+            danmaku_encode_preset=request.form.get('danmaku_encode_preset', 'medium'),
+            danmaku_encode_quality=request.form.get('danmaku_encode_quality', '20'),
             recording_quality=request.form.get('recording_quality', 'source'),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
         )
@@ -5229,7 +5351,19 @@ if __name__ == '__main__':
         port = int(os.environ.get('PORT', 5001))
         logger.info(f"服务启动，监听地址: http://127.0.0.1:{port}")
         # 使用标准Flask运行
-        app.run(host='0.0.0.0', port=port, debug=False)
+        desktop_mode = str(os.environ.get('POTATOFLOW_DESKTOP_MODE') or '').strip().lower() in ('1', 'true', 'yes')
+        host = (
+            '0.0.0.0'
+            if not desktop_mode or bool(config.get('DESKTOP_ALLOW_LAN', False))
+            else '127.0.0.1'
+        )
+        if desktop_mode:
+            from werkzeug.serving import make_server
+
+            _desktop_server = make_server(host, port, app, threaded=True)
+            _desktop_server.serve_forever()
+        else:
+            app.run(host=host, port=port, debug=False)
     except KeyboardInterrupt:
         logger.info("接收到退出信号，服务正在关闭...")
     except Exception as e:

@@ -21,7 +21,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.base import SchedulerNotRunningError
 import queue
-from .utils import get_app_root_dir, get_app_subdir
+from .utils import get_app_root_dir, get_app_subdir, get_resource_root_dir
 from .ffmpeg_manager import get_ffmpeg_path, get_ffprobe_path
 from .notifications import (
     EVENT_TASK_ADDED,
@@ -5701,7 +5701,7 @@ class TaskProcessor:
 
     @classmethod
     def _iter_bundled_font_paths(cls):
-        fonts_dir = get_app_subdir('fonts')
+        fonts_dir = os.path.join(get_resource_root_dir(), 'fonts')
         if not os.path.isdir(fonts_dir):
             return []
         font_paths = []
