@@ -238,9 +238,13 @@
                             <i class="bi bi-save"></i> 保存{{ '预览' if job.status == 'completed' else '修改' }}
                         </button>
                         {% if job.status == 'completed' %}
-                        <button type="submit" name="action" value="apply_to_bilibili" class="btn btn-success"
+                        <button type="submit" name="action" value="apply_to_bilibili" class="btn btn-outline-success"
                                 data-confirm-published-update="true">
-                            <i class="bi bi-cloud-check"></i> 确认同步到 B站
+                            <i class="bi bi-cloud-check"></i> 仅同步稿件
+                        </button>
+                        <button type="submit" name="action" value="apply_to_bilibili_and_comment" class="btn btn-success"
+                                data-confirm-published-update="true" data-sync-pinned-comment="true">
+                            <i class="bi bi-chat-square-text"></i> 同步稿件并更新置顶评论
                         </button>
                         {% else %}
                         <button type="submit" name="action" value="save_and_retry" class="btn btn-success" {% if not job.retryable %}disabled{% endif %}>
@@ -270,6 +274,7 @@
                         <span><i class="bi bi-card-text"></i> 简介</span>
                         <span><i class="bi bi-tags"></i> 标签 / 分区</span>
                         <span><i class="bi bi-image"></i> 16:9 / 4:3 封面</span>
+                        <span class="d-none" data-role="pinned-comment-confirm-item"><i class="bi bi-pin-angle"></i> 简介置顶评论</span>
                     </div>
                     <div class="published-update-note">
                         <i class="bi bi-shield-check"></i>
@@ -299,7 +304,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const form = document.getElementById('recording-review-form');
     const publishedUpdateModalElement = document.getElementById('publishedUpdateConfirmModal');
     const confirmPublishedUpdateButton = document.getElementById('confirmPublishedUpdateBtn');
-    const applyPublishedUpdateButton = form.querySelector('[data-confirm-published-update="true"]');
+    const applyPublishedUpdateButtons = Array.from(form.querySelectorAll('[data-confirm-published-update="true"]'));
+    const pinnedCommentConfirmItem = document.querySelector('[data-role="pinned-comment-confirm-item"]');
+    let pendingPublishedUpdateButton = null;
     let publishedUpdateConfirmed = false;
 
     function refreshCounts() {
@@ -326,6 +333,11 @@ document.addEventListener('DOMContentLoaded', function () {
             && !publishedUpdateConfirmed
         ) {
             event.preventDefault();
+            pendingPublishedUpdateButton = submitter;
+            pinnedCommentConfirmItem?.classList.toggle(
+                'd-none',
+                submitter.dataset.syncPinnedComment !== 'true'
+            );
             bootstrap.Modal.getOrCreateInstance(publishedUpdateModalElement).show();
             return;
         }
@@ -344,7 +356,7 @@ document.addEventListener('DOMContentLoaded', function () {
         confirmPublishedUpdateButton.innerHTML =
             '<span class="spinner-border spinner-border-sm me-1"></span>正在同步…';
         bootstrap.Modal.getOrCreateInstance(publishedUpdateModalElement).hide();
-        form.requestSubmit(applyPublishedUpdateButton);
+        form.requestSubmit(pendingPublishedUpdateButton || applyPublishedUpdateButtons[0]);
     });
     publishedUpdateModalElement?.addEventListener('hidden.bs.modal', function () {
         if (publishedUpdateConfirmed) return;

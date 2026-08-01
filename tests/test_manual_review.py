@@ -71,6 +71,7 @@ class ManualReviewTests(unittest.TestCase):
             "regenerate_cover",
             "regenerate_all",
             "apply_to_bilibili",
+            "apply_to_bilibili_and_comment",
         ):
             self.assertIn(action, editor_template)
             self.assertIn(action, app_source)
@@ -81,7 +82,9 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn("pending_published_update", manager_source)
         self.assertIn("视频内容和原有分P不会改变", editor_template)
         self.assertIn("publishedUpdateConfirmModal", editor_template)
-        self.assertIn("form.requestSubmit(applyPublishedUpdateButton)", editor_template)
+        self.assertIn("form.requestSubmit(pendingPublishedUpdateButton", editor_template)
+        self.assertIn("同步稿件并更新置顶评论", editor_template)
+        self.assertIn("sync_published_description_comment", manager_source)
         self.assertNotIn("window.confirm(", editor_template)
         self.assertIn('html[data-theme="dark"] .ai-regenerate-panel', editor_template)
 
