@@ -2044,26 +2044,11 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(context, "YYF锁定1号位；小狗主魔免引发争论")
         self.assertNotIn("00:06", context)
 
-    def test_verified_timeline_can_confirm_streamer_hero_without_equipment(self):
-        context = bridge.recording_timeline_hero_context(
-            "23:01 果小果巫医和老蔡骷髅王配合打出对线优势",
-            "果小果是个弟弟",
-        )
+    def test_verified_timeline_never_promotes_itself_to_hero_identity(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
 
-        self.assertEqual(context["hero"], "巫医")
-        self.assertEqual(context["items"], [])
-        self.assertEqual(context["identity_source"], "verified_timeline_streamer_hero")
-        stats = bridge.append_hero_only_live_stat(
-            "——— 直播数据 ———\n👥 在线 1830~2275",
-            "巫医",
-        )
-        self.assertEqual(
-            bridge.split_live_stats_sections(stats),
-            (
-                "——— 对局数据 ———\n🎮 巫医",
-                "——— 直播数据 ———\n👥 在线 1830~2275",
-            ),
-        )
+        self.assertNotIn("verified_timeline_streamer_hero", source)
+        self.assertNotIn("timeline_hero_identity", source)
 
     def test_dota2_cover_prompt_resolves_common_hero_aliases(self):
         instruction = bridge.recording_cover_dota2_instruction(

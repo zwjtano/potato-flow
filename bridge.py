@@ -1967,87 +1967,6 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def recording_timeline_hero_context(
-    description: str,
-    streamer: str,
-) -> dict[str, Any] | None:
-    """Extract one hero explicitly assigned to this streamer by a verified point."""
-    public_name = normalize_dota2_streamer_name(streamer)
-    subject_aliases = {streamer, public_name}
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
-        if canonical_name == public_name:
-            subject_aliases.update((canonical_name, *aliases))
-    compact_subjects = {
-        compact for value in subject_aliases
-        if (compact := _compact_alias(value))
-    }
-    matched: set[str] = set()
-    evidence: list[str] = []
-    for point in timeline_lines(description):
-        if not topic_mentions_streamer(point, streamer):
-            continue
-        compact_point = _compact_alias(point)
-        subject_ends = [
-            index + len(alias)
-            for alias in compact_subjects
-            for index in [compact_point.find(alias)]
-            if index >= 0
-        ]
-        distances: list[tuple[int, str]] = []
-        for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
-            canonical_short = re.split(r"[（(]", canonical_name, maxsplit=1)[0].strip()
-            hero_aliases = {canonical_short, *aliases}
-            positions = [
-                compact_point.find(compact_alias)
-                for alias in hero_aliases
-                if (compact_alias := _compact_alias(alias))
-                and not re.fullmatch(r"[a-z0-9]{1,2}", compact_alias)
-            ]
-            positions = [position for position in positions if position >= 0]
-            if not positions or not subject_ends:
-                continue
-            forward = [
-                position - subject_end
-                for position in positions
-                for subject_end in subject_ends
-                if position >= subject_end
-            ]
-            if forward:
-                distances.append((min(forward), canonical_short))
-        if distances:
-            best_distance = min(distance for distance, _hero in distances)
-            point_matches = {
-                hero for distance, hero in distances if distance == best_distance
-            }
-        else:
-            point_matches = set()
-        if len(point_matches) == 1:
-            matched.update(point_matches)
-            evidence.append(point)
-    if len(matched) != 1:
-        return None
-    return {
-        "hero": next(iter(matched)),
-        "items": [],
-        "neutral": "",
-        "scepter": False,
-        "shard": False,
-        "identity_source": "verified_timeline_streamer_hero",
-        "identity_evidence": evidence,
-    }
-
-
-def append_hero_only_live_stat(stats_text: str, hero: str) -> str:
-    """Add a confirmed hero without inventing equipment or duplicating game data."""
-    clean_hero = str(hero or "").strip()
-    text = str(stats_text or "").strip()
-    if not clean_hero or any(line.startswith("🎮 ") for line in text.splitlines()):
-        return text
-    if not text:
-        return f"——— 直播数据 ———\n🎮 {clean_hero}"
-    return f"{text}\n🎮 {clean_hero}"
-
-
 def _tag_identity_key(value: object) -> str:
     """Return a conservative semantic key for short recording tags."""
     key = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").casefold())
@@ -3847,30 +3766,6 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
 
         metadata_values_for_evidence = recording_metadata_values(video, cfg)
-        if not locked_game_context:
-            timeline_game_context = recording_timeline_hero_context(
-                description,
-                metadata_values_for_evidence["streamer"],
-            )
-            if timeline_game_context:
-                locked_game_context = timeline_game_context
-                stats_text = append_hero_only_live_stat(
-                    stats_text,
-                    str(timeline_game_context["hero"]),
-                )
-                ai_details["timeline_hero_identity"] = timeline_game_context
-                store.stage(key, "xml_identity", "completed", {
-                    "danmaku_xml": str(danmaku_xml or ""),
-                    "comment_count": len(comments),
-                    "streamer_hero": str(timeline_game_context["hero"]),
-                    "streamer_items": [],
-                    "streamer_neutral": "",
-                    "streamer_scepter": False,
-                    "streamer_shard": False,
-                    "identity_source": "verified_timeline_streamer_hero",
-                    "identity_evidence": timeline_game_context["identity_evidence"],
-                    "outcome": "matched_hero_only",
-                })
         if not locked_game_context and recording_cover_has_dota2_context(
             metadata_values_for_evidence["streamer"],
             title,

@@ -251,7 +251,8 @@ def select_anchor_player(
         aliases = {_normalise_text(hero)}
         aliases.update(_normalise_text(alias) for alias in HERO_ALIASES.get(hero, ()))
         aliases.discard("")
-        score = sum(_count_hero_aliases(text, aliases) for text in texts)
+        # Count independent comments, not repeated words inside one copypasta.
+        score = sum(1 for text in texts if _count_hero_aliases(text, aliases) > 0)
         scores.append((score, player))
     scores.sort(key=lambda item: item[0], reverse=True)
     if not scores or scores[0][0] < XML_MIN_MENTION_SCORE:
@@ -282,55 +283,80 @@ def _covered_seconds(intervals: Iterable[tuple[float, float]]) -> float:
     return sum(end - start for start, end in merged)
 
 
+def select_gsi_history_player(
+    history: object,
+    start_ts: float,
+    end_ts: float,
+) -> dict | None:
+    """Select one stable explicit GSI hero inside the recording timeframe."""
+    entries = history if isinstance(history, list) else []
+    candidates: list[tuple[float, float, dict, str, bool]] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("player"), dict):
+            continue
+        entry_start = float(entry.get("start_unix_ts") or 0)
+        entry_end = float(entry.get("last_seen_unix_ts") or entry_start)
+        if entry_end < start_ts or entry_start > end_ts:
+            continue
+        candidates.append((
+            max(entry_start, start_ts),
+            min(entry_end, end_ts),
+            entry["player"],
+            str(entry.get("source") or "gsi"),
+            bool(entry.get("verified_in_lineup", True)),
+        ))
+    if not candidates:
+        return None
+    hero_ids = {
+        str(player.get("id") or _normalise_text(player.get("hero")))
+        for _start, _end, player, _source, _verified in candidates
+    }
+    evidence_span = max(end for _start, end, _player, _source, _verified in candidates) - min(
+        start for start, _end, _player, _source, _verified in candidates
+    )
+    observed_seconds = _covered_seconds(
+        (start, end) for start, end, _player, _source, _verified in candidates
+    )
+    stable_enough = observed_seconds >= GSI_MIN_OBSERVATION_SECONDS or (
+        len(candidates) >= 3 and evidence_span >= GSI_MIN_OBSERVATION_SECONDS
+    )
+    if len(hero_ids) != 1 or not stable_enough:
+        return None
+    _start, snapshot_ts, player, source, verified_in_lineup = max(
+        candidates, key=lambda item: item[1]
+    )
+    selected = dict(player)
+    selected["identity_source"] = (
+        f"gsi_hero:{source}"
+        if verified_in_lineup
+        else f"gsi_explicit_hero:{source}"
+    )
+    selected["equipment_snapshot_unix_ts"] = snapshot_ts
+    selected["gsi_observed_seconds"] = round(observed_seconds, 3)
+    selected["gsi_verified_in_lineup"] = verified_in_lineup
+    return selected
+
+
 def select_streamer_player(
     game: dict,
     comments: Iterable[tuple[float, str]],
     start_ts: float,
     end_ts: float,
+    *,
+    allow_xml_fallback: bool = True,
 ) -> dict | None:
     """Select a stable streamer view, with strong XML evidence as fallback."""
-    candidates: list[tuple[float, float, dict, str]] = []
     raw_history = game.get("anchor_history")
     history = raw_history if isinstance(raw_history, list) else []
-    if isinstance(history, list):
-        for entry in history:
-            if not isinstance(entry, dict) or not isinstance(entry.get("player"), dict):
-                continue
-            entry_start = float(entry.get("start_unix_ts") or 0)
-            entry_end = float(entry.get("last_seen_unix_ts") or entry_start)
-            if entry_end < start_ts or entry_start > end_ts:
-                continue
-            candidates.append((
-                max(entry_start, start_ts),
-                min(entry_end, end_ts),
-                entry["player"],
-                str(entry.get("source") or game.get("anchor_source") or "gsi"),
-            ))
-    if candidates:
-        hero_ids = {
-            str(player.get("id") or _normalise_text(player.get("hero")))
-            for _entry_start, _entry_end, player, _source in candidates
-        }
-        evidence_span = max(end for _start, end, _player, _source in candidates) - min(
-            start for start, _end, _player, _source in candidates
-        )
-        observed_seconds = _covered_seconds(
-            (start, end) for start, end, _player, _source in candidates
-        )
-        stable_enough = observed_seconds >= GSI_MIN_OBSERVATION_SECONDS or (
-            len(candidates) >= 3 and evidence_span >= GSI_MIN_OBSERVATION_SECONDS
-        )
-        if len(hero_ids) == 1 and stable_enough:
-            _entry_start, snapshot_ts, player, source = max(
-                candidates, key=lambda item: item[1]
-            )
-            selected = dict(player)
-            selected["identity_source"] = f"gsi_hero:{source}"
-            selected["equipment_snapshot_unix_ts"] = snapshot_ts
-            selected["gsi_observed_seconds"] = round(observed_seconds, 3)
-            return selected
+    selected = select_gsi_history_player(history, start_ts, end_ts)
+    if selected:
+        return selected
 
-    selected = select_anchor_player(game.get("players", []), comments, start_ts, end_ts)
+    selected = (
+        select_anchor_player(game.get("players", []), comments, start_ts, end_ts)
+        if allow_xml_fallback
+        else None
+    )
     if selected:
         selected["identity_source"] = "xml_dominant_mention"
         selected["equipment_snapshot_unix_ts"] = float(
@@ -368,6 +394,65 @@ def _overlapping_games(stats: dict, start_ts: float, end_ts: float) -> list[dict
     return result
 
 
+def _select_game_anchor(
+    stats: dict,
+    game: dict,
+    comments: Iterable[tuple[float, str]],
+    start_ts: float,
+    end_ts: float,
+) -> dict | None:
+    """Prefer stable GSI evidence; use XML lineup evidence only as fallback."""
+    return (
+        select_streamer_player(
+            game,
+            comments,
+            start_ts,
+            end_ts,
+            allow_xml_fallback=False,
+        )
+        or select_gsi_history_player(
+            stats.get("gsi_hero_history"),
+            start_ts,
+            end_ts,
+        )
+        or select_streamer_player(game, comments, start_ts, end_ts)
+    )
+
+
+def _format_game_line(anchor: dict) -> str:
+    hero = str(anchor.get("hero") or "").strip()
+    main_items = [
+        str(item).strip()
+        for item in anchor.get("items", [])[:6]
+        if str(item).strip()
+        and _normalise_text(item) not in {"empty", "unknown"}
+        and not str(item).startswith("未知(empty)")
+    ]
+    equipment_parts: list[str] = []
+    if main_items:
+        equipment_parts.append(f"六格：{'、'.join(main_items)}")
+    neutral = str(anchor.get("neutral") or "").strip()
+    if (
+        neutral
+        and _normalise_text(neutral) not in {"empty", "unknown"}
+        and not neutral.startswith("未知(empty)")
+    ):
+        equipment_parts.append(f"中立：{neutral}")
+    if anchor.get("scepter"):
+        equipment_parts.append("A杖")
+    if anchor.get("shard"):
+        equipment_parts.append("魔晶")
+    summary = hero
+    if equipment_parts:
+        summary += f"｜{'｜'.join(equipment_parts)}"
+    if all(key in anchor for key in ("kills", "deaths", "assists")):
+        summary += (
+            f" K/D/A {anchor['kills']}/{anchor['deaths']}/{anchor['assists']}"
+            f" KDA {anchor.get('kda')}"
+        )
+    return summary
+
+
 def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
     """Return the streamer hero, KDA and final in-recording equipment snapshot."""
     comments = load_xml_comments(video_dir)
@@ -377,7 +462,9 @@ def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
     for game in _overlapping_games(stats, start_ts, end_ts):
         game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
         game_end = min(end_ts, float(game.get("end_unix_ts") or game.get("last_seen_unix_ts") or end_ts))
-        candidate = select_streamer_player(game, comments, game_start, game_end)
+        candidate = _select_game_anchor(
+            stats, game, comments, game_start, game_end
+        )
         if candidate:
             candidate["items"] = [
                 str(item) for item in candidate.get("items", [])[:6] if str(item)
@@ -385,7 +472,11 @@ def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
             overlap = max(0.0, game_end - game_start)
             if best is None or overlap > best[0]:
                 best = (overlap, candidate)
-    return best[1] if best is not None else None
+    if best is not None:
+        return best[1]
+    return select_gsi_history_player(
+        stats.get("gsi_hero_history"), start_ts, end_ts
+    )
 
 
 def get_identity_diagnostics(video_dir: str | os.PathLike[str]) -> dict:
@@ -409,6 +500,12 @@ def get_identity_diagnostics(video_dir: str | os.PathLike[str]) -> dict:
         "type_tooltips_last_player_count": int(tooltip.get("last_raw_player_count") or 0),
         "type_tooltips_game_snapshots": len(games),
         "gsi_streamer_anchor_snapshots": int(tooltip.get("streamer_anchor_snapshots") or 0),
+        "gsi_explicit_hero_snapshots": int(tooltip.get("explicit_hero_snapshots") or 0),
+        "gsi_explicit_hero_history_entries": len(
+            stats.get("gsi_hero_history", [])
+            if isinstance(stats.get("gsi_hero_history"), list)
+            else []
+        ),
         "gsi_streamer_anchor_available": any(
             isinstance(game.get("anchor_player"), dict) for game in games
         ),
@@ -480,40 +577,19 @@ def format_stats(
     for game in _overlapping_games(stats, start_ts, end_ts):
         game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
         game_end = min(end_ts, float(game.get("end_unix_ts") or game.get("last_seen_unix_ts") or end_ts))
-        anchor = select_streamer_player(game, comments, game_start, game_end)
+        anchor = _select_game_anchor(
+            stats, game, comments, game_start, game_end
+        )
         if not anchor:
             continue
-        hero = str(anchor.get("hero") or "").strip()
-        main_items = [
-            str(item).strip()
-            for item in anchor.get("items", [])[:6]
-            if str(item).strip()
-            and _normalise_text(item) not in {"empty", "unknown"}
-            and not str(item).startswith("未知(empty)")
-        ]
-        equipment_parts: list[str] = []
-        if main_items:
-            equipment_parts.append(f"六格：{'、'.join(main_items)}")
-        neutral = str(anchor.get("neutral") or "").strip()
-        if (
-            neutral
-            and _normalise_text(neutral) not in {"empty", "unknown"}
-            and not neutral.startswith("未知(empty)")
-        ):
-            equipment_parts.append(f"中立：{neutral}")
-        if anchor.get("scepter"):
-            equipment_parts.append("A杖")
-        if anchor.get("shard"):
-            equipment_parts.append("魔晶")
-        summary = hero
-        if equipment_parts:
-            summary += f"｜{'｜'.join(equipment_parts)}"
-        if all(key in anchor for key in ("kills", "deaths", "assists")):
-            summary += (
-                f" K/D/A {anchor['kills']}/{anchor['deaths']}/{anchor['assists']}"
-                f" KDA {anchor.get('kda')}"
-            )
-        game_lines.append(summary)
+        game_lines.append(_format_game_line(anchor))
+
+    if not game_lines:
+        anchor = select_gsi_history_player(
+            stats.get("gsi_hero_history"), start_ts, end_ts
+        )
+        if anchor:
+            game_lines.append(_format_game_line(anchor))
 
     if (
         not gift_totals and not diamond_events
