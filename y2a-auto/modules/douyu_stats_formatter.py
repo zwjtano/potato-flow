@@ -66,7 +66,7 @@ GSI_MIN_OBSERVATION_SECONDS = 60.0
 XML_MIN_MENTION_SCORE = 25
 XML_MIN_DOMINANCE_RATIO = 2.0
 XML_MIN_MENTION_SHARE = 0.6
-GIFT_MINIMUM_DISPLAY_TOTAL_CENTS = 10_000
+GIFT_MINIMUM_DISPLAY_UNIT_PRICE_CENTS = 10_000
 
 
 def load_stats(stats_path: str | os.PathLike[str]) -> dict:
@@ -467,7 +467,7 @@ def format_stats(
     gift_totals = {
         key: summary
         for key, summary in gift_totals.items()
-        if int(summary["total_cents"]) >= GIFT_MINIMUM_DISPLAY_TOTAL_CENTS
+        if int(summary["unit_price_cents"]) >= GIFT_MINIMUM_DISPLAY_UNIT_PRICE_CENTS
     }
 
     high_events = filter_by_timeframe(
