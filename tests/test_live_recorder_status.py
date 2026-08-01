@@ -78,7 +78,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 ],
             }
             generated = "新简介\n\n重要时间点\n00:12 高能事件"
-            expected_description = "直播数据\n\n" + generated
+            expected_description = generated + "\n\n直播数据"
             stored = {}
             with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
                 manager,
@@ -160,7 +160,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 result = manager.regenerate_published_metadata("a" * 64, {"description"})
 
         stats.assert_called_once_with(str(video.parent))
-        self.assertTrue(result["description"].startswith("💬 高能弹幕 ×1 | 300元\n\n"))
+        self.assertTrue(result["description"].endswith("\n\n💬 高能弹幕 ×1 | 300元"))
         self.assertEqual(
             generate.call_args.args[3]["live_stats"],
             "💬 高能弹幕 ×1 | 300元",
@@ -208,6 +208,77 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     manager.regenerate_published_metadata("a" * 64, {"description"})
 
         store.assert_not_called()
+
+    def test_cover_regeneration_uses_reviewed_title_body_and_matching_hero_only(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            video.write_bytes(b"video")
+            stats = "——— 直播数据 ———\n🎁 礼物合计 600元"
+            title = "YYF蓝猫残局送人头转小黑复健失败｜08-01 14:39"
+            body = "直播开场承接蓝猫残局，随后转小黑复健。"
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": title,
+                "description": f"{stats}\n\n{body}",
+                "tags": ["YYF"],
+                "partition_id": "171",
+                "room_name": "yyfyyf",
+                "review_override": {},
+                "stages": [
+                    {"key": "live_stats", "details": {"stats_summary": stats}},
+                    {
+                        "key": "xml_identity",
+                        "details": {
+                            "streamer_hero": "帕吉",
+                            "streamer_items": ["闪烁匕首"],
+                            "identity_source": "xml_dominant_mention",
+                        },
+                    },
+                    {"key": "ai", "details": {"title_topic": "直播精彩内容"}},
+                ],
+            }
+            generated_cover = root / "cover.jpg"
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock()
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock()
+            with mock.patch.dict(
+                sys.modules,
+                {"modules.ai_enhancer": ai_enhancer},
+            ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+            ), mock.patch.object(
+                manager,
+                "_recording_file_roots",
+                return_value={"artifacts": root / "artifacts"},
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_IMAGE_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={},
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "yyfyyf", "date": "08-01", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.generate_recording_cover_with_ai",
+                return_value=(generated_cover, {"ai_cover_generated": True}),
+            ) as generate:
+                result = manager.regenerate_published_metadata("a" * 64, {"cover"})
+
+        self.assertEqual(generate.call_count, 2)
+        for call in generate.call_args_list:
+            self.assertIn("蓝猫残局送人头", call.kwargs["ai_topic"])
+            self.assertNotIn("直播精彩内容", call.kwargs["ai_topic"])
+            self.assertEqual(call.kwargs["description"], body)
+            self.assertIsNone(call.kwargs["game_context"])
+            self.assertTrue(call.kwargs["game_context_locked"])
+        self.assertEqual(result["title"], title)
 
     def test_default_recordings_directory_uses_docker_mount_when_available(self):
         with mock.patch(

@@ -54,8 +54,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(tags, ["YYF", "DOTA2"])
         self.assertEqual(details["unverified_hero_tags_removed"], ["影魔"])
 
-    def test_live_stats_are_placed_before_archive_description(self):
-        description = bridge.prepend_live_stats_to_description(
+    def test_live_stats_are_placed_after_archive_description(self):
+        description = bridge.append_live_stats_to_description(
             "直播录播：YYF《休赛期改名狂欢》。",
             "【直播信息】\n峰值人气：123 万",
         )
@@ -65,11 +65,11 @@ class BridgeTests(unittest.TestCase):
             "【直播信息】\n峰值人气：123 万",
         )
 
-    def test_live_stats_take_priority_when_description_reaches_limit(self):
+    def test_live_stats_are_last_when_description_reaches_limit(self):
         stats = "【直播信息】\n" + "统计" * 20
-        description = bridge.prepend_live_stats_to_description("正文" * 2000, stats)
+        description = bridge.append_live_stats_to_description("正文" * 2000, stats)
 
-        self.assertTrue(description.startswith(stats))
+        self.assertTrue(description.endswith(stats))
         self.assertLessEqual(len(description), 1900)
 
     def test_description_limit_keeps_complete_timeline_before_long_prose(self):
@@ -87,9 +87,9 @@ class BridgeTests(unittest.TestCase):
         points = "\n".join(f"{index:02d}:00 看点{index}" for index in range(10))
         body = f"{'正文' * 750}\n\n重要时间点\n{points}"
 
-        description = bridge.prepend_live_stats_to_description(body, stats)
+        description = bridge.append_live_stats_to_description(body, stats)
 
-        self.assertTrue(description.startswith(stats))
+        self.assertTrue(description.endswith(stats))
         self.assertLessEqual(len(description), 1900)
         self.assertEqual(len(bridge.timeline_lines(description)), 10)
 
@@ -105,7 +105,7 @@ class BridgeTests(unittest.TestCase):
         points = "\n".join(f"{index:02d}:00 看点{index}" for index in range(10))
         body = f"{'正文' * 1000}\n\n重要时间点\n{points}"
 
-        description = bridge.prepend_live_stats_to_description(body, stats)
+        description = bridge.append_live_stats_to_description(body, stats)
 
         self.assertLessEqual(len(description), 1900)
         self.assertEqual(len(bridge.timeline_lines(description)), 10)
@@ -132,7 +132,7 @@ class BridgeTests(unittest.TestCase):
         body = bridge.render_multipart_description(parts, "总简介")
         stats = "——— 直播数据 ———\n" + "统计" * 90
 
-        description = bridge.prepend_live_stats_to_description(body, stats)
+        description = bridge.append_live_stats_to_description(body, stats)
 
         self.assertLessEqual(len(description), 1900)
         self.assertIn("【P1｜第1段｜07-31】", description)
@@ -140,22 +140,22 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(description.count("重要时间点"), 2)
         self.assertEqual(len(bridge.timeline_lines(description)), 20)
 
-    def test_live_stats_are_not_prepended_twice_when_ai_repeats_them(self):
+    def test_live_stats_are_moved_to_end_when_ai_repeats_them(self):
         stats = "——— 直播数据 ———\n🎁 狂欢飞机×2(200元)｜合计 200元\n👥 在线 8257~10000"
         ai_description = f"{stats}\n\n直播录播正文"
 
-        description = bridge.prepend_live_stats_to_description(ai_description, stats)
+        description = bridge.append_live_stats_to_description(ai_description, stats)
 
-        self.assertEqual(description, ai_description)
+        self.assertEqual(description, f"直播录播正文\n\n{stats}")
         self.assertEqual(description.count("——— 直播数据 ———"), 1)
 
     def test_existing_duplicate_live_stats_are_collapsed_on_retry(self):
         stats = "——— 直播数据 ———\n🎁 狂欢飞机×2(200元)｜合计 200元\n👥 在线 8257~10000"
         duplicated = f"{stats}\n\n{stats}\n\n直播录播正文"
 
-        description = bridge.prepend_live_stats_to_description(duplicated, stats)
+        description = bridge.append_live_stats_to_description(duplicated, stats)
 
-        self.assertEqual(description, f"{stats}\n\n直播录播正文")
+        self.assertEqual(description, f"直播录播正文\n\n{stats}")
         self.assertEqual(description.count("——— 直播数据 ———"), 1)
 
     def test_live_stats_can_be_removed_from_persisted_submission_description(self):
@@ -164,6 +164,12 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(
             bridge.strip_live_stats_from_description(persisted, stats),
+            "AI 正文",
+        )
+
+        appended = f"AI 正文\n\n{stats}"
+        self.assertEqual(
+            bridge.strip_live_stats_from_description(appended, stats),
             "AI 正文",
         )
 
@@ -337,12 +343,12 @@ class BridgeTests(unittest.TestCase):
 
     def test_generic_recording_intro_is_removed_from_final_body(self):
         stats = "——— 直播数据 ———\n👥 在线 8257~10000"
-        description = bridge.prepend_live_stats_to_description(
+        description = bridge.append_live_stats_to_description(
             "直播录播：YYF。正文从这里开始。",
             stats,
         )
 
-        self.assertEqual(description, f"{stats}\n\n正文从这里开始。")
+        self.assertEqual(description, f"正文从这里开始。\n\n{stats}")
         self.assertNotIn("直播录播：YYF。", description)
 
     def test_generic_recording_intro_is_removed_from_multipart_description(self):
@@ -1792,6 +1798,31 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertEqual(chinese_date, "游戏挑战")
         self.assertNotRegex(chinese_date, r"07月23日|21:30")
+
+    def test_recording_cover_headline_rejects_generic_topic_and_uses_reviewed_title(self):
+        headline = bridge.recording_cover_headline(
+            "YYF蓝猫残局送人头转小黑复健失败｜08-01 14:39",
+            "直播精彩内容",
+            "yyfyyf",
+        )
+
+        self.assertEqual(headline, "YYF蓝猫残局送人头转小黑复健失败")
+        self.assertNotIn("直播精彩内容", headline)
+        self.assertNotIn("08-01", headline)
+
+    def test_recording_cover_hero_must_match_reviewed_title(self):
+        self.assertTrue(
+            bridge.recording_cover_hero_matches_title(
+                "主宰",
+                "YYF主宰打穿后露娜对线受压｜08-01 12:39",
+            )
+        )
+        self.assertFalse(
+            bridge.recording_cover_hero_matches_title(
+                "帕吉",
+                "YYF蓝猫残局送人头转小黑复健失败｜08-01 14:39",
+            )
+        )
 
     def test_dota2_cover_prompt_resolves_common_hero_aliases(self):
         instruction = bridge.recording_cover_dota2_instruction(

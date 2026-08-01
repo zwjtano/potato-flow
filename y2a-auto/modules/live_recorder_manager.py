@@ -3416,6 +3416,21 @@ class LiveRecorderManager:
             )
             ai_details = ai_stage.get("details") if isinstance(ai_stage, dict) else {}
             ai_details = ai_details if isinstance(ai_details, dict) else {}
+            live_stats_stage = next(
+                (stage for stage in job.get("stages", []) if stage.get("key") == "live_stats"),
+                {},
+            )
+            live_stats_details = (
+                live_stats_stage.get("details")
+                if isinstance(live_stats_stage, dict)
+                else {}
+            )
+            live_stats_details = (
+                live_stats_details if isinstance(live_stats_details, dict) else {}
+            )
+            persisted_live_stats = str(
+                live_stats_details.get("stats_summary") or ""
+            ).strip()
             context = {
                 "streamer": job.get("room_name") or values.get("streamer") or "主播",
                 "recorded_at": values.get("date") or "",
@@ -3466,23 +3481,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     raise RecorderConfigError(
                         "原始弹幕 XML 没有可用弹幕，无法重新生成可点击时间点"
                     )
-                live_stats_stage = next(
-                    (stage for stage in job.get("stages", []) if stage.get("key") == "live_stats"),
-                    {},
-                )
-                live_stats_details = (
-                    live_stats_stage.get("details")
-                    if isinstance(live_stats_stage, dict)
-                    else {}
-                )
-                live_stats_details = (
-                    live_stats_details
-                    if isinstance(live_stats_details, dict)
-                    else {}
-                )
-                regenerated_live_stats = str(
-                    live_stats_details.get("stats_summary") or ""
-                ).strip()
+                regenerated_live_stats = persisted_live_stats
                 if (
                     not regenerated_live_stats
                     and bool(bridge_config.get("douyu_stats_enabled", True))
@@ -3584,7 +3583,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 and regenerated_live_stats
                 and append_regenerated_live_stats
             ):
-                generated_description = bridge.prepend_live_stats_to_description(
+                generated_description = bridge.append_live_stats_to_description(
                     generated_description,
                     regenerated_live_stats,
                     limit=1900,
@@ -3638,6 +3637,44 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             cover43_path = str(previous.get("cover43_path") or "").strip()
             cover_details: dict[str, Any] = {}
             if "cover" in selected:
+                cover_topic = bridge.recording_cover_headline(
+                    title,
+                    title_topic,
+                    str(job.get("room_name") or values.get("streamer") or ""),
+                )
+                cover_description = bridge.strip_live_stats_from_description(
+                    description,
+                    persisted_live_stats,
+                )
+                identity_stage = next(
+                    (stage for stage in job.get("stages", []) if stage.get("key") == "xml_identity"),
+                    {},
+                )
+                identity_details = (
+                    identity_stage.get("details")
+                    if isinstance(identity_stage, dict)
+                    else {}
+                )
+                identity_details = identity_details if isinstance(identity_details, dict) else {}
+                cover_game_context = None
+                identity_hero = str(identity_details.get("streamer_hero") or "").strip()
+                if bridge.recording_cover_hero_matches_title(identity_hero, title):
+                    cover_game_context = {
+                        key: identity_details.get(source_key)
+                        for key, source_key in (
+                            ("hero", "streamer_hero"),
+                            ("items", "streamer_items"),
+                            ("neutral", "streamer_neutral"),
+                            ("scepter", "streamer_scepter"),
+                            ("shard", "streamer_shard"),
+                            ("kills", "kills"),
+                            ("deaths", "deaths"),
+                            ("assists", "assists"),
+                            ("kda", "kda"),
+                            ("identity_source", "identity_source"),
+                        )
+                        if identity_details.get(source_key) not in (None, "", [])
+                    }
                 artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
                 errors: list[str] = []
                 variants = (
@@ -3649,14 +3686,16 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         generated_path, variant_details = (
                             bridge.generate_recording_cover_with_ai(
                                 title=title,
-                                ai_topic=title_topic or str(ai_details.get("title_topic") or ""),
-                                description=description,
+                                ai_topic=cover_topic,
+                                description=cover_description,
                                 streamer=str(job.get("room_name") or values.get("streamer") or ""),
                                 cfg=bridge_config,
                                 work_dir=artifact_dir,
                                 recording_dir=video_path.parent,
                                 target_size=target_size,
                                 output_path=output_path,
+                                game_context=cover_game_context,
+                                game_context_locked=True,
                             )
                         )
                         cover_details[variant] = variant_details
