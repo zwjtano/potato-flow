@@ -415,27 +415,85 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(diagnostics["prop_events"], 1)
         self.assertEqual(diagnostics["unknown_gift_ids"], {"824": 1})
 
-    def test_dgb_deduplicates_repeated_event_hash(self):
+    def test_dgb_does_not_deduplicate_reused_hc_style_hash(self):
         monitor = daemon.RoomMonitor("9999", "主播", {
             "1": {
                 "name": "飞机", "price": 100, "price_cents": 10000,
                 "price_type": "YUCHI", "catalog_source": "v5",
             },
+            "2": {
+                "name": "火箭", "price": 500, "price_cents": 50000,
+                "price_type": "YUCHI", "catalog_source": "v5",
+            },
         })
-        message = {
+        first_message = {
             "gfid": "1", "gfn": "飞机", "gfcnt": "1",
             "uid": "42", "hc": "same-event",
         }
+        second_message = {
+            "gfid": "2", "gfn": "火箭", "gfcnt": "1",
+            "uid": "84", "hc": "same-event",
+        }
 
-        monitor.handle_dgb(message)
-        monitor.handle_dgb(message)
+        monitor.handle_dgb(first_message)
+        monitor.handle_dgb(second_message)
 
-        self.assertEqual(len(monitor.state["gift_events"]), 1)
+        self.assertEqual(len(monitor.state["gift_events"]), 2)
         self.assertEqual(monitor.state["gift_events"][0]["total_value_cents"], 10000)
+        self.assertEqual(monitor.state["gift_events"][1]["total_value_cents"], 50000)
         diagnostics = monitor.state["gift_diagnostics"]
         self.assertEqual(diagnostics["messages"], 2)
-        self.assertEqual(diagnostics["recorded_events"], 1)
-        self.assertEqual(diagnostics["duplicate_messages"], 1)
+        self.assertEqual(diagnostics["recorded_events"], 2)
+        self.assertEqual(diagnostics["duplicate_messages"], 0)
+
+    def test_spbc_records_only_gifts_targeting_monitored_room(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {
+            "20003": {
+                "name": "飞机", "price": 100, "price_cents": 10000,
+                "price_type": "YUCHI", "catalog_source": "v5",
+            },
+        })
+
+        monitor.handle_spbc({
+            "gfid": "20003", "gn": "飞机", "gc": "1",
+            "sid": "42", "sn": "用户", "drid": "9999",
+        })
+        monitor.handle_spbc({
+            "gfid": "20003", "gn": "飞机", "gc": "1",
+            "sid": "84", "sn": "其他用户", "drid": "226037",
+        })
+
+        self.assertEqual(len(monitor.state["gift_events"]), 1)
+        event = monitor.state["gift_events"][0]
+        self.assertEqual(event["name"], "飞机")
+        self.assertEqual(event["unit_price_cents"], 10000)
+        self.assertEqual(event["source"], "spbc")
+        diagnostics = monitor.state["gift_diagnostics"]
+        self.assertEqual(diagnostics["spbc_messages"], 2)
+        self.assertEqual(diagnostics["spbc_other_room_messages"], 1)
+
+    def test_spbc_and_dgb_same_gift_are_deduplicated_across_sources(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {
+            "20004": {
+                "name": "火箭", "price": 500, "price_cents": 50000,
+                "price_type": "YUCHI", "catalog_source": "v5",
+            },
+        })
+
+        monitor.handle_dgb({
+            "gfid": "20004", "gfn": "火箭", "gfcnt": "1",
+            "uid": "42", "nn": "用户",
+        })
+        monitor.handle_spbc({
+            "gfid": "20004", "gn": "火箭", "gc": "1",
+            "sid": "42", "sn": "用户", "drid": "9999",
+        })
+
+        self.assertEqual(len(monitor.state["gift_events"]), 1)
+        self.assertEqual(
+            monitor.state["gift_diagnostics"]["cross_source_duplicates"],
+            1,
+        )
 
     def test_gift_catalog_refresh_replaces_only_with_nonempty_catalog(self):
         monitor = daemon.RoomMonitor("9999", "主播", {
