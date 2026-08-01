@@ -52,6 +52,7 @@ GIFT_CATALOG_URLS = (
     ("v5", "https://gift.douyucdn.cn/api/gift/v5/web/base/list?rid={room_id}"),
     ("v2", "https://gift.douyucdn.cn/api/gift/v2/web/list?rid={room_id}"),
 )
+GIFT_PHOTO_CONFIG_URL = "https://webconf.douyucdn.cn/resource/common/giftPhotos_w.json"
 
 dota_hero_map: dict[str, str] = {}
 dota_item_map: dict[str, str] = {}
@@ -130,7 +131,16 @@ def _request_json(url: str, referer: str = "") -> dict:
         headers["Referer"] = referer
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=10) as response:
-        value = json.loads(response.read())
+        text = response.read().decode("utf-8", errors="replace").strip()
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        # Some official Douyu configurations are JSONP even though their file
+        # extension is .json (for example DYConfigCallback({...})).
+        match = re.fullmatch(r"[A-Za-z_$][\w$]*\((.*)\)\s*;?", text, re.DOTALL)
+        if not match:
+            raise
+        value = json.loads(match.group(1))
     return value if isinstance(value, dict) else {}
 
 
@@ -241,7 +251,7 @@ def normalize_high_energy_record(record: dict, source: str, now: float | None = 
 
 
 def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
-    """Load the current web catalog first, then retain v2-only special gifts."""
+    """Load room catalogs plus the official full gift-price configuration."""
     prices: dict[str, dict[str, object]] = {}
     loaded_sources: list[str] = []
     errors: list[str] = []
@@ -299,6 +309,43 @@ def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
                 }
         except Exception as exc:
             errors.append(f"{source}: {exc}")
+    try:
+        response = _request_json(GIFT_PHOTO_CONFIG_URL, referer)
+        gifts = response.get("data", {}).get("pgInfos", [])
+        if not isinstance(gifts, list):
+            raise ValueError("pgInfos is not a list")
+        loaded_sources.append("gift-photos")
+        by_name: dict[str, list[dict]] = {}
+        for gift in gifts:
+            if not isinstance(gift, dict):
+                continue
+            name = str(gift.get("name") or "").strip()
+            price_cents = _nonnegative_int(gift.get("price"))
+            if name and price_cents > 0:
+                by_name.setdefault(name, []).append(gift)
+        for name, matches in by_name.items():
+            prices_for_name = {
+                _nonnegative_int(item.get("price")) for item in matches
+            }
+            # A few reused names have represented different products over
+            # time. Refuse to guess unless every official entry agrees.
+            if len(prices_for_name) != 1:
+                continue
+            price_cents = prices_for_name.pop()
+            newest = max(matches, key=lambda item: _nonnegative_int(item.get("time")))
+            prices[f"name:{name}"] = {
+                "name": name,
+                "price": price_cents / 100,
+                "price_cents": price_cents,
+                "raw_price": price_cents,
+                "price_type": "YUCHI",
+                "catalog_source": "gift-photos",
+                "price_catalog_source": "gift-photos",
+                "photo_gift_id": str(newest.get("pgId") or ""),
+                "show_status": 1,
+            }
+    except Exception as exc:
+        errors.append(f"gift-photos: {exc}")
     if errors:
         print(
             f"[stats] 礼物配置部分加载失败({room_id}): {'; '.join(errors)}",
@@ -516,6 +563,7 @@ class RoomMonitor(threading.Thread):
         self._last_unknown_gift_refresh_request = 0.0
         self._gift_catalog_refresh_requested = False
         self._ensure_gift_diagnostics()
+        self._backfill_unpriced_gift_events()
         self._ensure_diamond_fan_state()
         self._ensure_high_energy_state()
         diagnostics = self.state.setdefault("tooltip_diagnostics", {})
@@ -598,11 +646,59 @@ class RoomMonitor(threading.Thread):
             "spbc_messages": 0,
             "spbc_other_room_messages": 0,
             "cross_source_duplicates": 0,
+            "backfilled_events": 0,
         }.items():
             diagnostics.setdefault(key, value)
         if not isinstance(diagnostics.get("unknown_gift_ids"), dict):
             diagnostics["unknown_gift_ids"] = {}
         return diagnostics
+
+    def _gift_price_info(self, gift_id: str, gift_name: str) -> dict | None:
+        info = self.prices.get(gift_id)
+        if info is None and gift_name:
+            info = self.prices.get(f"name:{gift_name}")
+        return info
+
+    def _backfill_unpriced_gift_events(self) -> int:
+        """Repair retained events when a broader catalog becomes available."""
+        repaired = 0
+        events = self.state.get("gift_events", [])
+        if not isinstance(events, list):
+            return repaired
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            if bool(event.get("paid")) and _nonnegative_int(event.get("unit_price_cents")) > 0:
+                continue
+            name = str(event.get("name") or "").strip()
+            info = self._gift_price_info(str(event.get("gift_id") or ""), name)
+            price_type = str((info or {}).get("price_type") or "")
+            unit_price_cents = _nonnegative_int((info or {}).get("price_cents"))
+            if price_type != "YUCHI" or unit_price_cents <= 0:
+                continue
+            count = max(1, _nonnegative_int(event.get("count")))
+            event.update({
+                "price_type": price_type,
+                "paid": True,
+                "unit_price_cents": unit_price_cents,
+                "unit_price": unit_price_cents / 100,
+                "total_value_cents": unit_price_cents * count,
+                "total_value": unit_price_cents * count / 100,
+                "catalog_source": str((info or {}).get("catalog_source") or ""),
+                "price_catalog_source": str(
+                    (info or {}).get("price_catalog_source")
+                    or (info or {}).get("catalog_source")
+                    or ""
+                ),
+                "price_unknown": False,
+            })
+            repaired += 1
+        if repaired:
+            diagnostics = self._ensure_gift_diagnostics()
+            diagnostics["backfilled_events"] = (
+                int(diagnostics.get("backfilled_events") or 0) + repaired
+            )
+        return repaired
 
     def refresh_gift_prices(self) -> bool:
         """Refresh the room catalog without discarding a usable old snapshot."""
@@ -616,6 +712,7 @@ class RoomMonitor(threading.Thread):
             )
             return False
         self.prices = refreshed
+        self._backfill_unpriced_gift_events()
         diagnostics["catalog_refreshes"] = int(diagnostics["catalog_refreshes"] or 0) + 1
         diagnostics["catalog_size"] = len(refreshed)
         return True
@@ -799,7 +896,8 @@ class RoomMonitor(threading.Thread):
         except (TypeError, ValueError):
             diagnostics["parse_errors"] = int(diagnostics["parse_errors"] or 0) + 1
             count = 1
-        info = self.prices.get(gift_id)
+        gift_name = str(message.get("gfn") or "").strip()
+        info = self._gift_price_info(gift_id, gift_name)
         if (
             info is None
             and now - self._last_unknown_gift_refresh_request
@@ -837,7 +935,7 @@ class RoomMonitor(threading.Thread):
             "unix_ts": now,
             "ts": datetime.fromtimestamp(now, TZ).strftime("%H:%M:%S"),
             "gift_id": gift_id,
-            "name": str(message.get("gfn") or (info or {}).get("name") or "未知礼物"),
+            "name": str(gift_name or (info or {}).get("name") or "未知礼物"),
             "user_id": str(message.get("uid") or ""),
             "user": str(message.get("nn") or ""),
             "price_type": price_type,

@@ -376,6 +376,77 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(gift["catalog_source"], "v5")
         self.assertEqual(gift["price_catalog_source"], "v2")
 
+    def test_request_json_accepts_official_douyu_jsonp(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = (
+            b'DYConfigCallback({"data":{"pgInfos":[]}});'
+        )
+        with mock.patch.object(daemon.urllib.request, "urlopen", return_value=response):
+            value = daemon._request_json("https://example.invalid/gifts.json")
+
+        self.assertEqual(value, {"data": {"pgInfos": []}})
+
+    def test_gift_photo_catalog_adds_unique_name_price_and_skips_ambiguous_name(self):
+        responses = {
+            "v5": {"error": 0, "data": {"giftList": []}},
+            "v2": {"error": 0, "data": {"giftList": []}},
+            "photos": {"data": {"pgInfos": [
+                {"pgId": 612, "name": "琴心之恋", "price": 10000, "time": 2},
+                {"pgId": 1, "name": "重名礼物", "price": 100, "time": 1},
+                {"pgId": 2, "name": "重名礼物", "price": 200, "time": 2},
+            ]}},
+        }
+
+        def request(url, _referer=""):
+            if "giftPhotos" in url:
+                return responses["photos"]
+            return responses["v5" if "/v5/" in url else "v2"]
+
+        with mock.patch.object(daemon, "_request_json", side_effect=request):
+            prices = daemon.load_gift_prices("6558897")
+
+        self.assertEqual(prices["name:琴心之恋"]["price_cents"], 10000)
+        self.assertEqual(prices["name:琴心之恋"]["price_catalog_source"], "gift-photos")
+        self.assertNotIn("name:重名礼物", prices)
+
+    def test_unknown_activity_gift_uses_full_catalog_name_price(self):
+        monitor = daemon.RoomMonitor("6558897", "果小果", {
+            "name:琴心之恋": {
+                "name": "琴心之恋", "price": 100, "price_cents": 10000,
+                "price_type": "YUCHI", "catalog_source": "gift-photos",
+                "price_catalog_source": "gift-photos",
+            },
+        })
+        monitor.handle_dgb({
+            "gfid": "23996", "gfn": "琴心之恋", "gfcnt": "1",
+            "gpf": "1", "pid": "3379", "uid": "633894435",
+        })
+
+        event = monitor.state["gift_events"][-1]
+        self.assertTrue(event["paid"])
+        self.assertEqual(event["unit_price_cents"], 10000)
+        self.assertEqual(event["total_value_cents"], 10000)
+        self.assertEqual(event["price_catalog_source"], "gift-photos")
+
+    def test_unpriced_retained_activity_gift_is_backfilled_by_name(self):
+        monitor = daemon.RoomMonitor("6558897", "果小果", {})
+        monitor.state["gift_events"] = [{
+            "gift_id": "23996", "name": "琴心之恋", "count": 2,
+            "paid": False, "unit_price_cents": 0, "price_unknown": True,
+        }]
+        monitor.prices = {
+            "name:琴心之恋": {
+                "price_cents": 10000, "price_type": "YUCHI",
+                "catalog_source": "gift-photos",
+            },
+        }
+
+        self.assertEqual(monitor._backfill_unpriced_gift_events(), 1)
+        event = monitor.state["gift_events"][0]
+        self.assertTrue(event["paid"])
+        self.assertEqual(event["total_value_cents"], 20000)
+        self.assertFalse(event["price_unknown"])
+
     def test_dgb_keeps_low_value_and_unknown_prop_events_for_diagnostics(self):
         monitor = daemon.RoomMonitor("9999", "主播", {
             "24677": {
