@@ -3671,7 +3671,10 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 identity_details = identity_details if isinstance(identity_details, dict) else {}
                 cover_game_context = None
                 identity_hero = str(identity_details.get("streamer_hero") or "").strip()
-                if bridge.recording_cover_hero_matches_title(identity_hero, title):
+                if bridge.recording_cover_hero_matches_title(
+                    identity_hero,
+                    f"{title}\n{cover_description}",
+                ):
                     cover_game_context = {
                         key: identity_details.get(source_key)
                         for key, source_key in (

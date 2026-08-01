@@ -1093,9 +1093,9 @@ class DouyuStatsTests(unittest.TestCase):
 
         text = formatter.format_stats(stats, 100, 300)
 
-        self.assertNotIn("狙击手", text)
+        self.assertIn("🎮 第1局：狙击手", text)
         self.assertIn(
-            "🎮 斧王｜六格：闪烁匕首、刃甲、相位鞋｜中立：Rattlecage｜魔晶",
+            "🎮 第2局：斧王｜六格：闪烁匕首、刃甲、相位鞋｜中立：Rattlecage｜魔晶",
             text,
         )
         self.assertNotIn("狙击手 | 斧王", text)

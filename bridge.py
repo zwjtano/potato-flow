@@ -66,7 +66,8 @@ DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "确实发生的赛后复盘、回看失误或自我调侃可以作为节目效果写入，但必须说明复盘了什么，不得将“赛后复盘”"
     "当成空泛栏目词。避免“直播精彩内容、引发热议、争议话题”等不说具体事件的句子。"
     "不要在简介正文中手写时间点；程序会回到完整 XML 定位最早证据、补偿反应延迟并统一格式化。"
-    "重要事件必须有能够完整支持事件含义的逐字弹幕证据，没有足够证据时宁可少列，不得编造时间或事件。"
+    "重要事件必须有可在完整 XML 定位的弹幕原文，或同一时间围绕事件关键词的集中刷屏；"
+    "不要求多条引用全部逐字一致，但不得编造时间或事件。"
     "重要时间点必须覆盖标题的核心事件；若标题包含两个先后发生的独立转折，应分别收录。"
     "事件文案只做证据的最小忠实改写，不得增加原文没有的人物、动作、数字、原因或结果；"
     "开场如果承接上一段残局，必须如实说明是“开场承接”，不得写成本段新发生的事件。"
@@ -591,10 +592,15 @@ def recording_part_title(video: Path, index: int, topic: str = "") -> str:
 
 def strip_recording_intro(description: str) -> str:
     """Remove the generic AI/template lead-in from a recording summary."""
+    text = str(description or "").strip()
+    if re.match(r"^直播录播[：:]", text):
+        quoted_end = text.find("》。")
+        if quoted_end >= 0:
+            return text[quoted_end + len("》。"):].lstrip()
     return re.sub(
         r"^直播录播[：:].*?[。.!！]\s*",
         "",
-        str(description or "").strip(),
+        text,
         count=1,
     ).strip()
 
@@ -616,9 +622,9 @@ def strip_ai_timeline_lines(description: str) -> str:
 def timeline_target_range(duration_seconds: float | None) -> tuple[int, int]:
     """Return a useful highlight target scaled to the recording duration."""
     if duration_seconds is None or float(duration_seconds) <= 0:
-        return 4, 8
-    minimum = max(2, min(8, int((float(duration_seconds) + 899) // 900)))
-    return minimum, min(14, minimum + 4)
+        return 6, 10
+    minimum = max(3, min(12, int((float(duration_seconds) + 449) // 450)))
+    return minimum, min(16, minimum + 4)
 
 
 _TIMELINE_HEADING = "重要时间点"
@@ -629,6 +635,8 @@ _VAGUE_RECORDING_TITLE_RE = re.compile(
     r"|^(?:直播精彩内容|精彩内容|精彩直播|直播录像)$"
 )
 _MULTIPART_HEADING_RE = re.compile(r"^【P\d+(?:｜[^\n]*)?】$")
+_TIMELINE_SPAM_WINDOW_SECONDS = 60.0
+_TIMELINE_MIN_SPAM_MESSAGES = 3
 
 
 def timeline_lines(description: str) -> list[str]:
@@ -640,7 +648,10 @@ def timeline_lines(description: str) -> list[str]:
             if line.strip() == _TIMELINE_HEADING
         )
     except StopIteration:
-        return []
+        return [
+            line.strip() for line in lines
+            if _TIMELINE_LINE_RE.match(line.strip())
+        ]
     return [line.strip() for line in lines[start + 1:] if _TIMELINE_LINE_RE.match(line.strip())]
 
 
@@ -692,19 +703,31 @@ def fit_description_preserving_timeline(description: str, limit: int) -> str:
     points = timeline_lines(text)
     if not points:
         return text[:budget].rstrip()
-    heading_index = next(
-        index for index, line in enumerate(text.splitlines())
+    text_lines = text.splitlines()
+    heading_index = next((
+        index for index, line in enumerate(text_lines)
         if line.strip() == _TIMELINE_HEADING
-    )
-    prose = "\n".join(text.splitlines()[:heading_index]).strip()
-    timeline = _TIMELINE_HEADING
+    ), None)
+    has_heading = heading_index is not None
+    prose = "\n".join(
+        text_lines[:heading_index]
+        if heading_index is not None
+        else [line for line in text_lines if not _TIMELINE_LINE_RE.match(line.strip())]
+    ).strip()
     kept: list[str] = []
     for point in points:
-        candidate = "\n".join((_TIMELINE_HEADING, *kept, point))
+        candidate = "\n".join((
+            *((_TIMELINE_HEADING,) if has_heading else ()),
+            *kept,
+            point,
+        ))
         if len(candidate) > budget:
             break
         kept.append(point)
-    timeline = "\n".join((_TIMELINE_HEADING, *kept)).rstrip()
+    timeline = "\n".join((
+        *((_TIMELINE_HEADING,) if has_heading else ()),
+        *kept,
+    )).rstrip()
     if not prose or len(timeline) >= budget:
         return timeline[:budget].rstrip()
     separator = "\n\n"
@@ -798,6 +821,7 @@ def render_grounded_danmaku_timeline(
     maximum = None if duration_seconds is None else max(0.0, float(duration_seconds))
     verified: list[dict[str, Any]] = []
     rejection_reasons: dict[str, int] = {}
+    relaxed_screen_spam_count = 0
 
     def reject(reason: str) -> None:
         rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
@@ -812,12 +836,10 @@ def render_grounded_danmaku_timeline(
             if isinstance(raw_evidence_texts, list)
             else [str(item.get("evidence_text") or "").strip()]
         ))
-        if not evidence_texts or any(
-            not text or text not in sampled_texts
-            for text in evidence_texts
-        ):
-            reject("evidence_not_exact_sample")
-            continue
+        exact_evidence_texts = [
+            text for text in evidence_texts
+            if text and text in sampled_texts
+        ]
         raw_keywords = item.get("evidence_keywords")
         if not isinstance(raw_keywords, list):
             reject("missing_keywords")
@@ -827,32 +849,88 @@ def render_grounded_danmaku_timeline(
             for keyword in raw_keywords[:4]
             if len(re.sub(r"\s+", "", str(keyword or ""))) >= 2
         ))
-        evidence_corpus = "\n".join(evidence_texts).casefold()
-        if not keywords or any(keyword.casefold() not in evidence_corpus for keyword in keywords):
-            reject("keywords_not_supported")
+        if not keywords:
+            reject("missing_keywords")
             continue
+        evidence_corpus = "\n".join(exact_evidence_texts).casefold()
+        direct_keywords_supported = bool(exact_evidence_texts) and all(
+            keyword.casefold() in evidence_corpus for keyword in keywords
+        )
         evidence_matches = sorted(
             (
                 comment for comment in all_comments
-                if str(getattr(comment, "text", "")).strip() in evidence_texts
+                if str(getattr(comment, "text", "")).strip() in exact_evidence_texts
             ),
             key=lambda comment: float(comment.time),
         )
         matching_comments: list[Any] = []
-        for first_index, first in enumerate(evidence_matches):
-            cluster = [
-                comment for comment in evidence_matches[first_index:]
-                if float(first.time) <= float(comment.time) <= float(first.time) + 30.0
-            ]
-            cluster_texts = {
-                str(getattr(comment, "text", "")).strip()
-                for comment in cluster
-            }
-            if all(text in cluster_texts for text in evidence_texts):
-                matching_comments = cluster
-                break
+        if direct_keywords_supported and len(exact_evidence_texts) == len(evidence_texts):
+            for first_index, first in enumerate(evidence_matches):
+                cluster = [
+                    comment for comment in evidence_matches[first_index:]
+                    if float(first.time) <= float(comment.time) <= float(first.time) + 30.0
+                ]
+                cluster_texts = {
+                    str(getattr(comment, "text", "")).strip()
+                    for comment in cluster
+                }
+                if all(text in cluster_texts for text in exact_evidence_texts):
+                    matching_comments = cluster
+                    break
+
+        # Relaxed fallback: exact AI quoting is helpful but not mandatory when
+        # the full XML shows a concentrated burst of messages about the same
+        # keywords. The timestamp still comes exclusively from real XML.
         if not matching_comments:
-            reject("exact_cluster_not_found")
+            keyword_matches = sorted(
+                (
+                    comment for comment in all_comments
+                    if any(
+                        keyword.casefold()
+                        in str(getattr(comment, "text", "")).casefold()
+                        for keyword in keywords
+                    )
+                ),
+                key=lambda comment: float(comment.time),
+            )
+            seed_times = [float(comment.time) for comment in evidence_matches]
+            required_keyword_count = max(1, (len(keywords) + 1) // 2)
+            spam_clusters: list[list[Any]] = []
+            for first_index, first in enumerate(keyword_matches):
+                cluster = [
+                    comment for comment in keyword_matches[first_index:]
+                    if float(first.time) <= float(comment.time)
+                    <= float(first.time) + _TIMELINE_SPAM_WINDOW_SECONDS
+                ]
+                if len(cluster) < _TIMELINE_MIN_SPAM_MESSAGES:
+                    continue
+                if seed_times and min(
+                    abs(float(comment.time) - seed)
+                    for comment in cluster
+                    for seed in seed_times
+                ) > _TIMELINE_SPAM_WINDOW_SECONDS:
+                    continue
+                cluster_corpus = "\n".join(
+                    str(getattr(comment, "text", "")) for comment in cluster
+                ).casefold()
+                supported_keyword_count = sum(
+                    keyword.casefold() in cluster_corpus for keyword in keywords
+                )
+                if supported_keyword_count >= required_keyword_count:
+                    spam_clusters.append(cluster)
+            if spam_clusters:
+                matching_comments = max(
+                    spam_clusters,
+                    key=lambda cluster: (len(cluster), -float(cluster[0].time)),
+                )
+                relaxed_screen_spam_count += 1
+        if not matching_comments:
+            if not exact_evidence_texts:
+                reject("evidence_not_exact_sample")
+            elif not direct_keywords_supported:
+                reject("keywords_not_supported")
+            else:
+                reject("same_time_screen_spam_not_found")
             continue
         event = re.sub(r"\s+", " ", str(item.get("event") or "")).strip()
         event = re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", event)
@@ -920,6 +998,7 @@ def render_grounded_danmaku_timeline(
             for item in ordered
         ]
         anchor_diagnostics["timeline_rejection_reasons"] = rejection_reasons
+        anchor_diagnostics["timeline_relaxed_screen_spam_count"] = relaxed_screen_spam_count
     if not lines:
         return ""
     return "重要时间点\n" + "\n".join(lines)
@@ -1698,10 +1777,33 @@ def recording_cover_hero_matches_title(hero: str, title: str) -> bool:
     if not hero_name or not title_text:
         return False
     for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
-        names = {canonical_name.casefold(), *(alias.casefold() for alias in aliases)}
+        canonical_short = re.split(r"[（(]", canonical_name, maxsplit=1)[0].strip()
+        names = {
+            canonical_name.casefold(),
+            canonical_short.casefold(),
+            *(alias.casefold() for alias in aliases),
+        }
         if hero_name in names:
             return any(name and name in title_text for name in names)
     return hero_name in title_text
+
+
+def recording_cover_event_context(description: str) -> tuple[str, str]:
+    """Return timestamp-free cover context, preferring verified timeline events."""
+    points = timeline_lines(description)
+    if points:
+        events = [
+            re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", point).strip()
+            for point in points
+        ]
+        return "；".join(event for event in events if event)[:700], "verified_timeline"
+    clean_lines = [
+        line.strip()
+        for line in str(description or "").splitlines()
+        if line.strip()
+        and not line.strip().startswith(("———", "🎮 ", "🎁 ", "💎 ", "💬 ", "👥 "))
+    ]
+    return " ".join(clean_lines)[:700], "description"
 
 
 def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
@@ -1861,7 +1963,89 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("兽王（Beastmaster）", ("兽王", "beastmaster")),
     ("斧王（Axe）", ("斧王", "axe")),
     ("帕吉（Pudge）", ("屠夫", "胖子", "pudge")),
+    ("巫医（Witch Doctor）", ("巫医", "witch doctor", "wd")),
 )
+
+
+def recording_timeline_hero_context(
+    description: str,
+    streamer: str,
+) -> dict[str, Any] | None:
+    """Extract one hero explicitly assigned to this streamer by a verified point."""
+    public_name = normalize_dota2_streamer_name(streamer)
+    subject_aliases = {streamer, public_name}
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        if canonical_name == public_name:
+            subject_aliases.update((canonical_name, *aliases))
+    compact_subjects = {
+        compact for value in subject_aliases
+        if (compact := _compact_alias(value))
+    }
+    matched: set[str] = set()
+    evidence: list[str] = []
+    for point in timeline_lines(description):
+        if not topic_mentions_streamer(point, streamer):
+            continue
+        compact_point = _compact_alias(point)
+        subject_ends = [
+            index + len(alias)
+            for alias in compact_subjects
+            for index in [compact_point.find(alias)]
+            if index >= 0
+        ]
+        distances: list[tuple[int, str]] = []
+        for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
+            canonical_short = re.split(r"[（(]", canonical_name, maxsplit=1)[0].strip()
+            hero_aliases = {canonical_short, *aliases}
+            positions = [
+                compact_point.find(compact_alias)
+                for alias in hero_aliases
+                if (compact_alias := _compact_alias(alias))
+                and not re.fullmatch(r"[a-z0-9]{1,2}", compact_alias)
+            ]
+            positions = [position for position in positions if position >= 0]
+            if not positions or not subject_ends:
+                continue
+            forward = [
+                position - subject_end
+                for position in positions
+                for subject_end in subject_ends
+                if position >= subject_end
+            ]
+            if forward:
+                distances.append((min(forward), canonical_short))
+        if distances:
+            best_distance = min(distance for distance, _hero in distances)
+            point_matches = {
+                hero for distance, hero in distances if distance == best_distance
+            }
+        else:
+            point_matches = set()
+        if len(point_matches) == 1:
+            matched.update(point_matches)
+            evidence.append(point)
+    if len(matched) != 1:
+        return None
+    return {
+        "hero": next(iter(matched)),
+        "items": [],
+        "neutral": "",
+        "scepter": False,
+        "shard": False,
+        "identity_source": "verified_timeline_streamer_hero",
+        "identity_evidence": evidence,
+    }
+
+
+def append_hero_only_live_stat(stats_text: str, hero: str) -> str:
+    """Add a confirmed hero without inventing equipment or duplicating game data."""
+    clean_hero = str(hero or "").strip()
+    text = str(stats_text or "").strip()
+    if not clean_hero or any(line.startswith("🎮 ") for line in text.splitlines()):
+        return text
+    if not text:
+        return f"——— 直播数据 ———\n🎮 {clean_hero}"
+    return f"{text}\n🎮 {clean_hero}"
 
 
 def _tag_identity_key(value: object) -> str:
@@ -2161,11 +2345,12 @@ def generate_recording_cover_with_ai(
 
     ai_cfg = load_y2a_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
+    cover_event_context, cover_context_source = recording_cover_event_context(description)
     cover_subject_name = recording_cover_subject_name(
         streamer,
         title,
         ai_topic,
-        description,
+        cover_event_context,
     )
     headline = recording_cover_headline(title, ai_topic, streamer)
     details: dict[str, Any] = {
@@ -2173,6 +2358,8 @@ def generate_recording_cover_with_ai(
         "ai_cover_headline": headline,
         "ai_cover_subject_name": cover_subject_name,
         "ai_cover_excludes_time": True,
+        "ai_cover_context_source": cover_context_source,
+        "ai_cover_event_context": cover_event_context,
     }
     if not enabled:
         return None, details
@@ -2315,6 +2502,14 @@ def generate_recording_cover_with_ai(
             if not game_context_locked and recording_dir is not None:
                 from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
                 anchor = get_game_for_cover(recording_dir)
+            if anchor and not recording_cover_hero_matches_title(
+                str(anchor.get("hero") or ""),
+                f"{title}\n{cover_event_context}",
+            ):
+                details["ai_cover_hero_context_rejected"] = str(
+                    anchor.get("hero") or ""
+                )
+                anchor = None
             if anchor:
                 tooltip_hero = str(anchor.get("hero") or "")
                 tooltip_items = [
@@ -2356,8 +2551,16 @@ def generate_recording_cover_with_ai(
         else:
             dota2_item_instruction = ""
         if tooltip_hero:
+            identity_source = str(details.get("ai_cover_identity_source") or "")
+            if identity_source == "xml_repeated_hero_only":
+                hero_source_instruction = (
+                    "（由完整 XML 中跨时段反复且唯一占优的英雄讨论确认；"
+                    "本证据只确认英雄，不确认任何装备）"
+                )
+            else:
+                hero_source_instruction = "（来自斗鱼主播视角数据）"
             dota2_instruction = (
-                f"主播本局使用的英雄为 {tooltip_hero}（来自斗鱼主播视角数据）。"
+                f"主播本局使用的英雄为 {tooltip_hero}{hero_source_instruction}。"
                 + tooltip_kda_instruction
                 + dota2_instruction
             )
@@ -2529,8 +2732,8 @@ def generate_recording_cover_with_ai(
 为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
 封面主角称呼：{cover_subject_name or streamer or "主播"}
-AI 生成的核心标题：{headline}
-内容摘要：{str(description or "")[:500]}
+与投稿标题共用的核心事件：{headline}
+已核验时间线事件（仅用于选取画面主题，不得绘制时间戳）：{cover_event_context[:500]}
 
 只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 核心文案必须清晰保留主角称呼“{cover_subject_name or streamer or "主播"}”，称呼可以放在开头或自然融入句子，
@@ -3002,8 +3205,9 @@ def generate_danmaku_metadata_with_ai(
             "timeline_target_min": timeline_minimum,
             "timeline_target_max": timeline_maximum,
             "timeline_reaction_delay_seconds": reaction_delay,
-            "timeline_anchor_policy": "exact_xml_evidence",
-            "timeline_cluster_window_seconds": 30,
+            "timeline_anchor_policy": "same_time_screen_spam_or_exact_xml",
+            "timeline_cluster_window_seconds": int(_TIMELINE_SPAM_WINDOW_SECONDS),
+            "timeline_min_screen_spam_messages": _TIMELINE_MIN_SPAM_MESSAGES,
             "timeline_retry_attempted": False,
         })
         payload = {
@@ -3066,8 +3270,10 @@ description 只返回弹幕总结正文，不要重复 base_description，也不
 description 只写两至四段事件总结，主要依照 sampled_comment_evidence 从前到后的内容变化推进：
 先交代开场话题或状态，再写中段的事件发展、话题转换和观众反应，最后交代后段结果或复盘。
 不要为迎合 title_topic 把后半段事件提前，不要把不同时段的独立话题写成同一条因果链。
+description 中写到的每个关键事件、争议点和阶段性转折，都必须同时返回一条对应的 timeline；
+若该事件无法提供可核验的 evidence_texts/evidence_keywords，就从正文中删去，不得出现正文很长但时间点极少的脱节情况。
 不要包含“重要时间点”标题或任何手写时间。
-timeline 只选择 sampled_comment_evidence 有直接证据的事件。每项返回 event、evidence_texts
+timeline 只选择 sampled_comment_evidence 有直接证据或同一时间出现集中刷屏的事件。每项返回 event、evidence_texts
 和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
 evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
 必须先从有精确证据的 timeline 事件中选择 title_topic，并保证 timeline 至少有一条直接对应、
@@ -3078,6 +3284,7 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
 游戏内容时，才额外考虑阵容选择、关键交锋、操作失误、局势转折和翻盘；不得把聊天、访谈、
 户外、才艺或其他直播强行描述成游戏对局。不要把同一事件拆成多条，也不要为了达到数量编造内容。
+长录播应尽量保持约每 7 至 8 分钟一个可点击看点，避免只保留结尾或少量孤立事件。
 重要事件涉及人物时，event 必须写明当前主播或被提及的其他人物“谁做了什么”；
 无法从证据确定人物时宁可写“主播”或省略该事件，不得猜测姓名。
 每条 event 必须是 evidence_texts 的最小忠实改写：主语、对象、动作、数字、原因、结果和“首波”
@@ -3086,9 +3293,9 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 一条像总结稿的超长弹幕不能独自支撑包含多个先后环节的复合 event；应拆分并寻找相邻佐证，
 找不到就只保留该原文能直接支持的最小事实。
 不要返回时间戳；程序会使用 evidence_keywords 回到完整 XML 查找第一条匹配弹幕。
-程序只使用逐字一致的 evidence_texts 回到完整 XML 定位：只有一条证据时取该原文在 XML 中的最早出现；
-有多条证据时，每条原文都必须在同一个 30 秒窗口内出现。evidence_keywords 只用于检查这些原文是否完整支持 event，
-绝不能用关键词去搜索更早的相似弹幕或推测事件时间；否则必须省略该事件。
+程序优先使用逐字一致的 evidence_texts 回到完整 XML 定位；如果模型引用不完整或多条证据分散，
+同一 60 秒窗口内至少 3 条弹幕围绕 evidence_keywords 集中刷屏也可以形成时间点。
+时间仍由程序从完整 XML 中确定，不得自行编造或手写时间戳。
 弹幕时间晚于画面事件：应选最早一批明确相关弹幕作为证据锚点，不要选择刷屏高峰；程序会按
 timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
 如果最早证据本身位于录制开头的反应延迟窗口内，event 必须写成“开场已处于……”或“开场承接……”，
@@ -3154,8 +3361,8 @@ title_topic 是适合放进标题的自然短语，必须来自上述已收录�
             retry_prompt = f"""
 你正在补充一份已经由程序逐条核验的直播录播时间点。当前目标至少 {timeline_minimum} 条，
 已核验 {verified_count} 条。只返回尚未覆盖的不同事件，不得复述 verified_timeline。
-每项仍必须从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，并提供能完整支持
-event 的 evidence_keywords；多条 evidence_texts 必须来自同一个连续 30 秒事件窗口。证据不足就少返回，
+每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，并提供能支持
+event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也可以作为证据。证据不足就少返回，
 绝不能编造。不要返回时间戳或正文。
 返回 JSON 对象：{{"timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
 """.strip()
@@ -3201,14 +3408,16 @@ event 的 evidence_keywords；多条 evidence_texts 必须来自同一个连续 
             ),
         })
         if timeline_text:
-            generated_description = "\n\n".join(
-                part for part in (generated_description, timeline_text) if part
+            # Verified timestamp lines are the editorial body. The earlier
+            # prose draft is intentionally discarded so a long narrative can
+            # never drift away from a sparse, clickable timeline.
+            description = "\n".join(timeline_lines(timeline_text))
+        else:
+            description = (
+                f"{base_description}{generated_description}"
+                if generated_description
+                else base_description
             )
-        description = (
-            f"{base_description}{generated_description}"
-            if generated_description
-            else base_description
-        )
         title_topic = re.sub(
             r"[\r\n｜|]+",
             " ",
@@ -3638,6 +3847,30 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
 
         metadata_values_for_evidence = recording_metadata_values(video, cfg)
+        if not locked_game_context:
+            timeline_game_context = recording_timeline_hero_context(
+                description,
+                metadata_values_for_evidence["streamer"],
+            )
+            if timeline_game_context:
+                locked_game_context = timeline_game_context
+                stats_text = append_hero_only_live_stat(
+                    stats_text,
+                    str(timeline_game_context["hero"]),
+                )
+                ai_details["timeline_hero_identity"] = timeline_game_context
+                store.stage(key, "xml_identity", "completed", {
+                    "danmaku_xml": str(danmaku_xml or ""),
+                    "comment_count": len(comments),
+                    "streamer_hero": str(timeline_game_context["hero"]),
+                    "streamer_items": [],
+                    "streamer_neutral": "",
+                    "streamer_scepter": False,
+                    "streamer_shard": False,
+                    "identity_source": "verified_timeline_streamer_hero",
+                    "identity_evidence": timeline_game_context["identity_evidence"],
+                    "outcome": "matched_hero_only",
+                })
         if not locked_game_context and recording_cover_has_dota2_context(
             metadata_values_for_evidence["streamer"],
             title,
@@ -3888,7 +4121,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         cover_game_context = locked_game_context
         if cover_game_context and not recording_cover_hero_matches_title(
             str(cover_game_context.get("hero") or ""),
-            title,
+            f"{title}\n{description_body}",
         ):
             cover_game_context = None
 
