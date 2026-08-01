@@ -32,6 +32,7 @@ DOTA2_MAP_RETRY_INTERVAL = 300
 HIGH_ENERGY_POLL_INTERVAL = 15
 GIFT_CATALOG_REFRESH_INTERVAL = 24 * 60 * 60
 UNKNOWN_GIFT_REFRESH_COOLDOWN = 60 * 60
+CROSS_SOURCE_GIFT_DEDUPE_SECONDS = 5
 IGNORED_LEGACY_GIFT_IDS = {"24597"}
 DIAMOND_FAN_EVENT_TYPES = {
     "dfobc": "open",
@@ -502,12 +503,10 @@ class RoomMonitor(threading.Thread):
         self._pending_anchor: dict | None = None
         self._pending_anchor_source = ""
         self._pending_count = 0
+        self._recent_gift_sources: list[
+            tuple[float, tuple[str, str, str], str]
+        ] = []
         self._restore_snapshot()
-        self._gift_event_hashes = {
-            str(item.get("event_hash") or "").strip()
-            for item in self.state.get("gift_events", [])
-            if isinstance(item, dict) and str(item.get("event_hash") or "").strip()
-        }
         self._last_gift_catalog_refresh = time.time()
         self._last_unknown_gift_refresh_request = 0.0
         self._gift_catalog_refresh_requested = False
@@ -591,6 +590,9 @@ class RoomMonitor(threading.Thread):
             "unknown_catalog_refresh_requests": 0,
             "last_catalog_refresh_unix_ts": None,
             "catalog_size": len(self.prices),
+            "spbc_messages": 0,
+            "spbc_other_room_messages": 0,
+            "cross_source_duplicates": 0,
         }.items():
             diagnostics.setdefault(key, value)
         if not isinstance(diagnostics.get("unknown_gift_ids"), dict):
@@ -742,7 +744,30 @@ class RoomMonitor(threading.Thread):
         except Exception as exc:
             diagnostics["last_queue_error"] = str(exc)[:300]
 
-    def handle_dgb(self, message: dict[str, str]) -> None:
+    def _is_cross_source_gift_duplicate(
+        self,
+        message: dict[str, str],
+        source: str,
+    ) -> bool:
+        now = time.monotonic()
+        cutoff = now - CROSS_SOURCE_GIFT_DEDUPE_SECONDS
+        self._recent_gift_sources = [
+            item for item in self._recent_gift_sources if item[0] >= cutoff
+        ]
+        key = (
+            str(message.get("gfid") or "0"),
+            str(message.get("gfcnt") or "1"),
+            str(message.get("nn") or message.get("uid") or ""),
+        )
+        duplicate = any(
+            previous_key == key and previous_source != source
+            for _, previous_key, previous_source in self._recent_gift_sources
+        )
+        if not duplicate:
+            self._recent_gift_sources.append((now, key, source))
+        return duplicate
+
+    def handle_dgb(self, message: dict[str, str], source: str = "dgb") -> None:
         now = time.time()
         diagnostics = self._ensure_gift_diagnostics()
         diagnostics["messages"] = int(diagnostics["messages"] or 0) + 1
@@ -754,10 +779,15 @@ class RoomMonitor(threading.Thread):
                 int(diagnostics["ignored_high_energy_events"] or 0) + 1
             )
             return
-        event_hash = str(message.get("hc") or "").strip()
-        if event_hash and event_hash in self._gift_event_hashes:
-            diagnostics["duplicate_messages"] = int(diagnostics["duplicate_messages"] or 0) + 1
+        if self._is_cross_source_gift_duplicate(message, source):
+            diagnostics["cross_source_duplicates"] = (
+                int(diagnostics["cross_source_duplicates"] or 0) + 1
+            )
             return
+        # `hc` is a presentation/style hash, not a unique gift-event ID.
+        # Douyu reuses it across different users and even different gift IDs,
+        # so using it for deduplication silently drops legitimate paid gifts.
+        event_hash = str(message.get("hc") or "").strip()
         raw_count = message.get("gfcnt", "1")
         try:
             count = max(1, int(raw_count or 1))
@@ -828,11 +858,30 @@ class RoomMonitor(threading.Thread):
                 or ""
             ),
             "price_unknown": info is None,
+            "source": source,
         })
-        if event_hash:
-            self._gift_event_hashes.add(event_hash)
         diagnostics["recorded_events"] = int(diagnostics["recorded_events"] or 0) + 1
         diagnostics["last_seen_unix_ts"] = now
+
+    def handle_spbc(self, message: dict[str, str]) -> None:
+        """Record target-room gift broadcasts as a fallback for large gifts."""
+        diagnostics = self._ensure_gift_diagnostics()
+        diagnostics["spbc_messages"] = int(diagnostics["spbc_messages"] or 0) + 1
+        if str(message.get("drid") or "") != self.room_id:
+            diagnostics["spbc_other_room_messages"] = (
+                int(diagnostics["spbc_other_room_messages"] or 0) + 1
+            )
+            return
+        self.handle_dgb({
+            "gfid": str(message.get("gfid") or "0"),
+            "gfn": str(message.get("gn") or ""),
+            "gfcnt": str(message.get("gc") or "1"),
+            "uid": str(message.get("sid") or ""),
+            "nn": str(message.get("sn") or ""),
+            "gpf": str(message.get("gpf") or "0"),
+            "pid": str(message.get("pid") or "0"),
+            "hc": str(message.get("hc") or ""),
+        }, source="spbc")
 
     def handle_diamond_fan(self, message_type: str, message: dict[str, str]) -> None:
         """Record Diamond Fan membership actions without treating them as gifts."""
@@ -1209,11 +1258,6 @@ class RoomMonitor(threading.Thread):
             item for item in self.state.get("gift_events", [])
             if float(item.get("unix_ts") or 0) >= cutoff
         ]
-        self._gift_event_hashes = {
-            str(item.get("event_hash") or "").strip()
-            for item in self.state.get("gift_events", [])
-            if isinstance(item, dict) and str(item.get("event_hash") or "").strip()
-        }
         high = self.state.get("high_energy", {})
         if isinstance(high, dict):
             high["details"] = [
@@ -1278,6 +1322,8 @@ class RoomMonitor(threading.Thread):
                     for message_type, message, _raw in messages:
                         if message_type == "dgb":
                             self.handle_dgb(message)
+                        elif message_type == "spbc":
+                            self.handle_spbc(message)
                         elif message_type in DIAMOND_FAN_EVENT_TYPES:
                             self.handle_diamond_fan(message_type, message)
                         elif message_type == "voice_trlt":
