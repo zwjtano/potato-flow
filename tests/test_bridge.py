@@ -372,11 +372,12 @@ class BridgeTests(unittest.TestCase):
                 }],
             },
             {
+                "description": "重生成的完整正文",
                 "timeline": [{
                     "event": f"事件{index}",
                     "evidence_texts": [f"事件证据{index}"],
                     "evidence_keywords": [f"证据{index}"],
-                } for index in range(2, 9)],
+                } for index in range(1, 9)],
             },
         ])
         enhancer._request_json_object = lambda **_kwargs: next(responses)
@@ -402,6 +403,8 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(len(bridge.timeline_lines(description)), 8)
         self.assertTrue(diagnostics["timeline_retry_attempted"])
+        self.assertTrue(diagnostics["description_regeneration_attempted"])
+        self.assertTrue(diagnostics["description_regeneration_used"])
         self.assertTrue(diagnostics["timeline_target_met"])
         self.assertEqual(diagnostics["timeline_verified_count"], 8)
         self.assertEqual(diagnostics["timeline_shortfall"], 0)
@@ -449,6 +452,76 @@ class BridgeTests(unittest.TestCase):
             "same_time_screen_spam_or_exact_xml",
         )
         self.assertEqual(diagnostics["timeline_cluster_window_seconds"], 60)
+
+    def test_description_is_regenerated_before_title_uses_final_description(self):
+        package = types.ModuleType("modules")
+        package.__path__ = []
+        enhancer = types.ModuleType("modules.ai_enhancer")
+        config_manager = types.ModuleType("modules.config_manager")
+        enhancer.get_openai_client = lambda _cfg: object()
+        comments = [
+            types.SimpleNamespace(time=float(index * 300), text=f"证据{index}")
+            for index in range(1, 9)
+        ]
+        calls = []
+        title_payloads = []
+
+        def request(**kwargs):
+            calls.append(kwargs)
+            scene = kwargs["scene_name"]
+            if scene == "biliup_danmaku_summary":
+                return {
+                    "description": "时间点不完整的首稿",
+                    "timeline": [{
+                        "event": "首稿事件",
+                        "evidence_texts": ["证据1"],
+                        "evidence_keywords": ["证据1"],
+                    }],
+                }
+            if scene == "biliup_danmaku_description_regenerate":
+                return {
+                    "description": "重生成的完整简介",
+                    "timeline": [{
+                        "event": f"完整事件{index}",
+                        "evidence_texts": [f"证据{index}"],
+                        "evidence_keywords": [f"证据{index}"],
+                    } for index in range(1, 9)],
+                }
+            self.assertEqual(scene, "biliup_danmaku_title_from_description")
+            title_payloads.append(kwargs["payload"])
+            return {"title_topic": "最终简介提炼标题"}
+
+        enhancer._request_json_object = request
+        config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
+
+        with patch.dict(sys.modules, {
+            "modules": package,
+            "modules.ai_enhancer": enhancer,
+            "modules.config_manager": config_manager,
+        }):
+            description, topic = bridge.generate_danmaku_metadata_with_ai(
+                comments,
+                "",
+                {
+                    "_config_dir": str(Path(bridge.__file__).resolve().parent),
+                    "ai_danmaku_summary_enabled": True,
+                    "ai_danmaku_reaction_delay_seconds": 8,
+                },
+                timeline_duration_seconds=3600,
+            )
+
+        self.assertEqual(topic, "最终简介提炼标题")
+        self.assertEqual(len(bridge.timeline_lines(description)), 8)
+        self.assertEqual(title_payloads[0]["final_description"], description)
+        self.assertEqual(title_payloads[0]["verified_timeline"], bridge.timeline_lines(description))
+        self.assertEqual(
+            [call["scene_name"] for call in calls],
+            [
+                "biliup_danmaku_summary",
+                "biliup_danmaku_description_regenerate",
+                "biliup_danmaku_title_from_description",
+            ],
+        )
 
     def test_generic_recording_intro_is_removed_from_final_body(self):
         stats = "——— 直播数据 ———\n👥 在线 8257~10000"
@@ -765,7 +838,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("按弹幕内容随直播时间的变化向前推进", prompt)
         self.assertIn("不要为了突出标题而打乱实际顺序", prompt)
         self.assertIn("赛后复盘", prompt)
-        self.assertIn("重要时间点必须覆盖标题的核心事件", prompt)
+        self.assertIn("重要时间点必须覆盖简介中的关键事件", prompt)
         self.assertIn("事件文案只做证据的最小忠实改写", prompt)
 
     def test_timeline_prompt_is_generic_and_only_adds_game_events_conditionally(self):
@@ -778,9 +851,10 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("其他主播、选手或嘉宾", source)
         self.assertIn("谁做了什么", source)
         self.assertIn("同一 60 秒窗口内至少 3 条弹幕", source)
-        self.assertIn("必须先从有精确证据的 timeline 事件中选择 title_topic", source)
-        self.assertIn("两个先后发生的独立转折", source)
-        self.assertIn("不得只收录铺垫或次要事件而遗漏标题落点", source)
+        self.assertIn("现在只能根据 final_description", source)
+        self.assertIn("重新生成完整 description 和完整 timeline", source)
+        self.assertIn("简介包含两个先后发生的独立转折", source)
+        self.assertIn("标题必须选择简介中最有看点的一个具体事件", source)
         self.assertIn("每条 event 必须是 evidence_texts 的最小忠实改写", source)
         self.assertIn("一条像总结稿的超长弹幕不能独自支撑", source)
         self.assertIn("开场承接", source)

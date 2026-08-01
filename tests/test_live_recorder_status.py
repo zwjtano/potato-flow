@@ -419,6 +419,81 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(result["ai_cover_details"]["4x3"]["target_size"], (1600, 1200))
         store.assert_called_once_with("a" * 64, result)
 
+    def test_cover_regeneration_after_title_update_never_reuses_original_title(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            video.write_bytes(b"video")
+            original_title = "陪伴每一天｜08-01 23:07"
+            regenerated_title = "YYF虚空出装遭弹幕质疑｜08-01 23:07"
+            regenerated_description = "YYF使用虚空假面时的出装选择引发弹幕讨论。"
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                # Simulate a stale top-level upload record after the title and
+                # description preview have already been regenerated.
+                "title": original_title,
+                "description": "原始简介",
+                "tags": ["YYF"],
+                "partition_id": "171",
+                "room_name": "yyfyyf",
+                "review_override": {
+                    "title": regenerated_title,
+                    "description": regenerated_description,
+                    "ai_title_topic": "虚空出装遭弹幕质疑",
+                },
+                "stages": [
+                    {"key": "ai", "details": {"title_topic": "陪伴每一天"}},
+                ],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock()
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock()
+
+            def generate_cover(**kwargs):
+                kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
+                kwargs["output_path"].write_bytes(b"cover")
+                return kwargs["output_path"], {"ai_cover_generated": True}
+
+            with mock.patch.dict(
+                sys.modules,
+                {"modules.ai_enhancer": ai_enhancer},
+            ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+            ) as store, mock.patch.object(
+                manager,
+                "_recording_file_roots",
+                return_value={"artifacts": root / "artifacts"},
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_IMAGE_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={},
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "yyfyyf", "date": "08-01", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.generate_recording_cover_with_ai",
+                side_effect=generate_cover,
+            ) as generate:
+                result = manager.regenerate_published_metadata("a" * 64, {"cover"})
+
+        self.assertEqual(generate.call_count, 2)
+        for call in generate.call_args_list:
+            self.assertEqual(call.kwargs["title"], regenerated_title)
+            self.assertIn("虚空出装遭弹幕质疑", call.kwargs["ai_topic"])
+            self.assertNotIn("陪伴每一天", call.kwargs["ai_topic"])
+            self.assertEqual(call.kwargs["description"], regenerated_description)
+        self.assertEqual(result["title"], regenerated_title)
+        self.assertEqual(result["description"], regenerated_description)
+        self.assertEqual(result["ai_title_topic"], "虚空出装遭弹幕质疑")
+        store.assert_called_once_with("a" * 64, result)
+
     def test_cover_regeneration_failure_keeps_both_previous_covers(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:

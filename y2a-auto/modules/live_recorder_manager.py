@@ -3537,8 +3537,18 @@ class LiveRecorderManager:
             video_path = Path(str(job.get("video_path") or "recording.flv"))
             bridge_config = bridge.effective_config(bridge_config, video_path)
             values = bridge.recording_metadata_values(video_path, bridge_config)
-            current_title = str(job.get("title") or "").strip()
-            current_description = str(job.get("description") or "").strip()
+            review_preview = job.get("review_override")
+            review_preview = review_preview if isinstance(review_preview, dict) else {}
+            # The review override is the source of truth after either a manual
+            # edit or an AI regeneration. Some callers may still carry the
+            # originally uploaded title on the top-level job, so never let a
+            # later cover-only regeneration fall back to that stale value.
+            current_title = str(
+                review_preview.get("title") or job.get("title") or ""
+            ).strip()
+            current_description = str(
+                review_preview.get("description") or job.get("description") or ""
+            ).strip()
             ai_stage = next(
                 (stage for stage in job.get("stages", []) if stage.get("key") == "ai"),
                 {},
@@ -3560,8 +3570,6 @@ class LiveRecorderManager:
             persisted_live_stats = str(
                 live_stats_details.get("stats_summary") or ""
             ).strip()
-            review_preview = job.get("review_override")
-            review_preview = review_preview if isinstance(review_preview, dict) else {}
             context = {
                 "streamer": job.get("room_name") or values.get("streamer") or "主播",
                 "recorded_at": values.get("date") or "",
@@ -3759,6 +3767,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 " ",
                 str(
                     generated.get("title_topic")
+                    or review_preview.get("ai_title_topic")
                     or ai_details.get("title_topic")
                     or ""
                 ).strip(),

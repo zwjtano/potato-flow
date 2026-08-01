@@ -69,7 +69,7 @@ DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "不要在简介正文中手写时间点；程序会回到完整 XML 定位最早证据、补偿反应延迟并统一格式化。"
     "重要事件必须有可在完整 XML 定位的弹幕原文，或同一时间围绕事件关键词的集中刷屏；"
     "不要求多条引用全部逐字一致，但不得编造时间或事件。"
-    "重要时间点必须覆盖标题的核心事件；若标题包含两个先后发生的独立转折，应分别收录。"
+    "重要时间点必须覆盖简介中的关键事件；若简介包含两个先后发生的独立转折，应分别收录。"
     "事件文案只做证据的最小忠实改写，不得增加原文没有的人物、动作、数字、原因或结果；"
     "开场如果承接上一段残局，必须如实说明是“开场承接”，不得写成本段新发生的事件。"
     "只使用输入能够支持的事实，不虚构主播"
@@ -3281,7 +3281,7 @@ def generate_danmaku_metadata_with_ai(
             else ""
         )
         system_prompt = f"""
-你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和内容充实的中文简介。
+你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成内容充实的中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；英雄、装备和 KDA
 只能使用其中已经确认的数据，禁止从弹幕、标题或常识猜测，且不得把其他对局的数据混入本段。
@@ -3302,9 +3302,6 @@ description 中写到的每个关键事件、争议点和阶段性转折，都�
 timeline 只选择 sampled_comment_evidence 有直接证据或同一时间出现集中刷屏的事件。每项返回 event、evidence_texts
 和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
 evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
-必须先从有精确证据的 timeline 事件中选择 title_topic，并保证 timeline 至少有一条直接对应、
-完整支持标题核心事件。如果 title_topic 由两个先后发生的独立转折组成，timeline 必须分别收录，
-不得只收录铺垫或次要事件而遗漏标题落点。
 如果证据充足，timeline 应覆盖录播开头、中段和结尾，并返回 {timeline_minimum} 至
 {timeline_maximum} 个彼此不同的关键看点。适用于所有直播类型：优先选择内容推进、关键决定、
 意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
@@ -3326,15 +3323,10 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
 如果最早证据本身位于录制开头的反应延迟窗口内，event 必须写成“开场已处于……”或“开场承接……”，
 不得将上一段已发生的动作伪装成本段 00:00 新发生的事件。
-title_topic 是适合放进标题的自然短语，必须来自上述已收录的 timeline 核心事件；
-当前主播有可靠名称时，必须从 streamer_identity.editorial_names 中选择一个符合本段弹幕用法的名称，
-将其自然融入事件短语，位置不限；禁止输出“主播名｜事件”或“主播名：事件”这种标签式结构。
-不加书名号、不含日期和时间，最多 24 个中文字符。
 {DOTA2_METADATA_DISAMBIGUATION}
-本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
 {legacy_instruction}
-返回 JSON 对象：{{"title_topic":"...","description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
+返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
 """.strip()
         ai_client = get_openai_client(ai_cfg)
         model_name = str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini"))
@@ -3384,13 +3376,15 @@ title_topic 是适合放进标题的自然短语，必须来自上述已收录�
                 "verified_timeline": timeline_lines(timeline_text),
                 "timeline_shortfall": timeline_minimum - verified_count,
             })
+            diagnostics["description_regeneration_attempted"] = True
             retry_prompt = f"""
-你正在补充一份已经由程序逐条核验的直播录播时间点。当前目标至少 {timeline_minimum} 条，
-已核验 {verified_count} 条。只返回尚未覆盖的不同事件，不得复述 verified_timeline。
-每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，并提供能支持
-event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也可以作为证据。证据不足就少返回，
-绝不能编造。不要返回时间戳或正文。
-返回 JSON 对象：{{"timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
+你正在重新生成一份时间点不完整的直播录播简介。首稿目标至少 {timeline_minimum} 条重要时间点，
+程序只核验通过 {verified_count} 条。必须重新生成完整 description 和完整 timeline，不是只补几条时间点；
+description 中的每个关键事件都要在 timeline 中有对应证据，timeline 尽量覆盖开头、中段和结尾，
+不得复述同一事件凑数。每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，
+并提供足以支持 event 的 evidence_keywords；同一 60 秒内至少 3 条相关刷屏也可以作为证据。
+证据不足就删掉正文中的对应事件，绝不能编造。不要返回时间戳。
+返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
 """.strip()
             try:
                 retry_result = _request_json_object(
@@ -3402,16 +3396,31 @@ event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也�
                     temperature=0.1,
                     thinking_enabled=thinking_enabled,
                     logger_obj=None,
-                    scene_name="biliup_danmaku_timeline_supplement",
+                    scene_name="biliup_danmaku_description_regenerate",
                 )
-                supplemental = (
+                regenerated_description = str(
+                    (retry_result or {}).get("description", "")
+                ).strip()
+                regenerated_description = strip_live_stats_from_description(
+                    regenerated_description,
+                    str((grounding_context or {}).get("live_stats") or ""),
+                )
+                regenerated_description = re.sub(
+                    r"^直播录播[：:].*?[。.!！]\s*",
+                    "",
+                    regenerated_description,
+                    count=1,
+                ).strip()
+                regenerated_description = strip_ai_timeline_lines(
+                    regenerated_description
+                )
+                regenerated_timeline = (
                     list((retry_result or {}).get("timeline") or [])
                     if isinstance((retry_result or {}).get("timeline"), list)
                     else []
                 )
-                raw_timeline.extend(supplemental)
-                timeline_text = render_grounded_danmaku_timeline(
-                    raw_timeline,
+                regenerated_timeline_text = render_grounded_danmaku_timeline(
+                    regenerated_timeline,
                     selected,
                     comments,
                     delay_seconds=reaction_delay,
@@ -3419,10 +3428,18 @@ event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也�
                     maximum_points=timeline_maximum,
                     anchor_diagnostics=diagnostics,
                 )
-                verified_count = len(timeline_lines(timeline_text))
+                regenerated_count = len(timeline_lines(regenerated_timeline_text))
+                if regenerated_count >= verified_count:
+                    generated_description = regenerated_description
+                    raw_timeline = regenerated_timeline
+                    timeline_text = regenerated_timeline_text
+                    verified_count = regenerated_count
+                    diagnostics["description_regeneration_used"] = True
+                else:
+                    diagnostics["description_regeneration_used"] = False
             except Exception as exc:
                 diagnostics["timeline_retry_error"] = str(exc)[:240]
-                print(f"WARN 弹幕时间点补充生成失败，保留首轮结果: {exc}", file=sys.stderr)
+                print(f"WARN 弹幕简介重新生成失败，保留首轮结果: {exc}", file=sys.stderr)
         diagnostics.update({
             "timeline_candidate_count": len(raw_timeline),
             "timeline_verified_count": verified_count,
@@ -3444,11 +3461,45 @@ event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也�
                 if generated_description
                 else base_description
             )
-        title_topic = re.sub(
-            r"[\r\n｜|]+",
-            " ",
-            str((result or {}).get("title_topic", "")).strip(),
-        )[:28].strip()
+        final_description = (
+            fit_description_preserving_timeline(description, 1800)
+            if description else base_description
+        )
+        title_payload = {
+            "streamer_identity": payload["streamer_identity"],
+            "final_description": final_description,
+            "verified_timeline": timeline_lines(final_description),
+        }
+        title_system_prompt = f"""
+你是哔哩哔哩直播录播标题编辑。简介已经生成并通过时间点校验，现在只能根据 final_description
+和 verified_timeline 拟定标题，不得使用首稿、直播间默认标题或输入外的信息。
+标题必须选择简介中最有看点的一个具体事件；核心动作、人物和结果必须能在简介或已核验时间点中找到。
+当前主播有可靠名称时，从 streamer_identity.editorial_names 中选择符合简介用法的名称并自然融入句子，
+位置不限；禁止“主播名｜事件”“主播名：事件”等标签格式，不含日期、时间和“直播回放”。
+{title_prompt}
+返回 JSON 对象：{{"title_topic":"..."}}。
+""".strip()
+        try:
+            title_result = _request_json_object(
+                client=ai_client,
+                model_name=model_name,
+                system_prompt=title_system_prompt,
+                payload=title_payload,
+                max_tokens=300,
+                temperature=0.25,
+                thinking_enabled=thinking_enabled,
+                logger_obj=None,
+                scene_name="biliup_danmaku_title_from_description",
+            )
+            title_topic = re.sub(
+                r"[\r\n｜|]+",
+                " ",
+                str((title_result or {}).get("title_topic", "")).strip(),
+            )[:28].strip()
+            diagnostics["title_topic_source"] = "final_description"
+        except Exception as exc:
+            diagnostics["title_generation_error"] = str(exc)[:240]
+            title_topic = ""
         original_title_topic = title_topic
         if recording_title_topic_is_vague(original_title_topic):
             diagnostics.update({
@@ -3456,17 +3507,13 @@ event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也�
                 "title_topic_original": original_title_topic,
                 "title_topic_review_reason": "AI 返回空泛或默认标题",
             })
-        title_topic = recording_title_topic_from_timeline(title_topic, timeline_text)
+        title_topic = recording_title_topic_from_timeline(title_topic, final_description)
         if title_topic != original_title_topic:
             diagnostics.update({
                 "title_topic_vague_replaced": True,
                 "title_topic_original": original_title_topic,
                 "title_topic_replacement_source": "verified_timeline",
             })
-        final_description = (
-            fit_description_preserving_timeline(description, 1800)
-            if description else base_description
-        )
         final_verified_count = len(timeline_lines(final_description))
         diagnostics.update({
             "timeline_verified_count": final_verified_count,
