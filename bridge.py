@@ -53,7 +53,8 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "有信息量的完整核心主题标题。将当前主播或本段主角的可靠名称自然融入句子，主语不必放在最前；"
     "不得使用“主播名｜事件”这种姓名标签加竖线的机械格式。突出关键对局、英雄、事件或节目效果，"
     "不使用夸张的虚假结论；标题中的核心事件必须同时进入重要时间点。"
-    "禁止用“引发热议”“引起争议”“出装引争议”“争议话题”“直播精彩内容”等空泛、营销式短语代替具体事件；"
+    "禁止用“引发热议”“引起争议”“出装引争议”“被吐槽”“被喷”“被赞完美适配”"
+    "“争议话题”“直播精彩内容”等空泛、营销式评价代替具体事件；"
     "必须直接写清具体动作、选择、结果或节目效果。不要包含日期、时间和“直播回放”，"
     "最多24个中文字符。"
 )
@@ -68,7 +69,7 @@ DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "不要在简介正文中手写时间点；程序会回到完整 XML 定位最早证据、补偿反应延迟并统一格式化。"
     "重要事件必须有可在完整 XML 定位的弹幕原文，或同一时间围绕事件关键词的集中刷屏；"
     "不要求多条引用全部逐字一致，但不得编造时间或事件。"
-    "重要时间点必须覆盖标题的核心事件；若标题包含两个先后发生的独立转折，应分别收录。"
+    "重要时间点必须覆盖简介中的关键事件；若简介包含两个先后发生的独立转折，应分别收录。"
     "事件文案只做证据的最小忠实改写，不得增加原文没有的人物、动作、数字、原因或结果；"
     "开场如果承接上一段残局，必须如实说明是“开场承接”，不得写成本段新发生的事件。"
     "只使用输入能够支持的事实，不虚构主播"
@@ -630,6 +631,8 @@ _TIMELINE_HEADING = "重要时间点"
 _TIMELINE_LINE_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+\S.*$")
 _VAGUE_RECORDING_TITLE_RE = re.compile(
     r"(?:引发|引起|掀起|造成|导致|备受|引)(?:热议|争议)(?:不断)?$"
+    r"|(?:被|遭)(?:弹幕)?(?:狂)?(?:吐槽|质疑|批评|喷|怒喷)$"
+    r"|(?:被赞|获赞)(?:完美)?(?:适配|契合)$"
     r"|(?:争议|热门)话题$"
     r"|^(?:直播精彩内容|精彩内容|精彩直播|直播录像)$"
 )
@@ -1979,9 +1982,10 @@ def dedupe_recording_tags(tags: Iterable[object], limit: int | None = None) -> l
     return result
 
 
-def _contains_unverified_dota2_hero(value: object) -> bool:
+def _dota2_hero_identity_keys(value: object) -> set[str]:
     folded = str(value or "").casefold()
-    for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
+    matched: set[str] = set()
+    for hero_index, (canonical_name, aliases) in enumerate(_DOTA2_HERO_ALIAS_GROUPS):
         terms = (canonical_name.split("（", 1)[0], *aliases)
         for term in terms:
             candidate = str(term or "").strip().casefold()
@@ -1992,8 +1996,40 @@ def _contains_unverified_dota2_hero(value: object) -> bool:
                     rf"(?<![a-z0-9]){re.escape(candidate)}(?![a-z0-9])",
                     folded,
                 ):
-                    return True
+                    matched.add(str(hero_index))
+                    break
             elif candidate in folded:
+                matched.add(str(hero_index))
+                break
+    return matched
+
+
+def _contains_unverified_dota2_hero(value: object) -> bool:
+    return bool(_dota2_hero_identity_keys(value))
+
+
+def _timeline_claims_streamer_hero(line: str, streamer: str, hero_key: str) -> bool:
+    """Require the room owner to be the nearby subject before a hero mention."""
+    line_key = _compact_alias(line)
+    normalized_streamer = normalize_dota2_streamer_name(streamer)
+    owner_aliases = {str(streamer or ""), normalized_streamer}
+    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+        if canonical_name == normalized_streamer:
+            owner_aliases.update(aliases)
+            break
+    hero_name, hero_aliases = _DOTA2_HERO_ALIAS_GROUPS[int(hero_key)]
+    hero_terms = {hero_name.split("（", 1)[0], *hero_aliases}
+    for owner_alias in owner_aliases:
+        owner_key = _compact_alias(owner_alias)
+        if not owner_key:
+            continue
+        owner_end = line_key.find(owner_key)
+        if owner_end < 0:
+            continue
+        owner_end += len(owner_key)
+        for hero_term in hero_terms:
+            hero_position = line_key.find(_compact_alias(hero_term), owner_end)
+            if 0 <= hero_position - owner_end <= 16:
                 return True
     return False
 
@@ -2002,24 +2038,55 @@ def filter_unverified_dota2_metadata(
     title_topic: str,
     description: str,
     tags: Iterable[object],
+    *,
+    streamer: str = "",
+    verified_timeline: str = "",
 ) -> tuple[str, str, list[str], dict[str, Any]]:
-    """Remove hero claims when XML/GSI did not identify the streamer uniquely."""
-    filtered_topic = "" if _contains_unverified_dota2_hero(title_topic) else title_topic
+    """Remove hero claims unsupported by GSI or verified owner timeline evidence."""
+    title_hero_keys = _dota2_hero_identity_keys(title_topic)
+    supported_hero_keys: set[str] = set()
+    if title_hero_keys and streamer and verified_timeline:
+        for line in timeline_lines(verified_timeline):
+            line_hero_keys = title_hero_keys & _dota2_hero_identity_keys(line)
+            supported_hero_keys.update(
+                hero_key for hero_key in line_hero_keys
+                if _timeline_claims_streamer_hero(line, streamer, hero_key)
+            )
+
+    filtered_topic = (
+        title_topic
+        if not title_hero_keys or title_hero_keys <= supported_hero_keys
+        else ""
+    )
     filtered_lines: list[str] = []
     for line in str(description or "").splitlines():
         sentences = re.split(r"(?<=[。！？!?])", line)
         filtered_lines.append("".join(
             sentence for sentence in sentences
-            if not _contains_unverified_dota2_hero(sentence)
+            if (
+                not (sentence_hero_keys := _dota2_hero_identity_keys(sentence))
+                or sentence_hero_keys <= supported_hero_keys
+            )
         ))
     filtered_description = "\n".join(filtered_lines).strip()
     original_tags = [str(tag or "").strip() for tag in tags if str(tag or "").strip()]
-    hero_tags = [tag for tag in original_tags if _contains_unverified_dota2_hero(tag)]
+    hero_tags = [
+        tag for tag in original_tags
+        if (
+            (tag_hero_keys := _dota2_hero_identity_keys(tag))
+            and not tag_hero_keys <= supported_hero_keys
+        )
+    ]
     filtered_tags = dedupe_recording_tags(tag for tag in original_tags if tag not in hero_tags)
     details = {
         "unverified_hero_topic_removed": filtered_topic != title_topic,
         "unverified_hero_description_removed": filtered_description != str(description or "").strip(),
         "unverified_hero_tags_removed": hero_tags,
+        "verified_timeline_hero_evidence": [
+            _DOTA2_HERO_ALIAS_GROUPS[int(key)][0]
+            for key in sorted(supported_hero_keys, key=int)
+        ],
+        "hero_evidence_source": "verified_timeline" if supported_hero_keys else "none",
     }
     return filtered_topic, filtered_description, filtered_tags, details
 
@@ -2494,21 +2561,38 @@ def generate_recording_cover_with_ai(
             dota2_item_instruction = ""
         if tooltip_hero:
             identity_source = str(details.get("ai_cover_identity_source") or "")
-            if identity_source == "xml_repeated_hero_only":
+            hero_only_from_danmaku = identity_source in {
+                "xml_repeated_hero_only",
+                "xml_dominant_hero_only",
+            }
+            if hero_only_from_danmaku:
                 hero_source_instruction = (
-                    "（由完整 XML 中跨时段反复且唯一占优的英雄讨论确认；"
+                    "（由本段完整 XML 弹幕中独立重复或同一时段集中刷屏、且唯一占优的英雄讨论确认；"
                     "本证据只确认英雄，不确认任何装备）"
                 )
             else:
                 hero_source_instruction = "（来自斗鱼主播视角数据）"
             dota2_instruction = (
                 f"主播本局使用的英雄为 {tooltip_hero}{hero_source_instruction}。"
+                + (
+                    f"画面中的主播游戏角色只能是 {tooltip_hero}；"
+                    "不得根据标题、简介或常识补画其他具体英雄、装备、物品栏或游戏 UI。"
+                    if hero_only_from_danmaku
+                    else ""
+                )
                 + tooltip_kda_instruction
                 + dota2_instruction
             )
         details["ai_cover_tooltip_hero"] = tooltip_hero
         details["ai_cover_tooltip_items"] = tooltip_items
-        details["ai_cover_dota2_source"] = "tooltip"
+        details["ai_cover_dota2_source"] = (
+            "danmaku_hero"
+            if str(details.get("ai_cover_identity_source") or "") in {
+                "xml_repeated_hero_only",
+                "xml_dominant_hero_only",
+            }
+            else "tooltip"
+        )
         dota2_item_matches = match_dota2_items(*tooltip_items)
         dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
     elif game_context_locked:
@@ -3197,7 +3281,7 @@ def generate_danmaku_metadata_with_ai(
             else ""
         )
         system_prompt = f"""
-你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成核心主题和内容充实的中文简介。
+你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成内容充实的中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；英雄、装备和 KDA
 只能使用其中已经确认的数据，禁止从弹幕、标题或常识猜测，且不得把其他对局的数据混入本段。
@@ -3218,9 +3302,6 @@ description 中写到的每个关键事件、争议点和阶段性转折，都�
 timeline 只选择 sampled_comment_evidence 有直接证据或同一时间出现集中刷屏的事件。每项返回 event、evidence_texts
 和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
 evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
-必须先从有精确证据的 timeline 事件中选择 title_topic，并保证 timeline 至少有一条直接对应、
-完整支持标题核心事件。如果 title_topic 由两个先后发生的独立转折组成，timeline 必须分别收录，
-不得只收录铺垫或次要事件而遗漏标题落点。
 如果证据充足，timeline 应覆盖录播开头、中段和结尾，并返回 {timeline_minimum} 至
 {timeline_maximum} 个彼此不同的关键看点。适用于所有直播类型：优先选择内容推进、关键决定、
 意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
@@ -3242,15 +3323,10 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
 如果最早证据本身位于录制开头的反应延迟窗口内，event 必须写成“开场已处于……”或“开场承接……”，
 不得将上一段已发生的动作伪装成本段 00:00 新发生的事件。
-title_topic 是适合放进标题的自然短语，必须来自上述已收录的 timeline 核心事件；
-当前主播有可靠名称时，必须从 streamer_identity.editorial_names 中选择一个符合本段弹幕用法的名称，
-将其自然融入事件短语，位置不限；禁止输出“主播名｜事件”或“主播名：事件”这种标签式结构。
-不加书名号、不含日期和时间，最多 24 个中文字符。
 {DOTA2_METADATA_DISAMBIGUATION}
-本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
 {legacy_instruction}
-返回 JSON 对象：{{"title_topic":"...","description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
+返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
 """.strip()
         ai_client = get_openai_client(ai_cfg)
         model_name = str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini"))
@@ -3300,13 +3376,15 @@ title_topic 是适合放进标题的自然短语，必须来自上述已收录�
                 "verified_timeline": timeline_lines(timeline_text),
                 "timeline_shortfall": timeline_minimum - verified_count,
             })
+            diagnostics["description_regeneration_attempted"] = True
             retry_prompt = f"""
-你正在补充一份已经由程序逐条核验的直播录播时间点。当前目标至少 {timeline_minimum} 条，
-已核验 {verified_count} 条。只返回尚未覆盖的不同事件，不得复述 verified_timeline。
-每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，并提供能支持
-event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也可以作为证据。证据不足就少返回，
-绝不能编造。不要返回时间戳或正文。
-返回 JSON 对象：{{"timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
+你正在重新生成一份时间点不完整的直播录播简介。首稿目标至少 {timeline_minimum} 条重要时间点，
+程序只核验通过 {verified_count} 条。必须重新生成完整 description 和完整 timeline，不是只补几条时间点；
+description 中的每个关键事件都要在 timeline 中有对应证据，timeline 尽量覆盖开头、中段和结尾，
+不得复述同一事件凑数。每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，
+并提供足以支持 event 的 evidence_keywords；同一 60 秒内至少 3 条相关刷屏也可以作为证据。
+证据不足就删掉正文中的对应事件，绝不能编造。不要返回时间戳。
+返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
 """.strip()
             try:
                 retry_result = _request_json_object(
@@ -3318,16 +3396,31 @@ event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也�
                     temperature=0.1,
                     thinking_enabled=thinking_enabled,
                     logger_obj=None,
-                    scene_name="biliup_danmaku_timeline_supplement",
+                    scene_name="biliup_danmaku_description_regenerate",
                 )
-                supplemental = (
+                regenerated_description = str(
+                    (retry_result or {}).get("description", "")
+                ).strip()
+                regenerated_description = strip_live_stats_from_description(
+                    regenerated_description,
+                    str((grounding_context or {}).get("live_stats") or ""),
+                )
+                regenerated_description = re.sub(
+                    r"^直播录播[：:].*?[。.!！]\s*",
+                    "",
+                    regenerated_description,
+                    count=1,
+                ).strip()
+                regenerated_description = strip_ai_timeline_lines(
+                    regenerated_description
+                )
+                regenerated_timeline = (
                     list((retry_result or {}).get("timeline") or [])
                     if isinstance((retry_result or {}).get("timeline"), list)
                     else []
                 )
-                raw_timeline.extend(supplemental)
-                timeline_text = render_grounded_danmaku_timeline(
-                    raw_timeline,
+                regenerated_timeline_text = render_grounded_danmaku_timeline(
+                    regenerated_timeline,
                     selected,
                     comments,
                     delay_seconds=reaction_delay,
@@ -3335,10 +3428,18 @@ event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也�
                     maximum_points=timeline_maximum,
                     anchor_diagnostics=diagnostics,
                 )
-                verified_count = len(timeline_lines(timeline_text))
+                regenerated_count = len(timeline_lines(regenerated_timeline_text))
+                if regenerated_count >= verified_count:
+                    generated_description = regenerated_description
+                    raw_timeline = regenerated_timeline
+                    timeline_text = regenerated_timeline_text
+                    verified_count = regenerated_count
+                    diagnostics["description_regeneration_used"] = True
+                else:
+                    diagnostics["description_regeneration_used"] = False
             except Exception as exc:
                 diagnostics["timeline_retry_error"] = str(exc)[:240]
-                print(f"WARN 弹幕时间点补充生成失败，保留首轮结果: {exc}", file=sys.stderr)
+                print(f"WARN 弹幕简介重新生成失败，保留首轮结果: {exc}", file=sys.stderr)
         diagnostics.update({
             "timeline_candidate_count": len(raw_timeline),
             "timeline_verified_count": verified_count,
@@ -3360,23 +3461,59 @@ event 的 evidence_keywords；同一 60 秒内存在至少 3 条相关刷屏也�
                 if generated_description
                 else base_description
             )
-        title_topic = re.sub(
-            r"[\r\n｜|]+",
-            " ",
-            str((result or {}).get("title_topic", "")).strip(),
-        )[:28].strip()
+        final_description = (
+            fit_description_preserving_timeline(description, 1800)
+            if description else base_description
+        )
+        title_payload = {
+            "streamer_identity": payload["streamer_identity"],
+            "final_description": final_description,
+            "verified_timeline": timeline_lines(final_description),
+        }
+        title_system_prompt = f"""
+你是哔哩哔哩直播录播标题编辑。简介已经生成并通过时间点校验，现在只能根据 final_description
+和 verified_timeline 拟定标题，不得使用首稿、直播间默认标题或输入外的信息。
+标题必须选择简介中最有看点的一个具体事件；核心动作、人物和结果必须能在简介或已核验时间点中找到。
+当前主播有可靠名称时，从 streamer_identity.editorial_names 中选择符合简介用法的名称并自然融入句子，
+位置不限；禁止“主播名｜事件”“主播名：事件”等标签格式，不含日期、时间和“直播回放”。
+{title_prompt}
+返回 JSON 对象：{{"title_topic":"..."}}。
+""".strip()
+        try:
+            title_result = _request_json_object(
+                client=ai_client,
+                model_name=model_name,
+                system_prompt=title_system_prompt,
+                payload=title_payload,
+                max_tokens=300,
+                temperature=0.25,
+                thinking_enabled=thinking_enabled,
+                logger_obj=None,
+                scene_name="biliup_danmaku_title_from_description",
+            )
+            title_topic = re.sub(
+                r"[\r\n｜|]+",
+                " ",
+                str((title_result or {}).get("title_topic", "")).strip(),
+            )[:28].strip()
+            diagnostics["title_topic_source"] = "final_description"
+        except Exception as exc:
+            diagnostics["title_generation_error"] = str(exc)[:240]
+            title_topic = ""
         original_title_topic = title_topic
-        title_topic = recording_title_topic_from_timeline(title_topic, timeline_text)
+        if recording_title_topic_is_vague(original_title_topic):
+            diagnostics.update({
+                "title_topic_manual_review_required": True,
+                "title_topic_original": original_title_topic,
+                "title_topic_review_reason": "AI 返回空泛或默认标题",
+            })
+        title_topic = recording_title_topic_from_timeline(title_topic, final_description)
         if title_topic != original_title_topic:
             diagnostics.update({
                 "title_topic_vague_replaced": True,
                 "title_topic_original": original_title_topic,
                 "title_topic_replacement_source": "verified_timeline",
             })
-        final_description = (
-            fit_description_preserving_timeline(description, 1800)
-            if description else base_description
-        )
         final_verified_count = len(timeline_lines(final_description))
         diagnostics.update({
             "timeline_verified_count": final_verified_count,
@@ -3664,6 +3801,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         "equipment_snapshot_unix_ts": float(anchor.get("equipment_snapshot_unix_ts") or 0),
                         "gsi_observed_seconds": float(anchor.get("gsi_observed_seconds") or 0),
                         "xml_mention_score": int(anchor.get("xml_mention_score") or 0),
+                        "xml_mention_burst_score": int(anchor.get("xml_mention_burst_score") or 0),
                         "xml_runner_up_score": int(anchor.get("xml_runner_up_score") or 0),
                         "xml_mention_share": float(anchor.get("xml_mention_share") or 0),
                         "identity_source": str(anchor.get("identity_source") or ""),
@@ -3742,9 +3880,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 ai_details,
             )
         else:
+            timeline_details: dict[str, Any] = {}
             if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
                 store.stage(key, "ai", "running", {"comment_count": len(comments)})
-                timeline_details: dict[str, Any] = {}
                 description, ai_topic = generate_danmaku_metadata_with_ai(
                     comments,
                     description,
@@ -3770,6 +3908,37 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     "description": description,
                     "description_body": description,
                 })
+
+            fallback_title_topic = str(
+                recording_metadata_values(video, cfg)["ai_topic"] or ""
+            ).strip()
+            title_topic_is_fallback = bool(
+                not str(ai_topic or "").strip()
+                or (
+                    fallback_title_topic
+                    and _compact_alias(ai_topic) == _compact_alias(fallback_title_topic)
+                )
+            )
+            if (
+                not dry_run
+                and not existing_submission
+                and not isinstance(prior_result.get("bilibili"), dict)
+                and not str(review_override.get("title") or "").strip()
+                and (
+                    title_topic_is_fallback
+                    or recording_title_topic_is_vague(ai_topic)
+                )
+            ):
+                review_error = "AI 标题为空、空泛或回退到直播间默认标题，任务已终止，需要人工审核"
+                ai_details.update({
+                    "manual_review_required": True,
+                    "manual_review_reason": review_error,
+                    "title_topic": str(ai_topic or ""),
+                    "fallback_title_topic": fallback_title_topic,
+                    "title_topic_is_fallback": title_topic_is_fallback,
+                })
+                store.stage(key, "ai", "failed", ai_details, error=review_error)
+                raise RuntimeError(review_error)
 
             if not dry_run and not existing_submission:
                 store.stage(key, "ai", "running", ai_details)
@@ -3797,7 +3966,13 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         ):
             original_ai_topic = ai_topic
             filtered_topic, filtered_description, filtered_tags, evidence_filter = (
-                filter_unverified_dota2_metadata(ai_topic, description, tags)
+                filter_unverified_dota2_metadata(
+                    ai_topic,
+                    description,
+                    tags,
+                    streamer=metadata_values_for_evidence["streamer"],
+                    verified_timeline=description,
+                )
             )
             ai_topic = filtered_topic
             if filtered_description:
@@ -3811,6 +3986,55 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             ai_details["description"] = description
             ai_details["final_tags"] = tags
             metadata_automation["final_tags"] = tags
+
+        if not str(ai_topic or "").strip() and description:
+            recovered_title_topic = recording_title_topic_from_timeline(
+                "",
+                description,
+            )
+            if recovered_title_topic and not recording_title_topic_is_vague(
+                recovered_title_topic
+            ):
+                ai_topic = recovered_title_topic
+                title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
+                ai_details.update({
+                    "title_topic": ai_topic,
+                    "title": title,
+                    "title_topic_recovered_from_description": True,
+                    "title_topic_recovery_source": "verified_description_timeline",
+                })
+
+        post_filter_fallback_topic = str(
+            recording_metadata_values(video, cfg)["ai_topic"] or ""
+        ).strip()
+        post_filter_title_is_fallback = bool(
+            not str(ai_topic or "").strip()
+            or (
+                post_filter_fallback_topic
+                and _compact_alias(ai_topic) == _compact_alias(post_filter_fallback_topic)
+            )
+        )
+        if (
+            not dry_run
+            and not existing_submission
+            and not isinstance(prior_result.get("bilibili"), dict)
+            and not str(review_override.get("title") or "").strip()
+            and (
+                post_filter_title_is_fallback
+                or recording_title_topic_is_vague(ai_topic)
+            )
+        ):
+            review_error = "标题经证据过滤后为空、空泛或回退到直播间默认标题，任务已终止，需要人工审核"
+            ai_details.update({
+                "manual_review_required": True,
+                "manual_review_reason": review_error,
+                "title_topic": str(ai_topic or ""),
+                "fallback_title_topic": post_filter_fallback_topic,
+                "title_topic_is_fallback": post_filter_title_is_fallback,
+                "title_topic_rejected_after_evidence_filter": True,
+            })
+            store.stage(key, "ai", "failed", ai_details, error=review_error)
+            raise RuntimeError(review_error)
 
         part_values = recording_metadata_values(video, cfg, ai_topic=ai_topic)
         part_topic = str(ai_topic or part_values["ai_topic"]).strip()
@@ -3957,6 +4181,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                             anchor.get("equipment_snapshot_unix_ts") or 0
                         ),
                         "xml_mention_score": int(anchor.get("xml_mention_score") or 0),
+                        "xml_mention_burst_score": int(
+                            anchor.get("xml_mention_burst_score") or 0
+                        ),
                         "xml_runner_up_score": int(anchor.get("xml_runner_up_score") or 0),
                         "xml_mention_share": float(anchor.get("xml_mention_share") or 0),
                         "gsi_observed_seconds": float(

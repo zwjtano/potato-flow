@@ -376,6 +376,77 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(gift["catalog_source"], "v5")
         self.assertEqual(gift["price_catalog_source"], "v2")
 
+    def test_request_json_accepts_official_douyu_jsonp(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = (
+            b'DYConfigCallback({"data":{"pgInfos":[]}});'
+        )
+        with mock.patch.object(daemon.urllib.request, "urlopen", return_value=response):
+            value = daemon._request_json("https://example.invalid/gifts.json")
+
+        self.assertEqual(value, {"data": {"pgInfos": []}})
+
+    def test_gift_photo_catalog_adds_unique_name_price_and_skips_ambiguous_name(self):
+        responses = {
+            "v5": {"error": 0, "data": {"giftList": []}},
+            "v2": {"error": 0, "data": {"giftList": []}},
+            "photos": {"data": {"pgInfos": [
+                {"pgId": 612, "name": "琴心之恋", "price": 10000, "time": 2},
+                {"pgId": 1, "name": "重名礼物", "price": 100, "time": 1},
+                {"pgId": 2, "name": "重名礼物", "price": 200, "time": 2},
+            ]}},
+        }
+
+        def request(url, _referer=""):
+            if "giftPhotos" in url:
+                return responses["photos"]
+            return responses["v5" if "/v5/" in url else "v2"]
+
+        with mock.patch.object(daemon, "_request_json", side_effect=request):
+            prices = daemon.load_gift_prices("6558897")
+
+        self.assertEqual(prices["name:琴心之恋"]["price_cents"], 10000)
+        self.assertEqual(prices["name:琴心之恋"]["price_catalog_source"], "gift-photos")
+        self.assertNotIn("name:重名礼物", prices)
+
+    def test_unknown_activity_gift_uses_full_catalog_name_price(self):
+        monitor = daemon.RoomMonitor("6558897", "果小果", {
+            "name:琴心之恋": {
+                "name": "琴心之恋", "price": 100, "price_cents": 10000,
+                "price_type": "YUCHI", "catalog_source": "gift-photos",
+                "price_catalog_source": "gift-photos",
+            },
+        })
+        monitor.handle_dgb({
+            "gfid": "23996", "gfn": "琴心之恋", "gfcnt": "1",
+            "gpf": "1", "pid": "3379", "uid": "633894435",
+        })
+
+        event = monitor.state["gift_events"][-1]
+        self.assertTrue(event["paid"])
+        self.assertEqual(event["unit_price_cents"], 10000)
+        self.assertEqual(event["total_value_cents"], 10000)
+        self.assertEqual(event["price_catalog_source"], "gift-photos")
+
+    def test_unpriced_retained_activity_gift_is_backfilled_by_name(self):
+        monitor = daemon.RoomMonitor("6558897", "果小果", {})
+        monitor.state["gift_events"] = [{
+            "gift_id": "23996", "name": "琴心之恋", "count": 2,
+            "paid": False, "unit_price_cents": 0, "price_unknown": True,
+        }]
+        monitor.prices = {
+            "name:琴心之恋": {
+                "price_cents": 10000, "price_type": "YUCHI",
+                "catalog_source": "gift-photos",
+            },
+        }
+
+        self.assertEqual(monitor._backfill_unpriced_gift_events(), 1)
+        event = monitor.state["gift_events"][0]
+        self.assertTrue(event["paid"])
+        self.assertEqual(event["total_value_cents"], 20000)
+        self.assertFalse(event["price_unknown"])
+
     def test_dgb_keeps_low_value_and_unknown_prop_events_for_diagnostics(self):
         monitor = daemon.RoomMonitor("9999", "主播", {
             "24677": {
@@ -978,6 +1049,70 @@ class DouyuStatsTests(unittest.TestCase):
         selected = formatter.select_anchor_player(players, twenty_five_mentions, 100, 200)
         self.assertEqual(selected["hero"], "拍拍熊")
         self.assertEqual(selected["xml_mention_score"], 25)
+
+    def test_comment_hero_fallback_works_without_gsi_lineup(self):
+        comments = [
+            (100 + index * 20, "果小果这把巫医玩得可以")
+            for index in range(8)
+        ]
+
+        selected = formatter.select_comment_hero([], comments, 100, 300)
+
+        self.assertEqual(selected["hero"], "巫医")
+        self.assertEqual(selected["identity_source"], "xml_dominant_hero_only")
+        self.assertEqual(selected["items"], [])
+        self.assertEqual(selected["neutral"], "")
+        self.assertNotIn("kills", selected)
+
+    def test_comment_hero_fallback_accepts_short_danmaku_burst(self):
+        comments = [
+            (100, "巫医这波大招好"),
+            (107, "巫医牛"),
+            (115, "这巫医救了"),
+            (129, "巫医立功"),
+        ]
+
+        selected = formatter.select_comment_hero([], comments, 100, 200)
+
+        self.assertEqual(selected["hero"], "巫医")
+        self.assertEqual(selected["xml_mention_score"], 4)
+        self.assertEqual(selected["xml_mention_burst_score"], 4)
+
+    def test_comment_hero_fallback_rejects_ambiguous_heroes(self):
+        comments = [
+            *((100 + index, "巫医这波") for index in range(6)),
+            *((150 + index, "女王这波") for index in range(5)),
+        ]
+
+        self.assertIsNone(
+            formatter.select_comment_hero([], comments, 100, 300)
+        )
+
+    def test_comment_hero_fallback_uses_independent_hero_catalog(self):
+        comments = [
+            (100 + index, "宙斯输出拉满") for index in range(8)
+        ]
+
+        selected = formatter.select_comment_hero(["宙斯"], comments, 100, 200)
+
+        self.assertEqual(selected["hero"], "宙斯")
+
+    def test_stats_prints_comment_hero_without_fabricated_equipment(self):
+        comments = [
+            (100 + index, "果小果巫医又救人了") for index in range(8)
+        ]
+
+        text = formatter.format_stats(
+            {"dota_hero_catalog": ["巫医"]},
+            100,
+            200,
+            comments,
+        )
+
+        self.assertIn("🎮 巫医", text)
+        self.assertNotIn("六格", text)
+        self.assertNotIn("中立", text)
+        self.assertNotIn("K/D/A", text)
 
     def test_formatter_rejects_legacy_single_late_anchor_snapshot(self):
         game = {

@@ -3537,8 +3537,18 @@ class LiveRecorderManager:
             video_path = Path(str(job.get("video_path") or "recording.flv"))
             bridge_config = bridge.effective_config(bridge_config, video_path)
             values = bridge.recording_metadata_values(video_path, bridge_config)
-            current_title = str(job.get("title") or "").strip()
-            current_description = str(job.get("description") or "").strip()
+            review_preview = job.get("review_override")
+            review_preview = review_preview if isinstance(review_preview, dict) else {}
+            # The review override is the source of truth after either a manual
+            # edit or an AI regeneration. Some callers may still carry the
+            # originally uploaded title on the top-level job, so never let a
+            # later cover-only regeneration fall back to that stale value.
+            current_title = str(
+                review_preview.get("title") or job.get("title") or ""
+            ).strip()
+            current_description = str(
+                review_preview.get("description") or job.get("description") or ""
+            ).strip()
             ai_stage = next(
                 (stage for stage in job.get("stages", []) if stage.get("key") == "ai"),
                 {},
@@ -3565,7 +3575,11 @@ class LiveRecorderManager:
                 "recorded_at": values.get("date") or "",
                 "current_title": current_title,
                 "current_description": current_description,
-                "previous_topic": ai_details.get("title_topic") or "",
+                "previous_topic": (
+                    review_preview.get("ai_title_topic")
+                    or ai_details.get("title_topic")
+                    or ""
+                ),
                 "part_title": ai_details.get("part_title") or "",
                 "part_description": ai_details.get("part_description") or "",
                 "live_title": values.get("live_title") or "",
@@ -3586,6 +3600,8 @@ class LiveRecorderManager:
 你是哔哩哔哩直播录播编辑。根据给出的现有稿件信息重新拟定核心标题和简介。
 只能使用输入中已经出现的事实、对局内容和观众反应，不得虚构主播说过的话、比赛结果或英雄。
 title_topic 是自然、有信息量的中文核心主题，不含主播名、日期、时间和“直播回放”，最多18个中文字符。
+重新生成标题时必须选择与 current_title 实质不同的事件焦点或表达，不得原样返回、仅调整标点，
+也不得只增删主播名；如果 payload 含 rejected_title_topic，严禁再次返回该主题或同义改写。
 description 是可直接用于B站投稿的完整中文简介，保留有价值的事件脉络和观众反应，不出现文件名、任务编号或内部路径，不超过1800字。
 本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
@@ -3685,23 +3701,73 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     "description": generated_description,
                 }
             elif "title" in selected:
-                generated_result = _request_json_object(
-                    client=get_openai_client(app_config),
-                    model_name=str(app_config.get("OPENAI_MODEL_NAME") or "gpt-4o-mini"),
-                    system_prompt=system_prompt,
-                    payload=context,
-                    max_tokens=1100,
-                    temperature=0.35,
-                    thinking_enabled=bool(app_config.get("OPENAI_THINKING_ENABLED", False)),
-                    logger_obj=None,
-                    scene_name="recording_published_metadata_regenerate",
+                client = get_openai_client(app_config)
+
+                def request_title(rejected_topic: str = "") -> dict[str, Any]:
+                    payload = dict(context)
+                    payload["must_differ_from_current_title"] = True
+                    if rejected_topic:
+                        payload["rejected_title_topic"] = rejected_topic
+                    generated_result = _request_json_object(
+                        client=client,
+                        model_name=str(
+                            app_config.get("OPENAI_MODEL_NAME") or "gpt-4o-mini"
+                        ),
+                        system_prompt=system_prompt,
+                        payload=payload,
+                        max_tokens=1100,
+                        temperature=0.45,
+                        thinking_enabled=bool(
+                            app_config.get("OPENAI_THINKING_ENABLED", False)
+                        ),
+                        logger_obj=None,
+                        scene_name="recording_published_metadata_regenerate",
+                    )
+                    return generated_result if isinstance(generated_result, dict) else {}
+
+                def title_identity(value: object) -> str:
+                    compact = re.sub(
+                        r"[^0-9a-z\u4e00-\u9fff]+",
+                        "",
+                        str(value or "").casefold(),
+                    )
+                    streamer_aliases = {
+                        str(context["streamer"] or ""),
+                        bridge.normalize_dota2_streamer_name(
+                            str(context["streamer"] or "")
+                        ),
+                    }
+                    for alias in streamer_aliases:
+                        alias_key = re.sub(
+                            r"[^0-9a-z\u4e00-\u9fff]+",
+                            "",
+                            alias.casefold(),
+                        )
+                        if alias_key and compact.startswith(alias_key):
+                            compact = compact[len(alias_key):]
+                            break
+                    return compact
+
+                current_topic = bridge.recording_cover_headline(
+                    current_title,
+                    "",
+                    str(context["streamer"] or ""),
                 )
-                generated = generated_result if isinstance(generated_result, dict) else {}
+                generated = request_title()
+                first_topic = str(generated.get("title_topic") or "").strip()
+                if first_topic and title_identity(first_topic) == title_identity(current_topic):
+                    generated = request_title(first_topic)
+                final_topic = str(generated.get("title_topic") or "").strip()
+                if final_topic and title_identity(final_topic) == title_identity(current_topic):
+                    raise RecorderConfigError(
+                        "AI 连续返回与当前稿件相同的标题，已保留原标题，请再次尝试"
+                    )
             title_topic = re.sub(
                 r"[\r\n｜|]+",
                 " ",
                 str(
                     generated.get("title_topic")
+                    or review_preview.get("ai_title_topic")
                     or ai_details.get("title_topic")
                     or ""
                 ).strip(),
@@ -3766,9 +3832,14 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             cover43_path = str(previous.get("cover43_path") or "").strip()
             cover_details: dict[str, Any] = {}
             if "cover" in selected:
+                # A cover-only regeneration follows the title currently saved
+                # in the review form. The AI-stage topic belongs to the
+                # original upload and may be stale after a manual title edit.
+                # When title regeneration is selected in the same action,
+                # title_topic is new and remains the best source.
                 cover_topic = bridge.recording_cover_headline(
                     title,
-                    title_topic,
+                    title_topic if "title" in selected else "",
                     str(job.get("room_name") or values.get("streamer") or ""),
                 )
                 cover_live_stats = persisted_live_stats

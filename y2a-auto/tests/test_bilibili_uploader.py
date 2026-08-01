@@ -486,7 +486,7 @@ class BilibiliProgressTests(unittest.TestCase):
         self.assertEqual(sum(url.endswith("/add") for url in calls), 1)
         self.assertEqual(sum(url.endswith("/top") for url in calls), 3)
 
-    def test_sync_description_comment_edits_existing_uploader_pin(self):
+    def test_sync_description_comment_replaces_existing_uploader_pin(self):
         calls = []
 
         class Credential:
@@ -523,6 +523,8 @@ class BilibiliProgressTests(unittest.TestCase):
 
             async def request(self):
                 calls.append((self.url, self.params, self.data))
+                if self.url.endswith("/add"):
+                    return {"reply": {"rpid": 123456}}
                 return {}
 
         with patch(
@@ -545,13 +547,73 @@ class BilibiliProgressTests(unittest.TestCase):
         self.assertTrue(details["posted"])
         self.assertTrue(details["updated"])
         self.assertTrue(details["pinned"])
-        self.assertEqual(details["rpid"], "987654")
-        edit_call = next(call for call in calls if call[0].endswith("/edit"))
-        self.assertEqual(edit_call[2]["message"], "更新后的简介")
-        self.assertEqual(edit_call[2]["rpid"], 987654)
+        self.assertEqual(details["rpid"], "123456")
+        self.assertEqual(details["replaced_rpid"], "987654")
+        add_call = next(call for call in calls if call[0].endswith("/add"))
+        self.assertEqual(add_call[2]["message"], "更新后的简介")
         top_call = next(call for call in calls if call[0].endswith("/top"))
         self.assertEqual(top_call[2]["action"], 1)
-        self.assertFalse(any(call[0].endswith("/add") for call in calls))
+        delete_call = next(call for call in calls if call[0].endswith("/del"))
+        self.assertEqual(delete_call[2]["rpid"], 987654)
+        self.assertFalse(any(call[0].endswith("/edit") for call in calls))
+
+    def test_sync_description_comment_keeps_old_pin_when_replacement_fails(self):
+        class Credential:
+            dedeuserid = "42"
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+
+            def update_params(self, **_kwargs):
+                return self
+
+            @property
+            def result(self):
+                async def resolve():
+                    return {"upper": {"top": {"rpid": 987654}}}
+                return resolve()
+
+        uploader = BilibiliUploader("cookies.json")
+        with patch(
+            "modules.bilibili_uploader.configure_bilibili_runtime",
+        ), patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=Credential(),
+        ), patch(
+            "modules.bilibili_uploader.validate_credential_remote",
+            return_value=(True, "ok"),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ), patch.object(
+            uploader,
+            "publish_description_comment",
+            return_value={
+                "posted": True,
+                "pinned": False,
+                "rpid": "123456",
+                "pin_error": "临时失败",
+            },
+        ):
+            details = uploader.sync_description_comment(
+                {"aid": 123, "bvid": "BV1test"},
+                "更新后的简介",
+            )
+
+        self.assertFalse(details["updated"])
+        self.assertEqual(details["action"], "replacement_failed")
+        self.assertIn("临时失败", details["error"])
+
+    def test_comment_error_hides_html_error_page(self):
+        from modules.bilibili_uploader import _compact_exception_text
+
+        error = _compact_exception_text(
+            '网络错误，状态码：404 - <!DOCTYPE HTML><html><title>出错啦</title></html>'
+        )
+
+        self.assertEqual(error, "网络错误，状态码：404")
+        self.assertNotIn("DOCTYPE", error)
 
     def test_sync_description_comment_creates_pin_when_missing(self):
         class Credential:

@@ -67,6 +67,11 @@ GSI_MIN_OBSERVATION_SECONDS = 60.0
 XML_MIN_MENTION_SCORE = 25
 XML_MIN_DOMINANCE_RATIO = 2.0
 XML_MIN_MENTION_SHARE = 0.6
+XML_HERO_ONLY_MIN_MENTION_SCORE = 8
+XML_HERO_ONLY_MIN_BURST_SCORE = 4
+XML_HERO_ONLY_BURST_SECONDS = 30.0
+XML_HERO_ONLY_MIN_DOMINANCE_RATIO = 1.5
+XML_HERO_ONLY_MIN_MENTION_SHARE = 0.5
 GIFT_MINIMUM_DISPLAY_UNIT_PRICE_CENTS = 10_000
 
 
@@ -269,6 +274,87 @@ def select_anchor_player(
     selected["xml_runner_up_score"] = runner_up
     selected["xml_mention_share"] = round(top_score / total_score, 4)
     return selected
+
+
+def _maximum_comment_burst(timestamps: Iterable[float], window_seconds: float) -> int:
+    ordered = sorted(float(value) for value in timestamps)
+    left = 0
+    maximum = 0
+    for right, unix_ts in enumerate(ordered):
+        while unix_ts - ordered[left] > window_seconds:
+            left += 1
+        maximum = max(maximum, right - left + 1)
+    return maximum
+
+
+def select_comment_hero(
+    hero_catalog: Iterable[object],
+    comments: Iterable[tuple[float, str]],
+    start_ts: float,
+    end_ts: float,
+) -> dict | None:
+    """Infer only a hero from dominant recording-scoped danmaku evidence.
+
+    This is deliberately a hero-only fallback for rooms whose Douyu GSI is
+    empty. Equipment and KDA must never be inferred from chat.
+    """
+    texts = [
+        (float(unix_ts), str(text or ""))
+        for unix_ts, text in comments
+        if start_ts <= float(unix_ts) <= end_ts and str(text or "").strip()
+    ]
+    heroes = {
+        str(hero or "").strip()
+        for hero in hero_catalog
+        if str(hero or "").strip()
+    }
+    heroes.update(HERO_ALIASES)
+    scores: list[tuple[int, int, str]] = []
+    for hero in heroes:
+        aliases = {hero, *HERO_ALIASES.get(hero, ())}
+        matched_timestamps = [
+            unix_ts
+            for unix_ts, text in texts
+            if _count_hero_aliases(text, aliases) > 0
+        ]
+        if matched_timestamps:
+            scores.append((
+                len(matched_timestamps),
+                _maximum_comment_burst(
+                    matched_timestamps,
+                    XML_HERO_ONLY_BURST_SECONDS,
+                ),
+                hero,
+            ))
+    scores.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    if not scores:
+        return None
+    top_score, top_burst, hero = scores[0]
+    if (
+        top_score < XML_HERO_ONLY_MIN_MENTION_SCORE
+        and top_burst < XML_HERO_ONLY_MIN_BURST_SCORE
+    ):
+        return None
+    runner_up = scores[1][0] if len(scores) > 1 else 0
+    total_score = sum(score for score, _burst, _hero in scores)
+    if runner_up and top_score < runner_up * XML_HERO_ONLY_MIN_DOMINANCE_RATIO:
+        return None
+    if total_score and top_score / total_score < XML_HERO_ONLY_MIN_MENTION_SHARE:
+        return None
+    return {
+        "id": "",
+        "hero": hero,
+        "items": [],
+        "neutral": "",
+        "scepter": False,
+        "shard": False,
+        "identity_source": "xml_dominant_hero_only",
+        "equipment_snapshot_unix_ts": 0.0,
+        "xml_mention_score": top_score,
+        "xml_runner_up_score": runner_up,
+        "xml_mention_share": round(top_score / total_score, 4),
+        "xml_mention_burst_score": top_burst,
+    }
 
 
 def _covered_seconds(intervals: Iterable[tuple[float, float]]) -> float:
@@ -476,6 +562,8 @@ def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
         return best[1]
     return select_gsi_history_player(
         stats.get("gsi_hero_history"), start_ts, end_ts
+    ) or select_comment_hero(
+        stats.get("dota_hero_catalog", []), comments, start_ts, end_ts
     )
 
 
@@ -587,6 +675,8 @@ def format_stats(
     if not game_lines:
         anchor = select_gsi_history_player(
             stats.get("gsi_hero_history"), start_ts, end_ts
+        ) or select_comment_hero(
+            stats.get("dota_hero_catalog", []), comments, start_ts, end_ts
         )
         if anchor:
             game_lines.append(_format_game_line(anchor))
