@@ -414,7 +414,7 @@ class DouyuStatsTests(unittest.TestCase):
             1,
         )
 
-    def test_formatter_reports_all_priced_gifts_and_unpriced_props(self):
+    def test_formatter_filters_priced_gifts_with_unit_price_below_100_yuan(self):
         stats = {"gift_events": [
             {
                 "unix_ts": 150, "name": "钻粉卡", "paid": True,
@@ -433,9 +433,32 @@ class DouyuStatsTests(unittest.TestCase):
         text = formatter.format_stats(stats, 100, 200, [])
 
         self.assertIn("钻粉飞机×2(单价100元/总价200元)", text)
-        self.assertIn("钻粉卡×2(单价6元/总价12元)", text)
-        self.assertIn("礼物价值合计 212元", text)
+        self.assertNotIn("钻粉卡", text)
+        self.assertIn("礼物价值合计 200元", text)
         self.assertIn("🧩 未核价道具 未知道具×9", text)
+
+    def test_formatter_applies_100_yuan_threshold_to_unit_price(self):
+        stats = {"gift_events": [
+            {
+                "unix_ts": 150, "name": "丹药盒", "paid": True,
+                "unit_price_cents": 100, "total_value_cents": 20000, "count": 200,
+            },
+            {
+                "unix_ts": 160, "name": "飞机", "paid": True,
+                "unit_price_cents": 10000, "total_value_cents": 10000, "count": 1,
+            },
+            {
+                "unix_ts": 170, "name": "低于门槛", "paid": True,
+                "unit_price_cents": 9999, "total_value_cents": 19998, "count": 2,
+            },
+        ]}
+
+        text = formatter.format_stats(stats, 100, 200, [])
+
+        self.assertIn("飞机×1(单价100元/总价100元)", text)
+        self.assertIn("礼物价值合计 100元", text)
+        self.assertNotIn("丹药盒", text)
+        self.assertNotIn("低于门槛", text)
 
     def test_formatter_reports_unpriced_props_separately(self):
         stats = {
