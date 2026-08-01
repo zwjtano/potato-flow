@@ -11,4 +11,4 @@
 
 ## 国内构建源
 
-- Docker 构建新增可配置的 Debian、PyPI、PyTorch、Cargo 和 Deno 下载源参数，便于国内服务器稳定更新，默认仍保持官方源。
+- Docker 构建新增可配置的 Debian、PyPI、PyTorch、Cargo 和 Deno 下载源参数；Cargo 使用官方支持的 source replacement 机制，默认构建不写入任何镜像配置。

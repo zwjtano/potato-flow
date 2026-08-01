@@ -3,7 +3,7 @@
 FROM rust:bookworm AS recorder-builder
 
 ARG DEBIAN_MIRROR=""
-ARG CARGO_REGISTRY_INDEX=""
+ARG CARGO_MIRROR_URL=""
 
 RUN if [ -n "$DEBIAN_MIRROR" ]; then \
       sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g; s|http://security.debian.org/debian-security|${DEBIAN_MIRROR}-security|g" \
@@ -18,8 +18,9 @@ WORKDIR /build/upstream-biliup
 COPY upstream-biliup/ ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/upstream-biliup/target \
-    if [ -n "$CARGO_REGISTRY_INDEX" ]; then \
-      export CARGO_REGISTRIES_CRATES_IO_INDEX="$CARGO_REGISTRY_INDEX"; \
+    if [ -n "$CARGO_MIRROR_URL" ]; then \
+      printf '[source.crates-io]\nreplace-with = "potato-mirror"\n[source.potato-mirror]\nregistry = "%s"\n' \
+        "$CARGO_MIRROR_URL" > /usr/local/cargo/config.toml; \
     fi \
     && CARGO_PROFILE_RELEASE_LTO=false \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=8 \
