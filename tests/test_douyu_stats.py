@@ -30,6 +30,60 @@ def player(hero_id, hero, items=None):
 
 
 class DouyuStatsTests(unittest.TestCase):
+    def test_dota_maps_retry_after_partial_startup_timeout(self):
+        original_heroes = daemon.dota_hero_map
+        original_items = daemon.dota_item_map
+        original_hero_loaded = daemon._dota_hero_source_loaded
+        original_item_loaded = daemon._dota_item_source_loaded
+        self.addCleanup(setattr, daemon, "dota_hero_map", original_heroes)
+        self.addCleanup(setattr, daemon, "dota_item_map", original_items)
+        self.addCleanup(setattr, daemon, "_dota_hero_source_loaded", original_hero_loaded)
+        self.addCleanup(setattr, daemon, "_dota_item_source_loaded", original_item_loaded)
+        daemon.dota_hero_map = {}
+        daemon.dota_item_map = {}
+        daemon._dota_hero_source_loaded = False
+        daemon._dota_item_source_loaded = False
+        hero_attempts = 0
+
+        def request(url, referer=""):
+            nonlocal hero_attempts
+            if url == daemon.DOTA2_HEROES_URL:
+                hero_attempts += 1
+                if hero_attempts == 1:
+                    raise TimeoutError("hero source timed out")
+                return {
+                    "heroes": {
+                        "npc_dota_hero_nevermore": {"ID": "11", "Name": "影魔"}
+                    }
+                }
+            if url == daemon.DOTA2_ITEMS_URL:
+                return {
+                    "items": {
+                        "item_black_king_bar": {
+                            "ID": "116",
+                            "Key": "item_black_king_bar",
+                            "Name": "黑皇杖",
+                        }
+                    }
+                }
+            if url == daemon.DOTA2_OFFICIAL_ITEMS_URL:
+                return {"result": {"data": {"itemabilities": []}}}
+            raise AssertionError(url)
+
+        with mock.patch.object(daemon, "_request_json", side_effect=request):
+            daemon.load_dota2_maps()
+            self.assertEqual(daemon.dota_hero_map, {})
+            self.assertEqual(daemon.dota_item_map["116"], "黑皇杖")
+
+            last_attempt = daemon.refresh_dota2_maps_if_needed(
+                0.0,
+                now=float(daemon.DOTA2_MAP_RETRY_INTERVAL),
+            )
+
+        self.assertEqual(last_attempt, float(daemon.DOTA2_MAP_RETRY_INTERVAL))
+        self.assertEqual(daemon.dota_hero_map["11"], "影魔")
+        self.assertEqual(hero_attempts, 2)
+
     def test_official_item_names_fill_douyu_translation_gaps(self):
         responses = {
             daemon.DOTA2_HEROES_URL: {"heroes": {"hero": {"ID": "1", "Name": "敌法师"}}},
