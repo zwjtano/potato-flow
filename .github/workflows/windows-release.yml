@@ -91,6 +91,15 @@ jobs:
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
 
+      - name: Smoke test packaged desktop assets
+        shell: pwsh
+        working-directory: y2a-auto
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'build-tools/dist/PotatoFlow/PotatoFlow.exe'
+          $process = Start-Process -FilePath $exe -ArgumentList '--check-desktop-assets' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Desktop asset check exited with $($process.ExitCode)" }
+
       - name: Silent install and uninstall smoke test
         shell: pwsh
         working-directory: y2a-auto
