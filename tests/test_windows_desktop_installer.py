@@ -49,6 +49,16 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn('SERVER_ONLY_FLAG = "--server-only"', launcher)
         self.assertIn("POTATOFLOW_DATA_DIR", launcher)
 
+    def test_desktop_tray_uses_decodable_png_icon(self):
+        launcher_path = Y2A_ROOT / "build-tools" / "setup_app.py"
+        launcher = launcher_path.read_text(encoding="utf-8")
+        namespace = {"__file__": str(launcher_path), "__name__": "setup_app_test"}
+        exec(compile(launcher, str(launcher_path), "exec"), namespace)
+
+        self.assertIn('CHECK_DESKTOP_ASSETS_FLAG = "--check-desktop-assets"', launcher)
+        with namespace["load_tray_icon"]() as icon:
+            self.assertEqual(icon.size, (128, 128))
+
 
 if __name__ == "__main__":
     unittest.main()

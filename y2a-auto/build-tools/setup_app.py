@@ -21,6 +21,7 @@ from pathlib import Path
 INTERNAL_YT_DLP_FLAG = "--y2a-internal-yt-dlp"
 INTERNAL_BRIDGE_FLAG = "--y2a-internal-bridge"
 SERVER_ONLY_FLAG = "--server-only"
+CHECK_DESKTOP_ASSETS_FLAG = "--check-desktop-assets"
 ACTIVATION_PORT = 45160
 
 
@@ -85,6 +86,16 @@ def run_server() -> int:
     return 0
 
 
+def load_tray_icon():
+    """Load the bundled tray icon completely before pystray uses it."""
+    from PIL import Image
+
+    icon_path = resource_root() / "static" / "img" / "favicon.png"
+    icon_image = Image.open(icon_path)
+    icon_image.load()
+    return icon_image
+
+
 def _http_json(url: str, *, token: str = "", method: str = "GET", timeout: float = 3) -> dict:
     request = urllib.request.Request(url, method=method)
     if token:
@@ -129,7 +140,6 @@ def run_desktop(data_root: Path) -> int:
 
     import pystray
     import webview
-    from PIL import Image
     from modules.desktop_runtime import import_legacy_data
 
     port = int(os.environ.get("PORT", "5001"))
@@ -182,8 +192,7 @@ def run_desktop(data_root: Path) -> int:
 
     threading.Thread(target=activation_listener, daemon=True, name="desktop-activation").start()
 
-    icon_path = resource_root() / "static" / "img" / "favicon.ico"
-    icon_image = Image.open(icon_path)
+    icon_image = load_tray_icon()
     tray: pystray.Icon
 
     def shutdown(*_args) -> None:
@@ -263,6 +272,9 @@ def main() -> int:
     internal_exit_code = run_internal_cli(args)
     if internal_exit_code is not None:
         return internal_exit_code
+    if CHECK_DESKTOP_ASSETS_FLAG in args:
+        load_tray_icon().close()
+        return 0
     if SERVER_ONLY_FLAG in args:
         return run_server()
     return run_desktop(data_root)
