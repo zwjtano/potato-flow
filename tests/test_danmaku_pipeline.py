@@ -1,4 +1,5 @@
 import io
+import subprocess
 import tempfile
 import threading
 import time
@@ -82,10 +83,14 @@ class DanmakuPipelineTests(unittest.TestCase):
         self.assertIn("20", commands[-1])
 
     def test_burn_reports_percent_speed_and_eta(self):
+        popen_options = []
+
         class FakeProcess:
             def __init__(self, command, **_kwargs):
+                popen_options.append(_kwargs)
                 Path(command[-1]).write_bytes(b"burned-video")
                 self.stdout = io.StringIO(
+                    "[Parsed_subtitles] warning that must be drained\n"
                     "out_time_us=30000000\nspeed=2.0x\nprogress=continue\n"
                     "out_time_us=60000000\nspeed=2.0x\nprogress=end\n"
                 )
@@ -123,6 +128,7 @@ class DanmakuPipelineTests(unittest.TestCase):
         self.assertEqual(updates[0]["eta_seconds"], 15.0)
         self.assertEqual(updates[-1]["percent"], 100.0)
         self.assertEqual(updates[-1]["eta_seconds"], 0.0)
+        self.assertIs(popen_options[0]["stderr"], subprocess.STDOUT)
 
     def test_burn_queue_serializes_multiple_files(self):
         active = 0

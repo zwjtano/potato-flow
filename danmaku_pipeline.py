@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -415,15 +416,21 @@ def burn_ass(
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                # FFmpeg can emit enough subtitle warnings to fill stderr's
+                # pipe while the parent is reading progress from stdout. Merge
+                # both streams so every line is drained as it arrives.
+                stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
             )
             progress: dict[str, str] = {}
+            diagnostics: deque[str] = deque(maxlen=200)
             if process.stdout is not None:
                 for raw_line in process.stdout:
                     key, separator, value = raw_line.strip().partition("=")
                     if not separator:
+                        if raw_line.strip():
+                            diagnostics.append(raw_line.rstrip())
                         continue
                     progress[key] = value
                     if key != "progress" or not progress_callback:
@@ -465,8 +472,12 @@ def burn_ass(
                     except Exception:
                         pass
                     progress = {}
-            stderr = process.stderr.read() if process.stderr is not None else ""
-            return process.wait(), stderr
+            # Test doubles and unusual subprocess wrappers may still expose a
+            # separate stderr stream. Drain it without changing real FFmpeg's
+            # single-stream behavior.
+            if process.stderr is not None:
+                diagnostics.extend(process.stderr.read().splitlines())
+            return process.wait(), "\n".join(diagnostics)
 
         def encode_with_audio_retry(video_args: list[str]) -> tuple[int, str]:
             returncode, stderr = encode(video_args, ["-c:a", "copy"])
