@@ -28,6 +28,7 @@ DOTA2_OFFICIAL_ITEMS_URL = "https://www.dota2.com/datafeed/itemlist?language=sch
 DOTA2_DATA_URL = "https://www.douyu.com/wgapi/augmentedlive/dota2/data/get"
 FLUSH_INTERVAL = 30
 DOTA2_POLL_INTERVAL = 15
+DOTA2_MAP_RETRY_INTERVAL = 300
 HIGH_ENERGY_POLL_INTERVAL = 15
 GIFT_CATALOG_REFRESH_INTERVAL = 24 * 60 * 60
 UNKNOWN_GIFT_REFRESH_COOLDOWN = 60 * 60
@@ -53,6 +54,8 @@ GIFT_CATALOG_URLS = (
 
 dota_hero_map: dict[str, str] = {}
 dota_item_map: dict[str, str] = {}
+_dota_hero_source_loaded = False
+_dota_item_source_loaded = False
 
 
 def stt_decode(text: str) -> dict[str, str]:
@@ -307,35 +310,57 @@ def load_gift_prices(room_id: str) -> dict[str, dict[str, object]]:
 
 def load_dota2_maps() -> None:
     global dota_hero_map, dota_item_map
+    global _dota_hero_source_loaded, _dota_item_source_loaded
+    hero_error = ""
     try:
         heroes = _request_json(DOTA2_HEROES_URL).get("heroes", {})
-        items = _request_json(DOTA2_ITEMS_URL).get("items", {})
-        official_items: dict[str, str] = {}
-        try:
-            rows = (
-                _request_json(DOTA2_OFFICIAL_ITEMS_URL)
-                .get("result", {})
-                .get("data", {})
-                .get("itemabilities", [])
-            )
-            for row in rows:
-                name = str(row.get("name_loc") or "").strip()
-                item_id = str(row.get("id") or "")
-                item_key = str(row.get("name") or "")
-                if not name or name.startswith("item_"):
-                    continue
-                if item_id:
-                    official_items[item_id] = name
-                if item_key:
-                    official_items[item_key] = name
-        except Exception as exc:
-            print(f"[stats] DOTA2 官方装备中文名加载失败，继续使用斗鱼映射: {exc}", flush=True)
-        dota_hero_map = {
+        loaded_heroes = {
             str(info.get("ID")): str(info.get("Name") or key)
             for key, info in heroes.items()
             if str(info.get("ID") or "")
         }
-        item_map: dict[str, str] = {}
+        if loaded_heroes:
+            dota_hero_map = loaded_heroes
+            _dota_hero_source_loaded = True
+        else:
+            hero_error = "英雄映射为空"
+    except Exception as exc:
+        hero_error = str(exc)
+
+    item_error = ""
+    try:
+        items = _request_json(DOTA2_ITEMS_URL).get("items", {})
+        if items:
+            _dota_item_source_loaded = True
+        else:
+            item_error = "装备映射为空"
+    except Exception as exc:
+        items = {}
+        item_error = str(exc)
+
+    official_items: dict[str, str] = {}
+    try:
+        rows = (
+            _request_json(DOTA2_OFFICIAL_ITEMS_URL)
+            .get("result", {})
+            .get("data", {})
+            .get("itemabilities", [])
+        )
+        for row in rows:
+            name = str(row.get("name_loc") or "").strip()
+            item_id = str(row.get("id") or "")
+            item_key = str(row.get("name") or "")
+            if not name or name.startswith("item_"):
+                continue
+            if item_id:
+                official_items[item_id] = name
+            if item_key:
+                official_items[item_key] = name
+    except Exception as exc:
+        print(f"[stats] DOTA2 官方装备中文名加载失败，继续使用斗鱼映射: {exc}", flush=True)
+
+    if items or official_items:
+        item_map: dict[str, str] = {} if items else dict(dota_item_map)
         for key, info in items.items():
             item_id = str(info.get("ID") or "")
             item_key = str(info.get("Key") or key)
@@ -351,10 +376,29 @@ def load_dota2_maps() -> None:
                 item_map[item_key] = name
         for item_ref, name in official_items.items():
             item_map.setdefault(item_ref, name)
-        dota_item_map = item_map
-        print(f"[stats] DOTA2 映射: {len(dota_hero_map)} 英雄, {len(dota_item_map)} 装备", flush=True)
-    except Exception as exc:
-        print(f"[stats] DOTA2 映射加载失败: {exc}", flush=True)
+        if item_map:
+            dota_item_map = item_map
+        elif not item_error:
+            item_error = "装备映射为空"
+    elif not item_error:
+        item_error = "装备映射为空"
+
+    if hero_error:
+        print(f"[stats] DOTA2 英雄映射加载失败，稍后重试: {hero_error}", flush=True)
+    if item_error:
+        print(f"[stats] DOTA2 装备映射加载失败，稍后重试: {item_error}", flush=True)
+    print(f"[stats] DOTA2 映射: {len(dota_hero_map)} 英雄, {len(dota_item_map)} 装备", flush=True)
+
+
+def refresh_dota2_maps_if_needed(last_attempt: float, *, now: float | None = None) -> float:
+    """Retry a failed startup map load without discarding a successful partial map."""
+    current = time.monotonic() if now is None else now
+    if _dota_hero_source_loaded and _dota_item_source_loaded:
+        return last_attempt
+    if current - last_attempt < DOTA2_MAP_RETRY_INTERVAL:
+        return last_attempt
+    load_dota2_maps()
+    return current
 
 
 def load_streamers_from_config() -> list[dict[str, str]]:
@@ -1219,8 +1263,10 @@ def _start_monitor(room: dict[str, str]) -> RoomMonitor:
 def run() -> None:
     print("[stats] === 斗鱼数据监控启动 (多直播间) ===", flush=True)
     load_dota2_maps()
+    last_dota_map_load = time.monotonic()
     monitors: dict[str, RoomMonitor] = {}
     while True:
+        last_dota_map_load = refresh_dota2_maps_if_needed(last_dota_map_load)
         rooms = {room["room_id"]: room for room in load_streamers_from_config()}
         for room_id, monitor in list(monitors.items()):
             room = rooms.get(room_id)
