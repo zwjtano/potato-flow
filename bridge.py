@@ -14,9 +14,10 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -44,6 +45,7 @@ from dota2_heroes import build_dota2_hero_reference
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
+_IMAGE_GENERATION_THREAD_LOCK = threading.Lock()
 DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
 DEFAULT_RECORDING_TITLE_AI_PROMPT = (
@@ -2101,6 +2103,42 @@ def recording_cover_streamer_expression_instruction(
     )
 
 
+@contextmanager
+def image_generation_queue(cfg: dict[str, Any]):
+    """Serialize image-model requests across web threads and bridge processes."""
+    state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)
+    lock_path = state_path.parent / "image-generation.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    wait_started = time.monotonic()
+    with _IMAGE_GENERATION_THREAD_LOCK, lock_path.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            while True:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield time.monotonic() - wait_started
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -2523,36 +2561,38 @@ AI 生成的核心标题：{headline}
         or ai_cfg.get("OPENAI_IMAGE_SIZE")
         or "1536x1024"
     )
-    if reference_paths:
-        with ExitStack() as stack:
-            reference_handles = [
-                stack.enter_context(path.open("rb"))
-                for path in reference_paths
-            ]
-            response = image_client.edit(
+    with image_generation_queue(cfg) as queue_wait_seconds:
+        details["ai_cover_queue_wait_seconds"] = round(queue_wait_seconds, 3)
+        if reference_paths:
+            with ExitStack() as stack:
+                reference_handles = [
+                    stack.enter_context(path.open("rb"))
+                    for path in reference_paths
+                ]
+                response = image_client.edit(
+                    model=image_model,
+                    image=(
+                        reference_handles
+                        if len(reference_handles) > 1
+                        else reference_handles[0]
+                    ),
+                    prompt=prompt,
+                    size=image_size,
+                )
+            details.update({
+                "ai_cover_reference_used": True,
+                "ai_cover_reference_name": reference_name,
+                "ai_cover_reference_path": str(reference_paths[0]),
+                "ai_cover_reference_paths": [str(path) for path in reference_paths],
+                "ai_cover_reference_count": len(reference_paths),
+                "ai_cover_reference_kind": reference_kind,
+            })
+        else:
+            response = image_client.generate(
                 model=image_model,
-                image=(
-                    reference_handles
-                    if len(reference_handles) > 1
-                    else reference_handles[0]
-                ),
                 prompt=prompt,
                 size=image_size,
             )
-        details.update({
-            "ai_cover_reference_used": True,
-            "ai_cover_reference_name": reference_name,
-            "ai_cover_reference_path": str(reference_paths[0]),
-            "ai_cover_reference_paths": [str(path) for path in reference_paths],
-            "ai_cover_reference_count": len(reference_paths),
-            "ai_cover_reference_kind": reference_kind,
-        })
-    else:
-        response = image_client.generate(
-            model=image_model,
-            prompt=prompt,
-            size=image_size,
-        )
     item = response.data[0] if getattr(response, "data", None) else None
     if item is None:
         raise RuntimeError("图片模型没有返回封面")
@@ -2738,6 +2778,10 @@ def recording_metadata_values(
         stem,
         re.IGNORECASE,
     )
+    recorder_filename_match = re.match(
+        r"(.+?)_(.+)_(20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}(?:-\d{2})?)$",
+        stem,
+    )
     marker_match = re.match(r"(.+?)_[0-9a-f]{6}(?=20\d{2}-\d{2}-\d{2})", stem, re.IGNORECASE)
     streamer = str(cfg.get("streamer_name") or "").strip()
     if not streamer:
@@ -2748,6 +2792,8 @@ def recording_metadata_values(
     streamer = normalize_dota2_streamer_name(streamer)
     if current_filename_match:
         live_title = current_filename_match.group(2).strip("_- ")
+    elif recorder_filename_match:
+        live_title = recorder_filename_match.group(2).strip("_- ")
     else:
         live_title = time_match.group(1).strip("_- ") if time_match else ""
     topic = re.sub(r"[\r\n｜|]+", " ", str(ai_topic or live_title or "直播精彩内容")).strip()
@@ -4581,6 +4627,27 @@ def video_duration_seconds(path: Path, ffprobe: str = "ffprobe") -> float | None
         return None
 
 
+def recording_wall_clock_upper_bound_seconds(path: Path) -> float | None:
+    """Estimate a safe upper bound from the recorder timestamp and final mtime."""
+    match = re.search(
+        r"(20\d{2}-\d{2}-\d{2}_\d{2}-\d{2}(?:-\d{2})?)",
+        path.stem,
+    )
+    if not match:
+        return None
+    value = match.group(1)
+    date_format = "%Y-%m-%d_%H-%M-%S" if len(value) == 19 else "%Y-%m-%d_%H-%M"
+    try:
+        started_at = datetime.strptime(value, date_format)
+        elapsed = datetime.fromtimestamp(path.stat().st_mtime) - started_at
+    except (OSError, ValueError):
+        return None
+    seconds = elapsed.total_seconds()
+    if seconds < 0 or seconds > 7 * 24 * 3600:
+        return None
+    return seconds
+
+
 def main(argv: list[str] | None = None) -> int:
     ensure_pipeline_process_group()
     configure_linux_ca_environment()
@@ -4617,6 +4684,34 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             store.exclude_recording(path, str(args.room_id))
             record_cfg = effective_config(cfg, path)
+            minimum_duration = max(
+                300.0,
+                float(
+                    record_cfg.get(
+                        "MIN_RECORDING_UPLOAD_DURATION_SECONDS",
+                        300,
+                    )
+                    or 300
+                ),
+            )
+            duration = video_duration_seconds(
+                path,
+                str(record_cfg.get("ffprobe", "ffprobe")),
+            )
+            wall_clock_duration = recording_wall_clock_upper_bound_seconds(path)
+            if wall_clock_duration is not None:
+                duration = (
+                    min(duration, wall_clock_duration)
+                    if duration is not None
+                    else wall_clock_duration
+                )
+            if duration is not None and duration < minimum_duration:
+                print(
+                    f"SKIP 视频时长 {duration:.1f} 秒，小于 {minimum_duration:.0f} 秒："
+                    f"不创建任何任务: {path}",
+                    file=sys.stderr,
+                )
+                continue
             danmaku_xml = wait_for_danmaku_xml(
                 path,
                 received_paths,
@@ -4886,10 +4981,17 @@ def main(argv: list[str] | None = None) -> int:
             ok = False
             continue
         minimum_duration = max(
-            0.0,
-            float(cfg.get("MIN_RECORDING_UPLOAD_DURATION_SECONDS", 60) or 60),
+            300.0,
+            float(cfg.get("MIN_RECORDING_UPLOAD_DURATION_SECONDS", 300) or 300),
         )
         duration = video_duration_seconds(path, str(cfg.get("ffprobe", "ffprobe")))
+        wall_clock_duration = recording_wall_clock_upper_bound_seconds(path)
+        if wall_clock_duration is not None:
+            duration = (
+                min(duration, wall_clock_duration)
+                if duration is not None
+                else wall_clock_duration
+            )
         if duration is not None and duration < minimum_duration:
             print(
                 f"SKIP 视频时长 {duration:.1f} 秒，小于 {minimum_duration:.0f} 秒："

@@ -435,7 +435,7 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertIn("钻粉飞机×2(单价100元/总价200元)", text)
         self.assertNotIn("钻粉卡", text)
         self.assertIn("礼物价值合计 200元", text)
-        self.assertIn("🧩 未核价道具 未知道具×9", text)
+        self.assertNotIn("未核价", text)
 
     def test_formatter_applies_100_yuan_threshold_to_unit_price(self):
         stats = {"gift_events": [
@@ -460,7 +460,7 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertNotIn("丹药盒", text)
         self.assertNotIn("低于门槛", text)
 
-    def test_formatter_reports_unpriced_props_separately(self):
+    def test_formatter_hides_unpriced_props(self):
         stats = {
             "gift_events": [{
                 "unix_ts": 150,
@@ -474,8 +474,7 @@ class DouyuStatsTests(unittest.TestCase):
 
         text = formatter.format_stats(stats, 100, 200, [])
 
-        self.assertIn("🧩 未核价道具 未知道具×3", text)
-        self.assertNotIn("礼物价值合计", text)
+        self.assertEqual(text, "")
 
     def test_diamond_fan_membership_events_are_separate_from_gifts(self):
         monitor = daemon.RoomMonitor("9999", "主播", {})
