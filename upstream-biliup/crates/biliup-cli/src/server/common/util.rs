@@ -84,12 +84,16 @@ impl Recorder {
 
     /// 直接生成带扩展名的完整路径（当前目录下）
     pub fn generate_path(&self, suffix: &str) -> PathBuf {
-        PathBuf::from(self.generate_filename(suffix)).with_extension(suffix)
+        append_suffix(&self.generate_filename(suffix), suffix)
     }
 
     fn exists_with_suffix(&self, base: &str, suffix: &str) -> bool {
-        Path::new(base).with_extension(&suffix).exists()
+        append_suffix(base, suffix).exists()
     }
+}
+
+fn append_suffix(base: &str, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{base}.{}", suffix.trim_start_matches('.')))
 }
 
 /// 路径模板清洗。
@@ -247,6 +251,23 @@ mod tests {
         assert_eq!(
             sanitize_filename("/data/recordings/YYF/直播:回放_%Y-%m-%d"),
             "/data/recordings/YYF/直播_回放_%Y-%m-%d"
+        );
+    }
+
+    #[test]
+    fn recording_path_preserves_dots_inside_live_title() {
+        let info = StreamerInfo::new(
+            "国民大舅哥",
+            "https://www.douyu.com/182102",
+            "8号10.5开团",
+            Utc.with_ymd_and_hms(2026, 8, 1, 21, 29, 0).unwrap(),
+            "",
+        );
+        let recorder = Recorder::new(Some("{streamer}_{title}".to_string()), info);
+
+        assert_eq!(
+            recorder.generate_path("flv"),
+            PathBuf::from("国民大舅哥_8号10.5开团.flv")
         );
     }
 }
