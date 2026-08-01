@@ -485,6 +485,7 @@ class RoomMonitor(threading.Thread):
             "online_samples": [],
             "games": [],
             "active_game": None,
+            "gsi_hero_history": [],
             "tooltip_diagnostics": {
                 "messages": 0,
                 "valid_snapshots": 0,
@@ -527,6 +528,7 @@ class RoomMonitor(threading.Thread):
                 "last_source": "",
                 "streamer_anchor_snapshots": 0,
                 "streamer_anchor_last_seen_unix_ts": None,
+                "explicit_hero_snapshots": 0,
             }.items():
                 diagnostics.setdefault(key, value)
 
@@ -551,7 +553,7 @@ class RoomMonitor(threading.Thread):
         for key in (
             "started_at", "gift_events", "gift_diagnostics", "diamond_fans",
             "high_energy", "online_samples",
-            "games", "active_game", "tooltip_diagnostics",
+            "games", "active_game", "gsi_hero_history", "tooltip_diagnostics",
         ):
             if key in previous:
                 self.state[key] = previous[key]
@@ -1046,6 +1048,43 @@ class RoomMonitor(threading.Thread):
             })
             del history[:-200]
 
+    def _update_gsi_hero_history(
+        self,
+        anchor: dict | None,
+        source: str,
+        now: float,
+        *,
+        verified_in_lineup: bool,
+    ) -> None:
+        """Persist Douyu's explicit streamer-view hero even without a lineup."""
+        if not anchor:
+            return
+        history = self.state.setdefault("gsi_hero_history", [])
+        if not isinstance(history, list):
+            history = []
+            self.state["gsi_hero_history"] = history
+        player = dict(anchor)
+        if (
+            history
+            and str(history[-1].get("player", {}).get("id") or "")
+            == str(player.get("id") or "")
+        ):
+            history[-1]["last_seen_unix_ts"] = now
+            history[-1]["player"] = player
+            history[-1]["source"] = source
+            history[-1]["verified_in_lineup"] = bool(
+                history[-1].get("verified_in_lineup") or verified_in_lineup
+            )
+        else:
+            history.append({
+                "start_unix_ts": now,
+                "last_seen_unix_ts": now,
+                "source": source,
+                "verified_in_lineup": verified_in_lineup,
+                "player": player,
+            })
+            del history[:-200]
+
     def handle_dota2_snapshot(self, data: dict, source: str) -> None:
         diagnostics = self.state["tooltip_diagnostics"]
         raw_players = self._raw_players_from_tooltip(data)
@@ -1060,19 +1099,41 @@ class RoomMonitor(threading.Thread):
         )
         diagnostics["last_seen_unix_ts"] = time.time()
         diagnostics["last_source"] = source
+        now = time.time()
+        raw_anchor = data.get("hero")
+        explicit_anchor = (
+            self._player_from_raw(raw_anchor)
+            if isinstance(raw_anchor, dict)
+            else None
+        )
         players = self._players_from_tooltip(data)
         if not players:
+            self._update_gsi_hero_history(
+                explicit_anchor,
+                source,
+                now,
+                verified_in_lineup=False,
+            )
+            if explicit_anchor:
+                diagnostics["explicit_hero_snapshots"] = int(
+                    diagnostics.get("explicit_hero_snapshots") or 0
+                ) + 1
             diagnostics["invalid_snapshots"] += 1
             return
         diagnostics["valid_snapshots"] += 1
         anchor = self._streamer_anchor(data, players)
+        self._update_gsi_hero_history(
+            anchor,
+            source,
+            now,
+            verified_in_lineup=True,
+        )
         if anchor:
             diagnostics["streamer_anchor_snapshots"] = int(
                 diagnostics.get("streamer_anchor_snapshots") or 0
             ) + 1
             diagnostics["streamer_anchor_last_seen_unix_ts"] = time.time()
         fingerprint = tuple(sorted(player["id"] for player in players))
-        now = time.time()
         if fingerprint == self._accepted_fingerprint:
             active = self.state.get("active_game")
             if isinstance(active, dict):

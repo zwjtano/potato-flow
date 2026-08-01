@@ -749,6 +749,68 @@ class DouyuStatsTests(unittest.TestCase):
             monitor.handle_dota2_snapshot(payload, "http")
         self.assertNotIn("anchor_player", monitor.state["active_game"])
 
+    def test_explicit_gsi_hero_survives_missing_lineup_after_stability_window(self):
+        original_heroes = daemon.dota_hero_map
+        self.addCleanup(setattr, daemon, "dota_hero_map", original_heroes)
+        daemon.dota_hero_map = {30: "巫医", "30": "巫医"}
+        monitor = daemon.RoomMonitor("9999", "任意主播", {})
+        payload = {
+            "top": [],
+            "bottom": [],
+            "hero": {"id": 30, "items": ["item_phase_boots"]},
+        }
+
+        with mock.patch.object(daemon.time, "time", return_value=100.0):
+            monitor.handle_dota2_snapshot(payload, "http")
+        with mock.patch.object(daemon.time, "time", return_value=170.0):
+            monitor.handle_dota2_snapshot(payload, "http")
+
+        self.assertIsNone(monitor.state["active_game"])
+        history = monitor.state["gsi_hero_history"]
+        self.assertEqual(len(history), 1)
+        anchor = formatter.select_gsi_history_player(history, 100, 170)
+        self.assertEqual(anchor["hero"], "巫医")
+        self.assertEqual(anchor["identity_source"], "gsi_explicit_hero:http")
+        self.assertFalse(anchor["gsi_verified_in_lineup"])
+        text = formatter.format_stats(
+            {"gsi_hero_history": history},
+            100,
+            170,
+            [],
+        )
+        self.assertIn("🎮 巫医", text)
+
+    def test_explicit_gsi_hero_is_rejected_before_stability_window(self):
+        history = [{
+            "start_unix_ts": 100,
+            "last_seen_unix_ts": 159,
+            "source": "http",
+            "verified_in_lineup": False,
+            "player": player(30, "巫医"),
+        }]
+
+        self.assertIsNone(formatter.select_gsi_history_player(history, 100, 200))
+
+    def test_explicit_gsi_switching_heroes_is_rejected(self):
+        history = [
+            {
+                "start_unix_ts": 100,
+                "last_seen_unix_ts": 170,
+                "source": "http",
+                "verified_in_lineup": False,
+                "player": player(30, "巫医"),
+            },
+            {
+                "start_unix_ts": 171,
+                "last_seen_unix_ts": 250,
+                "source": "http",
+                "verified_in_lineup": False,
+                "player": player(71, "食人魔魔法师"),
+            },
+        ]
+
+        self.assertIsNone(formatter.select_gsi_history_player(history, 100, 250))
+
     def test_formatter_uses_last_gsi_snapshot_inside_recording(self):
         game = {
             "start_unix_ts": 80,
@@ -794,13 +856,27 @@ class DouyuStatsTests(unittest.TestCase):
                 },
             ],
         }
-        comments = [(150, "虚空" * 30), (300, "屠夫" * 4)]
+        comments = [
+            (150 + index, "这波虚空被集中讨论") for index in range(30)
+        ] + [
+            (300 + index, "这波屠夫被讨论") for index in range(4)
+        ]
 
         anchor = formatter.select_streamer_player(game, comments, 100, 400)
 
         self.assertEqual(anchor["hero"], "虚空假面")
         self.assertEqual(anchor["identity_source"], "xml_dominant_mention")
         self.assertEqual(anchor["xml_mention_score"], 30)
+
+    def test_xml_fallback_counts_distinct_comments_not_repeated_words(self):
+        players = [player(41, "虚空假面"), player(14, "帕吉")]
+
+        self.assertIsNone(formatter.select_anchor_player(
+            players,
+            [(150, "虚空" * 100)],
+            100,
+            200,
+        ))
 
     def test_formatter_rejects_sparse_gsi_and_ambiguous_xml(self):
         game = {
@@ -903,9 +979,12 @@ class DouyuStatsTests(unittest.TestCase):
             root = Path(temporary)
             session = root / "主播_直播_1970-01-01_00-01"
             session.mkdir()
+            hero_comments = "".join(
+                f'<d p="1,1,25,1,{100 + index * 2},0,{index},0">影魔装备讨论{index}</d>'
+                for index in range(25)
+            )
             (session / f"{session.name}.xml").write_text(
-                """<?xml version="1.0"?><i>
-                <d p="1,1,25,1,100,0,1,0">""" + "影魔" * 25 + """</d>
+                """<?xml version="1.0"?><i>""" + hero_comments + """
                 <d p="2,1,25,1,150,0,2,0">影魔装备成型</d>
                 </i>""",
                 encoding="utf-8",
@@ -1006,9 +1085,12 @@ class DouyuStatsTests(unittest.TestCase):
             root = Path(temporary)
             session = root / "主播_直播_1970-01-01_00-01"
             session.mkdir()
+            hero_comments = "".join(
+                f'<d p="1,1,25,1,{100 + index * 2},0,{index},0">影魔对局讨论{index}</d>'
+                for index in range(25)
+            )
             (session / f"{session.name}.xml").write_text(
-                """<?xml version="1.0"?><i>
-                <d p="1,1,25,1,100,0,1,0">""" + "影魔" * 25 + """</d>
+                """<?xml version="1.0"?><i>""" + hero_comments + """
                 <d p="2,1,25,1,150,0,2,0">影魔要出黑皇杖了</d>
                 <d p="3,1,25,1,200,0,3,0">漂亮</d>
                 </i>""",
@@ -1128,9 +1210,12 @@ class DouyuStatsTests(unittest.TestCase):
             metadata.mkdir(parents=True)
             legacy_session = root / "runtime" / "data" / "recordings" / "主播" / "场次"
             legacy_session.mkdir(parents=True)
+            hero_comments = "".join(
+                f'<d p="1,1,25,1,{100 + index * 2},0,{index},0">影魔对局讨论{index}</d>'
+                for index in range(25)
+            )
             (legacy_session / f"{legacy_session.name}.xml").write_text(
-                """<?xml version="1.0"?><i>
-                <d p="1,1,25,1,100,0,1,0">""" + "影魔" * 25 + """</d>
+                """<?xml version="1.0"?><i>""" + hero_comments + """
                 <d p="2,1,25,1,150,0,2,0">影魔要出黑皇杖了</d>
                 </i>""",
                 encoding="utf-8",

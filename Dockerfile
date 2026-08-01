@@ -2,7 +2,14 @@
 
 FROM rust:bookworm AS recorder-builder
 
-RUN apt-get update \
+ARG DEBIAN_MIRROR=""
+ARG CARGO_MIRROR_URL=""
+
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g; s|http://security.debian.org/debian-security|${DEBIAN_MIRROR}-security|g" \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential cmake pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -11,7 +18,11 @@ WORKDIR /build/upstream-biliup
 COPY upstream-biliup/ ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/upstream-biliup/target \
-    CARGO_PROFILE_RELEASE_LTO=false \
+    if [ -n "$CARGO_MIRROR_URL" ]; then \
+      printf '[source.crates-io]\nreplace-with = "potato-mirror"\n[source.potato-mirror]\nregistry = "%s"\n' \
+        "$CARGO_MIRROR_URL" > /usr/local/cargo/config.toml; \
+    fi \
+    && CARGO_PROFILE_RELEASE_LTO=false \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=8 \
     cargo build --release -p biliup-cli \
     && cp target/release/biliup /tmp/biliup
@@ -19,22 +30,30 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM python:3.11-slim-bookworm AS python-builder
 
+ARG DEBIAN_MIRROR=""
+ARG PYPI_INDEX_URL="https://pypi.org/simple"
+ARG PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN apt-get update \
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g; s|http://security.debian.org/debian-security|${DEBIAN_MIRROR}-security|g" \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends gcc python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 COPY y2a-auto/requirements.lock ./requirements.lock
 RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip install --index-url "$PYPI_INDEX_URL" --upgrade pip \
     && (/opt/venv/bin/pip install \
           "torch==2.6.0" "torchaudio==2.6.0" \
-          --index-url https://download.pytorch.org/whl/cpu \
-        || /opt/venv/bin/pip install "torch==2.6.0" "torchaudio==2.6.0") \
-    && /opt/venv/bin/pip install -r requirements.lock \
+          --index-url "$PYTORCH_INDEX_URL" \
+        || /opt/venv/bin/pip install --index-url "$PYPI_INDEX_URL" "torch==2.6.0" "torchaudio==2.6.0") \
+    && /opt/venv/bin/pip install -r requirements.lock --index-url "$PYPI_INDEX_URL" \
     && /opt/venv/bin/pip uninstall -y pip setuptools wheel \
     && find /opt/venv -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
@@ -43,6 +62,8 @@ FROM python:3.11-slim-bookworm AS runtime
 
 ARG TARGETARCH
 ARG DENO_VERSION=2.4.5
+ARG DEBIAN_MIRROR=""
+ARG DENO_DOWNLOAD_BASE="https://github.com/denoland/deno/releases/download"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -54,7 +75,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/biliup-y2a \
     TZ=Asia/Shanghai
 
-RUN apt-get update \
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g; s|http://security.debian.org/debian-security|${DEBIAN_MIRROR}-security|g" \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl ffmpeg gosu libfontconfig1 libfreetype6 \
         libfribidi0 libgomp1 libharfbuzz0b libsndfile1 libsox3 \
@@ -66,7 +91,7 @@ RUN apt-get update \
          *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
        esac \
     && curl -fsSL \
-         "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${deno_arch}.zip" \
+         "${DENO_DOWNLOAD_BASE}/v${DENO_VERSION}/deno-${deno_arch}.zip" \
          -o /tmp/deno.zip \
     && unzip /tmp/deno.zip -d /usr/local/bin \
     && chmod 0755 /usr/local/bin/deno \
