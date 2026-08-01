@@ -182,6 +182,49 @@ def validate_recordings_dir(value: Any) -> Path:
     return path
 
 
+def _format_disk_space(num_bytes: int) -> str:
+    size = max(0.0, float(num_bytes or 0))
+    units = ("B", "KB", "MB", "GB", "TB", "PB")
+    unit = units[0]
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            break
+        size /= 1024
+    decimals = 0 if unit in {"B", "KB", "MB"} else 1
+    return f"{size:.{decimals}f} {unit}"
+
+
+def recordings_disk_usage() -> dict[str, Any]:
+    path = recordings_dir()
+    probe = path
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        usage = shutil.disk_usage(probe)
+    except OSError:
+        return {
+            "recordings_free_bytes": None,
+            "recordings_free_text": "—",
+            "recordings_total_bytes": None,
+            "recordings_total_text": "—",
+            "recordings_free_level": "unknown",
+        }
+    free_ratio = usage.free / usage.total if usage.total else 0
+    if usage.free <= 20 * 1024 ** 3 or free_ratio <= 0.1:
+        free_level = "danger"
+    elif usage.free <= 50 * 1024 ** 3 or free_ratio <= 0.2:
+        free_level = "warning"
+    else:
+        free_level = "ok"
+    return {
+        "recordings_free_bytes": int(usage.free),
+        "recordings_free_text": _format_disk_space(usage.free),
+        "recordings_total_bytes": int(usage.total),
+        "recordings_total_text": _format_disk_space(usage.total),
+        "recordings_free_level": free_level,
+    }
+
+
 def _atomic_json(path: Path, value: Any) -> None:
     try:
         private = path.resolve(strict=False).is_relative_to(CONFIG_DIR.resolve(strict=False))
@@ -1212,6 +1255,12 @@ class LiveRecorderManager:
         return {
             "running": status["running"],
             "pid": status["pid"],
+            "recordings_path": status["recordings_path"],
+            "recordings_free_bytes": status["recordings_free_bytes"],
+            "recordings_free_text": status["recordings_free_text"],
+            "recordings_total_bytes": status["recordings_total_bytes"],
+            "recordings_total_text": status["recordings_total_text"],
+            "recordings_free_level": status["recordings_free_level"],
             "rooms": [
                 {
                     "id": room.get("id"),
@@ -2400,6 +2449,7 @@ class LiveRecorderManager:
 
     def status(self) -> dict[str, Any]:
         pid = self._pid()
+        disk_usage = recordings_disk_usage()
         return {
             "running": pid is not None,
             "pid": pid,
@@ -2407,6 +2457,7 @@ class LiveRecorderManager:
             "binary_path": str(self.binary_path),
             "config_path": str(BILIUP_CONFIG_PATH),
             "recordings_path": str(recordings_dir()),
+            **disk_usage,
         }
 
     def start(self) -> dict[str, Any]:
