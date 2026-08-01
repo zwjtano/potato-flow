@@ -405,6 +405,179 @@ class BilibiliUploader:
             self.log(f"Bilibili 简介评论发布失败（不影响投稿）: {details['error']}")
         return details
 
+    def sync_description_comment(
+        self,
+        result: dict,
+        description: str,
+    ) -> dict:
+        """Update the uploader's pinned description comment, or create it once."""
+        aid = result.get("aid") if isinstance(result, dict) else None
+        bvid = str(result.get("bvid") or "") if isinstance(result, dict) else ""
+        normalized = _normalize_multiline_text(description)
+        message = normalized[:1000].strip()
+        details = {
+            "enabled": True,
+            "posted": False,
+            "updated": False,
+            "pinned": False,
+            "aid": aid,
+            "bvid": bvid,
+            "truncated": len(normalized) > len(message),
+        }
+        if not aid:
+            details["error"] = "投稿结果缺少 aid，无法同步简介评论"
+            return details
+        if not message:
+            details["error"] = "简介为空，未同步置顶评论"
+            return details
+
+        try:
+            configure_bilibili_runtime()
+            credential = load_credential_from_file(self.cookie_file)
+            credential_ok, credential_msg = validate_credential_remote(credential)
+            if not credential_ok:
+                details["error"] = f"Bilibili登录态无效: {credential_msg}"
+                return details
+
+            async def _find_pinned_rpid() -> str:
+                payload = await (
+                    Api(
+                        url="https://api.bilibili.com/x/v2/reply/main",
+                        method="GET",
+                        verify=True,
+                        credential=credential,
+                    )
+                    .update_params(type=1, oid=int(aid), mode=3, next=0, ps=20)
+                    .result
+                )
+                payload = payload if isinstance(payload, dict) else {}
+                upper = payload.get("upper") if isinstance(payload.get("upper"), dict) else {}
+                upper_top = upper.get("top")
+                if isinstance(upper_top, dict):
+                    rpid = upper_top.get("rpid_str") or upper_top.get("rpid")
+                    if rpid:
+                        return str(rpid)
+                elif str(upper_top or "").isdigit():
+                    return str(upper_top)
+
+                account_mid = str(getattr(credential, "dedeuserid", "") or "")
+                top_replies = payload.get("top_replies")
+                for reply in top_replies if isinstance(top_replies, list) else []:
+                    if not isinstance(reply, dict):
+                        continue
+                    member = reply.get("member") if isinstance(reply.get("member"), dict) else {}
+                    control = (
+                        reply.get("reply_control")
+                        if isinstance(reply.get("reply_control"), dict)
+                        else {}
+                    )
+                    is_uploader = (
+                        bool(account_mid and str(member.get("mid") or "") == account_mid)
+                        or bool(control.get("is_up"))
+                    )
+                    rpid = reply.get("rpid_str") or reply.get("rpid")
+                    if is_uploader and rpid:
+                        return str(rpid)
+                return ""
+
+            try:
+                pinned_rpid = asyncio.run(_find_pinned_rpid())
+            except RuntimeError as exc:
+                if "cannot be called from a running event loop" not in str(exc):
+                    raise
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pinned_rpid = pool.submit(asyncio.run, _find_pinned_rpid()).result()
+
+            if not pinned_rpid:
+                created = self.publish_description_comment(
+                    {"aid": aid, "bvid": bvid},
+                    message,
+                    pin=True,
+                )
+                return {**created, "action": "created"}
+
+            pin_headers = {
+                **HEADERS,
+                "Origin": "https://www.bilibili.com",
+                "Referer": (
+                    f"https://www.bilibili.com/video/{bvid}/"
+                    if bvid
+                    else f"https://www.bilibili.com/video/av{aid}/"
+                ),
+            }
+
+            async def _update_and_pin() -> tuple[bool, str, int]:
+                await (
+                    Api(
+                        url="https://api.bilibili.com/x/v2/reply/edit",
+                        method="POST",
+                        verify=True,
+                        credential=credential,
+                    )
+                    .update_data(
+                        type=1,
+                        oid=int(aid),
+                        rpid=int(pinned_rpid),
+                        message=message,
+                        plat=1,
+                    )
+                    .request()
+                )
+                pin_error = ""
+                pin_attempts = 0
+                for attempt, delay_seconds in enumerate((0, 1, 2), start=1):
+                    pin_attempts = attempt
+                    if delay_seconds:
+                        await asyncio.sleep(delay_seconds)
+                    try:
+                        await (
+                            Api(
+                                url="https://api.bilibili.com/x/v2/reply/top",
+                                method="POST",
+                                verify=True,
+                                credential=credential,
+                            )
+                            .update_headers(**pin_headers)
+                            .update_data(
+                                type=1,
+                                oid=int(aid),
+                                rpid=int(pinned_rpid),
+                                action=1,
+                            )
+                            .request()
+                        )
+                        return True, "", pin_attempts
+                    except Exception as exc:
+                        pin_error = _compact_exception_text(str(exc))
+                return False, pin_error, pin_attempts
+
+            try:
+                pinned, pin_error, pin_attempts = asyncio.run(_update_and_pin())
+            except RuntimeError as exc:
+                if "cannot be called from a running event loop" not in str(exc):
+                    raise
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pinned, pin_error, pin_attempts = pool.submit(
+                        asyncio.run, _update_and_pin()
+                    ).result()
+
+            details.update({
+                "posted": True,
+                "updated": True,
+                "pinned": pinned,
+                "rpid": pinned_rpid,
+                "message_length": len(message),
+                "pin_attempts": pin_attempts,
+                "action": "updated",
+            })
+            if pin_error:
+                details["pin_error"] = pin_error
+            return details
+        except Exception as exc:
+            details["error"] = _compact_exception_text(str(exc))
+            self.log(f"Bilibili 简介置顶评论同步失败: {details['error']}")
+            return details
+
     def list_archives(
         self,
         *,
@@ -567,6 +740,55 @@ class BilibiliUploader:
             }
         except Exception as exc:
             return False, f"读取 B站稿件失败: {_compact_exception_text(str(exc))}"
+
+    def delete_archive(
+        self,
+        *,
+        aid: int,
+        bvid: str,
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Permanently delete one archive already verified as owned by this account."""
+        clean_bvid = str(bvid or "").strip()
+        if int(aid or 0) <= 0:
+            return False, "稿件缺少 aid，无法删除"
+        if not re.fullmatch(r"(?i)BV[0-9A-Za-z]{8,20}", clean_bvid):
+            return False, "BVID 格式无效"
+        try:
+            configure_bilibili_runtime()
+            credential = load_credential_from_file(self.cookie_file)
+            credential_ok, credential_msg = validate_credential_remote(credential)
+            if not credential_ok:
+                return False, f"Bilibili登录态无效: {credential_msg}"
+
+            request_headers = {
+                **HEADERS,
+                "Origin": "https://member.bilibili.com",
+                "Referer": "https://member.bilibili.com/platform/upload-manager/article",
+            }
+
+            async def _delete():
+                return await (
+                    Api(
+                        url="https://member.bilibili.com/x/web/archive/delete",
+                        method="POST",
+                        verify=True,
+                        credential=credential,
+                    )
+                    .update_headers(**request_headers)
+                    .update_data(aid=int(aid))
+                    .request()
+                )
+
+            try:
+                asyncio.run(_delete())
+            except RuntimeError as exc:
+                if "cannot be called from a running event loop" not in str(exc):
+                    raise
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, _delete()).result()
+            return True, {"aid": int(aid), "bvid": clean_bvid, "deleted": True}
+        except Exception as exc:
+            return False, f"删除 B站稿件失败: {_compact_exception_text(str(exc))}"
 
     def archive_comments(
         self,

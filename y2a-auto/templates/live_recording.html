@@ -170,6 +170,7 @@
                             · {{ recording_quality_name(room.recording_quality) }}
                             · {{ '不投稿' if room.record_only else ('分 P 投稿' if room.multipart_enabled and room.segment_enabled else '不分 P 投稿') }}
                             {% if room.danmaku_burn_in %}· 烧录弹幕{% endif %}
+                            {% if room.recording_schedule_enabled %}· 每天 {{ room.recording_schedule_start }}–{{ room.recording_schedule_end }}{% endif %}
                         </span>
                     </span>
                     <i class="bi bi-chevron-down room-ai-prompts-chevron"></i>
@@ -178,6 +179,19 @@
                       action="{{ url_for('live_recording_room_recording_settings', room_id=room.id) }}"
                       class="room-recording-settings-form" data-role="recording-settings-form">
                     <div class="room-recording-setting-grid">
+                        <label class="room-recording-setting-option">
+                            <span class="room-setting-switch">
+                                <input type="checkbox" name="recording_schedule_enabled" value="on"
+                                       data-role="recording-schedule-enabled"
+                                       {% if room.recording_schedule_enabled %}checked{% endif %}>
+                                <span></span>
+                            </span>
+                            <span><strong>定时录制</strong><small>按本机时区每天自动开始和停止；结束时间早于开始时间表示跨午夜。</small></span>
+                        </label>
+                        <div class="room-danmaku-overrides recording-schedule-times" data-role="recording-schedule-times">
+                            <label><span>开始时间</span><input class="form-control" name="recording_schedule_start" type="time" step="60" value="{{ room.recording_schedule_start|default('00:00') }}"></label>
+                            <label><span>结束时间</span><input class="form-control" name="recording_schedule_end" type="time" step="60" value="{{ room.recording_schedule_end|default('23:59') }}"></label>
+                        </div>
                         <label class="room-recording-duration{% if room.record_only %} d-none{% endif %}"
                                data-role="bilibili-account-field">
                             <span><strong>B站投稿账号</strong><small>仅影响这个直播间生成的新投稿任务</small></span>
@@ -1015,6 +1029,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const accountInput = accountField?.querySelector('input[name="bilibili_account_id"]');
         const inheritDanmaku = form.querySelector('[data-role="danmaku-settings-inherit"]');
         const danmakuOverrides = form.querySelector('[data-role="danmaku-overrides"]');
+        const scheduleEnabled = form.querySelector('[data-role="recording-schedule-enabled"]');
+        const scheduleTimes = form.querySelector('[data-role="recording-schedule-times"]');
         const syncState = () => {
             const active = Boolean(enabled?.checked);
             const recordOnlyActive = Boolean(recordOnly?.checked);
@@ -1036,11 +1052,17 @@ document.addEventListener('DOMContentLoaded', function () {
                 danmakuOverrides.classList.toggle('is-disabled', inherited);
                 danmakuOverrides.querySelectorAll('input, select').forEach(node => { node.disabled = inherited; });
             }
+            if (scheduleTimes) {
+                const scheduleActive = Boolean(scheduleEnabled?.checked);
+                scheduleTimes.classList.toggle('is-disabled', !scheduleActive);
+                scheduleTimes.querySelectorAll('input').forEach(node => { node.readOnly = !scheduleActive; });
+            }
         };
         enabled?.addEventListener('change', syncState);
         multipart?.addEventListener('change', syncState);
         recordOnly?.addEventListener('change', syncState);
         inheritDanmaku?.addEventListener('change', syncState);
+        scheduleEnabled?.addEventListener('change', syncState);
         syncState();
     });
     async function refreshLiveStatus() {

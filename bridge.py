@@ -89,7 +89,6 @@ DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "画面不要出现日期、时间、房间号、平台界面、二维码或水印。"
 )
 WORKSPACE_ROOT = Path(__file__).resolve().parent
-YYF_COVER_REFERENCE = WORKSPACE_ROOT / "assets" / "streamer-references" / "yyf.png"
 YYF_STREAMER_ALIASES = {
     "yyf", "yyfyyf", "月夜枫", "枫哥", "峰哥", "姜岑", "FG", "胖头", "胖头鱼"
 }
@@ -1809,9 +1808,6 @@ def recording_cover_event_context(description: str) -> tuple[str, str]:
 def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     """Return a curated identity reference for a known streamer."""
     normalized = normalize_dota2_streamer_name(streamer)
-    if normalized == "YYF":
-        if YYF_COVER_REFERENCE.is_file():
-            return "YYF", YYF_COVER_REFERENCE
     if normalized == "果小果":
         if GUOXIAOGUO_COVER_REFERENCE.is_file():
             return "果小果", GUOXIAOGUO_COVER_REFERENCE
@@ -1819,15 +1815,6 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
 
 
 def recording_cover_reference_instruction(reference_name: str) -> str:
-    if reference_name == "YYF":
-        return (
-            "上传的参考图是主播 YYF 的唯一固定 Q 版角色形象，必须以该角色为封面人物原型。"
-            "严格保留黑色短发、深蓝色眼睛、右侧脸颊小痣、黑红色连帽外套和胸前红色 YYF 字样；"
-            "最重要的标志是完整的蓝色鱼形头套：头套顶部有提环和鱼鳍，正面有一对大眼睛与浅蓝色"
-            "鱼嘴，两侧鱼鳍内部为粉色，帽檐也是粉色。保持精致的二次元 Q 版插画风格和粗黑描边，"
-            "禁止改成真人、普通蓝帽、鲨鱼玩偶、蓝猫或其他角色。可以根据本段对局改变表情、动作、"
-            "服装细节和横向背景，但上述人物特征、鱼形头套及 YYF 身份标志必须始终清晰可辨。"
-        )
     if reference_name == "果小果":
         return (
             "上传的参考图是主播果小果的固定角色形象。必须以图中角色为唯一原型，"
@@ -2190,19 +2177,55 @@ def recording_cover_streamer_expression_instruction(
     streamer: str,
     *content: str,
 ) -> str:
-    """Let known streamer references react to the segment without losing identity."""
-    if normalize_dota2_streamer_name(streamer) != "YYF":
-        return ""
+    """Let every room reference react to the segment without losing identity."""
+    streamer_name = normalize_dota2_streamer_name(streamer) or str(streamer or "主播")
     context = "\n".join(str(value or "") for value in content)
+    safe_context = re.sub(r"[【\[]?直播回放[】\]]?", "", context)
+    safe_context = re.sub(
+        r"(?<!\d)20\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?(?!\d)",
+        "",
+        safe_context,
+    )
+    safe_context = re.sub(
+        r"(?<!\d)\d{1,2}:\d{2}(?::\d{2})?(?!\d)",
+        "",
+        safe_context,
+    )
+    compact_context = re.sub(r"\s+", "", safe_context)
+    expression_rules = (
+        (("被翻盘", "惨遭翻盘", "痛失好局", "葬送优势", "优势送完"), "从错愕转为懊恼，眉头紧锁、嘴角下压，带一点不甘"),
+        (("翻盘成功", "完成翻盘", "逆转取胜", "绝地翻盘"), "如释重负后的兴奋，眼神发亮、明显笑意，可带克制的庆祝动作"),
+        (("碾压", "打爆", "轻松取胜", "血虐", "连胜"), "自信得意，眉梢上扬、轻松微笑，姿态舒展但不要傲慢失真"),
+        (("极限反杀", "残血反杀", "关键团", "一打多", "抢盾", "偷家"), "高度专注并带瞬间惊喜，目光锐利、身体微微前倾"),
+        (("惨败", "落败", "输掉", "告负", "游戏结束"), "疲惫无奈，眉眼下垂、轻叹或苦笑，不要夸张哭泣"),
+        (("暴毙", "被抓", "连死", "送人头", "白给"), "震惊夹杂烦躁，眼睛略睁大、眉头皱起，可有短暂摊手动作"),
+        (("失误", "空大", "出装争议", "加点争议", "被质疑"), "尴尬、心虚或不服气，使用克制苦笑、侧目或轻微撇嘴"),
+        (("破防", "红温", "气急", "上头", "怒了"), "明显恼火但保持人物美观，眉头紧皱、咬牙或抿嘴，禁止扭曲鬼脸"),
+        (("整活", "节目效果", "搞笑", "笑疯", "逗乐"), "开心大笑、憋笑或夸张惊讶，强化欢乐节目效果"),
+        (("逆风", "守高", "焦灼", "决胜团", "生死团"), "紧张坚定，目光集中、嘴唇微抿，呈现背水一战的压力"),
+        (("获胜", "赢下", "胜利", "拿下"), "开心满足，露出自然笑意和轻松神态"),
+    )
+    recommended_expression = next(
+        (
+            expression
+            for keywords, expression in expression_rules
+            if any(keyword in compact_context for keyword in keywords)
+        ),
+        "专注自然，根据画面情境使用轻微的眉眼和嘴角变化",
+    )
     return (
-        "YYF 表情与本段对局联动：先根据核心标题和内容摘要判断本段最主要的比赛情绪，再调整"
-        "参考角色中 YYF 的表情与轻微姿态。优势、高光或连胜可表现为兴奋、自信或得意；"
-        "失误、被翻盘或惨败可表现为震惊、懊恼、无奈或气急；逆风、关键团战或翻盘过程可表现为"
-        "紧张、专注、坚定；欢乐整活或节目效果可表现为大笑、憋笑或夸张惊讶。"
-        "没有明确结果时使用专注、自然的对局表情。表情强度要适合视频封面、清楚但不过度扭曲；"
-        "必须保持该 Q 版角色的脸型、五官比例、黑色短发、右脸小痣、蓝色鱼形头套和身份辨识度，"
-        "不能换脸、真人化或变成另一个卡通人物，也不能仅照抄底稿中的原始表情。"
-        f"本段判断依据：{context[:600]}"
+        f"{streamer_name} 的表情与本段内容联动：先判断最终结果，再判断决定性事件，"
+        "最后才考虑节目效果；"
+        "只选择一种占主导的情绪，不要把兴奋、愤怒、懊恼等冲突表情混在一起。"
+        "可通过眉眼开合、嘴角、视线方向、头部角度、肩部姿态和轻微手势表现层次："
+        "翻盘成功用释然后的兴奋；被翻盘用错愕后的懊恼；碾压或连胜用自信得意；"
+        "极限操作或关键团用紧张专注后的惊喜；惨败用疲惫无奈或苦笑；"
+        "暴毙、被抓或连续失误用震惊烦躁；出装、加点争议用尴尬、心虚或不服气；"
+        "红温破防用克制的恼火；欢乐整活用大笑、憋笑或夸张惊讶。"
+        f"本段优先表情建议：{recommended_expression}。"
+        "没有明确结果时使用专注、自然的情境表情；参考图不是人物或角色时不要强行添加表情。"
+        "表情强度要适合视频封面、清楚但不过度扭曲，并保持参考图原有的身份辨识度。"
+        f"本段判断依据：{safe_context[:600]}"
     )
 
 

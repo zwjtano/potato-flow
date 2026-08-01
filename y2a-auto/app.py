@@ -1624,9 +1624,32 @@ def live_recording_job_review(fingerprint):
                 )
                 flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
-            if action == 'apply_to_bilibili':
+            if action in {'apply_to_bilibili', 'apply_to_bilibili_and_comment'}:
                 live_recorder_manager.update_published_metadata(fingerprint)
-                flash('标题、简介、标签、分区和两种封面已同步到 B站，视频与分P未改动。', 'success')
+                if action == 'apply_to_bilibili_and_comment':
+                    try:
+                        comment_result = (
+                            live_recorder_manager.sync_published_description_comment(
+                                fingerprint
+                            )
+                        )
+                        comment_action = (
+                            '已创建并置顶'
+                            if comment_result.get('action') == 'created'
+                            else '已更新并重新置顶'
+                        )
+                        flash(
+                            '稿件信息已同步到 B站，简介评论'
+                            f'{comment_action}；视频与分P未改动。',
+                            'success',
+                        )
+                    except RecorderConfigError as exc:
+                        flash(
+                            f'稿件信息已同步，但置顶评论同步失败：{exc}',
+                            'warning',
+                        )
+                else:
+                    flash('标题、简介、标签、分区和两种封面已同步到 B站，视频与分P未改动。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action == 'save_and_retry':
                 live_recorder_manager.retry_pipeline_job(fingerprint)
@@ -1731,6 +1754,10 @@ def bilibili_archive_update():
         for tag in str(request.form.get('tags') or '').replace('，', ',').split(',')
         if tag.strip()
     ]
+    sync_pinned_comment = str(
+        request.form.get('sync_pinned_comment') or ''
+    ) == '1'
+    metadata_updated = False
     try:
         live_recorder_manager.update_bilibili_archive_metadata(
             account_id=account_id,
@@ -1740,9 +1767,30 @@ def bilibili_archive_update():
             tags=tags,
             partition_id=str(request.form.get('partition_id') or '').strip(),
         )
-        flash(f'{bvid} 的标题、简介、标签和分区已提交到 B站，视频与分P未改动。', 'success')
+        metadata_updated = True
+        if sync_pinned_comment:
+            comment_result = (
+                live_recorder_manager.sync_bilibili_archive_description_comment(
+                    account_id=account_id,
+                    bvid=bvid,
+                    description=str(request.form.get('description') or ''),
+                )
+            )
+            comment_action = (
+                '已创建并置顶' if comment_result.get('action') == 'created'
+                else '已更新并重新置顶'
+            )
+            flash(
+                f'{bvid} 的稿件信息已同步，简介评论{comment_action}。',
+                'success',
+            )
+        else:
+            flash(f'{bvid} 的标题、简介、标签和分区已提交到 B站，视频与分P未改动。', 'success')
     except RecorderConfigError as exc:
-        flash(str(exc), 'danger')
+        if metadata_updated:
+            flash(f'稿件信息已更新，但置顶评论同步失败：{exc}', 'warning')
+        else:
+            flash(str(exc), 'danger')
     return redirect(url_for(
         'bilibili_archives',
         account_id=account_id,
@@ -1773,6 +1821,40 @@ def bilibili_archive_reply():
         'bilibili_archives',
         account_id=account_id,
         bvid=bvid,
+    ))
+
+
+@app.route('/bilibili-archives/delete', methods=['POST'])
+@login_required
+def bilibili_archive_delete():
+    account_id = str(request.form.get('account_id') or '').strip()
+    bvid = str(request.form.get('bvid') or '').strip()
+    confirmation_bvid = str(
+        request.form.get('confirmation_bvid') or ''
+    ).strip()
+    if not bvid or confirmation_bvid.lower() != bvid.lower():
+        flash('删除确认失败：请输入完整且一致的 BVID。', 'danger')
+        return redirect(url_for(
+            'bilibili_archives',
+            account_id=account_id,
+            bvid=bvid,
+        ))
+    try:
+        live_recorder_manager.delete_bilibili_archive(
+            account_id=account_id,
+            bvid=bvid,
+        )
+        flash(f'{bvid} 已从 B站永久删除。', 'success')
+    except RecorderConfigError as exc:
+        flash(str(exc), 'danger')
+        return redirect(url_for(
+            'bilibili_archives',
+            account_id=account_id,
+            bvid=bvid,
+        ))
+    return redirect(url_for(
+        'bilibili_archives',
+        account_id=account_id,
     ))
 
 
@@ -2015,6 +2097,15 @@ def live_recording_room_recording_settings(room_id):
             danmaku_encode_quality=request.form.get('danmaku_encode_quality', '20'),
             recording_quality=request.form.get('recording_quality', 'source'),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
+            recording_schedule_enabled=_coerce_checkbox_value(
+                request.form.get('recording_schedule_enabled', 'off')
+            ),
+            recording_schedule_start=request.form.get(
+                'recording_schedule_start', '00:00'
+            ),
+            recording_schedule_end=request.form.get(
+                'recording_schedule_end', '23:59'
+            ),
         )
         room_name = str(room.get('name') or '直播间')
         if reload_state == 'pending':

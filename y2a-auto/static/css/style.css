@@ -284,6 +284,7 @@ html:not([data-theme="dark"]) .room-recording-settings-card .room-recording-summ
 .room-recording-settings-form { display: grid; gap: 15px; padding: 20px; color: #26384a; border-top: 1px solid #d9e3ec; background: #f5f9fc; }
 .room-recording-setting-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .room-danmaku-overrides { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px; border: 1px solid #d9e7f5; border-radius: 10px; background: #fff; transition: opacity .15s ease; }
+.recording-schedule-times { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .room-danmaku-overrides label { display: grid; gap: 5px; color: #506176; font-size: 12px; }
 .room-danmaku-overrides.is-disabled { opacity: .5; }
 .room-recording-setting-option, .room-recording-duration { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 15px; border: 1px solid #d5e0ea; border-radius: 10px; background: #fff; }

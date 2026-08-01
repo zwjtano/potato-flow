@@ -939,6 +939,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(room["danmaku_burn_in"])
         self.assertTrue(room["danmaku_settings_inherit"])
         self.assertEqual(room["recording_quality"], "source")
+        self.assertFalse(room["recording_schedule_enabled"])
+        self.assertEqual(room["recording_schedule_start"], "00:00")
+        self.assertEqual(room["recording_schedule_end"], "23:59")
 
     def test_room_recording_settings_are_saved_per_room(self):
         manager = LiveRecorderManager()
@@ -957,6 +960,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 multipart_enabled=True,
                 danmaku_burn_in=True,
                 recording_quality="1080p",
+                recording_schedule_enabled=True,
+                recording_schedule_start="22:30",
+                recording_schedule_end="06:15",
             )
 
         self.assertEqual(state, "saved")
@@ -966,6 +972,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(room["record_only"])
         self.assertTrue(room["danmaku_burn_in"])
         self.assertEqual(room["recording_quality"], "1080p")
+        self.assertTrue(room["recording_schedule_enabled"])
+        self.assertEqual(room["recording_schedule_start"], "22:30")
+        self.assertEqual(room["recording_schedule_end"], "06:15")
         persisted_rooms = atomic_json.call_args_list[0].args[1]
         self.assertNotIn("segment_minutes", persisted_rooms[1])
         sync_configs.assert_called_once_with(persisted_rooms)
@@ -992,6 +1001,31 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(room["danmaku_encoder"], "nvidia")
         self.assertEqual(room["danmaku_encode_preset"], "p5")
         self.assertEqual(room["danmaku_encode_crf"], 20)
+
+    def test_recording_schedule_rejects_equal_or_invalid_times(self):
+        manager = LiveRecorderManager()
+        rooms = [dict(item) for item in self.rooms]
+        with mock.patch.object(manager, "list_rooms", return_value=rooms):
+            with self.assertRaisesRegex(RecorderConfigError, "不能相同"):
+                manager.save_room_recording_settings(
+                    "aaaaaa111111",
+                    segment_enabled=True,
+                    segment_minutes=60,
+                    multipart_enabled=False,
+                    recording_schedule_enabled=True,
+                    recording_schedule_start="08:00",
+                    recording_schedule_end="08:00",
+                )
+            with self.assertRaisesRegex(RecorderConfigError, "HH:MM"):
+                manager.save_room_recording_settings(
+                    "aaaaaa111111",
+                    segment_enabled=True,
+                    segment_minutes=60,
+                    multipart_enabled=False,
+                    recording_schedule_enabled=True,
+                    recording_schedule_start="tomorrow",
+                    recording_schedule_end="08:00",
+                )
 
     def test_recording_setting_change_safely_rotates_an_active_segment(self):
         manager = LiveRecorderManager()
@@ -1273,6 +1307,82 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(merged[0]["runtime"]["state"], "paused")
         self.assertEqual(merged[0]["runtime"]["label"], "已手动停止")
         self.assertFalse(merged[0]["runtime"]["manual_enabled"])
+
+    def test_daily_recording_schedule_supports_daytime_and_cross_midnight(self):
+        daytime = {
+            **self.rooms[0],
+            "recording_schedule_enabled": True,
+            "recording_schedule_start": "09:30",
+            "recording_schedule_end": "18:00",
+        }
+        overnight = {
+            **self.rooms[0],
+            "recording_schedule_enabled": True,
+            "recording_schedule_start": "22:00",
+            "recording_schedule_end": "06:30",
+        }
+
+        self.assertTrue(LiveRecorderManager._recording_schedule_allows(
+            daytime, datetime(2026, 8, 1, 9, 30)
+        ))
+        self.assertFalse(LiveRecorderManager._recording_schedule_allows(
+            daytime, datetime(2026, 8, 1, 18, 0)
+        ))
+        self.assertTrue(LiveRecorderManager._recording_schedule_allows(
+            overnight, datetime(2026, 8, 1, 23, 15)
+        ))
+        self.assertTrue(LiveRecorderManager._recording_schedule_allows(
+            overnight, datetime(2026, 8, 2, 5, 0)
+        ))
+        self.assertFalse(LiveRecorderManager._recording_schedule_allows(
+            overnight, datetime(2026, 8, 1, 12, 0)
+        ))
+
+    def test_scheduled_pause_overrides_stale_worker_status(self):
+        room = {
+            **self.rooms[0],
+            "enabled": True,
+            "recording_schedule_enabled": True,
+            "recording_schedule_start": "09:00",
+            "recording_schedule_end": "10:00",
+        }
+        payload = {"rooms": [{
+            "downloader_status": "Working",
+            "live_streamer": {"url": room["url"], "remark": "开播主播_aaaaaa"},
+        }]}
+
+        merged = LiveRecorderManager._merge_room_runtime(
+            [room], True, payload, now=datetime(2026, 8, 1, 12, 0)
+        )
+
+        runtime = merged[0]["runtime"]
+        self.assertEqual(runtime["state"], "paused")
+        self.assertEqual(runtime["label"], "定时暂停")
+        self.assertTrue(runtime["manual_enabled"])
+        self.assertFalse(runtime["effective_enabled"])
+
+    def test_control_state_combines_manual_and_scheduled_switches(self):
+        manager = LiveRecorderManager()
+        rooms = [
+            {**self.rooms[0], "enabled": False},
+            {
+                **self.rooms[1],
+                "enabled": True,
+                "recording_schedule_enabled": True,
+                "recording_schedule_start": "09:00",
+                "recording_schedule_end": "10:00",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            control_path = Path(temp_dir) / "control.json"
+            with mock.patch.object(recorder_module, "CONTROL_PATH", control_path), mock.patch.object(
+                manager, "_room_recording_enabled", side_effect=[False, False]
+            ):
+                manager._write_control_state(rooms)
+            controls = json.loads(control_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(controls["rooms"][self.rooms[0]["url"]])
+        self.assertFalse(controls["rooms"][self.rooms[1]["url"]])
 
     def test_stopping_one_room_persists_control_without_stopping_engine(self):
         manager = LiveRecorderManager()
@@ -2706,7 +2816,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("/bilibili-archives/replace", app_source)
         self.assertIn("/bilibili-archives/update", app_source)
         self.assertIn("/bilibili-archives/reply", app_source)
+        self.assertIn("/bilibili-archives/delete", app_source)
         self.assertIn("编辑稿件信息", template)
+        self.assertIn("同步信息并更新置顶评论", template)
+        self.assertIn("sync_pinned_comment", app_source)
+        self.assertIn("sync_description_comment", uploader_source)
+        self.assertIn("删除这个稿件", template)
+        self.assertIn("输入完整 BVID", template)
+        self.assertIn("https://member.bilibili.com/x/web/archive/delete", uploader_source)
         self.assertIn("不改动封面、视频源或分P", template)
         self.assertIn("筛选当前页的标题或 BVID", template)
         self.assertIn("复制 BV 号", template)

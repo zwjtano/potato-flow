@@ -30,13 +30,12 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertNotIn("chromium", dockerfile.lower())
         self.assertNotIn("playwright", requirements.lower())
 
-    def test_image_contains_yyf_cover_reference(self):
+    def test_image_contains_only_current_bundled_cover_references(self):
         reference_root = ROOT / "assets" / "streamer-references"
-        for filename in ("yyf.png", "guoxiaoguo.png"):
-            with self.subTest(filename=filename):
-                reference = reference_root / filename
-                self.assertTrue(reference.is_file())
-                self.assertGreater(reference.stat().st_size, 1024)
+        reference = reference_root / "guoxiaoguo.png"
+        self.assertTrue(reference.is_file())
+        self.assertGreater(reference.stat().st_size, 1024)
+        self.assertFalse((reference_root / "yyf.png").exists())
 
     def test_entrypoint_persists_runtime_data(self):
         entrypoint = (ROOT / "deploy" / "docker-entrypoint.sh").read_text(

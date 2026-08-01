@@ -199,8 +199,16 @@
                         </select>
                     </div>
                     <div class="alert alert-info small"><i class="bi bi-shield-check"></i> 只更新标题、简介、标签和分区，不改动封面、视频源或分P。</div>
-                    <button class="btn btn-primary w-100" type="submit"><i class="bi bi-cloud-arrow-up"></i> 同步信息到 B站</button>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary" type="submit" name="sync_pinned_comment" value="1"><i class="bi bi-chat-square-text"></i> 同步信息并更新置顶评论</button>
+                        <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-cloud-arrow-up"></i> 仅同步稿件信息</button>
+                    </div>
                 </form>
+                <hr class="my-4">
+                <div class="d-flex justify-content-between align-items-center gap-3">
+                    <div><strong class="text-danger">危险操作</strong><div class="small text-muted">删除后无法在 PotatoFlow 或 B站恢复。</div></div>
+                    <button class="btn btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#archiveDeleteModal"><i class="bi bi-trash3"></i> 删除这个稿件</button>
+                </div>
             </div>
         </div>
 
@@ -244,6 +252,31 @@
                 {% else %}
                 {% if not archive_comments_error %}<div class="archive-empty"><i class="bi bi-chat-left-text"></i><span>暂无可回复的评论</span></div>{% endif %}
                 {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if selected_archive %}
+        <div class="modal fade" id="archiveDeleteModal" tabindex="-1" aria-labelledby="archiveDeleteModalTitle" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <form class="modal-content" method="post" action="{{ url_for('bilibili_archive_delete') }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="account_id" value="{{ selected_account_id }}">
+                    <input type="hidden" name="bvid" value="{{ selected_archive.bvid }}">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="archiveDeleteModalTitle">永久删除 B站稿件</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-danger"><i class="bi bi-exclamation-triangle"></i> 此操作会直接删除 B站稿件、视频和所有分P，无法撤销。</div>
+                        <label class="form-label" for="archive-delete-confirmation">输入完整 BVID <strong>{{ selected_archive.bvid }}</strong> 确认</label>
+                        <input class="form-control" id="archive-delete-confirmation" name="confirmation_bvid" autocomplete="off" required>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-light border" type="button" data-bs-dismiss="modal">取消</button>
+                        <button class="btn btn-danger" type="submit"><i class="bi bi-trash3"></i> 永久删除稿件</button>
+                    </div>
+                </form>
             </div>
         </div>
         {% endif %}

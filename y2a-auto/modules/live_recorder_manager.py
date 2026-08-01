@@ -111,6 +111,7 @@ RECORDING_QUALITY_OVERRIDES = {
 AUTO_UPLOAD_RETRY_DELAY_SECONDS = 5 * 60
 AUTO_UPLOAD_RETRY_MAX_RETRIES = 3
 RECORDING_NOTIFICATION_POLL_SECONDS = 2
+RECORDING_SCHEDULE_POLL_SECONDS = 15
 RECORDING_STAGE_LABELS = {
     "detect": "监控开播",
     "record": "自动录制",
@@ -794,6 +795,7 @@ class LiveRecorderManager:
         self._orphan_recovery_thread: threading.Thread | None = None
         self._upload_retry_thread: threading.Thread | None = None
         self._recording_notification_thread: threading.Thread | None = None
+        self._recording_schedule_thread: threading.Thread | None = None
         self._recording_notification_lock = threading.Lock()
         self._recording_notification_states: dict[str, bool] = {}
         self._recording_notification_details: dict[str, dict[str, Any]] = {}
@@ -826,7 +828,62 @@ class LiveRecorderManager:
             room.setdefault("recording_quality", DEFAULT_RECORDING_QUALITY)
             room.setdefault("bilibili_account_id", "")
             room.setdefault("ai_danmaku_reaction_delay_seconds", 8)
+            room.setdefault("recording_schedule_enabled", False)
+            room.setdefault("recording_schedule_start", "00:00")
+            room.setdefault("recording_schedule_end", "23:59")
         return rooms
+
+    @staticmethod
+    def _normalize_recording_schedule_time(value: Any) -> str:
+        text = str(value or "").strip()
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
+        if not match:
+            raise RecorderConfigError("定时录制时间必须使用 HH:MM 格式")
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            raise RecorderConfigError("定时录制时间必须在 00:00 到 23:59 之间")
+        return f"{hour:02d}:{minute:02d}"
+
+    @classmethod
+    def _recording_schedule_allows(
+        cls,
+        room: dict[str, Any],
+        now: datetime | None = None,
+    ) -> bool:
+        """Return whether the room is inside its recurring local-time window."""
+        if not bool(room.get("recording_schedule_enabled", False)):
+            return True
+        try:
+            start = cls._normalize_recording_schedule_time(
+                room.get("recording_schedule_start", "00:00")
+            )
+            end = cls._normalize_recording_schedule_time(
+                room.get("recording_schedule_end", "23:59")
+            )
+        except RecorderConfigError:
+            # A damaged legacy config must not silently disable recording.
+            return True
+        if start == end:
+            return True
+        current = now or datetime.now().astimezone()
+        current_minute = current.hour * 60 + current.minute
+        start_hour, start_minute = (int(part) for part in start.split(":"))
+        end_hour, end_minute = (int(part) for part in end.split(":"))
+        start_value = start_hour * 60 + start_minute
+        end_value = end_hour * 60 + end_minute
+        if start_value < end_value:
+            return start_value <= current_minute < end_value
+        return current_minute >= start_value or current_minute < end_value
+
+    @classmethod
+    def _room_recording_enabled(
+        cls,
+        room: dict[str, Any],
+        now: datetime | None = None,
+    ) -> bool:
+        return bool(room.get("enabled", True)) and cls._recording_schedule_allows(
+            room, now
+        )
 
     @staticmethod
     def recording_prompt_defaults() -> dict[str, str]:
@@ -967,6 +1024,7 @@ class LiveRecorderManager:
         engine_running: bool,
         status_payload: dict[str, Any] | None = None,
         stream_infos: list[dict[str, Any]] | None = None,
+        now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         workers = status_payload.get("rooms", []) if isinstance(status_payload, dict) else []
         workers_by_url: dict[str, dict[str, Any]] = {}
@@ -992,6 +1050,9 @@ class LiveRecorderManager:
         for source_room in rooms:
             room = dict(source_room)
             manual_enabled = bool(room.get("enabled", True))
+            schedule_enabled = bool(room.get("recording_schedule_enabled", False))
+            schedule_allowed = cls._recording_schedule_allows(room, now)
+            effective_enabled = manual_enabled and schedule_allowed
             room_url = str(room.get("url") or "")
             parsed_room_url = urlparse(room_url)
             room["display_url"] = parsed_room_url._replace(query="", fragment="").geturl()
@@ -1007,6 +1068,13 @@ class LiveRecorderManager:
             elif not manual_enabled:
                 state, label = "paused", "已手动停止"
                 primary, secondary = "录制已停止", "点击开始录制后恢复直播检测"
+            elif schedule_enabled and not schedule_allowed:
+                state, label = "paused", "定时暂停"
+                primary = "当前不在录制时段"
+                secondary = (
+                    f"每天 {room.get('recording_schedule_start', '00:00')}–"
+                    f"{room.get('recording_schedule_end', '23:59')} 自动录制"
+                )
             elif raw_status == "Working":
                 state, label = "recording", "录制中"
                 primary, secondary = "正在录制", "已检测开播，正在写入录播文件"
@@ -1044,6 +1112,15 @@ class LiveRecorderManager:
                 "recording": state == "recording",
                 "live": state == "recording",
                 "manual_enabled": manual_enabled,
+                "effective_enabled": effective_enabled,
+                "recording_schedule_enabled": schedule_enabled,
+                "recording_schedule_allowed": schedule_allowed,
+                "recording_schedule_start": str(
+                    room.get("recording_schedule_start") or "00:00"
+                ),
+                "recording_schedule_end": str(
+                    room.get("recording_schedule_end") or "23:59"
+                ),
                 "duration_seconds": duration_seconds,
                 "started_at": started_at,
                 "live_title": live_title,
@@ -1839,17 +1916,55 @@ class LiveRecorderManager:
 
     def _write_control_state(self, rooms: list[dict[str, Any]] | None = None) -> None:
         rooms = rooms if rooms is not None else self.list_rooms()
+        now = datetime.now().astimezone()
         _atomic_json(
             CONTROL_PATH,
             {
                 "updated_at": time.time(),
                 "rooms": {
-                    str(room.get("url") or ""): bool(room.get("enabled", True))
+                    str(room.get("url") or ""): self._room_recording_enabled(
+                        room, now
+                    )
                     for room in rooms
                     if room.get("url")
                 },
             },
         )
+
+    def _ensure_recording_schedule_thread(self) -> None:
+        if (
+            self._recording_schedule_thread is not None
+            and self._recording_schedule_thread.is_alive()
+        ):
+            return
+
+        def monitor() -> None:
+            previous: dict[str, bool] | None = None
+            while True:
+                try:
+                    with self._lock:
+                        rooms = self.list_rooms()
+                        now = datetime.now().astimezone()
+                        current = {
+                            str(room.get("url") or ""): self._room_recording_enabled(
+                                room, now
+                            )
+                            for room in rooms
+                            if room.get("url")
+                        }
+                        if current != previous or not CONTROL_PATH.is_file():
+                            self._write_control_state(rooms)
+                            previous = current
+                except Exception as exc:
+                    logger.warning("刷新定时录制开关失败：%s", exc)
+                time.sleep(RECORDING_SCHEDULE_POLL_SECONDS)
+
+        self._recording_schedule_thread = threading.Thread(
+            target=monitor,
+            name="biliup-recording-schedule",
+            daemon=True,
+        )
+        self._recording_schedule_thread.start()
 
     def _clear_stale_multipart_session(self, session_key: str) -> bool:
         """Detach an earlier failed broadcast before a manual recording restarts."""
@@ -1931,6 +2046,9 @@ class LiveRecorderManager:
         danmaku_encode_quality: Any = 20,
         recording_quality: str = DEFAULT_RECORDING_QUALITY,
         bilibili_account_id: str = "",
+        recording_schedule_enabled: bool = False,
+        recording_schedule_start: str = "00:00",
+        recording_schedule_end: str = "23:59",
     ) -> tuple[dict[str, Any], str]:
         """Save per-room segmentation/upload mode and safely rotate active files."""
         try:
@@ -1955,6 +2073,12 @@ class LiveRecorderManager:
             raise RecorderConfigError("弹幕透明度必须在 0.10 到 1.00 之间")
         if not 0 <= quality <= 51:
             raise RecorderConfigError("编码质量值必须在 0 到 51 之间")
+        schedule_start = self._normalize_recording_schedule_time(
+            recording_schedule_start
+        )
+        schedule_end = self._normalize_recording_schedule_time(recording_schedule_end)
+        if recording_schedule_enabled and schedule_start == schedule_end:
+            raise RecorderConfigError("定时录制的开始时间和结束时间不能相同")
         encoder = str(danmaku_encoder or "cpu").strip().lower()
         if encoder not in {"auto", "cpu", "nvidia", "intel", "amd"}:
             raise RecorderConfigError("不支持的弹幕烧录编码器")
@@ -1979,6 +2103,9 @@ class LiveRecorderManager:
                     recording_quality
                 ),
                 "bilibili_account_id": str(bilibili_account_id or "").strip(),
+                "recording_schedule_enabled": bool(recording_schedule_enabled),
+                "recording_schedule_start": schedule_start,
+                "recording_schedule_end": schedule_end,
             })
             for key in (
                 "danmaku_duration_seconds", "danmaku_font_size", "danmaku_opacity",
@@ -2288,6 +2415,7 @@ class LiveRecorderManager:
                 self._ensure_orphan_recovery_thread()
                 self._ensure_upload_retry_thread()
                 self._ensure_recording_notification_thread()
+                self._ensure_recording_schedule_thread()
                 return self.status()
             if not self.list_rooms():
                 raise RecorderConfigError("请先添加至少一个直播间")
@@ -2329,6 +2457,7 @@ class LiveRecorderManager:
             self._ensure_orphan_recovery_thread()
             self._ensure_upload_retry_thread()
             self._ensure_recording_notification_thread()
+            self._ensure_recording_schedule_thread()
             return self.status()
 
     def stop(self) -> dict[str, Any]:
@@ -3865,6 +3994,52 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         except Exception as exc:
             raise RecorderConfigError(f"更新 B站稿件失败：{exc}") from exc
 
+    def sync_published_description_comment(self, fingerprint: str) -> dict[str, Any]:
+        """Sync one completed task's reviewed description to its pinned comment."""
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        if job.get("status") != "completed" or not job.get("bvid"):
+            raise RecorderConfigError("只有已成功上传的 B站稿件可以同步置顶评论")
+        bilibili_result = (job.get("result") or {}).get("bilibili")
+        if not isinstance(bilibili_result, dict):
+            raise RecorderConfigError("任务中缺少原始 B站投稿结果，无法同步置顶评论")
+        review = job.get("review_override")
+        review = review if isinstance(review, dict) else {}
+        description = str(
+            review.get("description") or job.get("description") or ""
+        ).strip()
+        try:
+            from .bilibili_accounts import resolve_account, resolve_cookie_path
+            from .bilibili_uploader import BilibiliUploader
+            from .config_manager import load_config
+
+            account = resolve_account(
+                load_config(),
+                (job.get("result") or {}).get("bilibili_account_id")
+                or job.get("bilibili_account_id"),
+            )
+            uploader = BilibiliUploader(
+                cookie_file=str(resolve_cookie_path(account.get("cookies_path")))
+            )
+            result = uploader.sync_description_comment(
+                bilibili_result,
+                description,
+            )
+            if not isinstance(result, dict) or not result.get("posted"):
+                raise RecorderConfigError(
+                    str((result or {}).get("error") or "同步简介置顶评论失败")
+                )
+            if not result.get("pinned"):
+                raise RecorderConfigError(
+                    str(result.get("pin_error") or "简介评论已更新，但重新置顶失败")
+                )
+            return result
+        except RecorderConfigError:
+            raise
+        except Exception as exc:
+            raise RecorderConfigError(f"同步简介置顶评论失败：{exc}") from exc
+
     def bilibili_archive_accounts(self) -> list[dict[str, Any]]:
         """Return configured Bilibili accounts without exposing Cookie paths."""
         from .bilibili_accounts import normalize_accounts
@@ -3913,6 +4088,24 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             raise RecorderConfigError(str(result))
         return result
 
+    def delete_bilibili_archive(
+        self,
+        *,
+        account_id: str,
+        bvid: str,
+    ) -> dict[str, Any]:
+        """Delete one explicitly selected archive after ownership lookup."""
+        clean_bvid = str(bvid or "").strip()
+        detail = self.bilibili_archive_detail(account_id, clean_bvid)
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.delete_archive(
+            aid=int(detail.get("aid") or 0),
+            bvid=clean_bvid,
+        )
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        return result
+
     def update_bilibili_archive_metadata(
         self,
         *,
@@ -3940,6 +4133,31 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         )
         if not ok or not isinstance(result, dict):
             raise RecorderConfigError(str(result))
+        return result
+
+    def sync_bilibili_archive_description_comment(
+        self,
+        *,
+        account_id: str,
+        bvid: str,
+        description: str,
+    ) -> dict[str, Any]:
+        """Make the uploader's pinned comment match the current archive description."""
+        clean_bvid = str(bvid or "").strip()
+        detail = self.bilibili_archive_detail(account_id, clean_bvid)
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        result = uploader.sync_description_comment(
+            {"aid": detail.get("aid"), "bvid": clean_bvid},
+            description,
+        )
+        if not isinstance(result, dict) or not result.get("posted"):
+            raise RecorderConfigError(
+                str((result or {}).get("error") or "同步简介置顶评论失败")
+            )
+        if not result.get("pinned"):
+            raise RecorderConfigError(
+                str(result.get("pin_error") or "简介评论已更新，但重新置顶失败")
+            )
         return result
 
     def bilibili_archive_comments(

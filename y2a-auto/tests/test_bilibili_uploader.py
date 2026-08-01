@@ -486,6 +486,165 @@ class BilibiliProgressTests(unittest.TestCase):
         self.assertEqual(sum(url.endswith("/add") for url in calls), 1)
         self.assertEqual(sum(url.endswith("/top") for url in calls), 3)
 
+    def test_sync_description_comment_edits_existing_uploader_pin(self):
+        calls = []
+
+        class Credential:
+            dedeuserid = "42"
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.data = {}
+                self.params = {}
+                self.headers = {}
+
+            def update_params(self, **kwargs):
+                self.params.update(kwargs)
+                return self
+
+            def update_data(self, **kwargs):
+                self.data.update(kwargs)
+                return self
+
+            def update_headers(self, **kwargs):
+                self.headers.update(kwargs)
+                return self
+
+            @property
+            def result(self):
+                async def resolve():
+                    calls.append((self.url, self.params, self.data))
+                    return {
+                        "upper": {"top": {"rpid": 987654}},
+                        "top_replies": [],
+                    }
+                return resolve()
+
+            async def request(self):
+                calls.append((self.url, self.params, self.data))
+                return {}
+
+        with patch(
+            "modules.bilibili_uploader.configure_bilibili_runtime",
+        ), patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=Credential(),
+        ), patch(
+            "modules.bilibili_uploader.validate_credential_remote",
+            return_value=(True, "ok"),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ):
+            details = BilibiliUploader("cookies.json").sync_description_comment(
+                {"aid": 123, "bvid": "BV1test"},
+                "更新后的简介",
+            )
+
+        self.assertTrue(details["posted"])
+        self.assertTrue(details["updated"])
+        self.assertTrue(details["pinned"])
+        self.assertEqual(details["rpid"], "987654")
+        edit_call = next(call for call in calls if call[0].endswith("/edit"))
+        self.assertEqual(edit_call[2]["message"], "更新后的简介")
+        self.assertEqual(edit_call[2]["rpid"], 987654)
+        top_call = next(call for call in calls if call[0].endswith("/top"))
+        self.assertEqual(top_call[2]["action"], 1)
+        self.assertFalse(any(call[0].endswith("/add") for call in calls))
+
+    def test_sync_description_comment_creates_pin_when_missing(self):
+        class Credential:
+            dedeuserid = "42"
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.params = {}
+
+            def update_params(self, **kwargs):
+                self.params.update(kwargs)
+                return self
+
+            @property
+            def result(self):
+                async def resolve():
+                    return {"upper": {}, "top_replies": []}
+                return resolve()
+
+        uploader = BilibiliUploader("cookies.json")
+        with patch(
+            "modules.bilibili_uploader.configure_bilibili_runtime",
+        ), patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=Credential(),
+        ), patch(
+            "modules.bilibili_uploader.validate_credential_remote",
+            return_value=(True, "ok"),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ), patch.object(
+            uploader,
+            "publish_description_comment",
+            return_value={"posted": True, "pinned": True, "rpid": "123"},
+        ) as publish:
+            details = uploader.sync_description_comment(
+                {"aid": 123, "bvid": "BV1test"},
+                "简介",
+            )
+
+        self.assertEqual(details["action"], "created")
+        publish.assert_called_once_with(
+            {"aid": 123, "bvid": "BV1test"},
+            "简介",
+            pin=True,
+        )
+
+    def test_delete_archive_uses_verified_creator_endpoint(self):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.data = {}
+                self.headers = {}
+
+            def update_headers(self, **kwargs):
+                self.headers.update(kwargs)
+                return self
+
+            def update_data(self, **kwargs):
+                self.data.update(kwargs)
+                return self
+
+            async def request(self):
+                calls.append((self.url, self.data, self.headers))
+                return {}
+
+        with patch(
+            "modules.bilibili_uploader.configure_bilibili_runtime",
+        ), patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=object(),
+        ), patch(
+            "modules.bilibili_uploader.validate_credential_remote",
+            return_value=(True, "ok"),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ):
+            ok, result = BilibiliUploader("cookies.json").delete_archive(
+                aid=123,
+                bvid="BV1test0000",
+            )
+
+        self.assertTrue(ok)
+        self.assertTrue(result["deleted"])
+        self.assertEqual(calls[0][0], "https://member.bilibili.com/x/web/archive/delete")
+        self.assertEqual(calls[0][1], {"aid": 123})
+        self.assertEqual(calls[0][2]["Origin"], "https://member.bilibili.com")
+
 
 if __name__ == "__main__":
     unittest.main()
