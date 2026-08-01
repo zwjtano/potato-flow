@@ -104,11 +104,32 @@ jobs:
           if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)" }
           $installedExe = Join-Path $installDir 'PotatoFlow.exe'
           if (-not (Test-Path $installedExe)) { throw 'Installed executable is missing.' }
+          $dataRoot = Join-Path $env:LOCALAPPDATA 'PotatoFlow'
+          New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
+          $sentinel = Join-Path $dataRoot 'uninstall-preserves-user-data.txt'
+          Set-Content -Path $sentinel -Value 'keep' -Encoding ascii
+          $process = Start-Process -FilePath $installedExe -ArgumentList '--server-only' -WorkingDirectory $installDir -PassThru -WindowStyle Hidden
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 90; $attempt++) {
+              Start-Sleep -Seconds 2
+              if ($process.HasExited) { throw "Installed PotatoFlow.exe exited with code $($process.ExitCode)" }
+              try {
+                $health = Invoke-RestMethod -Uri 'http://127.0.0.1:5001/healthz' -TimeoutSec 3
+                if ($health.status -eq 'ok' -and $health.version -eq '${{ steps.release_meta.outputs.version }}') {
+                  $healthy = $true
+                  break
+                }
+              } catch { Write-Host "Waiting for installed health endpoint ($($attempt + 1)/90)..." }
+            }
+            if (-not $healthy) { throw 'Installed server mode did not become healthy.' }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
           $uninstaller = Join-Path $installDir 'unins000.exe'
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
           if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)" }
-          $dataRoot = Join-Path $env:LOCALAPPDATA 'PotatoFlow'
-          if (-not (Test-Path $dataRoot)) { throw 'Uninstall unexpectedly removed user data.' }
+          if (-not (Test-Path $sentinel)) { throw 'Uninstall unexpectedly removed user data.' }
 
       - name: Verify installer checksum
         shell: pwsh
