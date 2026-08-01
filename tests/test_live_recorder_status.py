@@ -209,6 +209,117 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         store.assert_not_called()
 
+    def test_title_regeneration_retries_when_ai_returns_current_title(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "recording.flv"
+            video.write_bytes(b"video")
+            current_topic = "YYF强行开团团灭后复盘怪队友不能4v5"
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": f"{current_topic}｜08-01 20:01",
+                "description": "重新生成后的简介和时间点",
+                "tags": ["YYF"],
+                "partition_id": "171",
+                "room_name": "yyfyyf",
+                "review_override": {
+                    "ai_title_topic": "简介生成的新主题",
+                },
+                "stages": [
+                    {"key": "ai", "details": {"title_topic": "陪伴每一天"}},
+                ],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock(side_effect=[
+                {"title_topic": current_topic},
+                {"title_topic": "30分钟豪言反噬遭一轮游"},
+            ])
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock(return_value=object())
+
+            with mock.patch.dict(
+                sys.modules,
+                {"modules.ai_enhancer": ai_enhancer},
+            ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+            ) as store, mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={},
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "YYF", "date": "08-01", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.render_metadata",
+                side_effect=lambda _video, _cfg, ai_topic="": (
+                    f"{ai_topic}｜08-01 20:01",
+                    "",
+                    [],
+                ),
+            ):
+                result = manager.regenerate_published_metadata("a" * 64, {"title"})
+
+        self.assertEqual(ai_enhancer._request_json_object.call_count, 2)
+        first_payload = ai_enhancer._request_json_object.call_args_list[0].kwargs["payload"]
+        retry_payload = ai_enhancer._request_json_object.call_args_list[1].kwargs["payload"]
+        self.assertEqual(first_payload["previous_topic"], "简介生成的新主题")
+        self.assertTrue(first_payload["must_differ_from_current_title"])
+        self.assertEqual(retry_payload["rejected_title_topic"], current_topic)
+        self.assertEqual(result["title"], "30分钟豪言反噬遭一轮游｜08-01 20:01")
+        self.assertEqual(result["ai_title_topic"], "30分钟豪言反噬遭一轮游")
+        store.assert_called_once_with("a" * 64, result)
+
+    def test_title_regeneration_keeps_current_title_after_two_identical_results(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "recording.flv"
+            video.write_bytes(b"video")
+            current_topic = "YYF强行开团团灭后复盘怪队友不能4v5"
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": f"{current_topic}｜08-01 20:01",
+                "description": "简介",
+                "tags": [],
+                "partition_id": "171",
+                "room_name": "yyfyyf",
+                "stages": [],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock(
+                return_value={"title_topic": current_topic}
+            )
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock(return_value=object())
+
+            with mock.patch.dict(
+                sys.modules,
+                {"modules.ai_enhancer": ai_enhancer},
+            ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+            ) as store, mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={},
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "YYF", "date": "08-01", "live_title": "直播"},
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "保留原标题"):
+                    manager.regenerate_published_metadata("a" * 64, {"title"})
+
+        self.assertEqual(ai_enhancer._request_json_object.call_count, 2)
+        store.assert_not_called()
+
     def test_cover_regeneration_uses_reviewed_title_body_and_matching_hero_only(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:
