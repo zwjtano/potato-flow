@@ -112,7 +112,10 @@
             <div class="room-empty"><i class="bi bi-camera-video-off"></i><strong>还没有直播间</strong><span>新增一个 B站、斗鱼或抖音直播间开始监控</span></div>
             {% endfor %}
         </div>
-        <div class="room-pane-footer"><i class="bi bi-device-hdd"></i><span data-role="recordings-free" title="录播目录：{{ recorder_status.recordings_path }}；磁盘总容量：{{ recorder_status.recordings_total_text }}">剩余 {{ recorder_status.recordings_free_text }}</span></div>
+        <div class="room-pane-footer storage-space-status {{ recorder_status.recordings_free_level }}" data-role="recordings-storage" title="录播目录：{{ recorder_status.recordings_path }}；磁盘总容量：{{ recorder_status.recordings_total_text }}">
+            <i class="bi bi-device-hdd-fill"></i>
+            <span class="storage-space-copy"><small>录播磁盘可用</small><strong data-role="recordings-free">{{ recorder_status.recordings_free_text }}</strong></span>
+        </div>
     </aside>
 
     <div class="room-detail">
@@ -1071,9 +1074,14 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!response.ok) return;
             const payload = await response.json();
             const recordingsFree = document.querySelector('[data-role="recordings-free"]');
+            const recordingsStorage = document.querySelector('[data-role="recordings-storage"]');
             if (recordingsFree && payload.recordings_free_text) {
-                recordingsFree.textContent = `剩余 ${payload.recordings_free_text}`;
-                recordingsFree.title = `录播目录：${payload.recordings_path || ''}；磁盘总容量：${payload.recordings_total_text || '—'}`;
+                recordingsFree.textContent = payload.recordings_free_text;
+            }
+            if (recordingsStorage) {
+                recordingsStorage.classList.remove('ok', 'warning', 'danger', 'unknown');
+                recordingsStorage.classList.add(payload.recordings_free_level || 'unknown');
+                recordingsStorage.title = `录播目录：${payload.recordings_path || ''}；磁盘总容量：${payload.recordings_total_text || '—'}`;
             }
             payload.rooms.forEach(room => updateRoom(room, payload.running));
             applyFilter();

@@ -151,8 +151,15 @@ html[data-theme="dark"] .app-restart-required { color: #fbbf24; }
 .room-state.recording { color: #e63e52; }
 .room-state.checking { color: var(--studio-primary); }
 .room-state.offline, .room-state.stopped, .room-state.unknown { color: #9298a3; }
-.room-pane-footer { display: flex; align-items: center; gap: 8px; padding: 12px 18px; color: #999faa; border-top: 1px solid var(--studio-border); font-size: 9px; }
-.room-pane-footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-pane-footer { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--studio-border); }
+.storage-space-status { color: #1877d2; background: rgba(30, 136, 229, .08); transition: color .2s ease, background-color .2s ease; }
+.storage-space-status > i { flex: 0 0 auto; font-size: 20px; }
+.storage-space-copy { display: flex; min-width: 0; flex-direction: column; line-height: 1.15; }
+.storage-space-copy small { color: #657184; font-size: 9px; font-weight: 600; }
+.storage-space-copy strong { overflow: hidden; margin-top: 3px; font-size: 16px; font-weight: 800; letter-spacing: .15px; text-overflow: ellipsis; white-space: nowrap; }
+.storage-space-status.warning { color: #b86a00; background: rgba(245, 158, 11, .13); }
+.storage-space-status.danger { color: #d52e45; background: rgba(225, 56, 76, .12); }
+.storage-space-status.unknown { color: #7c8491; background: rgba(124, 132, 145, .08); }
 .room-empty { display: flex; align-items: center; flex-direction: column; padding: 52px 20px; color: #9aa0aa; text-align: center; }
 .room-empty i { margin-bottom: 12px; font-size: 26px; }
 .room-empty strong { color: #555b66; font-size: 12px; }

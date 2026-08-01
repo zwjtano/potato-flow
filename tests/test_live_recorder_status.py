@@ -77,14 +77,36 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(status["recordings_free_bytes"], 124 * 1024 ** 3)
         self.assertEqual(status["recordings_free_text"], "124.0 GB")
         self.assertEqual(status["recordings_total_text"], "500.0 GB")
+        self.assertEqual(status["recordings_free_level"], "ok")
+
+    def test_disk_free_space_level_warns_before_recordings_fill_disk(self):
+        usage = mock.Mock(
+            total=200 * 1024 ** 3,
+            used=170 * 1024 ** 3,
+            free=30 * 1024 ** 3,
+        )
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            recorder_module,
+            "recordings_dir",
+            return_value=Path(temp),
+        ), mock.patch.object(
+            recorder_module.shutil,
+            "disk_usage",
+            return_value=usage,
+        ):
+            status = recorder_module.recordings_disk_usage()
+
+        self.assertEqual(status["recordings_free_level"], "warning")
 
     def test_live_recording_footer_refreshes_disk_space_without_reload(self):
         template = (Y2A_ROOT / "templates" / "live_recording.html").read_text(
             encoding="utf-8"
         )
         self.assertIn('data-role="recordings-free"', template)
+        self.assertIn('data-role="recordings-storage"', template)
         self.assertIn("payload.recordings_free_text", template)
         self.assertIn("recordingsFree.textContent", template)
+        self.assertIn("payload.recordings_free_level", template)
         self.assertIn("window.setInterval(refreshLiveRecordingPage, 5000)", template)
 
     def test_published_description_regeneration_reuses_xml_timeline_pipeline(self):

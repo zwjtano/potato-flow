@@ -207,12 +207,21 @@ def recordings_disk_usage() -> dict[str, Any]:
             "recordings_free_text": "—",
             "recordings_total_bytes": None,
             "recordings_total_text": "—",
+            "recordings_free_level": "unknown",
         }
+    free_ratio = usage.free / usage.total if usage.total else 0
+    if usage.free <= 20 * 1024 ** 3 or free_ratio <= 0.1:
+        free_level = "danger"
+    elif usage.free <= 50 * 1024 ** 3 or free_ratio <= 0.2:
+        free_level = "warning"
+    else:
+        free_level = "ok"
     return {
         "recordings_free_bytes": int(usage.free),
         "recordings_free_text": _format_disk_space(usage.free),
         "recordings_total_bytes": int(usage.total),
         "recordings_total_text": _format_disk_space(usage.total),
+        "recordings_free_level": free_level,
     }
 
 
@@ -1251,6 +1260,7 @@ class LiveRecorderManager:
             "recordings_free_text": status["recordings_free_text"],
             "recordings_total_bytes": status["recordings_total_bytes"],
             "recordings_total_text": status["recordings_total_text"],
+            "recordings_free_level": status["recordings_free_level"],
             "rooms": [
                 {
                     "id": room.get("id"),
