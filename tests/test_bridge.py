@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,34 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_image_generation_queue_serializes_threads(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cfg = {"state_db": str(Path(temp) / "state.sqlite3")}
+            first_entered = threading.Event()
+            second_entered = threading.Event()
+            release_first = threading.Event()
+
+            def first_worker():
+                with bridge.image_generation_queue(cfg):
+                    first_entered.set()
+                    release_first.wait(2)
+
+            def second_worker():
+                first_entered.wait(2)
+                with bridge.image_generation_queue(cfg):
+                    second_entered.set()
+
+            first = threading.Thread(target=first_worker)
+            second = threading.Thread(target=second_worker)
+            first.start()
+            self.assertTrue(first_entered.wait(1))
+            second.start()
+            self.assertFalse(second_entered.wait(0.1))
+            release_first.set()
+            first.join(2)
+            second.join(2)
+            self.assertTrue(second_entered.is_set())
+
     def test_title_prompt_rejects_vague_marketing_conclusions(self):
         prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
 
@@ -739,6 +768,24 @@ class BridgeTests(unittest.TestCase):
             )
         self.assertEqual(title, "主播｜深夜歌回｜07-23 09:45")
 
+    def test_current_recorder_filename_falls_back_to_embedded_live_title(self):
+        with tempfile.TemporaryDirectory() as temp:
+            video = (
+                Path(temp)
+                / "果小果是个弟弟_果小果：8月你好！_2026-08-01_17-25.flv"
+            )
+            video.write_bytes(b"video")
+            title, description, _ = bridge.render_metadata(
+                video,
+                {
+                    "title_template": bridge.DEFAULT_TITLE_TEMPLATE,
+                    "streamer_name": "果小果是个弟弟",
+                },
+            )
+
+        self.assertEqual(title, "果小果：8月你好！｜08-01 17:25")
+        self.assertIn("《果小果：8月你好！》", description)
+
     def test_yyf_alias_at_start_of_topic_avoids_repeated_streamer_prefix(self):
         aliases = ("FG", "胖头", "胖头鱼")
         for alias in aliases:
@@ -811,6 +858,72 @@ class BridgeTests(unittest.TestCase):
             xml.write_text("<i/>", encoding="utf-8")
             paths = bridge.input_paths([str(video), str(xml)], include_stdin=False)
             self.assertEqual(bridge.find_danmaku_xml(video, paths), xml.resolve())
+
+    def test_videos_shorter_than_five_minutes_never_create_a_task(self):
+        for command in ("ingest", "record-only"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                video = root / "short.flv"
+                state = root / "state.sqlite3"
+                config = root / "bridge.config.json"
+                video.write_bytes(b"video")
+                config.write_text(
+                    json.dumps({
+                        "state_db": str(state),
+                        "MIN_RECORDING_UPLOAD_DURATION_SECONDS": 60,
+                    }),
+                    encoding="utf-8",
+                )
+                arguments = ["--config", str(config), command]
+                if command == "record-only":
+                    arguments.extend(["--room-id", "room-1"])
+                arguments.append(str(video))
+
+                with patch.object(
+                    bridge,
+                    "video_duration_seconds",
+                    return_value=299.9,
+                ), patch.object(bridge, "upload_one") as upload:
+                    result = bridge.main(arguments)
+
+                self.assertEqual(result, 0)
+                upload.assert_not_called()
+                with sqlite3.connect(state) as db:
+                    self.assertEqual(
+                        db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0],
+                        0,
+                    )
+
+    def test_recorder_wall_clock_rejects_restart_fragment_with_false_duration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_标题_2026-08-01_17-25.flv"
+            state = root / "state.sqlite3"
+            config = root / "bridge.config.json"
+            video.write_bytes(b"video")
+            finished_at = datetime(2026, 8, 1, 17, 25, 23).timestamp()
+            os.utime(video, (finished_at, finished_at))
+            config.write_text(
+                json.dumps({"state_db": str(state)}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                bridge,
+                "video_duration_seconds",
+                return_value=3600,
+            ), patch.object(bridge, "upload_one") as upload:
+                result = bridge.main([
+                    "--config", str(config), "ingest", str(video),
+                ])
+
+            self.assertEqual(result, 0)
+            upload.assert_not_called()
+            with sqlite3.connect(state) as db:
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0],
+                    0,
+                )
 
     def test_danmaku_xml_falls_back_to_same_session_stop_timestamp(self):
         with tempfile.TemporaryDirectory() as temp:

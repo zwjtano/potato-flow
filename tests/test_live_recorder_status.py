@@ -245,6 +245,18 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ai_enhancer._request_json_object = mock.Mock()
             ai_enhancer.generate_video_tags = mock.Mock()
             ai_enhancer.get_openai_client = mock.Mock()
+
+            def generate_cover(**kwargs):
+                kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
+                kwargs["output_path"].write_bytes(b"cover")
+                return (
+                    kwargs["output_path"],
+                    {
+                        "ai_cover_generated": True,
+                        "target_size": kwargs["target_size"],
+                    },
+                )
+
             with mock.patch.dict(
                 sys.modules,
                 {"modules.ai_enhancer": ai_enhancer},
@@ -266,13 +278,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 return_value={"streamer": "yyfyyf", "date": "08-01", "live_title": "直播"},
             ), mock.patch(
                 "bridge.generate_recording_cover_with_ai",
-                side_effect=lambda **kwargs: (
-                    kwargs["output_path"],
-                    {
-                        "ai_cover_generated": True,
-                        "target_size": kwargs["target_size"],
-                    },
-                ),
+                side_effect=generate_cover,
             ) as generate:
                 result = manager.regenerate_published_metadata("a" * 64, {"cover"})
 
@@ -287,10 +293,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
             [call.kwargs["target_size"] for call in generate.call_args_list],
             [(1920, 1080), (1600, 1200)],
         )
-        self.assertEqual(
-            [call.kwargs["output_path"].name for call in generate.call_args_list],
-            ["ai_cover_16x9.jpg", "ai_cover_4x3.jpg"],
-        )
+        self.assertTrue(generate.call_args_list[0].kwargs["output_path"].name.startswith(
+            ".ai_cover_16x9-"
+        ))
+        self.assertTrue(generate.call_args_list[1].kwargs["output_path"].name.startswith(
+            ".ai_cover_4x3-"
+        ))
         self.assertEqual(result["title"], title)
         self.assertEqual(result["ai_regenerated_fields"], ["cover"])
         self.assertTrue(result["cover_path"].endswith("ai_cover_16x9.jpg"))
@@ -299,6 +307,75 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(result["ai_cover_details"]["16x9"]["target_size"], (1920, 1080))
         self.assertEqual(result["ai_cover_details"]["4x3"]["target_size"], (1600, 1200))
         store.assert_called_once_with("a" * 64, result)
+
+    def test_cover_regeneration_failure_keeps_both_previous_covers(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            old_cover = root / "artifacts" / ("a" * 16) / "ai_cover_16x9.jpg"
+            old_cover43 = root / "artifacts" / ("a" * 16) / "ai_cover_4x3.jpg"
+            video.write_bytes(b"video")
+            old_cover.parent.mkdir(parents=True)
+            old_cover.write_bytes(b"old-16x9")
+            old_cover43.write_bytes(b"old-4x3")
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "YYF蓝猫残局送人头｜08-01 14:39",
+                "description": "正文",
+                "tags": ["YYF"],
+                "partition_id": "171",
+                "room_name": "yyfyyf",
+                "review_override": {
+                    "cover_path": str(old_cover),
+                    "cover43_path": str(old_cover43),
+                },
+                "stages": [],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock()
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock()
+
+            def generate_cover(**kwargs):
+                if kwargs["target_size"] == (1600, 1200):
+                    raise RuntimeError("4:3 failed")
+                kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
+                kwargs["output_path"].write_bytes(b"new-16x9")
+                return kwargs["output_path"], {"ai_cover_generated": True}
+
+            with mock.patch.dict(
+                sys.modules,
+                {"modules.ai_enhancer": ai_enhancer},
+            ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+            ) as store, mock.patch.object(
+                manager,
+                "_recording_file_roots",
+                return_value={"artifacts": root / "artifacts"},
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_IMAGE_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config",
+                return_value={"douyu_stats_enabled": False},
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "yyfyyf", "date": "08-01", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.generate_recording_cover_with_ai",
+                side_effect=generate_cover,
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "已保留上一版"):
+                    manager.regenerate_published_metadata("a" * 64, {"cover"})
+
+            self.assertEqual(old_cover.read_bytes(), b"old-16x9")
+            self.assertEqual(old_cover43.read_bytes(), b"old-4x3")
+            self.assertEqual(list(old_cover.parent.glob(".ai_cover-*")), [])
+            store.assert_not_called()
 
     def test_default_recordings_directory_uses_docker_mount_when_available(self):
         with mock.patch(

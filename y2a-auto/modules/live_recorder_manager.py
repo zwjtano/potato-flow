@@ -3642,9 +3642,22 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     title_topic,
                     str(job.get("room_name") or values.get("streamer") or ""),
                 )
+                cover_live_stats = persisted_live_stats
+                if (
+                    not cover_live_stats
+                    and bool(bridge_config.get("douyu_stats_enabled", True))
+                ):
+                    try:
+                        from .douyu_stats_formatter import get_stats_for_description
+
+                        cover_live_stats = str(
+                            get_stats_for_description(str(video_path.parent)) or ""
+                        ).strip()
+                    except Exception:
+                        cover_live_stats = ""
                 cover_description = bridge.strip_live_stats_from_description(
                     description,
-                    persisted_live_stats,
+                    cover_live_stats,
                 )
                 identity_stage = next(
                     (stage for stage in job.get("stages", []) if stage.get("key") == "xml_identity"),
@@ -3677,11 +3690,18 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     }
                 artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
                 errors: list[str] = []
+                generation_id = uuid.uuid4().hex
+                generated_variants: dict[str, tuple[Path, Path]] = {}
+                staged_outputs: list[Path] = []
                 variants = (
                     ("16x9", (1920, 1080), artifact_dir / "ai_cover_16x9.jpg"),
                     ("4x3", (1600, 1200), artifact_dir / "ai_cover_4x3.jpg"),
                 )
                 for variant, target_size, output_path in variants:
+                    staged_output = output_path.with_name(
+                        f".{output_path.stem}-{generation_id}{output_path.suffix}"
+                    )
+                    staged_outputs.append(staged_output)
                     try:
                         generated_path, variant_details = (
                             bridge.generate_recording_cover_with_ai(
@@ -3693,26 +3713,38 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                                 work_dir=artifact_dir,
                                 recording_dir=video_path.parent,
                                 target_size=target_size,
-                                output_path=output_path,
+                                output_path=staged_output,
                                 game_context=cover_game_context,
                                 game_context_locked=True,
                             )
                         )
                         cover_details[variant] = variant_details
-                        if generated_path:
-                            if variant == "16x9":
-                                cover_path = str(generated_path)
-                            else:
-                                cover43_path = str(generated_path)
+                        generated_file = Path(generated_path) if generated_path else None
+                        if (
+                            generated_file is not None
+                            and generated_file.is_file()
+                            and generated_file.stat().st_size > 0
+                        ):
+                            generated_variants[variant] = (generated_file, output_path)
                         else:
                             errors.append(f"{variant} 未生成")
                     except Exception as exc:
                         cover_details[variant] = {"error": str(exc)}
                         errors.append(f"{variant}: {exc}")
-                if errors and not cover_path and not cover43_path:
-                    raise RecorderConfigError("两种 AI 封面均生成失败：" + "；".join(errors))
                 if errors:
-                    cover_details["errors"] = errors
+                    for staged_output in staged_outputs:
+                        staged_output.unlink(missing_ok=True)
+                    raise RecorderConfigError(
+                        "AI 双封面未完整生成，已保留上一版：" + "；".join(errors)
+                    )
+                for variant, (generated_file, output_path) in generated_variants.items():
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(generated_file, output_path)
+                    cover_details[variant]["ai_cover_path"] = str(output_path)
+                    if variant == "16x9":
+                        cover_path = str(output_path)
+                    else:
+                        cover43_path = str(output_path)
 
             now = datetime.now(timezone.utc).isoformat()
             metadata = {

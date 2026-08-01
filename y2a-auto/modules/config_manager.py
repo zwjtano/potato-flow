@@ -113,7 +113,7 @@ DEFAULT_CONFIG = {
     # 4:3 使用独立请求与构图提示，生成后再单独处理为投稿尺寸。
     # Official Images API sizes are square or 3:2; final output is cropped to 4:3.
     "OPENAI_IMAGE_SIZE_4X3": "1536x1024",
-    "MIN_RECORDING_UPLOAD_DURATION_SECONDS": 60,
+    "MIN_RECORDING_UPLOAD_DURATION_SECONDS": 300,
     "OPENAI_THINKING_ENABLED": False,
     "OPENAI_TIMEOUT_SECONDS": 600,  # OpenAI API 请求超时秒数；思考模型输出可达64k token，建议不低于300
     # bilibili固定分区ID（可选）：如设置则bilibili推荐分区将直接使用该ID
