@@ -89,6 +89,41 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(tags, ["YYF", "DOTA2"])
         self.assertEqual(details["unverified_hero_tags_removed"], ["影魔"])
 
+    def test_verified_owner_timeline_preserves_hero_metadata_without_gsi(self):
+        timeline = (
+            "43:17 弹幕嘲讽YYF虚空假面出装刮痧，与鲷哥的虚空形成对比"
+        )
+        topic, description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "YYF虚空假面冰眼出装刮痧",
+            timeline,
+            ["YYF", "虚空假面", "DOTA2"],
+            streamer="YYF",
+            verified_timeline=timeline,
+        )
+
+        self.assertEqual(topic, "YYF虚空假面冰眼出装刮痧")
+        self.assertEqual(description, timeline)
+        self.assertEqual(tags, ["YYF", "虚空假面", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "verified_timeline")
+        self.assertEqual(
+            details["verified_timeline_hero_evidence"],
+            ["虚空假面（Faceless Void）"],
+        )
+
+    def test_other_streamer_timeline_does_not_validate_owner_hero_title(self):
+        timeline = "43:17 查理斯虚空假面出装成型，YYF在旁观赛"
+        topic, _description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "YYF虚空假面冰眼出装刮痧",
+            timeline,
+            ["YYF", "虚空假面"],
+            streamer="YYF",
+            verified_timeline=timeline,
+        )
+
+        self.assertEqual(topic, "")
+        self.assertEqual(tags, ["YYF"])
+        self.assertEqual(details["hero_evidence_source"], "none")
+
     def test_live_stats_are_placed_after_archive_description(self):
         description = bridge.append_live_stats_to_description(
             "直播录播：YYF《休赛期改名狂欢》。",
@@ -2015,6 +2050,22 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(topic, "YYF操刀小狗带4个拳套出门")
         self.assertFalse(bridge.recording_title_topic_is_vague(topic))
 
+    def test_passive_reaction_titles_are_vague_but_concrete_followups_are_kept(self):
+        for topic in (
+            "YYF宝可梦BP与虚空出装被吐槽",
+            "川神主锤骷髅王被赞完美适配",
+            "果小果巫妖操作被狂喷",
+        ):
+            with self.subTest(topic=topic):
+                self.assertTrue(bridge.recording_title_topic_is_vague(topic))
+
+        for topic in (
+            "YYF宝可梦一轮游被狂喷发红包求饶",
+            "果小果巫妖公式化被喷后躺赢",
+        ):
+            with self.subTest(topic=topic):
+                self.assertFalse(bridge.recording_title_topic_is_vague(topic))
+
     def test_recording_cover_hero_must_match_reviewed_title(self):
         self.assertTrue(
             bridge.recording_cover_hero_matches_title(
@@ -2478,6 +2529,84 @@ class BridgeTests(unittest.TestCase):
             ANY,
         )
 
+    def test_recording_cover_uses_danmaku_hero_without_inventing_equipment(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work_dir = root / "artifacts"
+            character_base = root / "character-base.png"
+            character_base.write_bytes(b"character-base")
+            hero_reference = root / "witch-doctor.png"
+            hero_reference.write_bytes(b"hero-reference")
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_edit = Mock(return_value=response)
+            client = types.SimpleNamespace(
+                images=types.SimpleNamespace(edit=image_edit, generate=Mock())
+            )
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(
+                bridge,
+                "build_dota2_hero_reference",
+                return_value=(
+                    hero_reference,
+                    types.SimpleNamespace(
+                        chinese_name="巫医",
+                        english_name="Witch Doctor",
+                        icon_slug="witch_doctor",
+                    ),
+                    "",
+                ),
+            ), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
+                _, details = bridge.generate_recording_cover_with_ai(
+                    title="果小果巫医关键团救场｜08-02 00:08",
+                    ai_topic="果小果巫医关键团救场",
+                    description="果小果使用巫医在关键团战救场。",
+                    streamer="果小果",
+                    cfg={
+                        "_config_dir": str(root),
+                        "y2a_root": str(y2a_root),
+                        "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(character_base),
+                        "douyu_stats_enabled": True,
+                        "douyu_stats_cover_context_enabled": True,
+                    },
+                    work_dir=work_dir,
+                    game_context={
+                        "hero": "巫医",
+                        "items": [],
+                        "neutral": "",
+                        "identity_source": "xml_dominant_hero_only",
+                    },
+                    game_context_locked=True,
+                )
+
+        prompt = image_edit.call_args.kwargs["prompt"]
+        self.assertEqual(details["ai_cover_tooltip_hero"], "巫医")
+        self.assertEqual(details["ai_cover_tooltip_items"], [])
+        self.assertEqual(details["ai_cover_dota2_source"], "danmaku_hero")
+        self.assertIn("本证据只确认英雄，不确认任何装备", prompt)
+        self.assertIn("画面中的主播游戏角色只能是 巫医", prompt)
+        self.assertIn("不得根据标题、简介或常识补画其他具体英雄、装备", prompt)
+        self.assertNotIn("主播本局最终六格主装备", prompt)
+
     def test_dota2_item_icon_sheet_is_sent_to_image_model(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
         with tempfile.TemporaryDirectory() as temp:
@@ -2915,6 +3044,227 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result["tags"], override["tags"])
             self.assertEqual(result["partition_id"], override["partition_id"])
             self.assertEqual(result["cover"], str(manual_cover))
+
+    def test_default_ai_title_stops_before_metadata_and_requires_manual_review(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_abcdef2026-07-23_09-00-00.flv"
+            xml = root / "主播_abcdef2026-07-23_09-00-00.xml"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": True,
+                "ai_danmaku_summary_enabled": True,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video, xml)
+
+            with patch.object(
+                bridge,
+                "generate_danmaku_metadata_with_ai",
+                return_value=("简介正文", "直播精彩内容"),
+            ), patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                side_effect=AssertionError("默认标题不得继续生成标签和分区"),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                side_effect=AssertionError("默认标题不得继续生图"),
+            ), patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1920, 1080),
+            ):
+                self.assertFalse(
+                    bridge.upload_one(video, cfg, store, danmaku_xml=xml)
+                )
+
+            ai_stage = store.stage_state(key, "ai")
+            self.assertEqual(ai_stage["status"], "failed")
+            self.assertTrue(ai_stage["details"]["manual_review_required"])
+            self.assertIn("默认标题", ai_stage["error"])
+            self.assertIn("人工审核", ai_stage["error"])
+            with store.connect() as db:
+                upload_status = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?",
+                    (key,),
+                ).fetchone()["status"]
+            self.assertEqual(upload_status, "failed")
+            self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "pending")
+
+    def test_live_room_title_fallback_requires_manual_review(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "yyfyyf_陪伴每一天_2026-08-01_23-07.flv"
+            xml = root / "yyfyyf_陪伴每一天_2026-08-01_23-07.xml"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
+            cfg = {
+                "_config_dir": str(root),
+                "streamer_name": "YYF",
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": True,
+                "ai_danmaku_summary_enabled": True,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video, xml)
+
+            with patch.object(
+                bridge,
+                "generate_danmaku_metadata_with_ai",
+                return_value=("简介正文", "YYF虚空假面冰眼出装刮痧"),
+            ), patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                return_value=(["YYF", "虚空假面"], "171", {}),
+            ), patch.object(
+                bridge,
+                "filter_unverified_dota2_metadata",
+                return_value=(
+                    "",
+                    "简介正文",
+                    ["YYF"],
+                    {"unverified_hero_topic_removed": True},
+                ),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                side_effect=AssertionError("证据过滤清空标题后不得继续生图"),
+            ), patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1920, 1080),
+            ):
+                self.assertFalse(
+                    bridge.upload_one(video, cfg, store, danmaku_xml=xml)
+                )
+
+            ai_stage = store.stage_state(key, "ai")
+            self.assertEqual(ai_stage["status"], "failed")
+            self.assertTrue(ai_stage["details"]["manual_review_required"])
+            self.assertTrue(ai_stage["details"]["title_topic_is_fallback"])
+            self.assertEqual(ai_stage["details"]["fallback_title_topic"], "陪伴每一天")
+            self.assertTrue(
+                ai_stage["details"]["title_topic_rejected_after_evidence_filter"]
+            )
+            self.assertIn("证据过滤后", ai_stage["error"])
+
+    def test_evidence_filter_recovers_title_from_verified_description(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "yyfyyf_陪伴每一天_2026-08-01_23-07.flv"
+            xml = root / "yyfyyf_陪伴每一天_2026-08-01_23-07.xml"
+            cover = root / "cover.jpg"
+            cookie = root / "cookie.json"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cookie.write_text("[]", encoding="utf-8")
+            xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
+            timeline = (
+                "04:01 谢彬在BP阶段吃下大量ban位\n"
+                "43:17 弹幕讨论虚空假面冰眼出装刮痧"
+            )
+            cfg = {
+                "_config_dir": str(root),
+                "streamer_name": "YYF",
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": True,
+                "ai_danmaku_summary_enabled": True,
+                "delete_recording_after_upload": False,
+            }
+            uploaded = []
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **kwargs):
+                    uploaded.append(kwargs)
+                    return True, {
+                        "bvid": "BV1recovered",
+                        "aid": 123,
+                        "url": "https://www.bilibili.com/video/BV1recovered",
+                    }
+
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video, xml)
+            with patch.object(
+                bridge,
+                "generate_danmaku_metadata_with_ai",
+                return_value=(timeline, "YYF虚空假面冰眼出装刮痧"),
+            ), patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                return_value=(["YYF", "DOTA2"], "171", {}),
+            ), patch.object(
+                bridge,
+                "filter_unverified_dota2_metadata",
+                return_value=(
+                    "",
+                    timeline,
+                    ["YYF", "DOTA2"],
+                    {"unverified_hero_topic_removed": True},
+                ),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                return_value=(None, {"ai_cover_enabled": False}),
+            ), patch.object(
+                bridge,
+                "import_y2a",
+                return_value=(FakeUploader, None),
+            ), patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1920, 1080),
+            ):
+                self.assertTrue(
+                    bridge.upload_one(video, cfg, store, danmaku_xml=xml)
+                )
+
+            self.assertEqual(
+                uploaded[0]["title"],
+                "YYF｜谢彬在BP阶段吃下大量ban位｜08-01 23:07",
+            )
+            ai_stage = store.stage_state(key, "ai")
+            self.assertTrue(
+                ai_stage["details"]["title_topic_recovered_from_description"]
+            )
+            self.assertEqual(
+                ai_stage["details"]["title_topic_recovery_source"],
+                "verified_description_timeline",
+            )
 
     def test_cover_extraction_failure_is_reported_as_cover_stage(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -979,6 +979,70 @@ class DouyuStatsTests(unittest.TestCase):
         self.assertEqual(selected["hero"], "拍拍熊")
         self.assertEqual(selected["xml_mention_score"], 25)
 
+    def test_comment_hero_fallback_works_without_gsi_lineup(self):
+        comments = [
+            (100 + index * 20, "果小果这把巫医玩得可以")
+            for index in range(8)
+        ]
+
+        selected = formatter.select_comment_hero([], comments, 100, 300)
+
+        self.assertEqual(selected["hero"], "巫医")
+        self.assertEqual(selected["identity_source"], "xml_dominant_hero_only")
+        self.assertEqual(selected["items"], [])
+        self.assertEqual(selected["neutral"], "")
+        self.assertNotIn("kills", selected)
+
+    def test_comment_hero_fallback_accepts_short_danmaku_burst(self):
+        comments = [
+            (100, "巫医这波大招好"),
+            (107, "巫医牛"),
+            (115, "这巫医救了"),
+            (129, "巫医立功"),
+        ]
+
+        selected = formatter.select_comment_hero([], comments, 100, 200)
+
+        self.assertEqual(selected["hero"], "巫医")
+        self.assertEqual(selected["xml_mention_score"], 4)
+        self.assertEqual(selected["xml_mention_burst_score"], 4)
+
+    def test_comment_hero_fallback_rejects_ambiguous_heroes(self):
+        comments = [
+            *((100 + index, "巫医这波") for index in range(6)),
+            *((150 + index, "女王这波") for index in range(5)),
+        ]
+
+        self.assertIsNone(
+            formatter.select_comment_hero([], comments, 100, 300)
+        )
+
+    def test_comment_hero_fallback_uses_independent_hero_catalog(self):
+        comments = [
+            (100 + index, "宙斯输出拉满") for index in range(8)
+        ]
+
+        selected = formatter.select_comment_hero(["宙斯"], comments, 100, 200)
+
+        self.assertEqual(selected["hero"], "宙斯")
+
+    def test_stats_prints_comment_hero_without_fabricated_equipment(self):
+        comments = [
+            (100 + index, "果小果巫医又救人了") for index in range(8)
+        ]
+
+        text = formatter.format_stats(
+            {"dota_hero_catalog": ["巫医"]},
+            100,
+            200,
+            comments,
+        )
+
+        self.assertIn("🎮 巫医", text)
+        self.assertNotIn("六格", text)
+        self.assertNotIn("中立", text)
+        self.assertNotIn("K/D/A", text)
+
     def test_formatter_rejects_legacy_single_late_anchor_snapshot(self):
         game = {
             "start_unix_ts": 100,

@@ -3766,9 +3766,14 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             cover43_path = str(previous.get("cover43_path") or "").strip()
             cover_details: dict[str, Any] = {}
             if "cover" in selected:
+                # A cover-only regeneration follows the title currently saved
+                # in the review form. The AI-stage topic belongs to the
+                # original upload and may be stale after a manual title edit.
+                # When title regeneration is selected in the same action,
+                # title_topic is new and remains the best source.
                 cover_topic = bridge.recording_cover_headline(
                     title,
-                    title_topic,
+                    title_topic if "title" in selected else "",
                     str(job.get("room_name") or values.get("streamer") or ""),
                 )
                 cover_live_stats = persisted_live_stats

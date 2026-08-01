@@ -238,7 +238,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                             "identity_source": "xml_dominant_mention",
                         },
                     },
-                    {"key": "ai", "details": {"title_topic": "直播精彩内容"}},
+                    {"key": "ai", "details": {"title_topic": "陪伴每一天"}},
                 ],
             }
             ai_enhancer = mock.Mock()
@@ -285,7 +285,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(generate.call_count, 2)
         for call in generate.call_args_list:
             self.assertIn("蓝猫残局送人头", call.kwargs["ai_topic"])
-            self.assertNotIn("直播精彩内容", call.kwargs["ai_topic"])
+            self.assertNotIn("陪伴每一天", call.kwargs["ai_topic"])
             self.assertEqual(call.kwargs["description"], body)
             self.assertIsNone(call.kwargs["game_context"])
             self.assertTrue(call.kwargs["game_context_locked"])

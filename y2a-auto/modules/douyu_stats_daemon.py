@@ -487,6 +487,11 @@ class RoomMonitor(threading.Thread):
             "games": [],
             "active_game": None,
             "gsi_hero_history": [],
+            "dota_hero_catalog": sorted({
+                str(name).strip()
+                for name in dota_hero_map.values()
+                if str(name).strip()
+            }),
             "tooltip_diagnostics": {
                 "messages": 0,
                 "valid_snapshots": 0,
@@ -1282,6 +1287,14 @@ class RoomMonitor(threading.Thread):
     def flush(self) -> None:
         try:
             self._prune()
+            # Keep the independently refreshed hero mapping available to the
+            # formatter. It is also needed when GSI is empty and XML comments
+            # are the only hero evidence for this recording.
+            self.state["dota_hero_catalog"] = sorted({
+                str(name).strip()
+                for name in dota_hero_map.values()
+                if str(name).strip()
+            })
             ensure_directory(Path(self.streamer_dir))
             ensure_directory(Path(self.output_dir))
             output = Path(self.output_dir) / STATS_FILENAME

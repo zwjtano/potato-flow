@@ -170,7 +170,17 @@ def _extract_response_code_from_exception(exc: Exception) -> Optional[int]:
 
 
 def _compact_exception_text(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip()
+    compact = re.sub(r"\s+", " ", str(text or "")).strip()
+    if re.search(r"<!doctype\s+html|<html\b", compact, flags=re.IGNORECASE):
+        compact = re.split(
+            r"<!doctype\s+html|<html\b",
+            compact,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].rstrip(" -:：")
+        if not compact:
+            compact = "B站接口返回了网页错误，未返回有效数据"
+    return compact if len(compact) <= 300 else compact[:297].rstrip() + "..."
 
 
 def _format_bilibili_exception(exc: Exception) -> str:
@@ -506,72 +516,67 @@ class BilibiliUploader:
                 ),
             }
 
-            async def _update_and_pin() -> tuple[bool, str, int]:
+            # Bilibili does not expose an in-place comment edit endpoint. Post
+            # and pin the replacement first so a transient failure never
+            # removes the currently visible pinned comment.
+            replacement = self.publish_description_comment(
+                {"aid": aid, "bvid": bvid},
+                message,
+                pin=True,
+            )
+            if not replacement.get("posted") or not replacement.get("pinned"):
+                details.update(replacement)
+                details["action"] = "replacement_failed"
+                details["updated"] = False
+                details["error"] = _compact_exception_text(
+                    str(
+                        replacement.get("error")
+                        or replacement.get("pin_error")
+                        or "新简介评论未能置顶，已保留原置顶评论"
+                    )
+                )
+                return details
+
+            async def _delete_old_comment() -> None:
                 await (
                     Api(
-                        url="https://api.bilibili.com/x/v2/reply/edit",
+                        url="https://api.bilibili.com/x/v2/reply/del",
                         method="POST",
                         verify=True,
                         credential=credential,
                     )
+                    .update_headers(**pin_headers)
                     .update_data(
                         type=1,
                         oid=int(aid),
                         rpid=int(pinned_rpid),
-                        message=message,
-                        plat=1,
                     )
                     .request()
                 )
-                pin_error = ""
-                pin_attempts = 0
-                for attempt, delay_seconds in enumerate((0, 1, 2), start=1):
-                    pin_attempts = attempt
-                    if delay_seconds:
-                        await asyncio.sleep(delay_seconds)
-                    try:
-                        await (
-                            Api(
-                                url="https://api.bilibili.com/x/v2/reply/top",
-                                method="POST",
-                                verify=True,
-                                credential=credential,
-                            )
-                            .update_headers(**pin_headers)
-                            .update_data(
-                                type=1,
-                                oid=int(aid),
-                                rpid=int(pinned_rpid),
-                                action=1,
-                            )
-                            .request()
-                        )
-                        return True, "", pin_attempts
-                    except Exception as exc:
-                        pin_error = _compact_exception_text(str(exc))
-                return False, pin_error, pin_attempts
 
+            delete_error = ""
             try:
-                pinned, pin_error, pin_attempts = asyncio.run(_update_and_pin())
-            except RuntimeError as exc:
-                if "cannot be called from a running event loop" not in str(exc):
-                    raise
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    pinned, pin_error, pin_attempts = pool.submit(
-                        asyncio.run, _update_and_pin()
-                    ).result()
+                try:
+                    asyncio.run(_delete_old_comment())
+                except RuntimeError as exc:
+                    if "cannot be called from a running event loop" not in str(exc):
+                        raise
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(asyncio.run, _delete_old_comment()).result()
+            except Exception as exc:
+                delete_error = _compact_exception_text(str(exc))
 
+            details.update(replacement)
             details.update({
                 "posted": True,
                 "updated": True,
-                "pinned": pinned,
-                "rpid": pinned_rpid,
-                "message_length": len(message),
-                "pin_attempts": pin_attempts,
-                "action": "updated",
+                "pinned": True,
+                "rpid": str(replacement.get("rpid") or ""),
+                "replaced_rpid": pinned_rpid,
+                "action": "replaced",
             })
-            if pin_error:
-                details["pin_error"] = pin_error
+            if delete_error:
+                details["cleanup_error"] = delete_error
             return details
         except Exception as exc:
             details["error"] = _compact_exception_text(str(exc))
