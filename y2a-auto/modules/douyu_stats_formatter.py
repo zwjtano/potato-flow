@@ -60,6 +60,7 @@ HERO_ALIASES: dict[str, tuple[str, ...]] = {
     "裂魂人": ("白牛",),
     "赏金猎人": ("赏金", "bh"),
     "帕吉": ("屠夫", "胖子"),
+    "巫医": ("wd",),
 }
 
 GSI_MIN_OBSERVATION_SECONDS = 60.0
@@ -504,9 +505,9 @@ def format_stats(
             equipment_parts.append("A杖")
         if anchor.get("shard"):
             equipment_parts.append("魔晶")
-        if not equipment_parts:
-            continue
-        summary = f"{hero}｜{'｜'.join(equipment_parts)}"
+        summary = hero
+        if equipment_parts:
+            summary += f"｜{'｜'.join(equipment_parts)}"
         if all(key in anchor for key in ("kills", "deaths", "assists")):
             summary += (
                 f" K/D/A {anchor['kills']}/{anchor['deaths']}/{anchor['assists']}"

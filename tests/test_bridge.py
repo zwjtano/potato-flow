@@ -301,9 +301,20 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(topic, "BP 争议")
         self.assertEqual(
             description,
-            "录播前缀\n\n正文\n\n重要时间点\n21:00 弹幕质疑 BP 顺位",
+            "21:00 弹幕质疑 BP 顺位",
         )
         self.assertNotIn("00:21", description)
+
+    def test_headingless_timeline_is_kept_and_fitted_as_description_body(self):
+        body = "\n".join(f"0{index}:00 看点{index}" for index in range(1, 10))
+
+        self.assertEqual(len(bridge.timeline_lines(body)), 9)
+        fitted = bridge.fit_description_preserving_timeline(body, 42)
+        self.assertNotIn("重要时间点", fitted)
+        self.assertTrue(all(
+            bridge._TIMELINE_LINE_RE.match(line)
+            for line in fitted.splitlines()
+        ))
 
     def test_ai_timeline_retries_once_when_verified_points_are_below_target(self):
         package = types.ModuleType("modules")
@@ -397,9 +408,12 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(diagnostics["timeline_retry_attempted"])
         self.assertFalse(diagnostics["timeline_target_met"])
         self.assertEqual(diagnostics["timeline_evidence_status"], "insufficient")
-        self.assertEqual(diagnostics["timeline_shortfall"], 3)
-        self.assertEqual(diagnostics["timeline_anchor_policy"], "exact_xml_evidence")
-        self.assertEqual(diagnostics["timeline_cluster_window_seconds"], 30)
+        self.assertEqual(diagnostics["timeline_shortfall"], 7)
+        self.assertEqual(
+            diagnostics["timeline_anchor_policy"],
+            "same_time_screen_spam_or_exact_xml",
+        )
+        self.assertEqual(diagnostics["timeline_cluster_window_seconds"], 60)
 
     def test_generic_recording_intro_is_removed_from_final_body(self):
         stats = "——— 直播数据 ———\n👥 在线 8257~10000"
@@ -410,6 +424,14 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(description, f"正文从这里开始。\n{stats}")
         self.assertNotIn("直播录播：YYF。", description)
+
+    def test_recording_intro_with_internal_exclamation_is_removed_as_one_unit(self):
+        self.assertEqual(
+            bridge.strip_recording_intro(
+                "直播录播：川神《来这里开心就好！ 74960》。本场直播开始。"
+            ),
+            "本场直播开始。",
+        )
 
     def test_generic_recording_intro_is_removed_from_multipart_description(self):
         description = bridge.render_multipart_description(
@@ -589,11 +611,37 @@ class BridgeTests(unittest.TestCase):
             "重要时间点\n01:32 肉山盾遭到对手抢夺",
         )
 
+    def test_grounded_timeline_accepts_same_time_keyword_screen_spam(self):
+        sampled = [types.SimpleNamespace(time=112.0, text="马上要打了")]
+        comments = [
+            types.SimpleNamespace(time=100.0, text="开团了开团了"),
+            types.SimpleNamespace(time=108.0, text="真的开团了"),
+            types.SimpleNamespace(time=112.0, text="马上要打了"),
+            types.SimpleNamespace(time=118.0, text="这波开团可以"),
+        ]
+        diagnostics = {}
+
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "双方突然开团",
+                "evidence_texts": ["模型没有逐字复制"],
+                "evidence_keywords": ["开团"],
+            }],
+            sampled,
+            comments,
+            delay_seconds=8,
+            duration_seconds=300,
+            anchor_diagnostics=diagnostics,
+        )
+
+        self.assertEqual(rendered, "重要时间点\n01:32 双方突然开团")
+        self.assertEqual(diagnostics["timeline_relaxed_screen_spam_count"], 1)
+
     def test_timeline_target_scales_with_recording_duration(self):
-        self.assertEqual(bridge.timeline_target_range(None), (4, 8))
-        self.assertEqual(bridge.timeline_target_range(1800), (2, 6))
-        self.assertEqual(bridge.timeline_target_range(3600), (4, 8))
-        self.assertEqual(bridge.timeline_target_range(7200), (8, 12))
+        self.assertEqual(bridge.timeline_target_range(None), (6, 10))
+        self.assertEqual(bridge.timeline_target_range(1800), (4, 8))
+        self.assertEqual(bridge.timeline_target_range(3600), (8, 12))
+        self.assertEqual(bridge.timeline_target_range(7200), (12, 16))
 
     def test_grounded_timeline_rejects_unverifiable_evidence(self):
         sampled = [types.SimpleNamespace(time=1268.0, text="BP顺位受到质疑")]
@@ -694,7 +742,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("streamer_identity", source)
         self.assertIn("其他主播、选手或嘉宾", source)
         self.assertIn("谁做了什么", source)
-        self.assertIn("绝不能用关键词去搜索更早", source)
+        self.assertIn("同一 60 秒窗口内至少 3 条弹幕", source)
         self.assertIn("必须先从有精确证据的 timeline 事件中选择 title_topic", source)
         self.assertIn("两个先后发生的独立转折", source)
         self.assertIn("不得只收录铺垫或次要事件而遗漏标题落点", source)
@@ -1980,6 +2028,42 @@ class BridgeTests(unittest.TestCase):
                 "YYF蓝猫残局送人头转小黑复健失败｜08-01 14:39",
             )
         )
+        self.assertTrue(
+            bridge.recording_cover_hero_matches_title(
+                "冥魂大帝",
+                "川神主锤骷髅王假3真1打爆下路｜08-01 18:02",
+            )
+        )
+
+    def test_cover_context_uses_timestamp_free_verified_timeline(self):
+        context, source = bridge.recording_cover_event_context(
+            "00:06 YYF锁定1号位\n46:16 小狗主魔免引发争论"
+        )
+
+        self.assertEqual(source, "verified_timeline")
+        self.assertEqual(context, "YYF锁定1号位；小狗主魔免引发争论")
+        self.assertNotIn("00:06", context)
+
+    def test_verified_timeline_can_confirm_streamer_hero_without_equipment(self):
+        context = bridge.recording_timeline_hero_context(
+            "23:01 果小果巫医和老蔡骷髅王配合打出对线优势",
+            "果小果是个弟弟",
+        )
+
+        self.assertEqual(context["hero"], "巫医")
+        self.assertEqual(context["items"], [])
+        self.assertEqual(context["identity_source"], "verified_timeline_streamer_hero")
+        stats = bridge.append_hero_only_live_stat(
+            "——— 直播数据 ———\n👥 在线 1830~2275",
+            "巫医",
+        )
+        self.assertEqual(
+            bridge.split_live_stats_sections(stats),
+            (
+                "——— 对局数据 ———\n🎮 巫医",
+                "——— 直播数据 ———\n👥 在线 1830~2275",
+            ),
+        )
 
     def test_dota2_cover_prompt_resolves_common_hero_aliases(self):
         instruction = bridge.recording_cover_dota2_instruction(
@@ -2309,7 +2393,7 @@ class BridgeTests(unittest.TestCase):
         )
         prompt = image_edit.call_args.kwargs["prompt"]
         self.assertIn("横向 1920:1080 视频封面", prompt)
-        self.assertIn("AI 生成的核心标题：土豆新地图极限挑战", prompt)
+        self.assertIn("与投稿标题共用的核心事件：土豆新地图极限挑战", prompt)
         self.assertIn("封面主角称呼：土豆", prompt)
         self.assertIn("不得排成“主角｜主题”", prompt)
         self.assertIn("封面主角身份锁定", prompt)
