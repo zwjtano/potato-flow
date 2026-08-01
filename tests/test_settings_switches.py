@@ -41,6 +41,28 @@ class SettingsSwitchTests(unittest.TestCase):
         self.assertIn("douyu_pipeline_settings_changed", app_source)
         self.assertIn("live_recorder_manager.refresh_credentials()", app_source)
 
+    def test_windows_desktop_controls_are_hidden_from_server_deployments(self):
+        template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+        app_source = APP_SOURCE.read_text(encoding="utf-8")
+
+        guard = template.index("{% if windows_desktop_mode %}")
+        allow_lan = template.index('name="DESKTOP_ALLOW_LAN"')
+        startup = template.index('name="DESKTOP_START_WITH_WINDOWS"')
+        end_guard = template.index("{% endif %}", startup)
+        self.assertLess(guard, allow_lan)
+        self.assertLess(allow_lan, startup)
+        self.assertLess(startup, end_guard)
+        self.assertIn("sys.platform == 'win32'", app_source)
+        self.assertIn("form_data.pop('DESKTOP_ALLOW_LAN', None)", app_source)
+
+    def test_legacy_general_video_transcode_card_is_removed(self):
+        template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertNotIn('<h4>视频转码</h4>', template)
+        self.assertNotIn('name="VIDEO_ENCODER"', template)
+        self.assertNotIn('name="VIDEO_CUSTOM_PARAMS_ENABLED"', template)
+        self.assertIn('id="danmaku-encoder"', template)
+
 
 if __name__ == "__main__":
     unittest.main()

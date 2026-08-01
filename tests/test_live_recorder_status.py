@@ -78,7 +78,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 ],
             }
             generated = "新简介\n\n重要时间点\n00:12 高能事件"
-            expected_description = generated + "\n\n直播数据"
+            expected_description = generated + "\n直播数据"
             stored = {}
             with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
                 manager,
@@ -160,7 +160,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 result = manager.regenerate_published_metadata("a" * 64, {"description"})
 
         stats.assert_called_once_with(str(video.parent))
-        self.assertTrue(result["description"].endswith("\n\n💬 高能弹幕 ×1 | 300元"))
+        self.assertTrue(result["description"].endswith("\n💬 高能弹幕 ×1 | 300元"))
         self.assertEqual(
             generate.call_args.args[3]["live_stats"],
             "💬 高能弹幕 ×1 | 300元",
@@ -241,7 +241,6 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     {"key": "ai", "details": {"title_topic": "直播精彩内容"}},
                 ],
             }
-            generated_cover = root / "cover.jpg"
             ai_enhancer = mock.Mock()
             ai_enhancer._request_json_object = mock.Mock()
             ai_enhancer.generate_video_tags = mock.Mock()
@@ -252,7 +251,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
                 manager,
                 "_store_pipeline_review_override",
-            ), mock.patch.object(
+            ) as store, mock.patch.object(
                 manager,
                 "_recording_file_roots",
                 return_value={"artifacts": root / "artifacts"},
@@ -267,7 +266,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 return_value={"streamer": "yyfyyf", "date": "08-01", "live_title": "直播"},
             ), mock.patch(
                 "bridge.generate_recording_cover_with_ai",
-                return_value=(generated_cover, {"ai_cover_generated": True}),
+                side_effect=lambda **kwargs: (
+                    kwargs["output_path"],
+                    {
+                        "ai_cover_generated": True,
+                        "target_size": kwargs["target_size"],
+                    },
+                ),
             ) as generate:
                 result = manager.regenerate_published_metadata("a" * 64, {"cover"})
 
@@ -278,7 +283,22 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertEqual(call.kwargs["description"], body)
             self.assertIsNone(call.kwargs["game_context"])
             self.assertTrue(call.kwargs["game_context_locked"])
+        self.assertEqual(
+            [call.kwargs["target_size"] for call in generate.call_args_list],
+            [(1920, 1080), (1600, 1200)],
+        )
+        self.assertEqual(
+            [call.kwargs["output_path"].name for call in generate.call_args_list],
+            ["ai_cover_16x9.jpg", "ai_cover_4x3.jpg"],
+        )
         self.assertEqual(result["title"], title)
+        self.assertEqual(result["ai_regenerated_fields"], ["cover"])
+        self.assertTrue(result["cover_path"].endswith("ai_cover_16x9.jpg"))
+        self.assertTrue(result["cover43_path"].endswith("ai_cover_4x3.jpg"))
+        self.assertTrue(result["pending_published_update"])
+        self.assertEqual(result["ai_cover_details"]["16x9"]["target_size"], (1920, 1080))
+        self.assertEqual(result["ai_cover_details"]["4x3"]["target_size"], (1600, 1200))
+        store.assert_called_once_with("a" * 64, result)
 
     def test_default_recordings_directory_uses_docker_mount_when_available(self):
         with mock.patch(

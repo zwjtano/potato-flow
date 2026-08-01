@@ -50,7 +50,9 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "根据本段直播的实际内容和弹幕反应，从有精确弹幕证据的重要事件中提炼一个自然、"
     "有信息量的完整核心主题标题。将当前主播或本段主角的可靠名称自然融入句子，主语不必放在最前；"
     "不得使用“主播名｜事件”这种姓名标签加竖线的机械格式。突出关键对局、英雄、事件或节目效果，"
-    "不使用夸张的虚假结论；标题中的核心事件必须同时进入重要时间点。不要包含日期、时间和“直播回放”，"
+    "不使用夸张的虚假结论；标题中的核心事件必须同时进入重要时间点。"
+    "禁止用“引发热议”“引起争议”“出装引争议”“争议话题”“直播精彩内容”等空泛、营销式短语代替具体事件；"
+    "必须直接写清具体动作、选择、结果或节目效果。不要包含日期、时间和“直播回放”，"
     "最多24个中文字符。"
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
@@ -619,6 +621,11 @@ def timeline_target_range(duration_seconds: float | None) -> tuple[int, int]:
 
 _TIMELINE_HEADING = "重要时间点"
 _TIMELINE_LINE_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+\S.*$")
+_VAGUE_RECORDING_TITLE_RE = re.compile(
+    r"(?:引发|引起|掀起|造成|导致|备受|引)(?:热议|争议)(?:不断)?$"
+    r"|(?:争议|热门)话题$"
+    r"|^(?:直播精彩内容|精彩内容|精彩直播|直播录像)$"
+)
 _MULTIPART_HEADING_RE = re.compile(r"^【P\d+(?:｜[^\n]*)?】$")
 
 
@@ -633,6 +640,42 @@ def timeline_lines(description: str) -> list[str]:
     except StopIteration:
         return []
     return [line.strip() for line in lines[start + 1:] if _TIMELINE_LINE_RE.match(line.strip())]
+
+
+def recording_title_topic_is_vague(topic: str) -> bool:
+    """Reject empty promotional conclusions that do not name the actual event."""
+    clean = re.sub(r"[\s｜|：:，,。.!！]+", "", str(topic or ""))
+    return not clean or bool(_VAGUE_RECORDING_TITLE_RE.search(clean))
+
+
+def recording_title_topic_from_timeline(topic: str, timeline_text: str) -> str:
+    """Replace a vague title with the closest verified concrete timeline event."""
+    clean_topic = re.sub(r"[\r\n｜|]+", " ", str(topic or "")).strip()
+    if not recording_title_topic_is_vague(clean_topic):
+        return clean_topic[:28]
+
+    topic_key = re.sub(_VAGUE_RECORDING_TITLE_RE, "", _compact_alias(clean_topic))
+    topic_pairs = {
+        topic_key[index:index + 2]
+        for index in range(max(0, len(topic_key) - 1))
+    }
+    candidates: list[tuple[int, int, str]] = []
+    for position, line in enumerate(timeline_lines(timeline_text)):
+        event = re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", line).strip()
+        event = re.split(r"[，,。；;]", event, maxsplit=1)[0].strip()
+        if not event or recording_title_topic_is_vague(event):
+            continue
+        event_key = _compact_alias(event)
+        event_pairs = {
+            event_key[index:index + 2]
+            for index in range(max(0, len(event_key) - 1))
+        }
+        candidates.append((len(topic_pairs & event_pairs), -position, event))
+    if candidates:
+        return max(candidates)[2][:28]
+
+    fallback = re.sub(_VAGUE_RECORDING_TITLE_RE, "", clean_topic).strip(" -_｜|：:，,。.!！")
+    return fallback[:28]
 
 
 def fit_description_preserving_timeline(description: str, limit: int) -> str:
@@ -924,13 +967,36 @@ def strip_live_stats_from_description(description: str, stats_text: str) -> str:
     if not stats:
         return body
 
-    # Old tasks and model responses may contain one or more canonical copies.
-    # Keep this migration tolerant so retrying a historical task repairs it.
-    while body == stats or body.startswith(f"{stats}\n"):
-        body = body[len(stats):].lstrip()
-    while body == stats or body.endswith(f"\n{stats}"):
-        body = body[:-len(stats)].rstrip()
+    # Old tasks contain one combined block. New tasks put game/equipment data
+    # before the editorial body and audience/revenue data after it.
+    game_stats, trailing_stats = split_live_stats_sections(stats)
+    for block in (stats, game_stats, trailing_stats):
+        if not block:
+            continue
+        while body == block or body.startswith(f"{block}\n"):
+            body = body[len(block):].lstrip()
+        while body == block or body.endswith(f"\n{block}"):
+            body = body[:-len(block)].rstrip()
     return strip_recording_intro(body)
+
+
+def split_live_stats_sections(stats_text: str) -> tuple[str, str]:
+    """Return game/equipment lines for the front and audience lines for the end."""
+    original = str(stats_text or "").strip()
+    lines = [line.strip() for line in original.splitlines() if line.strip()]
+    game_lines = [line for line in lines if line.startswith("🎮 ")]
+    if not game_lines:
+        return "", original
+    trailing_lines = [
+        line for line in lines
+        if not line.startswith("🎮 ") and "直播数据" not in line and "对局数据" not in line
+    ]
+    game_stats = "\n".join(("——— 对局数据 ———", *game_lines)) if game_lines else ""
+    trailing_stats = (
+        "\n".join(("——— 直播数据 ———", *trailing_lines))
+        if trailing_lines else ""
+    )
+    return game_stats, trailing_stats
 
 
 _GIFT_STATS_ENTRY_RE = re.compile(
@@ -1004,12 +1070,13 @@ def append_live_stats_to_description(
     stats_text: str,
     limit: int = 1900,
 ) -> str:
-    """Put live statistics last while keeping the archive description in range."""
+    """Put game data first and audience/revenue statistics last."""
     stats = str(stats_text or "").strip()
     body = strip_live_stats_from_description(description, stats)
     if not stats:
         return fit_description_preserving_timeline(body, limit)
 
+    game_stats, trailing_stats = split_live_stats_sections(stats)
     points = timeline_lines(body)
     if points:
         timeline_headings = max(1, sum(
@@ -1028,11 +1095,17 @@ def append_live_stats_to_description(
     else:
         body_reserve = 0
 
-    stats_budget = max(0, limit - body_reserve - (2 if body else 0))
-    stats = _fit_live_stats(stats, stats_budget)
+    separators = sum(bool(value) for value in (game_stats, trailing_stats) if body)
+    stats_budget = max(0, limit - body_reserve - separators)
+    combined_stats = "\n".join(value for value in (game_stats, trailing_stats) if value)
+    combined_stats = _fit_live_stats(combined_stats, stats_budget)
+    game_stats, trailing_stats = split_live_stats_sections(combined_stats)
 
-    separator = "\n\n" if body else ""
-    body_budget = max(0, limit - len(stats) - len(separator))
+    fixed_length = len(game_stats) + len(trailing_stats)
+    fixed_separators = sum(
+        1 for left, right in ((game_stats, body), (body, trailing_stats)) if left and right
+    )
+    body_budget = max(0, limit - fixed_length - fixed_separators)
     has_multipart_sections = any(
         _MULTIPART_HEADING_RE.fullmatch(line.strip())
         for line in body.splitlines()
@@ -1042,8 +1115,9 @@ def append_live_stats_to_description(
         if has_multipart_sections
         else fit_description_preserving_timeline(body, body_budget)
     )
-    separator = "\n\n" if fitted_body and stats else ""
-    return f"{fitted_body}{separator}{stats}".rstrip()
+    return "\n".join(
+        value for value in (game_stats, fitted_body, trailing_stats) if value
+    ).rstrip()
 
 
 def prepend_live_stats_to_description(
@@ -3094,6 +3168,14 @@ event 的 evidence_keywords；多条 evidence_texts 必须来自同一个连续 
             " ",
             str((result or {}).get("title_topic", "")).strip(),
         )[:28].strip()
+        original_title_topic = title_topic
+        title_topic = recording_title_topic_from_timeline(title_topic, timeline_text)
+        if title_topic != original_title_topic:
+            diagnostics.update({
+                "title_topic_vague_replaced": True,
+                "title_topic_original": original_title_topic,
+                "title_topic_replacement_source": "verified_timeline",
+            })
         final_description = (
             fit_description_preserving_timeline(description, 1800)
             if description else base_description

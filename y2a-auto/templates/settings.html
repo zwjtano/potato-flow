@@ -90,7 +90,7 @@
                                 <div class="settings-section-header">
                                     <div>
                                     <h3 class="mb-1">常规与投稿</h3>
-                                    <p class="section-lead mb-0">自动化流程、投稿策略、视频转码与内容审核集中管理，常用项优先。</p>
+                                    <p class="section-lead mb-0">自动化流程、投稿策略与内容审核集中管理，常用项优先。</p>
                                     </div>
                                 </div>
                                 <div class="row g-4 settings-pane-grid">
@@ -275,47 +275,6 @@
                                     </div>
 
                                     <div class="col-12">
-                                        <article class="settings-card">
-                                            <div class="settings-card-header">
-                                                <div>
-                                                    <span class="section-eyebrow">转码策略</span>
-                                                    <h4>视频转码</h4>
-                                                </div>
-                                            </div>
-                                            <div class="settings-card-body">
-                                                <div class="row g-3">
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="video-encoder" class="form-label">视频编码器</label>
-                                                            <select id="video-encoder" name="VIDEO_ENCODER" class="form-select">
-                                                                <option value="auto" {% if config.get('VIDEO_ENCODER', 'auto') == 'auto' %}selected{% endif %}>自动检测</option>
-                                                                <option value="cpu" {% if config.get('VIDEO_ENCODER') == 'cpu' %}selected{% endif %}>CPU（libx264）</option>
-                                                                <option value="nvidia" {% if config.get('VIDEO_ENCODER') == 'nvidia' %}selected{% endif %}>NVIDIA（NVENC）</option>
-                                                                <option value="intel" {% if config.get('VIDEO_ENCODER') == 'intel' %}selected{% endif %}>Intel（QSV）</option>
-                                                                <option value="amd" {% if config.get('VIDEO_ENCODER') == 'amd' %}selected{% endif %}>AMD（AMF/VAAPI）</option>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <label class="checkbox-label">
-                                                            <input type="checkbox" name="VIDEO_CUSTOM_PARAMS_ENABLED" id="video-custom-params-enabled" {% if config.get('VIDEO_CUSTOM_PARAMS_ENABLED', False) %}checked{% endif %}>
-                                                            启用自定义转码参数
-                                                        </label>
-                                                    </div>
-                                                </div>
-                                                <div class="row g-3 mt-2" id="custom-params-section">
-                                                    <div class="col-12">
-                                                        <div class="form-group">
-                                                            <label for="video-custom-params" class="form-label">自定义视频编码参数</label>
-                                                            <input type="text" id="video-custom-params" name="VIDEO_CUSTOM_PARAMS" value="{{ config.get('VIDEO_CUSTOM_PARAMS', '') }}" class="form-control" placeholder="例如: -c:v libx264 -preset slow -crf 18">
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </article>
-                                    </div>
-
-                                    <div class="col-12">
                                         <article class="settings-card" id="danmaku-burn-settings">
                                             <div class="settings-card-header">
                                                 <div>
@@ -335,10 +294,12 @@
                                                     <div class="col-md-4 d-flex align-items-end"><button class="btn btn-outline-primary w-100" id="detect-danmaku-encoder" type="button"><i class="bi bi-cpu"></i> 检测并推荐</button></div>
                                                 </div>
                                                 <div class="alert alert-light border mt-3 mb-0" id="danmaku-encoder-result">硬件编码失败时，当前任务自动回退 CPU medium / CRF 20，不改动已保存设置。</div>
-                                                <div class="row g-3 mt-2">
+                                                {% if windows_desktop_mode %}
+                                                <div class="row g-3 mt-2" id="windows-desktop-settings">
                                                     <div class="col-md-6"><label class="checkbox-label"><input type="checkbox" name="DESKTOP_ALLOW_LAN" {% if config.get('DESKTOP_ALLOW_LAN', False) %}checked{% endif %}> Windows 桌面版允许局域网访问</label><p class="help-text mb-0">默认仅本机 127.0.0.1，修改后下次启动生效。</p></div>
                                                     <div class="col-md-6"><label class="checkbox-label"><input type="checkbox" name="DESKTOP_START_WITH_WINDOWS" {% if config.get('DESKTOP_START_WITH_WINDOWS', False) %}checked{% endif %}> Windows 登录后自动启动</label><p class="help-text mb-0">默认关闭，仅影响当前 Windows 用户。</p></div>
                                                 </div>
+                                                {% endif %}
                                             </div>
                                         </article>
                                     </div>
@@ -2560,16 +2521,6 @@ document.addEventListener('DOMContentLoaded', function () {
                     window.PotatoUI.notify('重置请求发生错误', 'danger');
                 });
         });
-    }
-
-    const customParamsCheckbox = document.getElementById('video-custom-params-enabled');
-    const customParamsSection = document.getElementById('custom-params-section');
-    if (customParamsCheckbox && customParamsSection) {
-        const toggleCustomParamsSection = function () {
-            customParamsSection.style.display = customParamsCheckbox.checked ? 'block' : 'none';
-        };
-        customParamsCheckbox.addEventListener('change', toggleCustomParamsSection);
-        toggleCustomParamsSection();
     }
 
     const asrProvider = document.getElementById('asr-provider');
