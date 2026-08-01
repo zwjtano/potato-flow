@@ -119,12 +119,12 @@ DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("BurNIng", ("BurNIng", "B神", "徐志雷")),
     ("xiao8", ("xiao8", "小八", "八师傅", "张宁")),
-    ("Zhou", ("Zhou", "周神", "陈尧")),
-    ("Hao", ("Hao", "豪哥", "陈智豪")),
+    ("Zhou", ("Zhou", "Zhou陈尧", "周神", "雕哥", "鲷哥", "陈尧")),
+    ("Hao", ("Hao", "豪哥", "猴", "HAOB", "陈智豪")),
     ("Mu", ("Mu", "Mu神", "张盼")),
     ("Faith_bian", ("Faith_bian", "faithbian", "小明鞭", "张睿达")),
     ("Somnus", ("Somnus", "Maybe", "超哥", "路垚")),
-    ("Chalice", ("Chalice", "查理斯", "杨沈仪")),
+    ("Chalice", ("Chalice", "查理斯", "查猪", "杨沈仪")),
     ("fy", ("fy", "fy神", "徐林森")),
     ("Ame", ("Ame", "萧瑟", "王淳煜")),
     ("XinQ", ("XinQ", "赵子星")),
@@ -140,8 +140,225 @@ DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("DDC", ("DDC", "大狗", "梁发")),
     ("PIS", ("PIS", "Pis", "姚羿成")),
     ("Inflame", ("Inflame", "小书童", "何雍正")),
-    ("川神", ("川神", "老菜", "叫我老陈就好了")),
+    (
+        "川神",
+        (
+            "川神",
+            "老菜",
+            "老蔡",
+            "蔡哥",
+            "菜哥",
+            "老陈",
+            "叫我老陈就好了",
+        ),
+    ),
+    (
+        "DD",
+        (
+            "DD",
+            "谢彬DD",
+            "谢彬",
+            "谢斌",
+            "奶哥",
+            "奶哥哥",
+            "奶子D",
+            "奶D",
+            "彬子",
+        ),
+    ),
+    (
+        "Sylar",
+        (
+            "Sylar",
+            "刘嘉俊Sylar1",
+            "刘嘉俊",
+            "塞拉",
+            "眼哥",
+            "眼少",
+            "眼神",
+            "眼子",
+            "眼醋",
+            "小眼哥",
+            "0.0",
+        ),
+    ),
+    (
+        "ZSMJ",
+        (
+            "ZSMJ",
+            "龚建ZSMJ",
+            "龚建",
+            "诸司马技",
+            "马甲哥",
+            "马甲",
+            "甲哥",
+            "这是马甲",
+            "左手摸鸡",
+            "蛛丝马迹",
+        ),
+    ),
+    (
+        "Doinb",
+        ("Doinb", "doinb", "金泰相", "金咕咕", "硬币哥", "毒硬币"),
+    ),
+    (
+        "icon",
+        ("icon", "冷少icon", "冷少", "谢天宇", "葬爱冷少", "峡谷天天"),
+    ),
+    ("H4cker", ("H4cker", "骇客H4cker", "骇客", "杨志浩", "MopPeT")),
+    ("MacSed", ("MacSed", "igmacsed", "sed")),
+    ("ZippO", ("ZippO", "ZippO宝哥", "宝哥")),
 )
+
+# 斗鱼 DOTA2 宝可梦 S7（2026-07-25 至 2026-08-04）页面列出的成员。
+# 用户确认这些活动成员昵称无需赛事语境；标题、简介或其他作图文案提到即可触发。
+DOTA2_POKEMON_PARTICIPANT_ALIAS_GROUPS: tuple[
+    tuple[str, tuple[str, ...]], ...
+] = (
+    ("SupKing", ("右手supking", "SupKing", "supking", "右手")),
+    ("石页", ("石页的第一根矛s", "石页", "石业", "第一根矛")),
+    (
+        "叁肆叁肆",
+        (
+            "叁肆叁肆",
+            "3434",
+            "狗哥",
+            "三生三世",
+            "三生三生",
+            "王兆辉",
+            "狗妹",
+        ),
+    ),
+    (
+        "果小果",
+        (
+            "果小果是个弟弟",
+            "果小果",
+            "果神",
+            "果宝",
+            "狗小狗",
+            "烈焰杀神",
+        ),
+    ),
+    ("蛋饼", ("蛋饼", "饼子")),
+    ("霸气", ("霸气", "霸气虚幻哥", "霸气虚幻哥1991", "虚幻哥")),
+    ("aq", ("aq",)),
+    ("阿雅Midori", ("阿雅Midori", "Midori", "阿雅", "雅醋")),
+    ("奥特慢", ("奥特慢", "奥特曼")),
+    ("是希文吖", ("是希文吖", "希文")),
+    ("艾琳", ("艾琳bigbaby", "艾琳", "bigbaby")),
+    ("哎呀朝朝", ("哎呀朝朝", "朝朝")),
+    ("三酒", ("三酒", "三九")),
+    ("塔莉娅", ("塔莉娅", "塔利亚", "塔醋", "塔宝")),
+    ("南枫", ("南枫",)),
+    ("憨憨", ("憨憨",)),
+    ("Spirit小蝴蝶", ("Spirit小蝴蝶", "Spirit", "小蝴蝶")),
+    ("小芳FLo", ("小芳FLo", "FLo")),
+    ("牙牙OMO", ("牙牙OMO", "OMO")),
+    ("蛋糕", ("蛋糕", "糕神")),
+    ("炸毛张", ("炸毛张", "毛张")),
+    ("小刘", ("小刘", "刘神")),
+    ("林仔", ("林仔",)),
+    ("白仔啊", ("白仔啊", "白仔")),
+    ("顾非池", ("顾非池",)),
+    ("甜瓜", ("甜瓜",)),
+    ("林九鸽", ("林九鸽", "林九哥", "九鸽", "零九鸽")),
+    ("小300TwT", ("小300TwT", "小300")),
+    ("哈哈明", ("faith", "哈哈明")),
+    ("艾斯yoona", ("艾斯yoona", "yoona", "大猛一")),
+    ("moon", ("moon",)),
+    ("煊宝", ("煊宝",)),
+    ("一只蘇I", ("一只蘇I", "一只苏I", "一只苏")),
+    ("小琳达Linda", ("小琳达Linda", "小琳达", "小linda", "Linda")),
+)
+
+DOTA2_STREAMER_AVATAR_SEARCH_NAMES: dict[str, str] = {
+    "YYF": "yyfyyf",
+    "Zhou": "Zhou陈尧",
+    "DD": "谢彬DD",
+    "川神": "叫我老陈就好了",
+    "Sylar": "刘嘉俊Sylar1",
+    "ZSMJ": "龚建ZSMJ",
+    "Doinb": "doinb",
+    "icon": "冷少icon",
+    "Chalice": "chalice",
+    "MacSed": "igmacsed",
+    "H4cker": "骇客H4cker",
+    "SupKing": "右手supking",
+    "ZippO": "ZippO宝哥",
+    "Hao": "hao",
+    "哈哈明": "faith",
+    **{
+        canonical_name: aliases[0]
+        for canonical_name, aliases in DOTA2_POKEMON_PARTICIPANT_ALIAS_GROUPS
+    },
+    "蛋饼": "保护我方蛋饼",
+}
+
+# Room 9999 activity page (`DOTA2BKMS7`, pageId 58321) publishes these room IDs
+# in the same order as the participant grid. “Spirit小蝴蝶”和“小蝴蝶”是同一人，
+# 活动页重复展示且两个入口都指向房间 448014，因此这里只保留一个身份。
+DOTA2_POKEMON_PARTICIPANT_ROOM_IDS: dict[str, str] = {
+    "YYF": "9999",
+    "Zhou": "88660",
+    "DD": "110",
+    "川神": "74960",
+    "Sylar": "762484",
+    "ZSMJ": "52876",
+    "Doinb": "252140",
+    "石页": "593392",
+    "icon": "8682569",
+    "Chalice": "5135383",
+    "果小果": "6558897",
+    "MacSed": "7546",
+    "H4cker": "7314971",
+    "SupKing": "316022",
+    "叁肆叁肆": "312407",
+    "ZippO": "67554",
+    "蛋饼": "8758901",
+    "霸气": "73965",
+    "aq": "7718843",
+    "阿雅Midori": "9667590",
+    "奥特慢": "10198618",
+    "是希文吖": "1334765",
+    "艾琳": "10639765",
+    "哎呀朝朝": "9105451",
+    "三酒": "2421040",
+    "塔莉娅": "6770423",
+    "南枫": "3436094",
+    "Hao": "8445951",
+    "憨憨": "11180817",
+    "Spirit小蝴蝶": "448014",
+    "小芳FLo": "6752",
+    "牙牙OMO": "10577834",
+    "蛋糕": "4067868",
+    "炸毛张": "209737",
+    "小刘": "52887",
+    "林仔": "500269",
+    "白仔啊": "1759181",
+    "顾非池": "5315665",
+    "甜瓜": "8702345",
+    "林九鸽": "10970886",
+    "小300TwT": "8489391",
+    "哈哈明": "331437",
+    "艾斯yoona": "10229065",
+    "moon": "12874381",
+    "煊宝": "7828414",
+    "一只蘇I": "895712",
+    "小琳达Linda": "6188551",
+}
+
+
+def _all_dota2_streamer_alias_groups() -> tuple[
+    tuple[str, tuple[str, ...]], ...
+]:
+    return DOTA2_STREAMER_ALIAS_GROUPS + DOTA2_POKEMON_PARTICIPANT_ALIAS_GROUPS
+
+
+def _dota2_streamer_alias_groups_for_content(
+    *content: str,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return _all_dota2_streamer_alias_groups()
 
 
 def _compact_alias(value: str) -> str:
@@ -156,7 +373,7 @@ def normalize_dota2_streamer_name(streamer: str) -> str:
         return "YYF"
     if normalized.startswith("果小果"):
         return "果小果"
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
         if any(normalized == _compact_alias(alias) for alias in aliases):
             return canonical_name
     return original
@@ -169,7 +386,7 @@ def recording_cover_subject_name(streamer: str, *content: str) -> str:
         return ""
 
     owner_aliases: tuple[str, ...] = ()
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
         if canonical_name == normalized:
             owner_aliases = aliases
             break
@@ -200,17 +417,24 @@ def recording_cover_subject_name(streamer: str, *content: str) -> str:
     return normalized
 
 
-def _text_mentions_name(text: str, name: str) -> bool:
+def _text_name_match_spans(text: str, name: str) -> list[tuple[int, int]]:
     folded_name = str(name or "").strip().casefold()
     if not folded_name:
-        return False
+        return []
     folded_text = str(text or "").casefold()
     if re.fullmatch(r"[a-z][a-z0-9_ -]*", folded_name):
-        return bool(re.search(
-            rf"(?<![a-z0-9]){re.escape(folded_name)}(?![a-z0-9])",
-            folded_text,
-        ))
-    return folded_name in folded_text
+        return [
+            match.span()
+            for match in re.finditer(
+                rf"(?<![a-z0-9]){re.escape(folded_name)}(?![a-z0-9])",
+                folded_text,
+            )
+        ]
+    return [match.span() for match in re.finditer(re.escape(folded_name), folded_text)]
+
+
+def _text_mentions_name(text: str, name: str) -> bool:
+    return bool(_text_name_match_spans(text, name))
 
 
 def recording_cover_guest_candidates(
@@ -220,18 +444,31 @@ def recording_cover_guest_candidates(
     """Return known non-owner streamer aliases explicitly present in the content."""
     current_name = normalize_dota2_streamer_name(streamer)
     combined = "\n".join(str(value or "") for value in content)
-    guests: list[dict[str, str]] = []
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+    matches: list[tuple[int, int, str, str]] = []
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
         if canonical_name == current_name:
             continue
-        matched = [alias for alias in aliases if _text_mentions_name(combined, alias)]
-        if not matched:
+        for alias in aliases:
+            for start, end in _text_name_match_spans(combined, alias):
+                matches.append((start, end, canonical_name, alias))
+
+    # Prefer the longest alias at an overlapping location. This keeps page names
+    # such as “Spirit小蝴蝶” from also selecting the separate participant “小蝴蝶”.
+    selected_spans: list[tuple[int, int]] = []
+    selected_names: set[str] = set()
+    guests: list[dict[str, str]] = []
+    for start, end, canonical_name, alias in sorted(
+        matches,
+        key=lambda item: (item[0], -(item[1] - item[0])),
+    ):
+        if canonical_name in selected_names:
             continue
-        mentioned_as = min(
-            matched,
-            key=lambda alias: combined.casefold().find(alias.casefold()),
-        )
-        guests.append({"name": canonical_name, "mentioned_as": mentioned_as})
+        if any(start < selected_end and end > selected_start
+               for selected_start, selected_end in selected_spans):
+            continue
+        selected_spans.append((start, end))
+        selected_names.add(canonical_name)
+        guests.append({"name": canonical_name, "mentioned_as": alias})
         if len(guests) >= 3:
             break
     return guests
@@ -259,48 +496,90 @@ def resolve_recording_guest_avatar(
                 "source": "saved_room",
             }
 
-    from modules.live_recorder_manager import live_recorder_manager  # type: ignore
+    from modules.live_recorder_manager import (  # type: ignore
+        RecorderConfigError,
+        live_recorder_manager,
+    )
 
-    candidates = live_recorder_manager._search_douyu_rooms(mentioned_as, 10)
-    exact = []
-    seen_room_ids: set[str] = set()
+    event_room_id = DOTA2_POKEMON_PARTICIPANT_ROOM_IDS.get(guest_name)
+    if event_room_id:
+        try:
+            event_rooms = live_recorder_manager._search_douyu_rooms(event_room_id, 1)
+        except RecorderConfigError:
+            event_rooms = []
+        for event_room in event_rooms:
+            avatar_url = str(event_room.get("avatar_url") or "").strip()
+            if (
+                str(event_room.get("room_id") or "").strip() == event_room_id
+                and re.match(r"^https?://", avatar_url, re.IGNORECASE)
+            ):
+                return {
+                    "name": guest_name,
+                    "mentioned_as": mentioned_as,
+                    "avatar_url": avatar_url,
+                    "room_id": event_room_id,
+                    "source": "douyu_event_room",
+                    "search_name": event_room_id,
+                }
+
     identity_aliases = {guest_name, mentioned_as}
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
         if canonical_name == guest_name:
             identity_aliases.update(aliases)
             break
-    for candidate in candidates:
-        room_id = str(candidate.get("room_id") or "").strip()
-        candidate_name = str(candidate.get("name") or "").strip()
-        avatar_url = str(candidate.get("avatar_url") or "").strip()
-        if (
-            not room_id
-            or room_id in seen_room_ids
-            or not re.match(r"^https?://", avatar_url, re.IGNORECASE)
-        ):
+
+    def exact_candidates(query: str) -> list[dict[str, Any]]:
+        exact: list[dict[str, Any]] = []
+        seen_room_ids: set[str] = set()
+        for candidate in live_recorder_manager._search_douyu_rooms(query, 10):
+            room_id = str(candidate.get("room_id") or "").strip()
+            candidate_name = str(candidate.get("name") or "").strip()
+            avatar_url = str(candidate.get("avatar_url") or "").strip()
+            if (
+                not room_id
+                or room_id in seen_room_ids
+                or not re.match(r"^https?://", avatar_url, re.IGNORECASE)
+            ):
+                continue
+            matched_identity_aliases = {
+                _compact_alias(alias)
+                for alias in identity_aliases
+                if _text_mentions_name(candidate_name, alias)
+            }
+            if not (
+                normalize_dota2_streamer_name(candidate_name) == guest_name
+                or _compact_alias(candidate_name) == _compact_alias(query)
+                or len(matched_identity_aliases) >= 2
+            ):
+                continue
+            seen_room_ids.add(room_id)
+            exact.append(candidate)
+        exact_name_matches = [
+            candidate
+            for candidate in exact
+            if _compact_alias(candidate.get("name")) == _compact_alias(query)
+        ]
+        if len(exact_name_matches) == 1:
+            return exact_name_matches
+        return exact
+
+    preferred_search_name = str(
+        DOTA2_STREAMER_AVATAR_SEARCH_NAMES.get(guest_name) or ""
+    ).strip()
+    for query in dict.fromkeys((mentioned_as, preferred_search_name)):
+        if not query:
             continue
-        matched_identity_aliases = {
-            _compact_alias(alias)
-            for alias in identity_aliases
-            if _text_mentions_name(candidate_name, alias)
-        }
-        if not (
-            normalize_dota2_streamer_name(candidate_name) == guest_name
-            or _compact_alias(candidate_name) == _compact_alias(mentioned_as)
-            or len(matched_identity_aliases) >= 2
-        ):
-            continue
-        seen_room_ids.add(room_id)
-        exact.append(candidate)
-    if len(exact) != 1:
-        return None
-    return {
-        "name": guest_name,
-        "mentioned_as": mentioned_as,
-        "avatar_url": str(exact[0]["avatar_url"]),
-        "room_id": str(exact[0]["room_id"]),
-        "source": "douyu_api",
-    }
+        exact = exact_candidates(query)
+        if len(exact) == 1:
+            return {
+                "name": guest_name,
+                "mentioned_as": mentioned_as,
+                "avatar_url": str(exact[0]["avatar_url"]),
+                "room_id": str(exact[0]["room_id"]),
+                "source": "douyu_api",
+                "search_name": query,
+            }
+    return None
 
 
 def utc_now() -> str:
@@ -2013,7 +2292,7 @@ def _timeline_claims_streamer_hero(line: str, streamer: str, hero_key: str) -> b
     line_key = _compact_alias(line)
     normalized_streamer = normalize_dota2_streamer_name(streamer)
     owner_aliases = {str(streamer or ""), normalized_streamer}
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
         if canonical_name == normalized_streamer:
             owner_aliases.update(aliases)
             break
@@ -2126,7 +2405,7 @@ def recording_cover_has_dota2_context(streamer: str, *content: str) -> bool:
     normalized_streamer = normalize_dota2_streamer_name(streamer)
     known_streamers = {
         canonical_name
-        for canonical_name, _aliases in DOTA2_STREAMER_ALIAS_GROUPS
+        for canonical_name, _aliases in _all_dota2_streamer_alias_groups()
     }
     known_streamers.add("果小果")
     if normalized_streamer in known_streamers:
@@ -2185,7 +2464,9 @@ def recording_cover_dota2_streamer_instruction(
     normalized_streamer = normalize_dota2_streamer_name(streamer)
     matched: list[str] = []
     seen: set[str] = set()
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+    for canonical_name, aliases in _dota2_streamer_alias_groups_for_content(
+        combined
+    ):
         found_alias = ""
         for alias in sorted(aliases, key=len, reverse=True):
             alias_folded = alias.casefold()
@@ -3061,7 +3342,7 @@ def topic_mentions_streamer(topic: str, streamer: str) -> bool:
     if not topic_key or not streamer_key or streamer_key == _compact_alias("主播"):
         return False
     candidates = {str(streamer or "").strip(), normalize_dota2_streamer_name(streamer)}
-    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS:
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
         keys = {_compact_alias(canonical_name), *(_compact_alias(alias) for alias in aliases)}
         if streamer_key in keys:
             candidates.add(canonical_name)
@@ -3245,7 +3526,7 @@ def generate_danmaku_metadata_with_ai(
                 ),
                 "editorial_names": list(dict.fromkeys(
                     alias
-                    for canonical_name, aliases in DOTA2_STREAMER_ALIAS_GROUPS
+                    for canonical_name, aliases in _all_dota2_streamer_alias_groups()
                     if normalize_dota2_streamer_name(
                         str(cfg.get("streamer_name") or "").strip()
                     ) == canonical_name

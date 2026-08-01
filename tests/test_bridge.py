@@ -2296,6 +2296,139 @@ class BridgeTests(unittest.TestCase):
             [("BurNIng", "B神"), ("Paparazi", "拒绝者")],
         )
 
+    def test_pokemon_participant_aliases_keep_similar_people_distinct(self):
+        self.assertEqual(bridge.normalize_dota2_streamer_name("狗哥"), "叁肆叁肆")
+        self.assertEqual(bridge.normalize_dota2_streamer_name("三生三世"), "叁肆叁肆")
+        self.assertEqual(bridge.normalize_dota2_streamer_name("叁肆叁肆"), "叁肆叁肆")
+        self.assertEqual(bridge.normalize_dota2_streamer_name("三酒"), "三酒")
+        self.assertEqual(bridge.normalize_dota2_streamer_name("faith"), "哈哈明")
+        self.assertEqual(bridge.normalize_dota2_streamer_name("哈哈明"), "哈哈明")
+        self.assertEqual(
+            bridge.normalize_dota2_streamer_name("faithbian"),
+            "Faith_bian",
+        )
+
+    def test_pokemon_historical_danmu_aliases_map_to_participants(self):
+        expected = {
+            "老蔡": "川神",
+            "眼子": "Sylar",
+            "彬子": "DD",
+            "谢斌": "DD",
+            "查猪": "Chalice",
+            "马甲": "ZSMJ",
+            "甲哥": "ZSMJ",
+            "石业": "石页",
+            "塔宝": "塔莉娅",
+            "雅醋": "阿雅Midori",
+            "饼子": "蛋饼",
+            "糕神": "蛋糕",
+            "林九哥": "林九鸽",
+            "毛张": "炸毛张",
+            "鲷哥": "Zhou",
+            "sed": "MacSed",
+            "阿雅": "阿雅Midori",
+            "猴": "Hao",
+            "HAOB": "Hao",
+            "大猛一": "艾斯yoona",
+            "王兆辉": "叁肆叁肆",
+            "狗妹": "叁肆叁肆",
+        }
+        for alias, participant in expected.items():
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    bridge.normalize_dota2_streamer_name(alias),
+                    participant,
+                )
+
+    def test_pokemon_names_do_not_require_event_context_for_guest_avatar(self):
+        ordinary_context_guests = bridge.recording_cover_guest_candidates(
+            "YYF",
+            "",
+            "今天吃蛋糕时看到一只小蝴蝶",
+        )
+        self.assertEqual(
+            [(guest["name"], guest["mentioned_as"])
+             for guest in ordinary_context_guests],
+            [("蛋糕", "蛋糕"), ("Spirit小蝴蝶", "小蝴蝶")],
+        )
+        guests = bridge.recording_cover_guest_candidates(
+            "YYF",
+            "宝可梦选人时Spirit小蝴蝶和小蝴蝶分到一组，饼子也来了",
+        )
+        self.assertEqual(
+            [(guest["name"], guest["mentioned_as"]) for guest in guests],
+            [
+                ("Spirit小蝴蝶", "Spirit小蝴蝶"),
+                ("蛋饼", "饼子"),
+            ],
+        )
+
+    def test_pokemon_participant_named_only_in_title_gets_guest_avatar(self):
+        guests = bridge.recording_cover_guest_candidates(
+            "YYF",
+            "狗哥与大猛一正面对决",
+            "本局双方前期打得十分激烈。",
+        )
+        self.assertEqual(
+            [(guest["name"], guest["mentioned_as"]) for guest in guests],
+            [("叁肆叁肆", "狗哥"), ("艾斯yoona", "大猛一")],
+        )
+
+    def test_guest_avatar_uses_official_participant_room_id(self):
+        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        if str(y2a_root) not in sys.path:
+            sys.path.insert(0, str(y2a_root))
+        from modules import live_recorder_manager as manager_module
+
+        def search_rooms(query, limit):
+            if query == "762484":
+                self.assertEqual(limit, 1)
+                return [
+                    {
+                        "room_id": "762484",
+                        "name": "刘嘉俊Sylar1",
+                        "avatar_url": "https://apic.douyucdn.cn/sylar.jpg",
+                    },
+                ]
+            return []
+
+        with patch.object(
+            manager_module.live_recorder_manager,
+            "_search_douyu_rooms",
+            side_effect=search_rooms,
+        ) as search:
+            resolved = bridge.resolve_recording_guest_avatar(
+                {"name": "Sylar", "mentioned_as": "眼子"},
+                {"_recording_profiles": []},
+            )
+
+        self.assertEqual(resolved["room_id"], "762484")
+        self.assertEqual(resolved["source"], "douyu_event_room")
+        self.assertEqual(resolved["search_name"], "762484")
+        self.assertEqual(
+            [call.args[0] for call in search.call_args_list],
+            ["762484"],
+        )
+
+    def test_official_participant_rooms_cover_every_linked_event_tile(self):
+        self.assertEqual(len(bridge.DOTA2_POKEMON_PARTICIPANT_ROOM_IDS), 47)
+        self.assertEqual(
+            bridge.DOTA2_POKEMON_PARTICIPANT_ROOM_IDS["蛋饼"],
+            "8758901",
+        )
+        self.assertEqual(
+            bridge.DOTA2_POKEMON_PARTICIPANT_ROOM_IDS["哈哈明"],
+            "331437",
+        )
+        self.assertEqual(
+            bridge.normalize_dota2_streamer_name("小蝴蝶"),
+            "Spirit小蝴蝶",
+        )
+        self.assertEqual(
+            bridge.DOTA2_POKEMON_PARTICIPANT_ROOM_IDS["Spirit小蝴蝶"],
+            "448014",
+        )
+
     def test_guest_avatar_uses_unique_exact_douyu_search_result(self):
         y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
         if str(y2a_root) not in sys.path:
