@@ -928,6 +928,8 @@ def strip_live_stats_from_description(description: str, stats_text: str) -> str:
     # Keep this migration tolerant so retrying a historical task repairs it.
     while body == stats or body.startswith(f"{stats}\n"):
         body = body[len(stats):].lstrip()
+    while body == stats or body.endswith(f"\n{stats}"):
+        body = body[:-len(stats)].rstrip()
     return strip_recording_intro(body)
 
 
@@ -997,12 +999,12 @@ def _fit_live_stats(stats_text: str, limit: int) -> str:
     return "\n".join(kept).rstrip()
 
 
-def prepend_live_stats_to_description(
+def append_live_stats_to_description(
     description: str,
     stats_text: str,
     limit: int = 1900,
 ) -> str:
-    """Put live statistics first while keeping the archive description in range."""
+    """Put live statistics last while keeping the archive description in range."""
     stats = str(stats_text or "").strip()
     body = strip_live_stats_from_description(description, stats)
     if not stats:
@@ -1040,8 +1042,17 @@ def prepend_live_stats_to_description(
         if has_multipart_sections
         else fit_description_preserving_timeline(body, body_budget)
     )
-    separator = "\n\n" if fitted_body else ""
-    return f"{stats}{separator}{fitted_body}".rstrip()
+    separator = "\n\n" if fitted_body and stats else ""
+    return f"{fitted_body}{separator}{stats}".rstrip()
+
+
+def prepend_live_stats_to_description(
+    description: str,
+    stats_text: str,
+    limit: int = 1900,
+) -> str:
+    """Compatibility wrapper; new descriptions always place statistics last."""
+    return append_live_stats_to_description(description, stats_text, limit)
 
 
 def live_stats_stage_details(stats_text: str) -> dict[str, Any]:
@@ -1569,10 +1580,25 @@ def recording_cover_headline(
     streamer: str = "",
 ) -> str:
     """Extract a cover-safe headline without dates, clocks or template chrome."""
+    generic_topics = {"直播精彩内容", "精彩内容", "直播回放", "精彩直播", "直播录像"}
     candidate = str(ai_topic or "").strip()
+    if candidate in generic_topics:
+        candidate = ""
     if not candidate:
         parts = [part.strip() for part in re.split(r"[｜|]", str(title or "")) if part.strip()]
-        candidate = parts[1] if len(parts) >= 2 else (parts[0] if parts else "直播精彩内容")
+        cleaned_parts = []
+        for part in parts:
+            cleaned = re.sub(r"【[^】]*(?:直播|回放)[^】]*】", "", part)
+            cleaned = re.sub(r"\b20\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?\b", "", cleaned)
+            cleaned = re.sub(r"\b\d{1,2}[-/.月]\d{1,2}(?:日)?\b", "", cleaned)
+            cleaned = re.sub(r"\b\d{1,2}[:：]\d{2}(?::\d{2})?\b", "", cleaned)
+            cleaned = cleaned.strip(" -_｜|·")
+            if cleaned:
+                cleaned_parts.append(cleaned)
+        if len(cleaned_parts) >= 2:
+            candidate = cleaned_parts[1]
+        else:
+            candidate = cleaned_parts[0] if cleaned_parts else "直播精彩内容"
     candidate = re.sub(r"【[^】]*(?:直播|回放)[^】]*】", "", candidate)
     candidate = re.sub(r"\b20\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?\b", "", candidate)
     candidate = re.sub(r"\b\d{1,2}月\d{1,2}日\b", "", candidate)
@@ -1587,6 +1613,19 @@ def recording_cover_headline(
     if subject_name and not topic_mentions_streamer(headline, streamer):
         headline = f"{subject_name}{candidate}"[:24]
     return headline
+
+
+def recording_cover_hero_matches_title(hero: str, title: str) -> bool:
+    """Only lock a gameplay hero when the reviewed headline names that hero."""
+    hero_name = str(hero or "").strip().casefold()
+    title_text = str(title or "").casefold()
+    if not hero_name or not title_text:
+        return False
+    for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
+        names = {canonical_name.casefold(), *(alias.casefold() for alias in aliases)}
+        if hero_name in names:
+            return any(name and name in title_text for name in names)
+    return hero_name in title_text
 
 
 def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
@@ -3689,11 +3728,11 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 stats_text,
             )
             if append_stats_enabled:
-                description = prepend_live_stats_to_description(description, stats_text)
+                description = append_live_stats_to_description(description, stats_text)
                 ai_details["stats_appended"] = True
-                ai_details["stats_prepended"] = True
-                ai_details["stats_position"] = "start"
-                print("[bridge] 预先整理的直播统计数据已置于简介开头", file=sys.stderr)
+                ai_details["stats_prepended"] = False
+                ai_details["stats_position"] = "end"
+                print("[bridge] 预先整理的直播统计数据已置于简介末尾", file=sys.stderr)
             else:
                 description = description_body
                 ai_details["stats_appended"] = False
@@ -3701,8 +3740,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 ai_details["stats_position"] = None
             store.stage(key, "live_stats", "completed", {
                 "stats_appended": append_stats_enabled,
-                "stats_prepended": append_stats_enabled,
-                "stats_position": "start" if append_stats_enabled else None,
+                "stats_prepended": False,
+                "stats_position": "end" if append_stats_enabled else None,
                 "description_length": len(description),
                 **live_stats_stage_details(stats_text),
             })
@@ -3717,6 +3756,13 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         ai_details["description_body"] = description_body
         ai_details["description"] = description
         store.stage(key, "ai", ai_stage_status, ai_details)
+
+        cover_game_context = locked_game_context
+        if cover_game_context and not recording_cover_hero_matches_title(
+            str(cover_game_context.get("hero") or ""),
+            title,
+        ):
+            cover_game_context = None
 
         current_stage = "cover_16x9"
         cover_generation: dict[str, Any] = {}
@@ -3803,7 +3849,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     target_size=(1920, 1080),
                     output_path=work_dir / "ai_cover_16x9.jpg",
                     recording_dir=video.parent,
-                    game_context=locked_game_context,
+                    game_context=cover_game_context,
                     game_context_locked=True,
                 )
                 if generated_cover:
@@ -3893,7 +3939,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     target_size=(1600, 1200),
                     output_path=work_dir / "ai_cover_4x3.jpg",
                     recording_dir=video.parent,
-                    game_context=locked_game_context,
+                    game_context=cover_game_context,
                     game_context_locked=True,
                 )
                 if generated_cover43:

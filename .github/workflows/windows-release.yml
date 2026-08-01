@@ -1,22 +1,14 @@
 name: Windows installer release
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/workflows/windows-release.yml
-      - danmaku_pipeline.py
-      - bridge.py
-      - bridge.config.example.json
-      - y2a-auto/**
+  # Windows publication is temporarily paused. Keep an explicit manual path
+  # available for future verification without attaching installers to releases.
   workflow_dispatch:
     inputs:
       release_tag:
         description: Existing release tag to receive the Windows installer
         required: false
         type: string
-  release:
-    types: [published]
 
 permissions:
   contents: read
