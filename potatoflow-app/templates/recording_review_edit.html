@@ -1,23 +1,26 @@
 {% extends 'base.html' %}
 
-{% block title %}PotatoFlow - {{ '编辑已上传稿件' if job.status == 'completed' else '录播人工审核' }}{% endblock %}
+{% set published_editor = job.status == 'completed' and job.bvid %}
+{% set pre_upload_editor = not published_editor and not job.record_only %}
+
+{% block title %}PotatoFlow - {{ '编辑已上传稿件' if published_editor else '投稿前 AI 编辑' }}{% endblock %}
 
 {% block content %}
 <div class="recording-review-editor">
     <div class="studio-page-header">
         <div>
-            <div class="page-eyebrow">{{ 'PUBLISHED ARCHIVE EDITOR' if job.status == 'completed' else 'RECORDING REVIEW' }}</div>
-            <h1>{{ '编辑已上传稿件' if job.status == 'completed' else '录播人工审核' }}</h1>
+            <div class="page-eyebrow">{{ 'PUBLISHED ARCHIVE EDITOR' if published_editor else 'PRE-PUBLISH AI REVIEW' }}</div>
+            <h1>{{ '编辑已上传稿件' if published_editor else '投稿前 AI 编辑' }}</h1>
             <p>
-                {% if job.status == 'completed' %}
+                {% if published_editor %}
                 AI 重新生成后先在本页预览，确认无误再同步到 B站；不会修改视频和分P。
                 {% else %}
-                默认使用已生成的 AI 投稿内容；AI 未生成的项目再手动补充。
+                流程已在封面生图前暂停。先生成简介，再基于新简介生成标题；确认后才会生成封面并继续投稿。
                 {% endif %}
             </p>
         </div>
-        <a href="{{ url_for('tasks') if job.status == 'completed' else url_for('manual_review') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-arrow-left"></i> 返回{{ '上传任务' if job.status == 'completed' else '人工审核' }}
+        <a href="{{ url_for('tasks') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> 返回上传任务
         </a>
     </div>
 
@@ -29,7 +32,7 @@
                     <dl class="review-facts mb-0">
                         <dt>主播</dt><dd>{{ job.room_name }}</dd>
                         <dt>录播文件</dt><dd class="text-break">{{ job.video_name }}</dd>
-                        {% if job.status == 'completed' %}
+                        {% if published_editor %}
                         <dt>B站稿件</dt><dd><a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener">{{ job.bvid }}</a></dd>
                         <dt>同步状态</dt>
                         <dd>
@@ -40,7 +43,8 @@
                             {% endif %}
                         </dd>
                         {% else %}
-                        <dt>失败步骤</dt><dd>{{ {'detect':'直播检测','record':'视频录制','ass':'生成 ASS','ai':'AI 简介','cover':'AI 封面','upload':'投稿 B站'}.get(job.failed_stage, job.failed_stage or '处理') }}</dd>
+                        <dt>当前状态</dt><dd><span class="badge text-bg-warning">等待人工确认</span></dd>
+                        <dt>下一步</dt><dd>确认后才生成 16:9 与 4:3 封面</dd>
                         {% endif %}
                         <dt>任务编号</dt><dd class="text-monospace text-break">{{ job.id }}</dd>
                     </dl>
@@ -65,7 +69,7 @@
                     </div>
                 </div>
                 <div class="card-body small text-muted">
-                    {% if job.status == 'completed' %}
+                    {% if published_editor %}
                     本页显示准备同步的封面。只有点击“确认同步到 B站”后，线上稿件才会改变。
                     {% else %}
                     上传新封面后会优先使用人工封面，不再使用本次任务原有的 AI 封面。
@@ -115,27 +119,29 @@
                 <div class="card mb-4">
                     <div class="card-header">编辑视频信息</div>
                     <div class="card-body">
-                        {% if job.status == 'completed' %}
+                        {% if published_editor or pre_upload_editor %}
                         <div class="ai-regenerate-panel mb-4">
                             <div>
                                 <strong><i class="bi bi-stars"></i> AI 重新生成</strong>
-                                <div class="small text-muted mt-1">每次生成只保存为预览，不会立即修改线上稿件。</div>
+                                <div class="small text-muted mt-1">每次生成只保存为预览。“全部重新生成”会严格按简介 → 标题 → 标签的顺序执行。</div>
                             </div>
                             <div class="d-flex flex-wrap gap-2 mt-3">
-                                <button type="submit" name="action" value="regenerate_title" class="btn btn-sm btn-outline-primary ai-generate-btn">
-                                    重新生成标题
-                                </button>
                                 <button type="submit" name="action" value="regenerate_description" class="btn btn-sm btn-outline-primary ai-generate-btn">
                                     重新生成简介
+                                </button>
+                                <button type="submit" name="action" value="regenerate_title" class="btn btn-sm btn-outline-primary ai-generate-btn">
+                                    基于当前简介重新生成标题
                                 </button>
                                 <button type="submit" name="action" value="regenerate_tags" class="btn btn-sm btn-outline-primary ai-generate-btn">
                                     重新生成六个标签
                                 </button>
+                                {% if published_editor %}
                                 <button type="submit" name="action" value="regenerate_cover" class="btn btn-sm btn-outline-primary ai-generate-btn">
                                     重新生成两种封面
                                 </button>
+                                {% endif %}
                                 <button type="submit" name="action" value="regenerate_all" class="btn btn-sm btn-primary ai-generate-btn">
-                                    全部重新生成
+                                    先简介后标题，全部重新生成
                                 </button>
                             </div>
                         </div>
@@ -232,12 +238,12 @@
                 </div>
 
                 <div class="review-actions">
-                    <a href="{{ url_for('tasks') if job.status == 'completed' else url_for('manual_review') }}" class="btn btn-outline-secondary">取消</a>
+                    <a href="{{ url_for('tasks') }}" class="btn btn-outline-secondary">取消</a>
                     <div class="d-flex flex-wrap gap-2">
                         <button type="submit" name="action" value="save" class="btn btn-primary">
-                            <i class="bi bi-save"></i> 保存{{ '预览' if job.status == 'completed' else '修改' }}
+                            <i class="bi bi-save"></i> 保存预览
                         </button>
-                        {% if job.status == 'completed' %}
+                        {% if published_editor %}
                         <button type="submit" name="action" value="apply_to_bilibili" class="btn btn-outline-success"
                                 data-confirm-published-update="true">
                             <i class="bi bi-cloud-check"></i> 仅同步稿件
@@ -247,8 +253,8 @@
                             <i class="bi bi-chat-square-text"></i> 同步稿件并更新置顶评论
                         </button>
                         {% else %}
-                        <button type="submit" name="action" value="save_and_retry" class="btn btn-success" {% if not job.retryable %}disabled{% endif %}>
-                            <i class="bi bi-cloud-upload"></i> 保存并重新投稿
+                        <button type="submit" name="action" value="save_and_continue" class="btn btn-success" {% if not job.retryable %}disabled{% endif %}>
+                            <i class="bi bi-arrow-right-circle"></i> 确认并继续生成封面与投稿
                         </button>
                         {% endif %}
                     </div>
@@ -258,7 +264,7 @@
     </div>
 </div>
 
-{% if job.status == 'completed' %}
+{% if published_editor %}
 <div class="modal fade published-update-modal" id="publishedUpdateConfirmModal" tabindex="-1"
      aria-labelledby="publishedUpdateConfirmTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">

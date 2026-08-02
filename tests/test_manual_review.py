@@ -36,7 +36,7 @@ class ManualReviewTests(unittest.TestCase):
 
         self.assertIn("def live_recording_job_review(fingerprint)", app_source)
         self.assertIn("save_pipeline_review(", app_source)
-        self.assertIn("保存并重新投稿", template)
+        self.assertIn("确认并继续生成封面与投稿", template)
         self.assertIn('name="cover_file"', template)
         self.assertIn('name="partition_id"', template)
         self.assertIn("recording_review_overrides", manager_source)
@@ -87,6 +87,46 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn("sync_published_description_comment", manager_source)
         self.assertNotIn("window.confirm(", editor_template)
         self.assertIn('html[data-theme="dark"] .ai-regenerate-panel', editor_template)
+
+    def test_running_recording_can_hold_after_ai_and_edit_before_cover(self):
+        app_source = (ROOT / "potatoflow-app" / "app.py").read_text(encoding="utf-8")
+        manager_source = (
+            ROOT / "potatoflow-app" / "modules" / "live_recorder_manager.py"
+        ).read_text(encoding="utf-8")
+        bridge_source = (ROOT / "potatoflow-app" / "bridge.py").read_text(encoding="utf-8")
+        tasks_template = (
+            ROOT / "potatoflow-app" / "templates" / "tasks.html"
+        ).read_text(encoding="utf-8")
+        editor_template = (
+            ROOT / "potatoflow-app" / "templates" / "recording_review_edit.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("live_recording_job_review_hold", app_source)
+        self.assertIn("request_pipeline_ai_review", manager_source)
+        self.assertIn('latest_review_override.get("hold_before_cover")', bridge_source)
+        hold_index = bridge_source.index('latest_review_override.get("hold_before_cover")')
+        self.assertLess(
+            hold_index,
+            bridge_source.index('current_stage = "cover_16x9"', hold_index),
+        )
+        self.assertIn("AI 完成后暂停编辑", tasks_template)
+        self.assertIn("暂停后续流程并编辑", tasks_template)
+        self.assertIn("PRE-PUBLISH AI REVIEW", editor_template)
+        self.assertIn("先生成简介，再基于新简介生成标题", editor_template)
+        self.assertIn('value="save_and_continue"', editor_template)
+
+    def test_ai_pipeline_generates_verified_description_before_title(self):
+        bridge_source = (ROOT / "potatoflow-app" / "bridge.py").read_text(
+            encoding="utf-8"
+        )
+
+        description_call = 'scene_name="recording_danmaku_summary"'
+        title_call = 'scene_name="recording_danmaku_title_from_description"'
+        self.assertLess(
+            bridge_source.index(description_call),
+            bridge_source.index(title_call),
+        )
+        self.assertIn('"final_description": final_description', bridge_source)
 
     def test_ai_regenerate_action_is_serialized_before_button_is_disabled(self):
         editor_template = (

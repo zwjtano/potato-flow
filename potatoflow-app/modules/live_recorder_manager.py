@@ -3493,6 +3493,8 @@ class LiveRecorderManager:
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
+        if job.get("record_only"):
+            raise RecorderConfigError("仅录制任务没有 B站投稿信息可编辑")
         clean_title = str(title or "").strip()
         clean_description = str(description or "").strip()
         clean_partition = str(partition_id or "").strip()
@@ -3533,6 +3535,15 @@ class LiveRecorderManager:
         cover_path = save_cover(cover_file, "manual-review-cover-16x9") or cover_path
         cover43_path = save_cover(cover43_file, "manual-review-cover-4x3") or cover43_path
 
+        published = job.get("status") == "completed" and bool(job.get("bvid"))
+        metadata_changed_for_cover = bool(
+            not published
+            and (
+                clean_title != str(previous.get("title") or job.get("title") or "").strip()
+                or clean_description
+                != str(previous.get("description") or job.get("description") or "").strip()
+            )
+        )
         now = datetime.now(timezone.utc).isoformat()
         metadata = {
             **previous,
@@ -3542,7 +3553,14 @@ class LiveRecorderManager:
             "partition_id": clean_partition,
             "cover_path": cover_path or None,
             "cover43_path": cover43_path or None,
-            "pending_published_update": job.get("status") == "completed",
+            "pending_published_update": published,
+            "hold_before_cover": bool(
+                not published and previous.get("hold_before_cover", True)
+            ),
+            "regenerate_covers_on_resume": bool(
+                previous.get("regenerate_covers_on_resume")
+                or metadata_changed_for_cover
+            ),
             "updated_at": now,
         }
         self._store_pipeline_review_override(fingerprint, metadata)
@@ -3574,12 +3592,76 @@ class LiveRecorderManager:
                 (fingerprint, json.dumps(metadata, ensure_ascii=False), now),
             )
 
+    def request_pipeline_ai_review(self, fingerprint: str) -> dict[str, Any]:
+        """Arm or enter the pre-cover review gate for one Bilibili pipeline."""
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise RecorderConfigError("任务编号无效")
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        if job.get("record_only"):
+            raise RecorderConfigError("仅录制任务不包含 AI 投稿信息步骤")
+        if job.get("status") == "completed":
+            return {"mode": "published", "paused": False, "armed": False}
+
+        stages = {
+            str(stage.get("key") or ""): stage
+            for stage in (job.get("stages") or [])
+            if isinstance(stage, dict)
+        }
+        ai_status = str((stages.get("ai") or {}).get("status") or "pending")
+        previous = job.get("review_override")
+        previous = previous if isinstance(previous, dict) else {}
+        now = datetime.now(timezone.utc).isoformat()
+        self._store_pipeline_review_override(fingerprint, {
+            **previous,
+            "hold_before_cover": True,
+            "pre_upload_review_requested_at": now,
+            "pending_published_update": False,
+            "updated_at": now,
+        })
+
+        paused = False
+        if (
+            ai_status in {"completed", "skipped"}
+            and recording_task_capabilities(job.get("status")).get("pausable")
+        ):
+            # The worker may already have moved from AI into a cover stage.
+            # Stop it now; every source and completed artifact is preserved.
+            self.pause_pipeline_job(fingerprint)
+            paused = True
+        return {
+            "mode": "pre_upload",
+            "paused": paused,
+            "armed": not paused,
+            "ai_status": ai_status,
+        }
+
+    def continue_pipeline_ai_review(self, fingerprint: str) -> bool:
+        """Release a reviewed task and resume at the first unfinished stage."""
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        if job.get("status") == "completed":
+            raise RecorderConfigError("稿件已上传完成，请使用线上稿件同步")
+        previous = job.get("review_override")
+        previous = previous if isinstance(previous, dict) else {}
+        now = datetime.now(timezone.utc).isoformat()
+        self._store_pipeline_review_override(fingerprint, {
+            **previous,
+            "hold_before_cover": False,
+            "pre_upload_review_confirmed_at": now,
+            "pending_published_update": False,
+            "updated_at": now,
+        })
+        return self.retry_pipeline_job(fingerprint)
+
     def regenerate_published_metadata(
         self,
         fingerprint: str,
         fields: set[str],
     ) -> dict[str, Any]:
-        """Generate a preview for an already-uploaded recording archive."""
+        """Generate an editable preview before upload or for a published archive."""
         allowed_fields = {"title", "description", "tags", "cover"}
         selected = {str(field).strip().lower() for field in fields} & allowed_fields
         if not selected:
@@ -3587,8 +3669,21 @@ class LiveRecorderManager:
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        if job.get("status") != "completed" or not job.get("bvid"):
-            raise RecorderConfigError("只有已成功上传到 B站的录播任务可以重新生成稿件信息")
+        published = job.get("status") == "completed" and bool(job.get("bvid"))
+        review_preview = job.get("review_override")
+        review_preview = review_preview if isinstance(review_preview, dict) else {}
+        pre_upload_review = bool(
+            not published
+            and not job.get("record_only")
+            and (
+                review_preview.get("hold_before_cover")
+                or job.get("status") in {"paused", "failed", "dry_run"}
+            )
+        )
+        if not published and not pre_upload_review:
+            raise RecorderConfigError("请先暂停后续流程，再重新生成 AI 投稿信息")
+        if pre_upload_review and "cover" in selected:
+            raise RecorderConfigError("投稿前审核阶段不会生图；确认标题和简介后再继续封面流程")
 
         try:
             if str(APP_ROOT) not in sys.path:
@@ -3616,8 +3711,6 @@ class LiveRecorderManager:
             video_path = Path(str(job.get("video_path") or "recording.flv"))
             bridge_config = bridge.effective_config(bridge_config, video_path)
             values = bridge.recording_metadata_values(video_path, bridge_config)
-            review_preview = job.get("review_override")
-            review_preview = review_preview if isinstance(review_preview, dict) else {}
             # The review override is the source of truth after either a manual
             # edit or an AI regeneration. Some callers may still carry the
             # originally uploaded title on the top-level job, so never let a
@@ -4044,7 +4137,15 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     if "description" in selected
                     else previous.get("timeline_diagnostics")
                 ),
-                "pending_published_update": True,
+                "pending_published_update": published,
+                "hold_before_cover": pre_upload_review,
+                "regenerate_covers_on_resume": bool(
+                    pre_upload_review
+                    and (
+                        previous.get("regenerate_covers_on_resume")
+                        or selected & {"title", "description"}
+                    )
+                ),
                 "updated_at": now,
             }
             self._store_pipeline_review_override(fingerprint, metadata)

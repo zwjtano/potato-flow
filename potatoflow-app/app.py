@@ -1634,6 +1634,27 @@ def live_recording_job_delete(fingerprint):
     return redirect(url_for('tasks'))
 
 
+@app.route('/live-recording/jobs/<fingerprint>/review-hold', methods=['POST'])
+@login_required
+def live_recording_job_review_hold(fingerprint):
+    try:
+        result = live_recorder_manager.request_pipeline_ai_review(fingerprint)
+        return jsonify({
+            'ok': True,
+            **result,
+            'review_url': url_for(
+                'live_recording_job_review', fingerprint=fingerprint
+            ),
+            'message': (
+                '已暂停后续流程，可以重新编辑 AI 标题和简介。'
+                if result.get('paused')
+                else 'AI 信息生成后将自动暂停，不会进入封面生图。'
+            ),
+        })
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+
+
 @app.route('/live-recording/jobs/<fingerprint>/review', methods=['GET', 'POST'])
 @login_required
 def live_recording_job_review(fingerprint):
@@ -1660,12 +1681,16 @@ def live_recording_job_review(fingerprint):
                 cover_file=request.files.get('cover_file'),
                 cover43_file=request.files.get('cover43_file'),
             )
+            published = job.get('status') == 'completed' and bool(job.get('bvid'))
             regenerate_fields = {
                 'regenerate_title': {'title'},
                 'regenerate_description': {'description'},
                 'regenerate_tags': {'tags'},
                 'regenerate_cover': {'cover'},
-                'regenerate_all': {'title', 'description', 'tags', 'cover'},
+                'regenerate_all': (
+                    {'title', 'description', 'tags', 'cover'}
+                    if published else {'title', 'description', 'tags'}
+                ),
             }
             if action in regenerate_fields:
                 regenerated = live_recorder_manager.regenerate_published_metadata(
@@ -1690,7 +1715,13 @@ def live_recording_job_review(fingerprint):
                         'warning',
                     )
                 else:
-                    flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
+                    destination = '同步到 B站' if published else '继续封面和投稿流程'
+                    sequence = '已先生成简介，再基于新简介生成标题。' if action == 'regenerate_all' else ''
+                    flash(
+                        f'AI 已重新生成{selected_names}。{sequence}'
+                        f'请预览后再确认{destination}。',
+                        'success',
+                    )
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action in {'apply_to_bilibili', 'apply_to_bilibili_and_comment'}:
                 live_recorder_manager.update_published_metadata(fingerprint)
@@ -1719,9 +1750,9 @@ def live_recording_job_review(fingerprint):
                 else:
                     flash('标题、简介、标签、分区和两种封面已同步到 B站，视频与分P未改动。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
-            if action == 'save_and_retry':
-                live_recorder_manager.retry_pipeline_job(fingerprint)
-                flash('人工修改已保存，并开始按修改后的信息重新投稿。', 'success')
+            if action in {'save_and_continue', 'save_and_retry'}:
+                live_recorder_manager.continue_pipeline_ai_review(fingerprint)
+                flash('人工修改已确认，现在才开始生成封面并继续投稿。', 'success')
                 return redirect(url_for('live_recording', job=fingerprint))
             flash('人工修改已保存。', 'success')
             return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))

@@ -1627,6 +1627,59 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "skipped")
             self.assertEqual(store.stage_state(key, "cover_4x3")["status"], "skipped")
 
+    def test_armed_ai_review_stops_before_cover_generation_and_upload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.mp4"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "douyu_stats_enabled": False,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.save_review_override(key, {
+                "hold_before_cover": True,
+                "updated_at": "2026-08-02T12:00:00+00:00",
+            })
+
+            with patch.object(
+                bridge,
+                "find_cover",
+                return_value=cover,
+            ), patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                return_value=(["录播"], "171", {}),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+            ) as generate_cover, patch.object(
+                bridge,
+                "import_app",
+            ) as import_app:
+                self.assertTrue(bridge.upload_one(video, cfg, store))
+
+            with store.connect() as db:
+                status = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?",
+                    (key,),
+                ).fetchone()["status"]
+            self.assertEqual(status, "paused")
+            self.assertEqual(store.stage_state(key, "ai")["status"], "skipped")
+            self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "pending")
+            self.assertTrue(store.results(key)["pre_upload_review"])
+            generate_cover.assert_not_called()
+            import_app.assert_not_called()
+
     def test_retry_preserves_uploaded_bvid(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
