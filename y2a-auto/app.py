@@ -1612,7 +1612,7 @@ def live_recording_job_review(fingerprint):
                 'regenerate_all': {'title', 'description', 'tags', 'cover'},
             }
             if action in regenerate_fields:
-                live_recorder_manager.regenerate_published_metadata(
+                regenerated = live_recorder_manager.regenerate_published_metadata(
                     fingerprint,
                     regenerate_fields[action],
                 )
@@ -1626,7 +1626,15 @@ def live_recording_job_review(fingerprint):
                     field_names[field] for field in ('title', 'description', 'tags', 'cover')
                     if field in regenerate_fields[action]
                 )
-                flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
+                cover_errors = regenerated.get('ai_cover_regeneration_errors') or []
+                if cover_errors:
+                    flash(
+                        'AI 封面已按成功结果分别更新；生成失败的尺寸保留上一版：'
+                        + '；'.join(str(error) for error in cover_errors),
+                        'warning',
+                    )
+                else:
+                    flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action in {'apply_to_bilibili', 'apply_to_bilibili_and_comment'}:
                 live_recorder_manager.update_published_metadata(fingerprint)

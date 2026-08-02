@@ -551,7 +551,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(result["ai_title_topic"], "虚空出装遭弹幕质疑")
         store.assert_called_once_with("a" * 64, result)
 
-    def test_cover_regeneration_failure_keeps_both_previous_covers(self):
+    def test_cover_regeneration_updates_successful_variant_and_keeps_failed_variant(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -612,13 +612,15 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 "bridge.generate_recording_cover_with_ai",
                 side_effect=generate_cover,
             ):
-                with self.assertRaisesRegex(RecorderConfigError, "已保留上一版"):
-                    manager.regenerate_published_metadata("a" * 64, {"cover"})
+                result = manager.regenerate_published_metadata("a" * 64, {"cover"})
 
-            self.assertEqual(old_cover.read_bytes(), b"old-16x9")
+            self.assertEqual(old_cover.read_bytes(), b"new-16x9")
             self.assertEqual(old_cover43.read_bytes(), b"old-4x3")
             self.assertEqual(list(old_cover.parent.glob(".ai_cover-*")), [])
-            store.assert_not_called()
+            self.assertEqual(result["cover_path"], str(old_cover))
+            self.assertEqual(result["cover43_path"], str(old_cover43))
+            self.assertEqual(result["ai_cover_regeneration_errors"], ["4x3: 4:3 failed"])
+            store.assert_called_once_with("a" * 64, result)
 
     def test_default_recordings_directory_uses_docker_mount_when_available(self):
         with mock.patch(
