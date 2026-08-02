@@ -252,8 +252,9 @@
                                 <div class="progress progress-thin" role="progressbar" aria-label="录播处理进度" aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
                                     <div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div>
                                 </div>
-                                <span class="recording-upload-live{% if not job.upload_progress_text %} d-none{% endif %}"
-                                      data-recording-upload-live data-job-id="{{ job.id }}">{{ job.upload_progress_text }}</span>
+                                {% set recording_progress_detail = job.processing_duration_text or job.upload_progress_text %}
+                                <span class="recording-upload-live{% if not recording_progress_detail %} d-none{% endif %}"
+                                      data-recording-upload-live data-job-id="{{ job.id }}">{{ recording_progress_detail }}</span>
                                 {% if job.auto_retry_scheduled %}
                                 <span class="recording-auto-retry">
                                     <i class="bi bi-clock-history"></i>
@@ -359,8 +360,9 @@
                             <span class="recording-progress-percent" data-recording-progress-percent>{{ progress }}%</span>
                         </div>
                         <div class="progress progress-thin"><div class="progress-bar{% if job.status == 'failed' %} bg-danger{% elif job.status == 'completed' %} bg-success{% endif %}" data-pct="{{ progress }}"></div></div>
-                        <span class="recording-upload-live{% if not job.upload_progress_text %} d-none{% endif %}"
-                              data-recording-upload-live data-job-id="{{ job.id }}">{{ job.upload_progress_text }}</span>
+                        {% set recording_progress_detail = job.processing_duration_text or job.upload_progress_text %}
+                        <span class="recording-upload-live{% if not recording_progress_detail %} d-none{% endif %}"
+                              data-recording-upload-live data-job-id="{{ job.id }}">{{ recording_progress_detail }}</span>
                         {% if job.auto_retry_scheduled %}
                         <span class="recording-auto-retry"><i class="bi bi-clock-history"></i> 5 分钟后自动重试投稿（第 {{ job.auto_retry_number }}/{{ job.auto_retry_max_retries }} 次）</span>
                         {% elif job.auto_retry_exhausted %}
@@ -2207,7 +2209,11 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         const percent = totalStages > 0
             ? Math.max(0, Math.min(100, Math.floor(completedStages * 100 / totalStages)))
             : 0;
-        const uploadText = String(job.upload_progress_text || formatRecordingUploadProgress(job.upload_progress));
+        const uploadText = String(
+            job.processing_duration_text ||
+            job.upload_progress_text ||
+            formatRecordingUploadProgress(job.upload_progress)
+        );
         const coverAvailable = job.cover_available ? '1' : '0';
         const coverVersion = String(job.cover_updated_at || '');
 

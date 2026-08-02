@@ -3323,6 +3323,34 @@ class LiveRecorderManager:
                 progress_label = "全部处理完成"
             else:
                 progress_label = "正在处理任务"
+            processing_duration_text = ""
+            if job_status == "completed":
+                processing_started_at = self._state_datetime(row["created_at"])
+                processing_finished_at = self._state_datetime(row["updated_at"])
+                if (
+                    processing_started_at is not None
+                    and processing_finished_at is not None
+                    and processing_finished_at >= processing_started_at
+                ):
+                    processing_seconds = int(
+                        round(
+                            (
+                                processing_finished_at - processing_started_at
+                            ).total_seconds()
+                        )
+                    )
+                    hours, remainder = divmod(processing_seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    duration_parts = []
+                    if hours:
+                        duration_parts.append(f"{hours}小时")
+                    if minutes:
+                        duration_parts.append(f"{minutes}分")
+                    if seconds or not duration_parts:
+                        duration_parts.append(f"{seconds}秒")
+                    processing_duration_text = (
+                        f"任务处理时长：{' '.join(duration_parts)}"
+                    )
             attempts = int(row["attempts"] or 0)
             automatic_retries_used = max(0, attempts - 1)
             auto_retry_scheduled = bool(
@@ -3433,6 +3461,7 @@ class LiveRecorderManager:
                 "upload_queue_position": queued_upload_positions.get(row["fingerprint"]),
                 "upload_progress": upload_progress,
                 "upload_progress_text": upload_progress_text,
+                "processing_duration_text": processing_duration_text,
                 "auto_retry_scheduled": auto_retry_scheduled,
                 "auto_retry_at": auto_retry_at,
                 "auto_retry_remaining_seconds": auto_retry_remaining_seconds,

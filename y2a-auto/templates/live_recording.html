@@ -393,7 +393,7 @@
             <section class="generated-files-card">
                 <div class="section-heading">
                     <div><h3>录制文件</h3><p>显示该直播间最近生成的视频、XML 弹幕和 ASS</p></div>
-                    <button class="btn btn-sm btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal"><i class="bi bi-folder2-open"></i> 管理全部文件</button>
+                    <button class="btn btn-sm btn-light border" type="button" data-bs-toggle="modal" data-bs-target="#recordingFilesModal" data-file-room="{{ room.id }}"><i class="bi bi-folder2-open"></i> 管理全部文件</button>
                 </div>
                 <div class="generated-file-list" data-generated-files-room="{{ room.id }}">
                     {% set file_state = namespace(count=0) %}
@@ -1144,6 +1144,14 @@ document.addEventListener('DOMContentLoaded', function () {
         addRoomForm.reset();
         resetRoomResolution();
         addRoomForm.querySelector('[data-role="segment-enabled"]')?.dispatchEvent(new Event('change'));
+    });
+    filesModal?.addEventListener('show.bs.modal', event => {
+        const roomFilter = filesModal.querySelector('[data-role="file-room"]');
+        if (!roomFilter) return;
+        const requestedRoom = String(event.relatedTarget?.dataset.fileRoom || '');
+        roomFilter.value = [...roomFilter.options].some(option => option.value === requestedRoom)
+            ? requestedRoom
+            : '';
     });
     filesModal?.addEventListener('shown.bs.modal', () => loadFiles());
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
