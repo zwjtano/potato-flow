@@ -9,7 +9,7 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_ROOT = ROOT / "y2a-auto"
+APP_ROOT = ROOT / "potatoflow-app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 

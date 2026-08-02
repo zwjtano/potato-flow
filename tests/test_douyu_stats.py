@@ -9,9 +9,9 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-Y2A_ROOT = ROOT / "y2a-auto"
-if str(Y2A_ROOT) not in sys.path:
-    sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = ROOT / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from modules import douyu_stats_daemon as daemon
 from modules import douyu_stats_formatter as formatter

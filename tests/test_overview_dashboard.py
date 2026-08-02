@@ -3,18 +3,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_SOURCE = (ROOT / "y2a-auto" / "app.py").read_text(encoding="utf-8")
-TEMPLATE_SOURCE = (ROOT / "y2a-auto" / "templates" / "index.html").read_text(
+APP_SOURCE = (ROOT / "potatoflow-app" / "app.py").read_text(encoding="utf-8")
+TEMPLATE_SOURCE = (ROOT / "potatoflow-app" / "templates" / "index.html").read_text(
     encoding="utf-8"
 )
-STYLE_SOURCE = (ROOT / "y2a-auto" / "static" / "css" / "style.css").read_text(
+STYLE_SOURCE = (ROOT / "potatoflow-app" / "static" / "css" / "style.css").read_text(
     encoding="utf-8"
 )
 BASE_TEMPLATE_SOURCE = (
-    ROOT / "y2a-auto" / "templates" / "base.html"
+    ROOT / "potatoflow-app" / "templates" / "base.html"
 ).read_text(encoding="utf-8")
 SETTINGS_TEMPLATE_SOURCE = (
-    ROOT / "y2a-auto" / "templates" / "settings.html"
+    ROOT / "potatoflow-app" / "templates" / "settings.html"
 ).read_text(encoding="utf-8")
 
 
@@ -57,7 +57,7 @@ class OverviewDashboardTests(unittest.TestCase):
 
     def test_home_can_open_the_add_room_flow(self):
         live_template = (
-            ROOT / "y2a-auto" / "templates" / "live_recording.html"
+            ROOT / "potatoflow-app" / "templates" / "live_recording.html"
         ).read_text(encoding="utf-8")
         self.assertIn("url_for('live_recording', add_room=1)", TEMPLATE_SOURCE)
         self.assertIn("get('add_room') === '1'", live_template)

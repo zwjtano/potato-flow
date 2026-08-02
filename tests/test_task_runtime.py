@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 
 
-Y2A_ROOT = Path(__file__).resolve().parents[1] / "y2a-auto"
-if str(Y2A_ROOT) not in sys.path:
-    sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = Path(__file__).resolve().parents[1] / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from modules.runtime_info import build_runtime_info, read_source_version  # noqa: E402
 from modules.task_runtime import TaskLeaseStore  # noqa: E402
@@ -95,7 +95,7 @@ class RuntimeInfoTests(unittest.TestCase):
 
 class ReproducibleDependencyTests(unittest.TestCase):
     def test_runtime_lock_uses_exact_direct_versions(self):
-        lock_file = Y2A_ROOT / "requirements.lock"
+        lock_file = APP_ROOT / "requirements.lock"
         dependency_lines = [
             line.strip()
             for line in lock_file.read_text(encoding="utf-8").splitlines()
@@ -105,5 +105,5 @@ class ReproducibleDependencyTests(unittest.TestCase):
         for line in dependency_lines:
             self.assertIn("==", line, msg=f"dependency is not pinned: {line}")
 
-        dockerfile = (Y2A_ROOT.parent / "Dockerfile").read_text(encoding="utf-8")
+        dockerfile = (APP_ROOT.parent / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("pip install -r requirements.lock", dockerfile)

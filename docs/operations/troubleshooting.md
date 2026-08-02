@@ -11,7 +11,7 @@ docker compose logs --tail=300 potato-flow
 常见原因是发布文件损坏、Python 导入失败、挂载目录权限或端口冲突。可在源码目录运行：
 
 ```bash
-python -m compileall -q y2a-auto bridge.py
+python -m compileall -q potatoflow-app bridge.py
 ```
 
 ## 页面打不开

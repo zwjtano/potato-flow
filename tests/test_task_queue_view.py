@@ -5,9 +5,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-Y2A_ROOT = Path(__file__).resolve().parents[1] / "y2a-auto"
-if str(Y2A_ROOT) not in sys.path:
-    sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = Path(__file__).resolve().parents[1] / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from modules.task_queue_view import (  # noqa: E402
     build_queue_summary,

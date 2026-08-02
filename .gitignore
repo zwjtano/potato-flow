@@ -32,26 +32,26 @@
 .env
 bridge.config.json
 .bridge/
-y2a-auto/config/*
-y2a-auto/cookies/
-y2a-auto/security/
+potatoflow-app/config/*
+potatoflow-app/cookies/
+potatoflow-app/security/
 *.cookie
 *cookies*.json
 
 # Runtime data
-y2a-auto/db/
-y2a-auto/logs/
-y2a-auto/temp/
-y2a-auto/downloads/
-y2a-auto/recordings/
+potatoflow-app/db/
+potatoflow-app/logs/
+potatoflow-app/temp/
+potatoflow-app/downloads/
+potatoflow-app/recordings/
 recordings/
 docker-data/
 docker-data-v1428-fix/
-y2a-auto/static/covers/
-y2a-auto/ffmpeg/
-upstream-biliup/data/
-upstream-biliup/logs/
-upstream-biliup/downloads/
+potatoflow-app/static/covers/
+potatoflow-app/ffmpeg/
+recorder-core/data/
+recorder-core/logs/
+recorder-core/downloads/
 
 # Generated recorder configuration and media
 config.yaml

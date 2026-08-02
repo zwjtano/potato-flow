@@ -4,8 +4,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = ROOT / "y2a-auto" / "templates"
-REFINEMENT_CSS = ROOT / "y2a-auto" / "static" / "css" / "ui-refinement.css"
+TEMPLATES = ROOT / "potatoflow-app" / "templates"
+REFINEMENT_CSS = ROOT / "potatoflow-app" / "static" / "css" / "ui-refinement.css"
 
 
 class _IconOnlyActionParser(HTMLParser):

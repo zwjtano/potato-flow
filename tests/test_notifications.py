@@ -8,9 +8,9 @@ import requests
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-Y2A_ROOT = ROOT / "y2a-auto"
-if str(Y2A_ROOT) not in sys.path:
-    sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = ROOT / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from modules.notifications.adapters import (  # noqa: E402
     CHANNEL_TELEGRAM,
@@ -129,9 +129,9 @@ class TelegramNotificationTests(unittest.TestCase):
         self.assertNotIn("123:secret", str(context.exception))
 
     def test_settings_and_defaults_expose_telegram_notification(self):
-        template = (Y2A_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
-        config_source = (Y2A_ROOT / "modules" / "config_manager.py").read_text(encoding="utf-8")
-        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
+        template = (APP_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
+        config_source = (APP_ROOT / "modules" / "config_manager.py").read_text(encoding="utf-8")
+        app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
 
         for field in (
             "NOTIFY_TELEGRAM_ENABLED",
@@ -226,7 +226,7 @@ class NotificationEventExtensionTests(unittest.TestCase):
         bridge.emit_recording_task_added_notification(
             {
                 "_config_dir": str(ROOT),
-                "y2a_root": str(Y2A_ROOT),
+                "app_root": str(APP_ROOT),
                 "streamer_name": "yyfyyf",
                 "source_url": "https://www.douyu.com/9999",
             },
@@ -245,7 +245,7 @@ class NotificationEventExtensionTests(unittest.TestCase):
     def test_bridge_emits_recording_completion_and_failure(self, emit):
         cfg = {
             "_config_dir": str(ROOT),
-            "y2a_root": str(Y2A_ROOT),
+            "app_root": str(APP_ROOT),
             "streamer_name": "果小果",
             "source_url": "https://www.douyu.com/123",
         }
@@ -392,11 +392,11 @@ class NotificationEventExtensionTests(unittest.TestCase):
         self.assertEqual(start_event.payload["live_title"], "天梯冲分")
 
     def test_settings_expose_new_event_switches_and_cookie_hooks(self):
-        template = (Y2A_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
-        config_source = (Y2A_ROOT / "modules" / "config_manager.py").read_text(encoding="utf-8")
-        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
-        task_source = (Y2A_ROOT / "modules" / "task_manager.py").read_text(encoding="utf-8")
-        uploader_source = (Y2A_ROOT / "modules" / "bilibili_uploader.py").read_text(encoding="utf-8")
+        template = (APP_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
+        config_source = (APP_ROOT / "modules" / "config_manager.py").read_text(encoding="utf-8")
+        app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        task_source = (APP_ROOT / "modules" / "task_manager.py").read_text(encoding="utf-8")
+        uploader_source = (APP_ROOT / "modules" / "bilibili_uploader.py").read_text(encoding="utf-8")
 
         for field in (
             "NOTIFY_EVENT_RECORDING_STARTED",

@@ -1,4 +1,4 @@
-"""Biliup XML danmaku parsing, ASS rendering and FFmpeg burn-in helpers."""
+"""Danmaku XML danmaku parsing, ASS rendering and FFmpeg burn-in helpers."""
 
 from __future__ import annotations
 
@@ -189,8 +189,8 @@ class DanmakuComment:
     mode: int = 1
 
 
-def parse_biliup_xml(path: Path) -> list[DanmakuComment]:
-    """Parse Bilibili-compatible `<d p="...">text</d>` entries from biliup XML."""
+def parse_danmaku_xml(path: Path) -> list[DanmakuComment]:
+    """Parse Bilibili-compatible `<d p="...">text</d>` entries from recorder XML."""
     comments: list[DanmakuComment] = []
     root = ET.parse(path).getroot()
     for elem in root.iter("d"):
@@ -215,12 +215,12 @@ def parse_biliup_xml(path: Path) -> list[DanmakuComment]:
     return comments
 
 
-def inspect_biliup_xml(
+def inspect_danmaku_xml(
     path: Path,
     comments: list[DanmakuComment] | None = None,
 ) -> dict[str, Any]:
     """Return auditable entry and timeline diagnostics for one XML sidecar."""
-    parsed = comments if comments is not None else parse_biliup_xml(path)
+    parsed = comments if comments is not None else parse_danmaku_xml(path)
     root = ET.parse(path).getroot()
     xml_entries = sum(1 for _ in root.iter("d"))
     timeline = [comment.time for comment in parsed]

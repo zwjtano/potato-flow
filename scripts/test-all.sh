@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-POTATO_PYTHON="${POTATO_PYTHON:-${PROJECT_ROOT}/y2a-auto/.venv/bin/python}"
+POTATO_PYTHON="${POTATO_PYTHON:-${PROJECT_ROOT}/potatoflow-app/.venv/bin/python}"
 
 if [[ ! -x "${POTATO_PYTHON}" ]]; then
   POTATO_PYTHON="python3"
@@ -14,6 +14,6 @@ fi
 )
 
 (
-  cd "${PROJECT_ROOT}/y2a-auto"
+  cd "${PROJECT_ROOT}/potatoflow-app"
   "${POTATO_PYTHON}" -m unittest discover -s tests
 )

@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 
-Y2A_ROOT = Path(__file__).resolve().parents[1] / "y2a-auto"
-sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = Path(__file__).resolve().parents[1] / "potatoflow-app"
+sys.path.insert(0, str(APP_ROOT))
 
 from modules.live_recorder_manager import LiveRecorderManager, RecorderConfigError  # noqa: E402
 import modules.live_recorder_manager as recorder_module  # noqa: E402
@@ -99,7 +99,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(status["recordings_free_level"], "warning")
 
     def test_live_recording_footer_refreshes_disk_space_without_reload(self):
-        template = (Y2A_ROOT / "templates" / "live_recording.html").read_text(
+        template = (APP_ROOT / "templates" / "live_recording.html").read_text(
             encoding="utf-8"
         )
         self.assertIn('data-role="recordings-free"', template)
@@ -151,7 +151,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 "bridge.recording_metadata_values",
                 return_value={"streamer": "YYF", "date": "07-31", "live_title": "直播"},
             ), mock.patch(
-                "bridge.parse_biliup_xml",
+                "bridge.parse_danmaku_xml",
                 return_value=[mock.Mock(time=20.0, text="高能事件")],
             ), mock.patch(
                 "bridge.generate_danmaku_metadata_with_ai",
@@ -205,7 +205,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 "bridge.recording_metadata_values",
                 return_value={"streamer": "YYF", "date": "07-31", "live_title": "直播"},
             ), mock.patch(
-                "bridge.parse_biliup_xml",
+                "bridge.parse_danmaku_xml",
                 return_value=[mock.Mock(time=20.0, text="高能事件")],
             ), mock.patch(
                 "modules.douyu_stats_formatter.get_stats_for_description",
@@ -255,7 +255,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 "bridge.recording_metadata_values",
                 return_value={"streamer": "YYF", "date": "07-31", "live_title": "直播"},
             ), mock.patch(
-                "bridge.parse_biliup_xml",
+                "bridge.parse_danmaku_xml",
                 return_value=[mock.Mock(time=20.0, text="事件")],
             ), mock.patch(
                 "bridge.generate_danmaku_metadata_with_ai",
@@ -1001,13 +1001,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config_path = root / "biliup.yaml"
+            config_path = root / "recorder.yaml"
             with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
                     mock.patch.object(recorder_module, "RECORDER_RUNTIME_DIR", root / "run" / "engine"), \
-                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "RECORDER_CONFIG_PATH", config_path), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs([room])
 
@@ -1036,12 +1036,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config_path = root / "biliup.yaml"
+            config_path = root / "recorder.yaml"
             with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
-                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "RECORDER_CONFIG_PATH", config_path), \
                     mock.patch.object(recorder_module, "_douyin_cookie_header", return_value="sessionid=secret"), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs([self.rooms[0]])
@@ -1056,7 +1056,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             root = Path(temp_dir)
             config_dir = root / "config"
             cookie_path = root / "bili_cookies.json"
-            config_path = root / "biliup.yaml"
+            config_path = root / "recorder.yaml"
             cookie_path.write_text(
                 json.dumps(
                     [
@@ -1071,13 +1071,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
-                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "RECORDER_CONFIG_PATH", config_path), \
                     mock.patch.object(recorder_module, "_bilibili_cookie_path", return_value=cookie_path), \
                     mock.patch.object(recorder_module, "_douyin_cookie_header", return_value=""), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs([self.rooms[1]])
 
-            normalized_path = config_dir / "biliup.bilibili.cookies.json"
+            normalized_path = config_dir / "recorder.bilibili.cookies.json"
             normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
             content = config_path.read_text(encoding="utf-8")
 
@@ -1103,13 +1103,13 @@ class LiveRecorderStatusTests(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config_path = root / "biliup.yaml"
+            config_path = root / "recorder.yaml"
             with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
                     mock.patch.object(recorder_module, "RECORDER_RUNTIME_DIR", root / "run" / "engine"), \
-                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "RECORDER_CONFIG_PATH", config_path), \
                     mock.patch.object(recorder_module, "_douyin_cookie_header", return_value=""), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs(rooms)
@@ -1130,12 +1130,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config_path = root / "biliup.yaml"
+            config_path = root / "recorder.yaml"
             with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
-                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "RECORDER_CONFIG_PATH", config_path), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs([room])
 
@@ -1155,12 +1155,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config_path = root / "biliup.yaml"
+            config_path = root / "recorder.yaml"
             with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
-                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "RECORDER_CONFIG_PATH", config_path), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs([room])
 
@@ -1317,12 +1317,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config_path = root / "biliup.yaml"
+            config_path = root / "recorder.yaml"
             with mock.patch.object(recorder_module, "CONFIG_DIR", root / "config"), \
                     mock.patch.object(recorder_module, "RECORDINGS_DIR", root / "recordings"), \
                     mock.patch.object(recorder_module, "LOG_PATH", root / "logs" / "recorder.log"), \
                     mock.patch.object(recorder_module, "PID_PATH", root / "run" / "recorder.pid"), \
-                    mock.patch.object(recorder_module, "BILIUP_CONFIG_PATH", config_path), \
+                    mock.patch.object(recorder_module, "RECORDER_CONFIG_PATH", config_path), \
                     mock.patch.object(manager, "_sync_bridge_profiles"):
                 manager.sync_configs([room])
 
@@ -1910,8 +1910,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 json.dumps(
                     {
                         "title_template": "{stem}",
-                        "bilibili_cookies": "y2a-auto/cookies/bili_cookies.json",
-                        "danmaku_fonts_dir": "y2a-auto/fonts",
+                        "bilibili_cookies": "potatoflow-app/cookies/bili_cookies.json",
+                        "danmaku_fonts_dir": "potatoflow-app/fonts",
                     },
                     ensure_ascii=False,
                 ),
@@ -2049,7 +2049,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(rooms[1]["runtime"]["state"], "unknown")
 
     def test_manager_does_not_depend_on_legacy_http_port(self):
-        source = (Y2A_ROOT / "modules" / "live_recorder_manager.py").read_text(encoding="utf-8")
+        source = (APP_ROOT / "modules" / "live_recorder_manager.py").read_text(encoding="utf-8")
 
         self.assertNotIn("19159", source)
         self.assertNotIn("BILIUP_API_BASE", source)
@@ -2057,7 +2057,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('"--status-file"', source)
 
     def test_live_page_does_not_load_finished_pipeline_history(self):
-        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertNotIn("const jobLogStates = new Map()", source)
         self.assertNotIn("loadJobLog(", source)
@@ -2069,8 +2069,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("显示该直播间最近生成的视频、XML 弹幕和 ASS", source)
 
     def test_recording_dark_mode_covers_stop_modal_and_mobile_progress(self):
-        stylesheet = (Y2A_ROOT / "static" / "css" / "style.css").read_text(encoding="utf-8")
-        tasks = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        stylesheet = (APP_ROOT / "static" / "css" / "style.css").read_text(encoding="utf-8")
+        tasks = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
 
         self.assertIn(
             'html[data-theme="dark"] .stop-recording-modal .modal-content',
@@ -2087,9 +2087,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("{{ job.progress_label }}", tasks)
 
     def test_recording_details_show_partition_names_and_hide_empty_ai_fields(self):
-        tasks = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
-        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
-        bridge_source = (Y2A_ROOT.parent / "bridge.py").read_text(encoding="utf-8")
+        tasks = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        bridge_source = (APP_ROOT.parent / "bridge.py").read_text(encoding="utf-8")
 
         self.assertIn("bilibili_partition_names=_build_bilibili_partition_name_map()", app_source)
         self.assertIn("const recordingPartitionNames = {{ bilibili_partition_names | tojson }};", tasks)
@@ -2104,7 +2104,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertGreaterEqual(bridge_source.count('"streamer_neutral"'), 2)
 
     def test_recording_cover_refreshes_when_pipeline_exposes_generated_image(self):
-        tasks = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        tasks = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
 
         self.assertIn('data-recording-cover-available="{{ 1 if job.cover_available else 0 }}"', tasks)
         self.assertIn('data-recording-cover-version="{{ job.cover_updated_at }}"', tasks)
@@ -2122,7 +2122,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         )
 
     def test_live_room_files_and_selected_room_refresh_without_page_reload(self):
-        template = (Y2A_ROOT / "templates" / "live_recording.html").read_text(
+        template = (APP_ROOT / "templates" / "live_recording.html").read_text(
             encoding="utf-8"
         )
 
@@ -2798,9 +2798,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
         retry.assert_called_once_with("a" * 64, automatic=True)
 
     def test_unified_task_views_include_recording_jobs(self):
-        tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
-        overview_source = (Y2A_ROOT / "templates" / "index.html").read_text(encoding="utf-8")
-        live_source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        tasks_source = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        overview_source = (APP_ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+        live_source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertIn("直播录播任务", tasks_source)
         self.assertIn("recording_jobs", tasks_source)
@@ -2975,7 +2975,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertNotIn("--session-key", run.call_args.args[0])
 
     def test_add_room_form_supports_name_search_and_recording_settings(self):
-        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertNotIn('name="name"', source)
         self.assertIn("直播间链接、分享文案或主播昵称", source)
@@ -3000,10 +3000,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertNotIn("按 2.5 GB 自动分段", source)
 
     def test_live_room_exposes_per_room_segmentation_and_multipart_settings(self):
-        settings_source = (Y2A_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
-        live_source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
-        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
-        style_source = (Y2A_ROOT / "static" / "css" / "style.css").read_text(encoding="utf-8")
+        settings_source = (APP_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
+        live_source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        style_source = (APP_ROOT / "static" / "css" / "style.css").read_text(encoding="utf-8")
 
         self.assertNotIn('name="RECORDING_MULTIPART_ENABLED"', settings_source)
         self.assertIn('name="segment_enabled"', live_source)
@@ -3031,8 +3031,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("grid-template-columns: 32px minmax(0, 1fr) auto 16px", style_source)
 
     def test_record_only_ui_hides_upload_account_identity(self):
-        live_source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
-        tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        live_source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        tasks_source = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
 
         self.assertIn("{% if not room.record_only %}", live_source)
         self.assertIn('data-role="bilibili-account-field"', live_source)
@@ -3043,7 +3043,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertNotIn("job.bilibili_account_uid", tasks_source)
 
     def test_recording_queue_uses_absolute_local_time_and_explicit_bvid_label(self):
-        tasks_source = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        tasks_source = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
 
         self.assertIn("formatToParts(date)", tasks_source)
         self.assertIn("`${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`", tasks_source)
@@ -3052,10 +3052,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("recording-updated-heading", tasks_source)
 
     def test_archive_center_exposes_all_history_and_safe_source_replacement(self):
-        template = (Y2A_ROOT / "templates" / "bilibili_archives.html").read_text(encoding="utf-8")
-        base = (Y2A_ROOT / "templates" / "base.html").read_text(encoding="utf-8")
-        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
-        uploader_source = (Y2A_ROOT / "modules" / "bilibili_uploader.py").read_text(encoding="utf-8")
+        template = (APP_ROOT / "templates" / "bilibili_archives.html").read_text(encoding="utf-8")
+        base = (APP_ROOT / "templates" / "base.html").read_text(encoding="utf-8")
+        app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        uploader_source = (APP_ROOT / "modules" / "bilibili_uploader.py").read_text(encoding="utf-8")
 
         self.assertIn("投稿中心", base)
         self.assertIn("全部历史稿件", template)
@@ -3089,10 +3089,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("https://member.bilibili.com/x/vu/web/edit", uploader_source)
 
     def test_recording_stage_order_matches_real_burn_pipeline(self):
-        source = (Y2A_ROOT / "modules" / "live_recorder_manager.py").read_text(
+        source = (APP_ROOT / "modules" / "live_recorder_manager.py").read_text(
             encoding="utf-8"
         )
-        template = (Y2A_ROOT / "templates" / "tasks.html").read_text(
+        template = (APP_ROOT / "templates" / "tasks.html").read_text(
             encoding="utf-8"
         )
 
@@ -3152,7 +3152,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         )
 
     def test_delete_room_button_is_enabled_while_worker_runs(self):
-        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertNotIn('disabled title="请先停止录制引擎"', source)
         self.assertIn('title="删除直播间"', source)

@@ -3,9 +3,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STYLE_FILE = ROOT / "y2a-auto" / "static" / "css" / "style.css"
-SETTINGS_TEMPLATE = ROOT / "y2a-auto" / "templates" / "settings.html"
-APP_SOURCE = ROOT / "y2a-auto" / "app.py"
+STYLE_FILE = ROOT / "potatoflow-app" / "static" / "css" / "style.css"
+SETTINGS_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "settings.html"
+APP_SOURCE = ROOT / "potatoflow-app" / "app.py"
 
 
 class SettingsSwitchTests(unittest.TestCase):

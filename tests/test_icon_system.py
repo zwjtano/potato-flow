@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_ROOT = ROOT / "y2a-auto"
+APP_ROOT = ROOT / "potatoflow-app"
 ICON_FONT_SOURCE = (
     APP_ROOT / "static" / "lib" / "icons" / "bootstrap-icons.css"
 ).read_text(encoding="utf-8")

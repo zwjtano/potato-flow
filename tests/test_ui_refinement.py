@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_ROOT = ROOT / "y2a-auto"
+APP_ROOT = ROOT / "potatoflow-app"
 BASE_SOURCE = (APP_ROOT / "templates" / "base.html").read_text(encoding="utf-8")
 REFINEMENT_SOURCE = (
     APP_ROOT / "static" / "css" / "ui-refinement.css"

@@ -11,7 +11,7 @@ PotatoFlow 是一个面向 Linux 和 Windows 的直播录制、弹幕处理、AI
 | 直播录制 | 哔哩哔哩直播、斗鱼、抖音 |
 | 弹幕采集 | B站、斗鱼、抖音 XML 弹幕 |
 | 视频投稿 | 仅哔哩哔哩 |
-| 投稿引擎 | 内置 Biliup |
+| 投稿引擎 | 内置投稿引擎 |
 | YouTube | 视频下载、频道与关键词监控、字幕和 AI 处理 |
 | 部署方式 | Docker、Ubuntu / Debian 原生安装，或 Windows 10/11 x64 便携版 |
 | Web 端口 | 默认 `5001` |
@@ -54,7 +54,7 @@ XML 主播识别
 - 每个直播间可以独立开始、停止和恢复录制。
 - 删除直播间只删除监控配置，不删除已有录播文件和任务。
 - B站 Cookie 同时用于投稿和直播录制，可帮助获取账号可用的最高画质。
-- 抖音沿用 Biliup 的解析与录制方式；需要登录时可手动上传 Cookie 文件，不依赖 Chromium 扫码。
+- 抖音沿用 内置录制引擎；需要登录时可手动上传 Cookie 文件，不依赖 Chromium 扫码。
 
 ### 分段与投稿方式
 
@@ -127,14 +127,14 @@ XML 主播识别
 - 任务详情和日志不会因列表刷新而自动关闭。
 - 所有任务均提供独立删除操作。
 
-### Biliup 投稿节点
+### 投稿线路
 
 - 所有直播间和上传任务共用一个全局投稿节点。
 - 在“系统设置 → 账号与网络 → 投稿节点探测与测试”手动开始测速。
 - 测速严格逐个节点执行，前一个节点完成或超时后才测试下一个，避免节点互相抢占带宽。
-- 测速完成后自动选择最快的 Biliup 支持节点，也可以手动选择测速成功的节点。
+- 测速完成后自动选择最快的 内置投稿引擎支持的节点，也可以手动选择测速成功的节点。
 - 测速结果保存在服务器；正常投稿直接使用已选节点，不会每次重新测速。
-- 投稿页面显示 Biliup 的实时上传进度。
+- 投稿页面显示 实时上传进度。
 
 ### 文件管理
 
@@ -163,7 +163,7 @@ XML 主播识别
 
 - B站支持网页二维码登录。
 - B站也支持手动上传 JSON 或 Netscape Cookie 文件。
-- B站登录态用于直播录制和 Biliup 投稿。
+- B站登录态用于直播录制和 内置投稿。
 - 抖音支持手动上传浏览器导出的 Cookie 文件，上传后自动转换为录制器可用格式。
 - YouTube 支持手动 Cookie 文件和 CookieCloud 拉取。
 - 系统设置中可以检查 Cookie 状态。
@@ -221,7 +221,7 @@ Telegram 自动使用“账号与网络”中的通用代理，并可开启机�
 
 ## 本地测试
 
-项目包含根目录集成测试和 `y2a-auto` 模块测试。请使用统一入口，避免只运行其中一套：
+项目包含根目录集成测试和 `potatoflow-app` 模块测试。请使用统一入口，避免只运行其中一套：
 
 ```bash
 bash scripts/test-all.sh
@@ -250,7 +250,7 @@ docker compose up -d --build
 http://服务器IP:5001
 ```
 
-首次构建会编译内置 Biliup 并安装 Python、FFmpeg 和 AI 处理依赖，因此耗时会比普通重启长。
+首次构建会编译内置投稿引擎 并安装 Python、FFmpeg 和 AI 处理依赖，因此耗时会比普通重启长。
 
 ### 录播目录
 
@@ -312,7 +312,7 @@ docker compose up -d --build
 cp -a docker-data docker-data.backup
 ```
 
-镜像构建使用 `y2a-auto/requirements.lock` 中经过测试的精确直接依赖版本，
+镜像构建使用 `potatoflow-app/requirements.lock` 中经过测试的精确直接依赖版本，
 不会在每次重建时静默拉取新的 `yt-dlp` 或 SDK。升级依赖时应显式修改该文件，
 执行 `./scripts/test-all.sh` 后再重建镜像。
 
@@ -346,7 +346,7 @@ cd potato-flow
 启动：
 
 ```bash
-./y2a-auto/.venv/bin/python run.py
+./potatoflow-app/.venv/bin/python run.py
 ```
 
 安装 systemd 服务：

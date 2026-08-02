@@ -48,7 +48,7 @@ flowchart LR
 - 投稿平台只保留哔哩哔哩；YouTube 功能保留用于下载与监控。
 - 弹幕保存为 XML 并生成独立 ASS，默认不烧录进视频。
 - 每个直播间独立设置分段时长、是否合并分P、是否仅录制。
-- 抖音沿用 biliup 原生解析方式；不内置 Chromium，不提供扫码登录。
+- 抖音沿用 内置录制引擎解析方式；不内置 Chromium，不提供扫码登录。
 
 !!! tip "从这里开始"
     新服务器优先使用 [Docker 安装](getting-started/docker.md)，然后按 [首次配置](getting-started/first-run.md) 完成 B站登录和 AI 设置。

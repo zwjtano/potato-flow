@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 
-Y2A_ROOT = Path(__file__).resolve().parents[1] / "y2a-auto"
-sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = Path(__file__).resolve().parents[1] / "potatoflow-app"
+sys.path.insert(0, str(APP_ROOT))
 
 from modules.live_recorder_manager import LiveRecorderManager, RecorderConfigError  # noqa: E402
 import modules.live_recorder_manager as recorder_module  # noqa: E402
@@ -63,13 +63,13 @@ class RecordingFilesTests(unittest.TestCase):
         self.assertEqual(self.manager.recording_cover(info["id"]), cover.resolve())
 
     def test_file_manager_defines_html_escaping_before_rendering_rows(self):
-        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertIn("const escapeHtml =", source)
         self.assertLess(source.index("const escapeHtml ="), source.index("function renderFiles()"))
 
     def test_room_file_manager_opens_with_that_room_selected(self):
-        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
 
         self.assertIn('data-file-room="{{ room.id }}"', source)
         self.assertIn("filesModal?.addEventListener('show.bs.modal', event => {", source)
@@ -80,7 +80,7 @@ class RecordingFilesTests(unittest.TestCase):
         )
 
     def test_batch_delete_keeps_button_reference_before_async_confirmation(self):
-        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
         handler = source[source.index("async function deleteSelectedFiles(event)"):
                          source.index("async function loadFiles(")]
 

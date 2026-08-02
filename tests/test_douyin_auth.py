@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 
 
-Y2A_ROOT = Path(__file__).resolve().parents[1] / "y2a-auto"
-sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = Path(__file__).resolve().parents[1] / "potatoflow-app"
+sys.path.insert(0, str(APP_ROOT))
 
 from modules.douyin_auth import (  # noqa: E402
     load_douyin_cookie,

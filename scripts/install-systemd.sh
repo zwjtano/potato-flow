@@ -7,7 +7,7 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="${ROOT}/y2a-auto/.venv/bin/python"
+PYTHON="${ROOT}/potatoflow-app/.venv/bin/python"
 SERVICE_NAME="potato-flow"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
