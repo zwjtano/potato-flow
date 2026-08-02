@@ -1646,9 +1646,9 @@ def live_recording_job_review_hold(fingerprint):
                 'live_recording_job_review', fingerprint=fingerprint
             ),
             'message': (
-                '已暂停后续流程，可以重新编辑 AI 标题和简介。'
+                '已直接介入并暂停后续流程，可以重新编辑 AI 标题和简介。'
                 if result.get('paused')
-                else 'AI 信息生成后将自动暂停，不会进入封面生图。'
+                else '稿件已经发布，可以在预览后同步新的标题和简介。'
             ),
         })
     except RecorderConfigError as exc:

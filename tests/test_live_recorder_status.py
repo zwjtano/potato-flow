@@ -109,7 +109,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("payload.recordings_free_level", template)
         self.assertIn("window.setInterval(refreshLiveRecordingPage, 5000)", template)
 
-    def test_ai_review_request_arms_running_ai_without_stopping_worker(self):
+    def test_ai_review_request_waits_for_completed_ai_without_arming_gate(self):
         manager = LiveRecorderManager()
         job = {
             "status": "processing",
@@ -117,21 +117,19 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "review_override": {},
             "stages": [{"key": "ai", "status": "running"}],
         }
-        stored = {}
         with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
             manager,
             "_store_pipeline_review_override",
-            side_effect=lambda _fingerprint, metadata: stored.update(metadata),
-        ), mock.patch.object(manager, "pause_pipeline_job") as pause:
-            result = manager.request_pipeline_ai_review("a" * 64)
+        ) as store, mock.patch.object(manager, "pause_pipeline_job") as pause:
+            with self.assertRaisesRegex(RecorderConfigError, "完成后才能直接介入"):
+                manager.request_pipeline_ai_review("a" * 64)
 
-        self.assertTrue(result["armed"])
-        self.assertFalse(result["paused"])
-        self.assertTrue(stored["hold_before_cover"])
+        store.assert_not_called()
         pause.assert_not_called()
 
     def test_ai_review_request_pauses_after_ai_before_cover(self):
         manager = LiveRecorderManager()
+        events = []
         job = {
             "status": "processing",
             "record_only": False,
@@ -144,10 +142,11 @@ class LiveRecorderStatusTests(unittest.TestCase):
         with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
             manager,
             "_store_pipeline_review_override",
+            side_effect=lambda *_args: events.append("hold"),
         ) as store, mock.patch.object(
             manager,
             "pause_pipeline_job",
-            return_value=True,
+            side_effect=lambda *_args: events.append("pause") or True,
         ) as pause:
             result = manager.request_pipeline_ai_review("b" * 64)
 
@@ -155,6 +154,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(result["armed"])
         self.assertTrue(store.call_args.args[1]["hold_before_cover"])
         pause.assert_called_once_with("b" * 64)
+        self.assertEqual(events, ["hold", "pause"])
 
     def test_pre_upload_review_rejects_cover_generation(self):
         manager = LiveRecorderManager()

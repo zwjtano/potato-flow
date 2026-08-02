@@ -2801,7 +2801,10 @@ class BridgeTests(unittest.TestCase):
                 cover, details = bridge.generate_recording_cover_with_ai(
                     title="【直播回放】YYF｜天梯翻盘局｜2026-07-24",
                     ai_topic="天梯翻盘局",
-                    description="YYF进行天梯对局并完成翻盘。",
+                    description=(
+                        "YYF进行天梯对局并完成翻盘。最后弹幕顺带提到骇客徐杰，"
+                        "并对比老蔡此前的表现。"
+                    ),
                     streamer="yyfyyf",
                     cfg={
                         "_config_dir": str(root),
@@ -2829,6 +2832,11 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("被翻盘用错愕后的懊恼", edit_kwargs["prompt"])
         self.assertEqual(details["ai_cover_reference_kind"], "avatar")
         self.assertEqual(details["ai_cover_reference_count"], 1)
+        self.assertEqual(details["ai_cover_guest_streamers"], [])
+        self.assertEqual(
+            details["ai_cover_guest_candidate_source"],
+            "submission_title",
+        )
         self.assertEqual(
             details["ai_cover_reference_paths"],
             [str(avatar)],

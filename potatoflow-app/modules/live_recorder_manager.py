@@ -3593,7 +3593,7 @@ class LiveRecorderManager:
             )
 
     def request_pipeline_ai_review(self, fingerprint: str) -> dict[str, Any]:
-        """Arm or enter the pre-cover review gate for one Bilibili pipeline."""
+        """Interrupt a pipeline after AI metadata is ready and enter review."""
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             raise RecorderConfigError("任务编号无效")
         job = self.pipeline_job(fingerprint)
@@ -3610,6 +3610,11 @@ class LiveRecorderManager:
             if isinstance(stage, dict)
         }
         ai_status = str((stages.get("ai") or {}).get("status") or "pending")
+        if ai_status not in {"completed", "skipped"}:
+            raise RecorderConfigError("AI 投稿信息尚未完成，完成后才能直接介入")
+        if not recording_task_capabilities(job.get("status")).get("pausable"):
+            raise RecorderConfigError("当前任务已不在可介入的处理阶段，请刷新任务状态")
+
         previous = job.get("review_override")
         previous = previous if isinstance(previous, dict) else {}
         now = datetime.now(timezone.utc).isoformat()
@@ -3621,19 +3626,14 @@ class LiveRecorderManager:
             "updated_at": now,
         })
 
-        paused = False
-        if (
-            ai_status in {"completed", "skipped"}
-            and recording_task_capabilities(job.get("status")).get("pausable")
-        ):
-            # The worker may already have moved from AI into a cover stage.
-            # Stop it now; every source and completed artifact is preserved.
-            self.pause_pipeline_job(fingerprint)
-            paused = True
+        # Persist the stop flag before terminating the worker. If the worker is
+        # exactly between AI and the first cover request, it observes the flag;
+        # if it already entered a cover request, pause_pipeline_job stops it.
+        self.pause_pipeline_job(fingerprint)
         return {
             "mode": "pre_upload",
-            "paused": paused,
-            "armed": not paused,
+            "paused": True,
+            "armed": False,
             "ai_status": ai_status,
         }
 
