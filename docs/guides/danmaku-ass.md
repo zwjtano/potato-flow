@@ -2,6 +2,11 @@
 
 PotatoFlow 在录制视频的同时保存 XML 弹幕。每个视频分段完成后，会把对应 XML 转换为 ASS 字幕文件。
 
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-file-manager-v1619.webp" alt="本地文件管理页面中的虚构视频、XML 与 ASS 文件">
+  <figcaption>文件管理会并列显示视频、XML 与 ASS。截图中的人物、目录和文件任务均为虚构。</figcaption>
+</figure>
+
 ```mermaid
 flowchart LR
     A[直播视频分段] --> C[同名视频文件]
@@ -27,6 +32,11 @@ flowchart LR
 多个分段同时收尾时，烧录任务会按先后顺序串行执行，任务步骤会分别显示“等待烧录”和“正在烧录”。该队列同时覆盖单进程多线程和多进程容器内的任务，避免多个 FFmpeg 烧录抢占资源。
 
 ## 如何检查
+
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-task-detail-v1619.webp" alt="虚构录播任务的逐步处理详情弹窗">
+  <figcaption>打开任务详情可核对 ASS 生成、产物路径和失败步骤；示例任务与人物均为虚构。</figcaption>
+</figure>
 
 在“上传任务”点击处理进度，打开 **生成 ASS** 步骤，可以查看：
 

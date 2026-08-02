@@ -2,10 +2,10 @@
 
 直播录制页负责直播间、录制引擎和当前生成文件；已结束的任务统一进入“上传任务”。
 
-<div class="screenshot">
-  <img src="../../assets/screenshots/live-recording.png" alt="直播录制页面">
-  <div class="shot-caption">每张直播间卡片显示主播、平台、直播状态、录制状态和当前文件。</div>
-</div>
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-live-recording-v1619.webp" alt="本地直播录制页面，展示三个虚构直播间与录制文件">
+  <figcaption>直播间列表、录制引擎和当前文件位于同一页。图中人物、房间号和文件任务均为虚构。</figcaption>
+</figure>
 
 ## 添加直播间
 
@@ -33,10 +33,10 @@ https://live.douyin.com/123456
 
 ## 单直播间设置
 
-<div class="screenshot">
-  <img src="../../assets/screenshots/recording-settings.png" alt="直播间录制设置">
-  <div class="shot-caption">分段、分P和仅录制均按直播间保存，录制中修改会在当前分段安全结束后生效。</div>
-</div>
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-recording-settings-v1619.webp" alt="虚构直播间的录制分段与投稿方式设置面板">
+  <figcaption>展开“录制分段与投稿方式”即可单独配置当前直播间；示例直播间为虚构。</figcaption>
+</figure>
 
 每个直播间可独立设置：
 

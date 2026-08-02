@@ -1,5 +1,10 @@
 # 首次配置
 
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-settings-v1619.webp" alt="本地 PotatoFlow 系统设置页面">
+  <figcaption>首次配置从“系统设置”开始；截图来自当前本地 5001，未展示任何真实账号凭证。</figcaption>
+</figure>
+
 ## 1. 登录 B站
 
 进入 **系统设置 → 账号与网络 → 平台账号**：
@@ -29,4 +34,3 @@
 
 !!! info "平台边界"
     抖音只用于直播检测、录制和弹幕采集；投稿仍只发送到哔哩哔哩。
-
