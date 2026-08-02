@@ -7,7 +7,7 @@
     python tools/render_subtitle_preview.py \
         --texts "这是第一句示例字幕" "第二句稍长一点，用来测试换行效果" \
         --resolutions 1920x1080 3840x2160 1080x1920 \
-        --font SourceHanSansHWSC-VF.otf \
+        --font NotoSansCJKsc-Regular.otf \
         --outdir temp/subtitle_preview
 
 说明:
