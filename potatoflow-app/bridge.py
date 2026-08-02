@@ -2286,7 +2286,10 @@ def _dota2_hero_identity_keys(value: object) -> set[str]:
                 ):
                     matched.add(str(hero_index))
                     break
-            elif candidate in folded:
+            elif candidate == "人马" and candidate in folded.replace("原班人马", ""):
+                matched.add(str(hero_index))
+                break
+            elif candidate != "人马" and candidate in folded:
                 matched.add(str(hero_index))
                 break
     return matched
@@ -2330,32 +2333,49 @@ def filter_unverified_dota2_metadata(
     streamer: str = "",
     verified_timeline: str = "",
 ) -> tuple[str, str, list[str], dict[str, Any]]:
-    """Remove hero claims unsupported by GSI or verified owner timeline evidence."""
+    """Remove unsupported owner-hero claims without deleting ordinary discussion."""
     title_hero_keys = _dota2_hero_identity_keys(title_topic)
+    description_hero_keys = _dota2_hero_identity_keys(description)
     supported_hero_keys: set[str] = set()
-    if title_hero_keys and streamer and verified_timeline:
+    metadata_hero_keys = title_hero_keys | description_hero_keys
+    if metadata_hero_keys and streamer and verified_timeline:
         for line in timeline_lines(verified_timeline):
-            line_hero_keys = title_hero_keys & _dota2_hero_identity_keys(line)
+            line_hero_keys = metadata_hero_keys & _dota2_hero_identity_keys(line)
             supported_hero_keys.update(
                 hero_key for hero_key in line_hero_keys
                 if _timeline_claims_streamer_hero(line, streamer, hero_key)
             )
 
+    unsupported_title_hero_keys = title_hero_keys - supported_hero_keys
+    title_claims_owner_hero = any(
+        _timeline_claims_streamer_hero(title_topic, streamer, hero_key)
+        for hero_key in unsupported_title_hero_keys
+    )
     filtered_topic = (
         title_topic
-        if not title_hero_keys or title_hero_keys <= supported_hero_keys
+        if not unsupported_title_hero_keys or not title_claims_owner_hero
         else ""
     )
     filtered_lines: list[str] = []
     for line in str(description or "").splitlines():
         sentences = re.split(r"(?<=[。！？!?])", line)
-        filtered_lines.append("".join(
-            sentence for sentence in sentences
-            if (
-                not (sentence_hero_keys := _dota2_hero_identity_keys(sentence))
-                or sentence_hero_keys <= supported_hero_keys
+        kept_sentences: list[str] = []
+        for sentence in sentences:
+            unsupported_sentence_hero_keys = (
+                _dota2_hero_identity_keys(sentence) - supported_hero_keys
             )
-        ))
+            claims_owner_hero = any(
+                _timeline_claims_streamer_hero(sentence, streamer, hero_key)
+                for hero_key in unsupported_sentence_hero_keys
+            )
+            if not claims_owner_hero:
+                kept_sentences.append(sentence)
+        filtered_line = "".join(kept_sentences)
+        # A removed timestamp line must not leave a blank placeholder. Preserve
+        # only blank lines that were already present in the source description.
+        if line.strip() and not filtered_line.strip():
+            continue
+        filtered_lines.append(filtered_line)
     filtered_description = "\n".join(filtered_lines).strip()
     original_tags = [str(tag or "").strip() for tag in tags if str(tag or "").strip()]
     hero_tags = [
