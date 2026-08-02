@@ -68,6 +68,17 @@ class RecordingFilesTests(unittest.TestCase):
         self.assertIn("const escapeHtml =", source)
         self.assertLess(source.index("const escapeHtml ="), source.index("function renderFiles()"))
 
+    def test_room_file_manager_opens_with_that_room_selected(self):
+        source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+
+        self.assertIn('data-file-room="{{ room.id }}"', source)
+        self.assertIn("filesModal?.addEventListener('show.bs.modal', event => {", source)
+        self.assertIn("event.relatedTarget?.dataset.fileRoom", source)
+        self.assertLess(
+            source.index("filesModal?.addEventListener('show.bs.modal'"),
+            source.index("filesModal?.addEventListener('shown.bs.modal'"),
+        )
+
     def test_batch_delete_keeps_button_reference_before_async_confirmation(self):
         source = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
         handler = source[source.index("async function deleteSelectedFiles(event)"):

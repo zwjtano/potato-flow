@@ -2468,7 +2468,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("当前速度：5.0MB/s", job["upload_progress_text"])
         self.assertIn("最高速度：8.0MB/s", job["upload_progress_text"])
 
-    def test_completed_pipeline_job_keeps_peak_upload_speed(self):
+    def test_completed_pipeline_job_shows_processing_duration_instead_of_speed(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
@@ -2487,10 +2487,11 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     );
                     """
                 )
-                timestamp = "2026-07-31T05:00:00+00:00"
+                created_at = "2026-07-31T05:00:00+00:00"
+                completed_at = "2026-07-31T06:02:03+00:00"
                 db.execute(
                     "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'completed', 1, '{}', NULL, ?, ?)",
-                    (fingerprint, "/data/recordings/test.flv", timestamp, timestamp),
+                    (fingerprint, "/data/recordings/test.flv", created_at, completed_at),
                 )
                 db.execute(
                     "INSERT INTO upload_stages VALUES (?, 'upload', 'completed', ?, NULL, ?, ?, ?)",
@@ -2506,9 +2507,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
                             },
                             "peak_speed_bytes_per_second": 12 * 1024 * 1024,
                         }),
-                        timestamp,
-                        timestamp,
-                        timestamp,
+                        created_at,
+                        completed_at,
+                        completed_at,
                     ),
                 )
             with mock.patch.object(
@@ -2517,6 +2518,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 job = manager.pipeline_jobs()[0]
 
         self.assertEqual(job["upload_progress_text"], "最高上传速度：12.0MB/s")
+        self.assertEqual(
+            job["processing_duration_text"],
+            "任务处理时长：1小时 2分 3秒",
+        )
 
     def test_upload_queue_positions_and_paused_job_can_be_deleted(self):
         manager = LiveRecorderManager()
