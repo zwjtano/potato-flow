@@ -2,6 +2,11 @@
 
 抖音沿用 内置录制引擎的直播解析与弹幕采集方式，不依赖 Chromium 或 Playwright，也不提供扫码登录。
 
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-douyin-room-v1619.webp" alt="本地 PotatoFlow 中的虚构抖音直播间">
+  <figcaption>抖音直播间与其他平台共用录制工作台。晚风研究员、房间号和相关任务均为虚构。</figcaption>
+</figure>
+
 ## 添加直播间
 
 在“新增直播间”粘贴公开抖音直播间链接，PotatoFlow 会尝试识别主播昵称、头像、标题和真实房间号。

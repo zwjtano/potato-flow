@@ -8,12 +8,12 @@ AI 会从本段弹幕提取真实讨论主题，生成标题、简介、标签�
 
 其中时间取录制开始时间，不取上传开始时间。
 
-## 每个直播间的自定义提示词
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-ai-prompts-v1619.webp" alt="虚构直播间展开后的 AI 投稿提示词设置">
+  <figcaption>每个直播间可独立调整标题、简介、封面和时间点提示词；截图中的人物与任务均为虚构。</figcaption>
+</figure>
 
-<div class="screenshot">
-  <img src="../../assets/screenshots/ai-prompts.png" alt="直播间 AI 投稿提示词">
-  <div class="shot-caption">标题、简介、封面提示词和人物底稿均可按直播间单独保存；留空时使用系统默认。</div>
-</div>
+## 每个直播间的自定义提示词
 
 进入直播间设置的 **AI 投稿提示词**，可以分别设置：
 

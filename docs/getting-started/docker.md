@@ -2,6 +2,11 @@
 
 Docker 是 PotatoFlow 在 Linux 上的推荐安装方式。仓库只启动一个容器，对外只开放 `5001`。
 
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-overview-v1619.webp" alt="通过 5001 访问的 PotatoFlow 本地工作台">
+  <figcaption>安装完成后通过 5001 访问 WebUI。截图来自当前本地服务，所有人物和任务均为虚构。</figcaption>
+</figure>
+
 ## 环境要求
 
 - 64 位 Linux（推荐 Ubuntu 22.04/24.04 或 Debian 12/13）

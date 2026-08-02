@@ -1,54 +1,90 @@
 ---
 hide:
   - navigation
+  - toc
 ---
 
-<div class="hero">
-  <div>
-    <h1>PotatoFlow</h1>
-    <p>把直播检测、原画录制、XML 弹幕、ASS 字幕、AI 稿件与 B站投稿放进一个 Linux 服务、一个 WebUI、一个端口。</p>
-    <div class="hero-actions">
-      <a href="getting-started/docker/">Docker 安装</a>
-      <a class="secondary" href="guides/live-recording/">查看录播流程</a>
+<div class="home-shell">
+  <section class="home-intro">
+    <div class="home-intro-copy">
+      <span class="home-kicker">PotatoFlow 中文文档</span>
+      <h1>从直播录制到投稿，跑通一条可维护的流水线</h1>
+      <p>从部署、录制、弹幕处理到 AI 稿件与 B站投稿，按照真实任务找到下一步。适用于长期运行的 Linux 与 Docker 环境。</p>
+      <div class="home-actions">
+        <a class="pf-button pf-button-primary" href="getting-started/">开始部署</a>
+        <a class="pf-button pf-button-secondary" href="guides/">浏览使用指南</a>
+      </div>
     </div>
-  </div>
-  <img src="assets/logo.png" alt="PotatoFlow">
+    <aside class="first-run-card" aria-label="首次上线步骤">
+      <div class="first-run-heading">
+        <span>首次上线</span>
+        <strong>约 15 分钟</strong>
+      </div>
+      <ol>
+        <li><span>01</span><div><strong>启动服务</strong><small>使用 Docker 完成安装与健康检查</small></div></li>
+        <li><span>02</span><div><strong>连接账号</strong><small>校验 B站登录态并配置 AI 服务</small></div></li>
+        <li><span>03</span><div><strong>添加直播间</strong><small>确认录制范围、分段和投稿方式</small></div></li>
+      </ol>
+      <a href="getting-started/first-run/">查看首次配置清单 →</a>
+    </aside>
+  </section>
+
+  <figure class="local-ui-shot">
+    <img src="assets/screenshots/local-overview-v1619.webp" alt="本地 PotatoFlow 1.6.19 工作台，展示三个虚构直播间及虚构任务统计">
+    <figcaption>本地 5001 当前工作台。星河小队长、云朵维修员、晚风研究员及页面中的房间号、任务均为虚构演示数据。</figcaption>
+  </figure>
+
+  <section class="home-section">
+    <div class="section-heading">
+      <div><span class="section-label">按目标查找</span><h2>现在要完成什么？</h2></div>
+      <p>文档按任务组织，不要求先理解所有功能。</p>
+    </div>
+    <div class="path-grid">
+      <a class="path-card" href="getting-started/">
+        <span class="path-index">01 · START</span>
+        <h3>首次部署</h3>
+        <p>准备服务器、启动容器、完成首次配置，并确认服务可以持续运行。</p>
+        <strong>进入快速开始 →</strong>
+      </a>
+      <a class="path-card" href="guides/">
+        <span class="path-index">02 · USE</span>
+        <h3>建立录播流程</h3>
+        <p>配置直播间、分段、弹幕、AI 稿件、人工审核和最终投稿。</p>
+        <strong>进入使用指南 →</strong>
+      </a>
+      <a class="path-card" href="operations/">
+        <span class="path-index">03 · OPERATE</span>
+        <h3>维护生产服务</h3>
+        <p>围绕检查、更新、备份和恢复组织，不把日常运维混进字段参考。</p>
+        <strong>进入部署运维 →</strong>
+      </a>
+      <a class="path-card" href="troubleshooting/">
+        <span class="path-index">04 · FIX</span>
+        <h3>处理异常</h3>
+        <p>从可见症状开始定位容器、页面、登录、AI、录制与投稿问题。</p>
+        <strong>进入故障排查 →</strong>
+      </a>
+    </div>
+  </section>
+
+  <section class="home-section workflow-section">
+    <div class="section-heading">
+      <div><span class="section-label">完整链路</span><h2>一条可以逐步检查的工作流</h2></div>
+      <a class="section-link" href="guides/tasks-review/">查看任务与人工审核 →</a>
+    </div>
+    <div class="workflow-strip" aria-label="PotatoFlow 工作流">
+      <div><span>01</span><strong>检测开播</strong><small>直播间状态</small></div>
+      <div><span>02</span><strong>录制与弹幕</strong><small>视频 · XML</small></div>
+      <div><span>03</span><strong>处理内容</strong><small>ASS · AI 稿件</small></div>
+      <div><span>04</span><strong>审核投稿</strong><small>封面 · B站</small></div>
+    </div>
+  </section>
+
+  <section class="help-band">
+    <div><span class="section-label">需要答案</span><h2>从症状查问题，或直接核对字段。</h2></div>
+    <div class="help-actions">
+      <a href="troubleshooting/">常见问题与排障</a>
+      <a href="reference/">配置与存储参考</a>
+    </div>
+  </section>
 </div>
-
-<div class="feature-grid">
-  <div class="feature-card"><strong>三平台录制</strong>哔哩哔哩、斗鱼、抖音直播检测、原画录制与弹幕采集。</div>
-  <div class="feature-card"><strong>AI 稿件</strong>依据本段弹幕生成标题、摘要、标签、分区与 GPT Image 封面。</div>
-  <div class="feature-card"><strong>B站投稿</strong>逐段独立投稿或合并分P，失败进入人工审核，完成后可自动清理源文件。</div>
-</div>
-
-<div class="screenshot">
-  <img src="assets/screenshots/overview.png" alt="PotatoFlow 概览">
-  <div class="shot-caption">真实本地服务的概览页：录制、处理、存储和任务状态集中展示。</div>
-</div>
-
-## 一条可检查的录播流水线
-
-```mermaid
-flowchart LR
-    A[直播检测] --> B[视频与 XML 弹幕]
-    B --> C[生成 ASS]
-    C --> D[AI 标题与摘要]
-    D --> E[AI 封面]
-    E --> F[B站投稿]
-    F --> G{成功?}
-    G -- 是 --> H[按设置删除源文件]
-    G -- 否 --> I[人工审核]
-```
-
-每一步都有状态、开始/完成时间、产物和原始日志。任务页不会在你查看详情时强制刷新。
-
-## 设计边界
-
-- 对外只监听 `5001`，录制 worker 在同一个容器中运行。
-- 投稿平台只保留哔哩哔哩；YouTube 功能保留用于下载与监控。
-- 弹幕保存为 XML 并生成独立 ASS，默认不烧录进视频。
-- 每个直播间独立设置分段时长、是否合并分P、是否仅录制。
-- 抖音沿用 内置录制引擎解析方式；不内置 Chromium，不提供扫码登录。
-
-!!! tip "从这里开始"
-    新服务器优先使用 [Docker 安装](getting-started/docker.md)，然后按 [首次配置](getting-started/first-run.md) 完成 B站登录和 AI 设置。

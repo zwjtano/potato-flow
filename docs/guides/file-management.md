@@ -2,10 +2,10 @@
 
 “直播录制 → 文件管理”集中展示录播视频、XML 弹幕和 ASS 字幕。视频旁存在同名 JPG 时，列表会直接使用它作为缩略图；“仅录制不投稿”的 FLV 会在收尾后无转码封装成带内嵌封面的 MP4。
 
-<div class="screenshot">
-  <img src="../../assets/screenshots/file-manager.png" alt="录播文件管理">
-  <div class="shot-caption">可按直播间和文件类型筛选，查看空间占用，下载文件或多选删除。</div>
-</div>
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-file-manager-v1619.webp" alt="本地 PotatoFlow 文件管理弹窗中的虚构录播文件">
+  <figcaption>可在文件管理中搜索、筛选、下载或删除录播产物；截图中的人物、路径和文件任务均为虚构。</figcaption>
+</figure>
 
 ## 可用操作
 

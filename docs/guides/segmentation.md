@@ -2,6 +2,11 @@
 
 “录制分段”和“合并为分P”是两件独立的事。
 
+<figure class="local-ui-shot">
+  <img src="../../assets/screenshots/local-recording-settings-v1619.webp" alt="本地虚构直播间的分段时长和分P投稿设置">
+  <figcaption>分段时长、分P方式、目标画质和是否投稿都在单直播间设置中完成；图中任务为虚构。</figcaption>
+</figure>
+
 | 设置 | 默认值 | 效果 |
 |---|---:|---|
 | 开启录制分段 | 开启 | 每到设定时长安全结束文件，并立即处理 |
@@ -30,4 +35,3 @@
 
 !!! note
     不分段时无法“每小时自动投稿”，因为在直播结束前没有完整、可投稿的成品文件。
-
