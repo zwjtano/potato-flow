@@ -93,7 +93,7 @@
         {% elif request.path.startswith('/settings') %}{% set shell_section = '系统设置' %}{% set shell_icon = 'bi-sliders2' %}{% endif %}
         <header class="app-topbar">
             <div class="app-breadcrumb"><span>PotatoFlow</span><i class="bi bi-chevron-right"></i><strong><i class="bi {{ shell_icon }}"></i>{{ shell_section }}</strong></div>
-            <div class="app-topbar-status"><button class="app-theme-toggle" type="button" data-theme-toggle aria-label="切换为暗黑模式" title="切换为暗黑模式"><i class="bi bi-moon-stars"></i></button><time id="appClock"></time>{% if show_logout_in_nav %}<a href="{{ url_for('logout') }}" title="退出登录" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}</div>
+            <div class="app-topbar-status"><button class="app-theme-toggle" type="button" data-theme-toggle aria-label="切换为暗黑模式" title="切换为暗黑模式"><i class="bi bi-moon-stars"></i></button><time id="appClock"></time>{% if show_logout_in_nav %}<span class="app-admin-account" title="管理员账号 {{ current_admin_username }}">{% if admin_avatar_url %}<img src="{{ admin_avatar_url }}" alt="">{% else %}<i class="bi bi-person-circle"></i>{% endif %}<span>{{ current_admin_username }}</span></span><a href="{{ url_for('logout') }}" title="退出登录" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}</div>
         </header>
         <main class="app-main {% block main_class %}{% endblock %}">
         {% with messages = get_flashed_messages(with_categories=true) %}

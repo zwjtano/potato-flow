@@ -1,7 +1,11 @@
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +77,74 @@ class SecurityBoundaryTests(unittest.TestCase):
             (False, False),
         )
 
+    def test_admin_username_normalization(self):
+        self.assertEqual(app_module._normalize_admin_username(" 管理员_01 "), "管理员_01")
+        self.assertEqual(app_module._normalize_admin_username("a"), "")
+        self.assertEqual(app_module._normalize_admin_username("admin name"), "")
+
+    def test_login_requires_matching_admin_username_and_password(self):
+        protected = {
+            "password_protection_enabled": True,
+            "admin_username": "owner",
+            "password": app_module.generate_password_hash("correct horse"),
+            "LOGIN_MAX_FAILED_ATTEMPTS": 5,
+            "LOGIN_LOCKOUT_MINUTES": 15,
+        }
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(app_module, "load_config", return_value=protected),
+            patch.object(
+                app_module,
+                "_load_security_state",
+                return_value={"failed_attempts": 0, "locked_until": 0, "last_attempt": 0},
+            ),
+            patch.object(app_module, "_save_security_state"),
+            patch.object(app_module, "_emit_login_event"),
+        ):
+            response = self.client.post(
+                "/login",
+                data={
+                    "_csrf_token": "known-token",
+                    "username": "owner",
+                    "password": "correct horse",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session_state:
+            self.assertTrue(session_state["logged_in"])
+            self.assertEqual(session_state["admin_username"], "owner")
+
+    def test_admin_avatar_upload_is_cropped_and_persisted(self):
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (900, 500), (32, 120, 180)).save(image_bytes, format="JPEG")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            avatar_path = root / "admin" / "avatar.png"
+            form_data = {}
+            with (
+                patch.object(app_module, "_admin_avatar_file", return_value=avatar_path),
+                patch.object(
+                    app_module,
+                    "get_app_subdir",
+                    side_effect=lambda name: str(root / name),
+                ),
+            ):
+                app_module._persist_settings_uploads(
+                    form_data,
+                    {
+                        "admin_avatar_file": {
+                            "filename": "avatar.jpg",
+                            "content": image_bytes.getvalue(),
+                        }
+                    },
+                )
+
+            self.assertEqual(form_data["admin_avatar_path"], "admin/avatar.png")
+            with Image.open(avatar_path) as avatar:
+                self.assertEqual(avatar.size, (512, 512))
+
     def test_secret_form_value_never_returns_the_secret(self):
         rendered = app_module._secret_form_value(
             {"OPENAI_API_KEY": "sk-sensitive-value"},
@@ -103,6 +175,8 @@ class SecurityBoundaryTests(unittest.TestCase):
 
         self.assertIn('name="_csrf_token"', template)
         self.assertIn('value="{{ csrf_token }}"', template)
+        self.assertIn('name="username"', template)
+        self.assertIn('login-admin-avatar', template)
 
     def test_fetch_csrf_header_is_restricted_to_same_origin(self):
         script = (APP_ROOT / "static" / "js" / "main.js").read_text(

@@ -2266,7 +2266,7 @@
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">访问控制</span>
-                                                    <h4>密码保护</h4>
+                                                    <h4>管理员账号</h4>
                                                 </div>
                                             </div>
                                             <div class="settings-card-body">
@@ -2274,19 +2274,39 @@
                                                     <div>
                                                         <label class="checkbox-label">
                                                             <input type="checkbox" name="password_protection_enabled" id="password_protection_enabled" {% if config.password_protection_enabled %}checked{% endif %}>
-                                                            启用 Web 界面密码保护
+                                                            启用管理员账号登录
                                                         </label>
                                                     </div>
                                                 </div>
                                                 <div id="password-fields" class="mt-3">
                                                     <div class="row g-3">
-                                                        <div class="col-md-6">
+                                                        <div class="col-12">
+                                                            <div class="admin-account-avatar-editor">
+                                                                {% if admin_avatar_url %}
+                                                                <img src="{{ admin_avatar_url }}?v={{ config.get('admin_avatar_path', '')|urlencode }}" alt="管理员头像" class="admin-account-avatar-preview">
+                                                                {% else %}
+                                                                <span class="admin-account-avatar-preview fallback"><i class="bi bi-person-fill"></i></span>
+                                                                {% endif %}
+                                                                <div class="flex-grow-1">
+                                                                    <label for="admin_avatar_file" class="form-label">管理员头像</label>
+                                                                    <input type="file" id="admin_avatar_file" name="admin_avatar_file" accept="image/jpeg,image/png,image/webp" class="form-control">
+                                                                    <div class="form-text">支持 JPG、PNG、WebP，保存时自动裁剪为方形，最大 5 MB。</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="admin_username" class="form-label">管理员用户名</label>
+                                                                <input type="text" id="admin_username" name="admin_username" value="{{ config.get('admin_username', 'admin') }}" minlength="2" maxlength="32" class="form-control" autocomplete="username" required>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
                                                             <div class="form-group">
                                                                 <label for="new_password" class="form-label">新密码</label>
                                                                 <input type="password" id="new_password" name="new_password" class="form-control" autocomplete="new-password">
                                                             </div>
                                                         </div>
-                                                        <div class="col-md-6">
+                                                        <div class="col-md-4">
                                                             <div class="form-group">
                                                                 <label for="confirm_password" class="form-label">确认新密码</label>
                                                                 <input type="password" id="confirm_password" name="confirm_password" class="form-control" autocomplete="new-password">

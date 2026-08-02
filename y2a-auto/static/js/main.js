@@ -44,7 +44,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     console.log('PotatoFlow 已加载');
 
-    // --- 设置页面的密码保护逻辑 ---
+    // --- 设置页面的管理员账号逻辑 ---
     const settingsForm = document.querySelector('form[method="post"][enctype="multipart/form-data"]');
     if (settingsForm) {
         const newPassword = document.getElementById('new_password');
@@ -68,7 +68,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         settingsForm.addEventListener('submit', function(event) {
-            // 仅在启用密码保护时才校验密码匹配
+            // 仅在启用管理员账号登录时才校验密码匹配
             if (passwordProtectionEnabled && passwordProtectionEnabled.checked &&
                 newPassword && confirmPassword && newPassword.value !== confirmPassword.value) {
                 event.preventDefault(); // 阻止表单提交

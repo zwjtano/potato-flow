@@ -1,47 +1,85 @@
 {% extends "base.html" %}
 
-{% block title %}登录 - PotatoFlow{% endblock %}
-
-{% block extra_css %}{% endblock %}
+{% block title %}管理员登录 - PotatoFlow{% endblock %}
 
 {% block content %}
 <div class="login-wrapper">
-    <div class="login-card card shadow-sm">
-        <div class="card-body">
-            <div class="login-brand">
-                <img src="{{ url_for('static', filename='img/potato-flow.png') }}" alt="PotatoFlow">
-                <div>
-                    <div class="title">PotatoFlow · 土豆录播姬</div>
+    <section class="login-shell" aria-labelledby="login-title">
+        <div class="login-showcase">
+            <div class="login-showcase-glow glow-one"></div>
+            <div class="login-showcase-glow glow-two"></div>
+            <div class="login-showcase-content">
+                <div class="login-product-mark">
+                    <img src="{{ url_for('static', filename='img/potato-flow.png') }}" alt="">
+                    <span>PotatoFlow</span>
+                </div>
+                <div class="login-showcase-copy">
+                    <span class="login-kicker">录制 · 处理 · 投稿</span>
+                    <h1>让每一场直播<br>自然流向作品。</h1>
+                    <p>一个入口，管理直播录制、弹幕处理、AI 元数据与投稿进度。</p>
+                </div>
+                <div class="login-feature-row" aria-hidden="true">
+                    <span><i class="bi bi-record-circle"></i> 自动录制</span>
+                    <span><i class="bi bi-stars"></i> AI 整理</span>
+                    <span><i class="bi bi-cloud-arrow-up"></i> 自动投稿</span>
                 </div>
             </div>
-
-            <div class="text-center login-subtitle">请输入管理员密码以继续访问控制台</div>
-
-            <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-                <div class="form-floating mb-3">
-                    <input type="password" class="form-control" id="password" name="password" placeholder="密码" required>
-                    <label for="password">密码</label>
-                </div>
-
-                <div class="d-grid">
-                    <button class="btn btn-login" type="submit">登录</button>
-                </div>
-            </form>
-
-            <div class="login-help">忘记密码请联系系统管理员</div>
         </div>
-    </div>
-    
+
+        <div class="login-panel">
+            <div class="login-panel-inner">
+                <div class="login-admin-avatar">
+                    {% if admin_avatar_url %}<img src="{{ admin_avatar_url }}" alt="管理员头像">
+                    {% else %}<span><i class="bi bi-person-fill"></i></span>{% endif %}
+                    <i class="login-online-dot" aria-hidden="true"></i>
+                </div>
+                <div class="login-heading">
+                    <span class="login-kicker">管理员控制台</span>
+                    <h2 id="login-title">欢迎回来</h2>
+                    <p>登录后继续管理 PotatoFlow</p>
+                </div>
+
+                <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}" class="login-form">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <label class="login-field" for="username">
+                        <span>用户名</span>
+                        <div class="login-input-wrap">
+                            <i class="bi bi-person"></i>
+                            <input type="text" id="username" name="username" placeholder="输入管理员用户名" autocomplete="username" required>
+                        </div>
+                    </label>
+                    <label class="login-field" for="password">
+                        <span>密码</span>
+                        <div class="login-input-wrap">
+                            <i class="bi bi-lock"></i>
+                            <input type="password" id="password" name="password" placeholder="输入管理员密码" autocomplete="current-password" required>
+                            <button type="button" class="login-password-toggle" aria-label="显示密码" title="显示密码"><i class="bi bi-eye"></i></button>
+                        </div>
+                    </label>
+                    <button class="btn-login" type="submit"><span>进入控制台</span><i class="bi bi-arrow-right"></i></button>
+                </form>
+
+                <div class="login-help"><i class="bi bi-shield-check"></i> 账号信息仅保存在当前 PotatoFlow 数据目录</div>
+            </div>
+        </div>
+    </section>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    // 聚焦密码输入框，若元素存在
-    const pwd = document.getElementById('password');
-    if(pwd){ pwd.focus(); pwd.select(); }
-    // 给 body 添加登录专用类以启用全屏布局样式（在 base.html 中不会干扰其他页面）
-    if(document && document.body) document.body.classList.add('login-fullscreen');
+    document.body.classList.add('login-fullscreen');
+    const username = document.getElementById('username');
+    if (username) username.focus();
+    const password = document.getElementById('password');
+    const toggle = document.querySelector('.login-password-toggle');
+    toggle?.addEventListener('click', () => {
+        const reveal = password.type === 'password';
+        password.type = reveal ? 'text' : 'password';
+        toggle.setAttribute('aria-label', reveal ? '隐藏密码' : '显示密码');
+        toggle.setAttribute('title', reveal ? '隐藏密码' : '显示密码');
+        toggle.querySelector('i').className = reveal ? 'bi bi-eye-slash' : 'bi bi-eye';
+        password.focus();
+    });
 </script>
 {% endblock %}
