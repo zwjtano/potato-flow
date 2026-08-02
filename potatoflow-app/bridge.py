@@ -1910,6 +1910,19 @@ class StateStore:
         except (TypeError, json.JSONDecodeError):
             return {}
 
+    def save_review_override(self, key: str, metadata: dict[str, Any]) -> None:
+        """Persist worker-side review flags without losing editor fields."""
+        now = str(metadata.get("updated_at") or utc_now())
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO recording_review_overrides
+                   (fingerprint, metadata_json, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT(fingerprint) DO UPDATE SET
+                     metadata_json=excluded.metadata_json,
+                     updated_at=excluded.updated_at""",
+                (key, json.dumps(metadata, ensure_ascii=False, default=str), now),
+            )
+
     def multipart_session(self, session_key: str, *, include_closed: bool = False) -> dict[str, Any]:
         with self.connect() as db:
             row = db.execute(
@@ -4234,6 +4247,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 and not existing_submission
                 and not isinstance(prior_result.get("bilibili"), dict)
                 and not str(review_override.get("title") or "").strip()
+                and not review_override.get("hold_before_cover")
                 and (
                     title_topic_is_fallback
                     or recording_title_topic_is_vague(ai_topic)
@@ -4329,6 +4343,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             and not existing_submission
             and not isinstance(prior_result.get("bilibili"), dict)
             and not str(review_override.get("title") or "").strip()
+            and not review_override.get("hold_before_cover")
             and (
                 post_filter_title_is_fallback
                 or recording_title_topic_is_vague(ai_topic)
@@ -4573,6 +4588,30 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         ai_details["description"] = description
         store.stage(key, "ai", ai_stage_status, ai_details)
 
+        # A review request can be armed while AI is still running. Re-read it
+        # only after the final AI details are durable, then stop before either
+        # cover model is called. The retry path reuses this completed AI stage
+        # and applies the editor override before generating fresh covers.
+        latest_review_override = store.review_override(key)
+        if not dry_run and latest_review_override.get("hold_before_cover"):
+            store.finish(key, "paused", {
+                **prior_result,
+                "video_path": str(video),
+                "final_video_path": str(upload_video),
+                "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
+                "ass_path": str(ass_path) if ass_path else None,
+                "title": title,
+                "description": description,
+                "tags": tags,
+                "partition_id": partition,
+                "metadata_automation": metadata_automation,
+                "bilibili_account_id": str(cfg.get("bilibili_account_id") or ""),
+                "bilibili_account_name": str(cfg.get("bilibili_account_name") or ""),
+                "pre_upload_review": True,
+            })
+            print("PAUSED AI 投稿信息已生成，等待人工确认后再生成封面")
+            return True
+
         cover_game_context = locked_game_context
         if cover_game_context and not recording_cover_hero_matches_title(
             str(cover_game_context.get("hero") or ""),
@@ -4598,7 +4637,10 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         )
         retry_cover_path = ""
         retry_cover43_path = ""
-        if retry:
+        force_cover_regeneration = bool(
+            review_override.get("regenerate_covers_on_resume")
+        )
+        if retry and not force_cover_regeneration:
             for value in (
                 review_override.get("cover_path"),
                 prior_result.get("cover_path"),
@@ -4800,6 +4842,12 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 })
         store.stage(key, "cover_4x3", cover43_status, cover43_generation)
         cover_generation.update(cover43_generation)
+        if force_cover_regeneration:
+            refreshed_review = store.review_override(key)
+            refreshed_review["regenerate_covers_on_resume"] = False
+            refreshed_review["covers_regenerated_at"] = utc_now()
+            refreshed_review["updated_at"] = refreshed_review["covers_regenerated_at"]
+            store.save_review_override(key, refreshed_review)
 
         summary = {"video": str(video), "upload_video": str(upload_video),
                    "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,

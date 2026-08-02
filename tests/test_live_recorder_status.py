@@ -109,6 +109,64 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("payload.recordings_free_level", template)
         self.assertIn("window.setInterval(refreshLiveRecordingPage, 5000)", template)
 
+    def test_ai_review_request_arms_running_ai_without_stopping_worker(self):
+        manager = LiveRecorderManager()
+        job = {
+            "status": "processing",
+            "record_only": False,
+            "review_override": {},
+            "stages": [{"key": "ai", "status": "running"}],
+        }
+        stored = {}
+        with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+            manager,
+            "_store_pipeline_review_override",
+            side_effect=lambda _fingerprint, metadata: stored.update(metadata),
+        ), mock.patch.object(manager, "pause_pipeline_job") as pause:
+            result = manager.request_pipeline_ai_review("a" * 64)
+
+        self.assertTrue(result["armed"])
+        self.assertFalse(result["paused"])
+        self.assertTrue(stored["hold_before_cover"])
+        pause.assert_not_called()
+
+    def test_ai_review_request_pauses_after_ai_before_cover(self):
+        manager = LiveRecorderManager()
+        job = {
+            "status": "processing",
+            "record_only": False,
+            "review_override": {},
+            "stages": [
+                {"key": "ai", "status": "completed"},
+                {"key": "cover_16x9", "status": "running"},
+            ],
+        }
+        with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+            manager,
+            "_store_pipeline_review_override",
+        ) as store, mock.patch.object(
+            manager,
+            "pause_pipeline_job",
+            return_value=True,
+        ) as pause:
+            result = manager.request_pipeline_ai_review("b" * 64)
+
+        self.assertTrue(result["paused"])
+        self.assertFalse(result["armed"])
+        self.assertTrue(store.call_args.args[1]["hold_before_cover"])
+        pause.assert_called_once_with("b" * 64)
+
+    def test_pre_upload_review_rejects_cover_generation(self):
+        manager = LiveRecorderManager()
+        job = {
+            "status": "paused",
+            "record_only": False,
+            "review_override": {"hold_before_cover": True},
+        }
+        with mock.patch.object(manager, "pipeline_job", return_value=job):
+            with self.assertRaisesRegex(RecorderConfigError, "投稿前审核阶段不会生图"):
+                manager.regenerate_published_metadata("c" * 64, {"cover"})
+
     def test_published_description_regeneration_reuses_xml_timeline_pipeline(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:

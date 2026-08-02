@@ -1260,6 +1260,8 @@ html[data-theme="dark"] .task-datetime { color: #d1deea; border-bottom-color: #6
 .recording-detail-legend-item.skipped i { color: #8fa1b4; }
 .recording-detail-legend-item.failed i { color: #dc3545; }
 .recording-detail-stage-body { padding: 0 1rem 1rem 3.95rem; }
+.recording-detail-ai-review { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .65rem; margin: 0 0 .85rem; padding: .75rem .85rem; color: #445166; border: 1px solid #b8d5fb; border-radius: 10px; background: #f4f8ff; font-size: .8rem; }
+.recording-detail-ai-review strong { display: block; color: #194f8a; }
 .recording-detail-error { margin-bottom: .75rem; padding: .75rem; color: #a61e2d; border-radius: 8px; background: #fff0f2; white-space: pre-wrap; word-break: break-word; }
 .recording-detail-skip { display: flex; align-items: flex-start; gap: .5rem; margin-bottom: .75rem; padding: .65rem .75rem; color: #536070; border: 1px solid #dfe5ec; border-radius: 9px; background: #f6f8fa; font-size: .8rem; }
 .recording-burn-live { display: grid; gap: .45rem; margin-bottom: .8rem; padding: .7rem .8rem; color: #075da8; border: 1px solid #bddcff; border-radius: 9px; background: #eef7ff; font-size: .82rem; }
@@ -1299,6 +1301,8 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage {
     border-color: var(--studio-border);
     background: var(--studio-surface-raised);
 }
+html[data-theme="dark"] #recordingJobDetailModal .recording-detail-ai-review { color: #b8c9d8; border-color: #315a82; background: #172d41; }
+html[data-theme="dark"] #recordingJobDetailModal .recording-detail-ai-review strong { color: #8bc1ff; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-summary .text-muted,
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage-title small,
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage .text-muted,
@@ -1920,6 +1924,66 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             </div>`;
     }
 
+    function recordingAiReviewMarkup(job, stageStatus) {
+        if (job.record_only) return '';
+        const reviewUrl = `/live-recording/jobs/${encodeURIComponent(job.id)}/review`;
+        if (job.status === 'completed' && job.bvid) {
+            return `<div class="recording-detail-ai-review">
+                <div><strong>AI 内容不满意？</strong><span>可以再次生成简介和标题，预览后才同步到 B站。</span></div>
+                <a class="btn btn-sm btn-outline-primary" href="${reviewUrl}"><i class="bi bi-stars"></i> AI 编辑稿件</a>
+            </div>`;
+        }
+        if (['paused', 'failed', 'dry_run'].includes(String(job.status || ''))) {
+            return `<div class="recording-detail-ai-review">
+                <div><strong>后续流程已停止</strong><span>先完成简介 → 标题的人工确认，再开始封面生图。</span></div>
+                <a class="btn btn-sm btn-primary" href="${reviewUrl}"><i class="bi bi-pencil-square"></i> 进入投稿前 AI 编辑</a>
+            </div>`;
+        }
+        if (job.review_override?.hold_before_cover) {
+            return `<div class="recording-detail-ai-review">
+                <div><strong>人工闸门已设置</strong><span>AI 信息完成后将在封面生图前自动暂停。</span></div>
+                <button type="button" class="btn btn-sm btn-outline-primary" disabled><i class="bi bi-check2"></i> 等待 AI 完成</button>
+            </div>`;
+        }
+        const completed = ['completed', 'skipped'].includes(String(stageStatus || ''));
+        const label = completed ? '暂停后续流程并编辑' : 'AI 完成后暂停编辑';
+        const hint = completed
+            ? '立即阻止后续封面与投稿，保留已有产物。'
+            : '先设置人工闸门；AI 信息生成后会在生图前自动暂停。';
+        return `<div class="recording-detail-ai-review">
+            <div><strong>需要人工介入</strong><span>${hint}</span></div>
+            <button type="button" class="btn btn-sm btn-primary" data-recording-ai-review data-job-id="${escapeRecordingDetail(job.id)}">
+                <i class="bi bi-pause-circle"></i> ${label}
+            </button>
+        </div>`;
+    }
+
+    async function requestRecordingAiReview(button) {
+        const jobId = button?.dataset?.jobId;
+        if (!jobId || button.disabled) return;
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>正在设置…';
+        try {
+            const response = await fetch(`/live-recording/jobs/${encodeURIComponent(jobId)}/review-hold`, {
+                method: 'POST',
+                headers: {'Accept': 'application/json'},
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error(result.error || '无法设置人工介入');
+            if (result.paused || result.mode === 'published') {
+                window.location.assign(result.review_url);
+                return;
+            }
+            button.innerHTML = '<i class="bi bi-check2"></i> 已设置，等待 AI 完成';
+            window.setTimeout(() => refreshActiveRecordingDetail(), 900);
+        } catch (error) {
+            button.disabled = false;
+            button.innerHTML = original;
+            showTaskErrorMessage(jobId.slice(0, 12), '人工介入设置失败', error.message);
+        }
+    }
+
     function renderRecordingJobDetail(job) {
         const modal = document.getElementById('recordingJobDetailModal');
         const body = modal?.querySelector('[data-role="recording-detail-body"]');
@@ -1953,6 +2017,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             const stageContent = key === 'cover_16x9' || key === 'cover_4x3'
                 ? renderRecordingCoverDetail(job, stage, details)
                 : (fields ? `<dl class="recording-detail-fields">${fields}</dl>` : '<span class="text-muted small">当前步骤暂无更多产物信息。</span>');
+            const aiReview = key === 'ai' ? recordingAiReviewMarkup(job, status) : '';
             const timing = [
                 stage.started_at ? `开始 ${formatRecordingDetailDate(stage.started_at)}` : '',
                 stage.finished_at ? `完成 ${formatRecordingDetailDate(stage.finished_at)}` : '',
@@ -1974,6 +2039,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                     <span class="recording-detail-stage-status ${escapeRecordingDetail(status)}">${escapeRecordingDetail(statusName)}</span>
                 </summary>
                 <div class="recording-detail-stage-body">
+                    ${aiReview}
                     ${stage.error ? `<div class="recording-detail-error">${escapeRecordingDetail(stage.error)}</div>` : ''}
                     ${skipReason ? `<div class="recording-detail-skip"><i class="bi bi-skip-forward-circle"></i><span><strong>为什么跳过：</strong>${escapeRecordingDetail(skipReason)}</span></div>` : ''}
                     ${key === 'burn' && burnProgressText ? `<div class="recording-burn-live"><strong>${escapeRecordingDetail(burnProgressText)}</strong><div class="progress" role="progressbar" aria-valuenow="${burnPercent.toFixed(1)}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:${burnPercent.toFixed(1)}%"></div></div></div>` : ''}
@@ -2016,9 +2082,19 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                 <pre>${escapeRecordingDetail(job.log || '暂无任务日志。')}</pre>
             </details>`;
 
+        body.querySelectorAll('[data-recording-ai-review]').forEach(button => {
+            button.addEventListener('click', () => requestRecordingAiReview(button));
+        });
+
         const review = modal.querySelector('[data-role="recording-detail-review"]');
         review.href = `/live-recording/jobs/${encodeURIComponent(job.id)}/review`;
-        review.classList.toggle('d-none', job.status !== 'failed' || job.record_only);
+        const aiStage = stagesByKey.get('ai') || {};
+        const aiReviewReady = ['completed', 'skipped', 'failed'].includes(String(aiStage.status || ''));
+        review.textContent = job.status === 'completed' ? 'AI 编辑稿件' : '投稿前 AI 编辑';
+        review.classList.toggle(
+            'd-none',
+            job.record_only || !aiReviewReady || !['completed', 'paused', 'failed', 'dry_run'].includes(String(job.status || ''))
+        );
         const bilibili = modal.querySelector('[data-role="recording-detail-bilibili"]');
         bilibili.href = job.bilibili_url || (job.bvid ? `https://www.bilibili.com/video/${encodeURIComponent(job.bvid)}` : '#');
         bilibili.classList.toggle('d-none', !job.bvid);
