@@ -29,7 +29,7 @@ class ManualReviewTests(unittest.TestCase):
         manager_source = (
             ROOT / "potatoflow-app" / "modules" / "live_recorder_manager.py"
         ).read_text(encoding="utf-8")
-        bridge_source = (ROOT / "bridge.py").read_text(encoding="utf-8")
+        bridge_source = (ROOT / "potatoflow-app" / "bridge.py").read_text(encoding="utf-8")
         template = (
             ROOT / "potatoflow-app" / "templates" / "recording_review_edit.html"
         ).read_text(encoding="utf-8")

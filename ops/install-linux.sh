@@ -45,6 +45,15 @@ for runtime_dir in config cookies db downloads logs recordings security temp; do
   fi
 done
 
+if [[ -f "${ROOT}/bridge.config.json" && ! -e "${APP_ROOT}/bridge.config.json" ]]; then
+  mv "${ROOT}/bridge.config.json" "${APP_ROOT}/bridge.config.json"
+  echo "已迁移旧流水线配置到应用目录。"
+fi
+if [[ -d "${ROOT}/.bridge" && ! -e "${APP_ROOT}/.bridge" ]]; then
+  mv "${ROOT}/.bridge" "${APP_ROOT}/.bridge"
+  echo "已迁移旧流水线状态目录到应用目录。"
+fi
+
 python3 -m venv "${APP_ROOT}/.venv"
 "${APP_ROOT}/.venv/bin/python" -m pip install --upgrade pip
 "${APP_ROOT}/.venv/bin/pip" install -r "${APP_ROOT}/requirements.lock"
@@ -54,12 +63,12 @@ python3 -m venv "${APP_ROOT}/.venv"
   cargo build --release -p biliup-cli
 )
 
-if [[ ! -f "${ROOT}/bridge.config.json" ]]; then
-  cp "${ROOT}/bridge.config.example.json" "${ROOT}/bridge.config.json"
+if [[ ! -f "${APP_ROOT}/bridge.config.json" ]]; then
+  cp "${APP_ROOT}/bridge.config.example.json" "${APP_ROOT}/bridge.config.json"
 fi
 
 mkdir -p \
-  "${ROOT}/.bridge" \
+  "${APP_ROOT}/.bridge" \
   "${ROOT}/docker-data/recordings" \
   "${APP_ROOT}/config" \
   "${APP_ROOT}/logs" \
@@ -67,5 +76,5 @@ mkdir -p \
 
 echo
 echo "安装完成。"
-echo "直接启动: ${APP_ROOT}/.venv/bin/python ${ROOT}/run.py"
-echo "安装 systemd: ${ROOT}/scripts/install-systemd.sh"
+echo "直接启动: ${APP_ROOT}/.venv/bin/python ${APP_ROOT}/run.py"
+echo "安装 systemd: ${ROOT}/ops/install-systemd.sh"

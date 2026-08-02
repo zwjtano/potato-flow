@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:bookworm AS recorder-builder
+ARG RUST_IMAGE=rust:bookworm
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm
+
+FROM ${RUST_IMAGE} AS recorder-builder
 
 ARG DEBIAN_MIRROR=""
 ARG CARGO_MIRROR_URL=""
@@ -30,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cp target/release/biliup /tmp/biliup
 
 
-FROM python:3.11-slim-bookworm AS python-builder
+FROM ${PYTHON_IMAGE} AS python-builder
 
 ARG DEBIAN_MIRROR=""
 ARG PYPI_INDEX_URL="https://pypi.org/simple"
@@ -60,7 +63,7 @@ RUN python -m venv /opt/venv \
     && find /opt/venv -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
 
 ARG TARGETARCH
 ARG DENO_VERSION=2.4.5
@@ -107,8 +110,9 @@ COPY --from=python-builder --chown=potatoflow:potatoflow \
 COPY --from=recorder-builder --chown=potatoflow:potatoflow \
     /tmp/biliup \
     /app/recorder-core/target/release/biliup
-COPY --chown=potatoflow:potatoflow . /app
-COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --chown=potatoflow:potatoflow potatoflow-app/ /app/potatoflow-app/
+COPY --chown=potatoflow:potatoflow LICENSE THIRD_PARTY_NOTICES.md /app/
+COPY ops/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN chmod 0755 \
       /usr/local/bin/docker-entrypoint.sh \
@@ -123,4 +127,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/healthz', timeout=5)" || exit 1
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python", "/app/run.py"]
+CMD ["python", "/app/potatoflow-app/run.py"]

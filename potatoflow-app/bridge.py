@@ -89,12 +89,13 @@ DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "禁止自绘或仿冒装备图标。"
     "画面不要出现日期、时间、房间号、平台界面、二维码或水印。"
 )
-WORKSPACE_ROOT = Path(__file__).resolve().parent
+APP_ROOT = Path(__file__).resolve().parent
+WORKSPACE_ROOT = APP_ROOT.parent
 YYF_STREAMER_ALIASES = {
     "yyf", "yyfyyf", "月夜枫", "枫哥", "峰哥", "姜岑", "FG", "胖头", "胖头鱼"
 }
 GUOXIAOGUO_COVER_REFERENCE = (
-    WORKSPACE_ROOT / "assets" / "streamer-references" / "guoxiaoguo.png"
+    APP_ROOT / "assets" / "streamer-references" / "guoxiaoguo.png"
 )
 GUOXIAOGUO_STREAMER_ALIASES = {"果小果", "果小果是个弟弟"}
 DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -620,8 +621,13 @@ def resolve_app_root(cfg: dict[str, Any]) -> Path:
     """Resolve the canonical app path while accepting the legacy config key."""
     configured = cfg.get("app_root") or cfg.get("y2a_root") or "potatoflow-app"
     resolved = resolve_path(str(configured), cfg)
-    if str(configured) == "y2a-auto" and not (resolved / "modules").is_dir():
-        return resolve_path("potatoflow-app", cfg)
+    if not (resolved / "modules").is_dir():
+        if str(configured) == "y2a-auto":
+            canonical = resolve_path("potatoflow-app", cfg)
+            if (canonical / "modules").is_dir():
+                return canonical
+        if str(configured) in {"y2a-auto", "potatoflow-app"}:
+            return APP_ROOT
     return resolved
 
 

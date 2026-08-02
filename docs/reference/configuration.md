@@ -22,7 +22,7 @@
 | `post_description_comment` | `true` | 投稿后把简介发为评论 |
 | `pin_description_comment` | `true` | 尝试置顶简介评论 |
 
-示例文件位于仓库根目录 `bridge.config.example.json`。
+示例文件位于 `potatoflow-app/bridge.config.example.json`。
 
 ## 单直播间设置
 

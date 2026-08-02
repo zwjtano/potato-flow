@@ -2089,7 +2089,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
     def test_recording_details_show_partition_names_and_hide_empty_ai_fields(self):
         tasks = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
         app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        bridge_source = (APP_ROOT.parent / "bridge.py").read_text(encoding="utf-8")
+        bridge_source = (APP_ROOT / "bridge.py").read_text(encoding="utf-8")
 
         self.assertIn("bilibili_partition_names=_build_bilibili_partition_name_map()", app_source)
         self.assertIn("const recordingPartitionNames = {{ bilibili_partition_names | tojson }};", tasks)

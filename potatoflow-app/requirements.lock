@@ -1,5 +1,5 @@
 # Verified direct runtime dependency set.
-# Update intentionally, run scripts/test-all.sh, then rebuild the image.
+# Update intentionally, run ops/test-all.sh, then rebuild the image.
 yt-dlp[default]==2026.7.4
 flask==3.1.3
 flask-cors==6.0.5

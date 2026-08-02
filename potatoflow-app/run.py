@@ -9,8 +9,7 @@ from pathlib import Path
 from runtime_environment import configure_linux_ca_environment
 
 
-ROOT = Path(__file__).resolve().parent
-APP_ROOT = ROOT / "potatoflow-app"
+APP_ROOT = Path(__file__).resolve().parent
 PYTHON = APP_ROOT / ".venv" / "bin" / "python"
 
 if not PYTHON.exists():

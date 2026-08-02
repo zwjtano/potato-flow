@@ -18,8 +18,7 @@ tar -czf potato-flow-data-$(date +%Y%m%d-%H%M).tar.gz docker-data
 
 ```bash
 git pull --ff-only
-docker compose build --no-cache potato-flow
-docker compose up -d
+./ops/install-docker.sh
 ```
 
 验证：
