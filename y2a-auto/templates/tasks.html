@@ -111,7 +111,7 @@
             <input type="hidden" name="source" value="{{ source_filter }}">
             <label class="recording-filter-search">
                 <span>关键词</span>
-                <input class="form-control form-control-sm" type="search" name="recording_q" value="{{ recording_keyword }}" placeholder="标题、文件名、任务编号、BV号">
+                <input class="form-control form-control-sm" type="search" name="recording_q" value="{{ recording_keyword }}" placeholder="标题、文件名、BV号">
             </label>
             <label>
                 <span>直播间</span>
@@ -198,7 +198,6 @@
                                             {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
                                         </div>
                                         <code class="recording-task-file">{{ job.video_name }}</code>
-                                        <span class="recording-task-number"><span>任务编号</span><code>{{ job.display_id or '未编号' }}</code></span>
                                     </div>
                                 </div>
                             </td>
@@ -334,7 +333,6 @@
                                     {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
                                 </div>
                                 <div class="small text-muted mt-1">{{ job.room_name }}</div>
-                                <span class="recording-task-number"><span>任务编号</span><code>{{ job.display_id or '未编号' }}</code></span>
                                 {% if job.record_only %}
                                 <div class="recording-no-upload mt-1"><i class="bi bi-hdd"></i> 无需投稿</div>
                                 {% else %}
@@ -1030,9 +1028,6 @@ html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: 
 .recording-task-filters label { min-width: 0; }
 .recording-task-filters label > span { display: block; margin-bottom: .3rem; color: #66758a; font-size: .72rem; font-weight: 700; }
 .recording-filter-actions { display: flex; gap: .4rem; white-space: nowrap; }
-.recording-task-number { display: flex; align-items: center; gap: .35rem; min-width: 0; margin-top: .28rem; color: #78869a; font-size: .68rem; }
-.recording-task-number > span { flex: 0 0 auto; }
-.recording-task-number code { overflow: hidden; color: #27658d; font-size: .7rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .recording-pagination { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .75rem; margin-top: 1rem; color: #728096; font-size: .78rem; text-align: center; }
 .recording-pagination > :last-child { justify-self: end; }
 .recording-pagination > :first-child { justify-self: start; }
@@ -1187,8 +1182,6 @@ html[data-theme="dark"] .recording-task-card.status-failed {
 html[data-theme="dark"] .recording-task-filters { border-color: #2b3e50; background: #14212d; }
 html[data-theme="dark"] .recording-task-filters label > span,
 html[data-theme="dark"] .recording-pagination { color: #9aabbe; }
-html[data-theme="dark"] .recording-task-number { color: #91a2b6; }
-html[data-theme="dark"] .recording-task-number code { color: #75cfff; }
 html[data-theme="dark"] .youtube-account-cell strong,
 html[data-theme="dark"] .youtube-mobile-account strong { color: #e1ebf5; }
 html[data-theme="dark"] .youtube-task-meta,
