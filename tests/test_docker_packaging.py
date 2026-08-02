@@ -21,7 +21,7 @@ class DockerPackagingTests(unittest.TestCase):
 
     def test_image_contains_headless_recorder(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        requirements = (ROOT / "y2a-auto" / "requirements.txt").read_text(
+        requirements = (ROOT / "y2a-auto" / "requirements.lock").read_text(
             encoding="utf-8"
         )
         self.assertIn("cargo build --release -p biliup-cli", dockerfile)
@@ -29,6 +29,14 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("EXPOSE 5001", dockerfile)
         self.assertNotIn("chromium", dockerfile.lower())
         self.assertNotIn("playwright", requirements.lower())
+
+    def test_linux_installer_uses_canonical_runtime_lock(self):
+        installer = (ROOT / "scripts" / "install-linux.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("y2a-auto/requirements.lock", installer)
+        self.assertNotIn("y2a-auto/requirements.txt", installer)
+        self.assertFalse((ROOT / "y2a-auto" / "requirements.txt").exists())
 
     def test_image_contains_only_current_bundled_cover_references(self):
         reference_root = ROOT / "assets" / "streamer-references"

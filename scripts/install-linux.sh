@@ -36,7 +36,7 @@ fi
 
 python3 -m venv "${ROOT}/y2a-auto/.venv"
 "${ROOT}/y2a-auto/.venv/bin/python" -m pip install --upgrade pip
-"${ROOT}/y2a-auto/.venv/bin/pip" install -r "${ROOT}/y2a-auto/requirements.txt"
+"${ROOT}/y2a-auto/.venv/bin/pip" install -r "${ROOT}/y2a-auto/requirements.lock"
 
 (
   cd "${ROOT}/upstream-biliup"
