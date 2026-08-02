@@ -177,7 +177,7 @@ class TaskQueueRouteTests(unittest.TestCase):
         self.assertNotIn("recording-complete", body)
         self.assertNotIn("YouTube / 手动上传任务</h2>", body)
 
-    def test_tasks_route_filters_recordings_and_shows_task_number(self):
+    def test_tasks_route_can_filter_by_task_number_without_displaying_it(self):
         recording = [
             {
                 "id": "matching-fingerprint",
@@ -222,6 +222,7 @@ class TaskQueueRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
-        self.assertIn("任务编号", body)
-        self.assertIn("DYU-YYFYYF-0801-003", body)
+        self.assertIn("蓝猫残局", body)
+        self.assertNotIn("任务编号", body)
+        self.assertNotIn("DYU-YYFYYF-0801-003", body)
         self.assertNotIn("DYU-GXG-0801-001", body)

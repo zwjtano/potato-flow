@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import io
 import json
 import logging
 import mimetypes
@@ -18,7 +19,7 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, session, Response, stream_with_context
 from functools import wraps
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash, safe_join
 from modules.youtube_handler import extract_video_urls_from_playlist
 from modules.utils import get_app_subdir
@@ -151,6 +152,10 @@ def _secret_form_value(config: dict, key: str) -> str:
     return _SECRET_FORM_SENTINEL if str(config.get(key) or '').strip() else ''
 
 
+def _admin_avatar_file() -> Path:
+    return Path(get_app_subdir('admin')) / 'avatar.png'
+
+
 @app.context_processor
 def inject_app_settings():
     app_settings = app.config.get('Y2A_SETTINGS', {})
@@ -160,6 +165,7 @@ def inject_app_settings():
         __version__,
         Path(__file__).resolve().with_name('version.py'),
     )
+    admin_avatar_available = _admin_avatar_file().is_file()
     return {
         'now': datetime.now(),  # 每次请求动态获取当前时间
         'app_settings': app_settings,
@@ -171,6 +177,12 @@ def inject_app_settings():
         'show_logout_in_nav': bool(
             app_settings.get('password_protection_enabled') and session.get('logged_in')
         ),
+        'current_admin_username': str(
+            session.get('admin_username')
+            or app_settings.get('admin_username')
+            or 'admin'
+        ),
+        'admin_avatar_url': url_for('admin_avatar') if admin_avatar_available else '',
     }
 
 
@@ -872,6 +884,7 @@ def _extract_settings_uploads(files_storage) -> dict:
         'youtube_cookies_file',
         'bilibili_cookies_file',
         'douyin_cookies_file',
+        'admin_avatar_file',
     ):
         file_storage = files_storage.get(field_name)
         if not file_storage or not getattr(file_storage, 'filename', ''):
@@ -894,6 +907,29 @@ def _persist_settings_uploads(form_data: dict, uploads: dict):
     }
 
     for field_name, payload in uploads.items():
+        if field_name == 'admin_avatar_file':
+            content = payload.get('content') or b''
+            if not content or len(content) > 5 * 1024 * 1024:
+                raise ValueError('管理员头像不能为空且不能超过 5 MB')
+            try:
+                with Image.open(io.BytesIO(content)) as source_image:
+                    if str(source_image.format or '').upper() not in {'JPEG', 'PNG', 'WEBP'}:
+                        raise ValueError('管理员头像只支持 JPG、PNG 或 WebP')
+                    avatar = ImageOps.fit(
+                        source_image.convert('RGBA'),
+                        (512, 512),
+                        method=Image.Resampling.LANCZOS,
+                    )
+                    target_path = _admin_avatar_file()
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    temporary_path = target_path.with_suffix('.tmp.png')
+                    avatar.save(temporary_path, format='PNG', optimize=True)
+                    os.replace(temporary_path, target_path)
+            except (UnidentifiedImageError, OSError) as exc:
+                raise ValueError('管理员头像文件无效，请重新选择图片') from exc
+            form_data['admin_avatar_path'] = 'admin/avatar.png'
+            logger.info('管理员头像已更新')
+            continue
         spec = file_specs.get(field_name)
         if not spec or not payload.get('filename'):
             continue
@@ -993,6 +1029,19 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
         new_password = form_data.get('new_password')
         confirm_password = form_data.get('confirm_password')
+        if 'admin_username' in form_data:
+            normalized_admin_username = _normalize_admin_username(
+                form_data.get('admin_username')
+            )
+            if normalized_admin_username:
+                form_data['admin_username'] = normalized_admin_username
+            else:
+                form_data.pop('admin_username', None)
+                _append_settings_message(
+                    messages,
+                    'danger',
+                    '管理员用户名需为 2 到 32 位，只能包含文字、数字、点、横线、下划线或 @。',
+                )
         if new_password:
             if new_password == confirm_password:
                 form_data['password'] = generate_password_hash(new_password)
@@ -1400,6 +1449,13 @@ def _verify_login_password(stored_password: str, submitted_password: str) -> tup
     return secrets.compare_digest(stored, submitted), True
 
 
+def _normalize_admin_username(value) -> str:
+    username = str(value or '').strip()
+    if not re.fullmatch(r'[\w.@+-]{2,32}', username, flags=re.UNICODE):
+        return ''
+    return username
+
+
 @app.route('/live-recording')
 @login_required
 def live_recording():
@@ -1612,7 +1668,7 @@ def live_recording_job_review(fingerprint):
                 'regenerate_all': {'title', 'description', 'tags', 'cover'},
             }
             if action in regenerate_fields:
-                live_recorder_manager.regenerate_published_metadata(
+                regenerated = live_recorder_manager.regenerate_published_metadata(
                     fingerprint,
                     regenerate_fields[action],
                 )
@@ -1626,7 +1682,15 @@ def live_recording_job_review(fingerprint):
                     field_names[field] for field in ('title', 'description', 'tags', 'cover')
                     if field in regenerate_fields[action]
                 )
-                flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
+                cover_errors = regenerated.get('ai_cover_regeneration_errors') or []
+                if cover_errors:
+                    flash(
+                        'AI 封面已按成功结果分别更新；生成失败的尺寸保留上一版：'
+                        + '；'.join(str(error) for error in cover_errors),
+                        'warning',
+                    )
+                else:
+                    flash(f'AI 已重新生成{selected_names}，请预览后再确认同步到 B站。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action in {'apply_to_bilibili', 'apply_to_bilibili_and_comment'}:
                 live_recorder_manager.update_published_metadata(fingerprint)
@@ -2447,7 +2511,7 @@ app.jinja_env.globals.update(
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     config = load_config()
-    # 如果密码保护未启用，或已登录，则重定向到首页
+    # 如果管理员账号登录未启用，或已登录，则重定向到首页
     if not config.get('password_protection_enabled'):
         return redirect(url_for('index'))
     if 'logged_in' in session:
@@ -2465,16 +2529,24 @@ def login():
         return render_template('login.html')
 
     if request.method == 'POST':
+        username = _normalize_admin_username(request.form.get('username'))
         password = request.form.get('password')
+        stored_username = _normalize_admin_username(
+            config.get('admin_username') or 'admin'
+        ) or 'admin'
         stored_password = config.get('password')
 
-        # 检查是否有设置密码
+        # 检查是否已完成管理员账号设置
         if not stored_password:
-            flash('系统尚未设置密码，无法登录。请在禁用密码保护的情况下，进入设置页面设置密码。', 'danger')
+            flash('系统尚未设置管理员密码，请先在设置页面完成管理员账号设置。', 'danger')
             return render_template('login.html')
 
         password_matches, legacy_plaintext = _verify_login_password(stored_password, password)
-        if password_matches:
+        username_matches = bool(username) and secrets.compare_digest(
+            stored_username,
+            username,
+        )
+        if username_matches and password_matches:
             if legacy_plaintext:
                 try:
                     update_config({'password': generate_password_hash(str(password))})
@@ -2482,6 +2554,7 @@ def login():
                 except Exception:
                     logger.exception('迁移旧版登录密码失败')
             session['logged_in'] = True
+            session['admin_username'] = stored_username
             session.permanent = True  # session持久化
             # 登录成功，重置失败计数与锁定
             sec.update({'failed_attempts': 0, 'locked_until': 0, 'last_attempt': now_ts})
@@ -2490,6 +2563,7 @@ def login():
                 EVENT_LOGIN_SUCCESS,
                 {
                     'ip_address': _get_request_ip_address(),
+                    'username': stored_username,
                 }
             )
             flash('登录成功', 'success')
@@ -2514,13 +2588,21 @@ def login():
                         'lock_minutes': lock_minutes,
                     }
                 )
-                flash(f'密码错误次数过多（{failed}/{max_attempts}），已锁定 {lock_minutes} 分钟。', 'danger')
+                flash(f'账号或密码错误次数过多（{failed}/{max_attempts}），已锁定 {lock_minutes} 分钟。', 'danger')
             else:
                 _save_security_state(sec)
                 remain = max_attempts - failed
-                flash(f'密码错误。还可尝试 {remain} 次后将被锁定。', 'danger')
+                flash(f'账号或密码错误。还可尝试 {remain} 次后将被锁定。', 'danger')
     
     return render_template('login.html')
+
+
+@app.route('/admin/avatar')
+def admin_avatar():
+    avatar_path = _admin_avatar_file()
+    if not avatar_path.is_file():
+        return '', 404
+    return send_file(avatar_path, mimetype='image/png', conditional=True, max_age=300)
 
 @app.route('/logout')
 def logout():
@@ -3900,18 +3982,22 @@ def settings():
         enable_password_protection = str(form_data.get('password_protection_enabled', '')).lower() in ['true', '1', 'on']
         submitted_new_password = str(form_data.get('new_password') or '')
         submitted_confirm_password = str(form_data.get('confirm_password') or '')
+        submitted_admin_username = _normalize_admin_username(
+            form_data.get('admin_username') or config.get('admin_username') or 'admin'
+        )
         has_effective_password = (
             (submitted_new_password and submitted_new_password == submitted_confirm_password)
             or bool(config.get('password'))
         )
 
-        # 当用户在未开启保护的情况下保存“启用密码保护”时，需要立即把当前会话标记为已登录，
+        # 首次启用管理员账号登录时，需要立即把当前会话标记为已登录，
         # 否则前端接下来轮询 /settings/save-progress/... 会被 login_required 重定向到登录页，
         # 导致保存进度卡住或请求解析失败。
-        if enable_password_protection and has_effective_password:
+        if enable_password_protection and submitted_admin_username and has_effective_password:
             session['logged_in'] = True
+            session['admin_username'] = submitted_admin_username
             session.permanent = True
-        # 关闭密码保护时不立即清除会话，避免中断当前保存流程的进度轮询。
+        # 关闭管理员账号登录时不立即清除会话，避免中断当前保存流程的进度轮询。
         # 会话将在用户主动退出或session过期时自然失效。
 
         if _is_ajax_request():

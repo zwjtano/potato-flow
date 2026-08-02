@@ -72,6 +72,8 @@ DEFAULT_CONFIG = {
     "TELEGRAM_CONTROL_ENABLED": False,
     "TELEGRAM_CONTROL_ADMIN_USER_IDS": "",
     "password_protection_enabled": False,
+    "admin_username": "admin",
+    "admin_avatar_path": "",
     "password": "",
     # 登录安全控制
     "LOGIN_MAX_FAILED_ATTEMPTS": 5,  # 达到该失败次数后触发锁定

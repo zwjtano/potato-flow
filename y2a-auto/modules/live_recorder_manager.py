@@ -3911,6 +3911,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             cover_path = str(previous.get("cover_path") or "").strip()
             cover43_path = str(previous.get("cover43_path") or "").strip()
             cover_details: dict[str, Any] = {}
+            errors: list[str] = []
             if "cover" in selected:
                 # A cover-only regeneration follows the title currently saved
                 # in the review form. The AI-stage topic belongs to the
@@ -3972,10 +3973,8 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         if identity_details.get(source_key) not in (None, "", [])
                     }
                 artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
-                errors: list[str] = []
                 generation_id = uuid.uuid4().hex
-                generated_variants: dict[str, tuple[Path, Path]] = {}
-                staged_outputs: list[Path] = []
+                generated_variants: list[str] = []
                 variants = (
                     ("16x9", (1920, 1080), artifact_dir / "ai_cover_16x9.jpg"),
                     ("4x3", (1600, 1200), artifact_dir / "ai_cover_4x3.jpg"),
@@ -3984,7 +3983,6 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     staged_output = output_path.with_name(
                         f".{output_path.stem}-{generation_id}{output_path.suffix}"
                     )
-                    staged_outputs.append(staged_output)
                     try:
                         generated_path, variant_details = (
                             bridge.generate_recording_cover_with_ai(
@@ -4008,26 +4006,25 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                             and generated_file.is_file()
                             and generated_file.stat().st_size > 0
                         ):
-                            generated_variants[variant] = (generated_file, output_path)
+                            output_path.parent.mkdir(parents=True, exist_ok=True)
+                            os.replace(generated_file, output_path)
+                            generated_variants.append(variant)
+                            cover_details[variant]["ai_cover_path"] = str(output_path)
+                            if variant == "16x9":
+                                cover_path = str(output_path)
+                            else:
+                                cover43_path = str(output_path)
                         else:
                             errors.append(f"{variant} 未生成")
                     except Exception as exc:
                         cover_details[variant] = {"error": str(exc)}
                         errors.append(f"{variant}: {exc}")
-                if errors:
-                    for staged_output in staged_outputs:
+                    finally:
                         staged_output.unlink(missing_ok=True)
+                if errors and not generated_variants:
                     raise RecorderConfigError(
-                        "AI 双封面未完整生成，已保留上一版：" + "；".join(errors)
+                        "AI 双封面均未生成，已保留上一版：" + "；".join(errors)
                     )
-                for variant, (generated_file, output_path) in generated_variants.items():
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(generated_file, output_path)
-                    cover_details[variant]["ai_cover_path"] = str(output_path)
-                    if variant == "16x9":
-                        cover_path = str(output_path)
-                    else:
-                        cover43_path = str(output_path)
 
             now = datetime.now(timezone.utc).isoformat()
             metadata = {
@@ -4042,6 +4039,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 "ai_regenerated_at": now,
                 "ai_title_topic": title_topic or None,
                 "ai_cover_details": cover_details or previous.get("ai_cover_details"),
+                "ai_cover_regeneration_errors": errors,
                 "timeline_diagnostics": (
                     timeline_diagnostics
                     if "description" in selected
