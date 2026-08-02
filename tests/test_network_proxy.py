@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-Y2A_ROOT = ROOT / "y2a-auto"
-if str(Y2A_ROOT) not in sys.path:
-    sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = ROOT / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from modules.network_proxy import (  # noqa: E402
     build_common_proxy_url,

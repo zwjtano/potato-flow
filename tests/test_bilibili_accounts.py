@@ -6,9 +6,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-Y2A_ROOT = ROOT / "y2a-auto"
-if str(Y2A_ROOT) not in sys.path:
-    sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = ROOT / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from modules.bilibili_accounts import (  # noqa: E402
     LEGACY_ACCOUNT_ID,
@@ -81,16 +81,16 @@ class BilibiliAccountsTests(unittest.TestCase):
         self.assertTrue(account["cookies_path"].endswith(".txt"))
 
     def test_templates_expose_real_identity_and_account_binding(self):
-        settings = (Y2A_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
-        tasks = (Y2A_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
-        live = (Y2A_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+        settings = (APP_ROOT / "templates" / "settings.html").read_text(encoding="utf-8")
+        tasks = (APP_ROOT / "templates" / "tasks.html").read_text(encoding="utf-8")
+        live = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
         youtube_config = (
-            Y2A_ROOT / "templates" / "youtube_monitor_config.html"
+            APP_ROOT / "templates" / "youtube_monitor_config.html"
         ).read_text(encoding="utf-8")
         youtube_monitor = (
-            Y2A_ROOT / "modules" / "youtube_monitor.py"
+            APP_ROOT / "modules" / "youtube_monitor.py"
         ).read_text(encoding="utf-8")
-        manager = (Y2A_ROOT / "modules" / "live_recorder_manager.py").read_text(encoding="utf-8")
+        manager = (APP_ROOT / "modules" / "live_recorder_manager.py").read_text(encoding="utf-8")
 
         self.assertIn("UID 未识别", settings)
         self.assertIn('data-role="set-default-bilibili-account"', settings)

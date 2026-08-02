@@ -7,8 +7,8 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-Y2A_ROOT = ROOT / "y2a-auto"
-sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = ROOT / "potatoflow-app"
+sys.path.insert(0, str(APP_ROOT))
 
 from modules.desktop_runtime import import_legacy_data  # noqa: E402
 from modules.utils import get_app_root_dir, get_resource_root_dir  # noqa: E402
@@ -20,7 +20,7 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
             os.environ, {"POTATOFLOW_DATA_DIR": temp}
         ):
             self.assertEqual(Path(get_app_root_dir()), Path(temp))
-            self.assertEqual(Path(get_resource_root_dir()), Y2A_ROOT)
+            self.assertEqual(Path(get_resource_root_dir()), APP_ROOT)
 
     def test_legacy_import_copies_data_without_deleting_source(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -39,8 +39,8 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
 
     def test_release_build_outputs_installer_only(self):
         workflow = (ROOT / ".github" / "workflows" / "windows-release.yml").read_text(encoding="utf-8")
-        builder = (Y2A_ROOT / "build-tools" / "build_exe.py").read_text(encoding="utf-8")
-        launcher = (Y2A_ROOT / "build-tools" / "setup_app.py").read_text(encoding="utf-8")
+        builder = (APP_ROOT / "build-tools" / "build_exe.py").read_text(encoding="utf-8")
+        launcher = (APP_ROOT / "build-tools" / "setup_app.py").read_text(encoding="utf-8")
 
         self.assertIn("Windows-x64-Setup.exe", workflow)
         self.assertNotIn("Compress-Archive", workflow)
@@ -50,7 +50,7 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn("POTATOFLOW_DATA_DIR", launcher)
 
     def test_desktop_tray_uses_decodable_png_icon(self):
-        launcher_path = Y2A_ROOT / "build-tools" / "setup_app.py"
+        launcher_path = APP_ROOT / "build-tools" / "setup_app.py"
         launcher = launcher_path.read_text(encoding="utf-8")
         namespace = {"__file__": str(launcher_path), "__name__": "setup_app_test"}
         exec(compile(launcher, str(launcher_path), "exec"), namespace)

@@ -21,14 +21,38 @@ class DockerPackagingTests(unittest.TestCase):
 
     def test_image_contains_headless_recorder(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        requirements = (ROOT / "y2a-auto" / "requirements.txt").read_text(
+        requirements = (ROOT / "potatoflow-app" / "requirements.lock").read_text(
             encoding="utf-8"
         )
         self.assertIn("cargo build --release -p biliup-cli", dockerfile)
-        self.assertIn("BILIUP_BIN=/app/upstream-biliup/target/release/biliup", dockerfile)
+        self.assertIn("RECORDER_BIN=/app/recorder-core/target/release/biliup", dockerfile)
         self.assertIn("EXPOSE 5001", dockerfile)
         self.assertNotIn("chromium", dockerfile.lower())
         self.assertNotIn("playwright", requirements.lower())
+
+    def test_recorder_builder_copies_only_rust_workspace_inputs(self):
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "COPY recorder-core/Cargo.toml recorder-core/Cargo.lock ./",
+            dockerfile,
+        )
+        self.assertIn("COPY recorder-core/.sqlx ./.sqlx", dockerfile)
+        self.assertIn("COPY recorder-core/crates ./crates", dockerfile)
+        self.assertNotIn("COPY recorder-core/ ./", dockerfile)
+
+        upstream_root = ROOT / "recorder-core"
+        for unused_path in (".github", "app", "biliup", "docs", "public", "tauri-app"):
+            self.assertFalse((upstream_root / unused_path).exists())
+
+    def test_linux_installer_uses_canonical_runtime_lock(self):
+        installer = (ROOT / "scripts" / "install-linux.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"${APP_ROOT}/requirements.lock"', installer)
+        self.assertNotIn("requirements.txt", installer)
+        self.assertIn('LEGACY_APP_ROOT="${ROOT}/y2a-auto"', installer)
+        self.assertIn('mv "${legacy_path}" "${canonical_path}"', installer)
+        self.assertFalse((ROOT / "potatoflow-app" / "requirements.txt").exists())
 
     def test_image_contains_only_current_bundled_cover_references(self):
         reference_root = ROOT / "assets" / "streamer-references"
@@ -57,7 +81,7 @@ class DockerPackagingTests(unittest.TestCase):
             entrypoint,
         )
         self.assertIn(
-            'link_persistent_path "${APP_DIR}/recordings" "${Y2A_DIR}/recordings"',
+            'link_persistent_path "${APP_DIR}/recordings" "${APP_CODE_DIR}/recordings"',
             entrypoint,
         )
         self.assertIn("umask 0027", entrypoint)
@@ -68,21 +92,21 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn('exec gosu "${APP_USER}"', entrypoint)
 
     def test_potato_flow_branding_and_systemd_service(self):
-        base = (ROOT / "y2a-auto" / "templates" / "base.html").read_text(encoding="utf-8")
+        base = (ROOT / "potatoflow-app" / "templates" / "base.html").read_text(encoding="utf-8")
         installer = (ROOT / "scripts" / "install-systemd.sh").read_text(encoding="utf-8")
 
         self.assertIn("PotatoFlow · 土豆录播姬", base)
         self.assertIn("img/potato-flow.png", base)
         self.assertIn("img/favicon.png", base)
-        self.assertTrue((ROOT / "y2a-auto" / "static" / "img" / "potato-flow.png").is_file())
-        self.assertTrue((ROOT / "y2a-auto" / "static" / "img" / "favicon.png").is_file())
+        self.assertTrue((ROOT / "potatoflow-app" / "static" / "img" / "potato-flow.png").is_file())
+        self.assertTrue((ROOT / "potatoflow-app" / "static" / "img" / "favicon.png").is_file())
         self.assertIn('SERVICE_NAME="potato-flow"', installer)
         self.assertTrue((ROOT / "deploy" / "potato-flow.service").is_file())
 
     def test_recorder_upload_actor_does_not_block_other_room_sessions(self):
         source = (
             ROOT
-            / "upstream-biliup"
+            / "recorder-core"
             / "crates"
             / "biliup-cli"
             / "src"
@@ -98,7 +122,7 @@ class DockerPackagingTests(unittest.TestCase):
     def test_recorder_without_upload_config_still_runs_segment_processors(self):
         source = (
             ROOT
-            / "upstream-biliup"
+            / "recorder-core"
             / "crates"
             / "biliup-cli"
             / "src"

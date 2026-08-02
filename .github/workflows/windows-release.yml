@@ -33,13 +33,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: y2a-auto/requirements.lock
+          cache-dependency-path: potatoflow-app/requirements.lock
 
       - name: Read release metadata
         id: release_meta
         shell: pwsh
         run: |
-          $version = python -c "import sys; sys.path.insert(0, 'y2a-auto'); from version import __version__; print(__version__)"
+          $version = python -c "import sys; sys.path.insert(0, 'potatoflow-app'); from version import __version__; print(__version__)"
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "installer=PotatoFlow-v$version-Windows-x64-Setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
@@ -48,15 +48,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install -r y2a-auto/requirements.lock pyinstaller==6.15.0
+          python -m pip install -r potatoflow-app/requirements.lock pyinstaller==6.15.0
 
       - name: Build Windows desktop installer
-        working-directory: y2a-auto
+        working-directory: potatoflow-app
         run: python build-tools/build_exe.py
 
       - name: Smoke test packaged server mode
         shell: pwsh
-        working-directory: y2a-auto
+        working-directory: potatoflow-app
         run: |
           $ErrorActionPreference = 'Stop'
           $bundle = Join-Path $PWD 'build-tools/dist/PotatoFlow'
@@ -85,7 +85,7 @@ jobs:
 
       - name: Smoke test packaged desktop assets
         shell: pwsh
-        working-directory: y2a-auto
+        working-directory: potatoflow-app
         run: |
           $ErrorActionPreference = 'Stop'
           $exe = Join-Path $PWD 'build-tools/dist/PotatoFlow/PotatoFlow.exe'
@@ -94,7 +94,7 @@ jobs:
 
       - name: Silent install and uninstall smoke test
         shell: pwsh
-        working-directory: y2a-auto
+        working-directory: potatoflow-app
         run: |
           $ErrorActionPreference = 'Stop'
           $dist = Join-Path $PWD 'build-tools/dist'
@@ -134,7 +134,7 @@ jobs:
 
       - name: Verify installer checksum
         shell: pwsh
-        working-directory: y2a-auto
+        working-directory: potatoflow-app
         run: |
           $dist = Join-Path $PWD 'build-tools/dist'
           $installerName = '${{ steps.release_meta.outputs.installer }}'
@@ -148,8 +148,8 @@ jobs:
         with:
           name: PotatoFlow-v${{ steps.release_meta.outputs.version }}-Windows-x64-Setup
           path: |
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }}
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }}
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -161,6 +161,6 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           gh release upload $env:RELEASE_TAG `
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }} `
-            y2a-auto/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256 `
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }} `
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256 `
             --clobber

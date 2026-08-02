@@ -14,10 +14,12 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
         build-essential cmake pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build/upstream-biliup
-COPY upstream-biliup/ ./
+WORKDIR /build/recorder-core
+COPY recorder-core/Cargo.toml recorder-core/Cargo.lock ./
+COPY recorder-core/.sqlx ./.sqlx
+COPY recorder-core/crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/build/upstream-biliup/target \
+    --mount=type=cache,target=/build/recorder-core/target \
     if [ -n "$CARGO_MIRROR_URL" ]; then \
       printf '[source.crates-io]\nreplace-with = "potato-mirror"\n[source.potato-mirror]\nregistry = "%s"\n' \
         "$CARGO_MIRROR_URL" > /usr/local/cargo/config.toml; \
@@ -46,7 +48,7 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY y2a-auto/requirements.lock ./requirements.lock
+COPY potatoflow-app/requirements.lock ./requirements.lock
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --index-url "$PYPI_INDEX_URL" --upgrade pip \
     && (/opt/venv/bin/pip install \
@@ -70,9 +72,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONIOENCODING=utf-8 \
     PORT=5001 \
     AUTO_START_RECORDER=1 \
-    BILIUP_BIN=/app/upstream-biliup/target/release/biliup \
-    PATH=/app/y2a-auto/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    HOME=/home/biliup-y2a \
+    RECORDER_BIN=/app/recorder-core/target/release/biliup \
+    PATH=/app/potatoflow-app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME=/home/potatoflow \
     TZ=Asia/Shanghai
 
 RUN if [ -n "$DEBIAN_MIRROR" ]; then \
@@ -97,22 +99,22 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
     && chmod 0755 /usr/local/bin/deno \
     && rm -f /tmp/deno.zip \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --home-dir /home/biliup-y2a --shell /bin/bash biliup-y2a
+    && useradd --create-home --home-dir /home/potatoflow --shell /bin/bash potatoflow
 
 WORKDIR /app
-COPY --from=python-builder --chown=biliup-y2a:biliup-y2a \
-    /opt/venv/ /app/y2a-auto/.venv/
-COPY --from=recorder-builder --chown=biliup-y2a:biliup-y2a \
+COPY --from=python-builder --chown=potatoflow:potatoflow \
+    /opt/venv/ /app/potatoflow-app/.venv/
+COPY --from=recorder-builder --chown=potatoflow:potatoflow \
     /tmp/biliup \
-    /app/upstream-biliup/target/release/biliup
-COPY --chown=biliup-y2a:biliup-y2a . /app
+    /app/recorder-core/target/release/biliup
+COPY --chown=potatoflow:potatoflow . /app
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN chmod 0755 \
       /usr/local/bin/docker-entrypoint.sh \
-      /app/upstream-biliup/target/release/biliup \
+      /app/recorder-core/target/release/biliup \
     && mkdir -p /data \
-    && chown biliup-y2a:biliup-y2a /app /data
+    && chown potatoflow:potatoflow /app /data
 
 EXPOSE 5001
 VOLUME ["/data"]

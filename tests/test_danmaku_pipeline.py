@@ -13,8 +13,8 @@ from danmaku_pipeline import (
     build_ass,
     burn_ass,
     format_comments_for_ai,
-    inspect_biliup_xml,
-    parse_biliup_xml,
+    inspect_danmaku_xml,
+    parse_danmaku_xml,
     select_summary_comments,
     danmaku_burn_slot,
     probe_encoding_capabilities,
@@ -159,7 +159,7 @@ class DanmakuPipelineTests(unittest.TestCase):
             xml_path = root / "clip.xml"
             ass_path = root / "clip.ass"
             xml_path.write_text(SAMPLE_XML, encoding="utf-8")
-            comments = parse_biliup_xml(xml_path)
+            comments = parse_danmaku_xml(xml_path)
             self.assertEqual(len(comments), 3)
             self.assertEqual(comments[0].text, "第一条弹幕")
             build_ass(comments, ass_path, width=1280, height=720)
@@ -179,7 +179,7 @@ class DanmakuPipelineTests(unittest.TestCase):
                 f'<d p="{index},1,25,16777215,0,0,1,0">同一条</d>' for index in range(20)
             )
             path.write_text(f"<i>{repeated}</i>", encoding="utf-8")
-            selected = select_summary_comments(parse_biliup_xml(path), 20)
+            selected = select_summary_comments(parse_danmaku_xml(path), 20)
             self.assertEqual(len(selected), 2)
             self.assertNotIn("uid", format_comments_for_ai(selected).lower())
 
@@ -219,7 +219,7 @@ class DanmakuPipelineTests(unittest.TestCase):
             '<d p="75.5,1,25,16777215,0,0,2,0">第二条</d>'
         )
 
-        details = inspect_biliup_xml(path)
+        details = inspect_danmaku_xml(path)
 
         self.assertEqual(details["danmaku_xml_entries"], 3)
         self.assertEqual(details["danmaku_count"], 2)
@@ -229,7 +229,7 @@ class DanmakuPipelineTests(unittest.TestCase):
         self.assertEqual(details["danmaku_timeline_span_seconds"], 65.5)
 
     def test_ai_comment_timestamps_use_bilibili_chapter_format(self):
-        comments = parse_biliup_xml(
+        comments = parse_danmaku_xml(
             self._write_xml(
                 '<d p="65,1,25,16777215,0,0,1,0">一分五秒</d>'
                 '<d p="3661,1,25,16777215,0,0,2,0">一小时一分一秒</d>'

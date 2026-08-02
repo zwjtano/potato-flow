@@ -15,6 +15,15 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_app_root_accepts_legacy_config_key_and_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            canonical = root / "potatoflow-app"
+            (canonical / "modules").mkdir(parents=True)
+            cfg = {"_config_dir": str(root), "y2a_root": "y2a-auto"}
+
+            self.assertEqual(bridge.resolve_app_root(cfg), canonical.resolve())
+
     def test_image_generation_queue_serializes_threads(self):
         with tempfile.TemporaryDirectory() as temp:
             cfg = {"state_db": str(Path(temp) / "state.sqlite3")}
@@ -469,7 +478,7 @@ class BridgeTests(unittest.TestCase):
         def request(**kwargs):
             calls.append(kwargs)
             scene = kwargs["scene_name"]
-            if scene == "biliup_danmaku_summary":
+            if scene == "recording_danmaku_summary":
                 return {
                     "description": "时间点不完整的首稿",
                     "timeline": [{
@@ -478,7 +487,7 @@ class BridgeTests(unittest.TestCase):
                         "evidence_keywords": ["证据1"],
                     }],
                 }
-            if scene == "biliup_danmaku_description_regenerate":
+            if scene == "recording_danmaku_description_regenerate":
                 return {
                     "description": "重生成的完整简介",
                     "timeline": [{
@@ -487,7 +496,7 @@ class BridgeTests(unittest.TestCase):
                         "evidence_keywords": [f"证据{index}"],
                     } for index in range(1, 9)],
                 }
-            self.assertEqual(scene, "biliup_danmaku_title_from_description")
+            self.assertEqual(scene, "recording_danmaku_title_from_description")
             title_payloads.append(kwargs["payload"])
             return {"title_topic": "最终简介提炼标题"}
 
@@ -517,9 +526,9 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(
             [call["scene_name"] for call in calls],
             [
-                "biliup_danmaku_summary",
-                "biliup_danmaku_description_regenerate",
-                "biliup_danmaku_title_from_description",
+                "recording_danmaku_summary",
+                "recording_danmaku_description_regenerate",
+                "recording_danmaku_title_from_description",
             ],
         )
 
@@ -798,7 +807,7 @@ class BridgeTests(unittest.TestCase):
                 '<i><d p="1,1,25,16777215,0,0,1,0">仅一条</d></i>',
                 encoding="utf-8",
             )
-            comments = bridge.parse_biliup_xml(xml)
+            comments = bridge.parse_danmaku_xml(xml)
 
             with patch.object(bridge, "video_duration_seconds", return_value=3601):
                 details = bridge.danmaku_stage_details(video, xml, comments, {})
@@ -1625,7 +1634,7 @@ class BridgeTests(unittest.TestCase):
                 bridge,
                 "generate_recording_cover_with_ai",
                 return_value=(None, {"ai_cover_enabled": False}),
-            ), patch.object(bridge, "import_y2a", return_value=(MustNotUpload, None)):
+            ), patch.object(bridge, "import_app", return_value=(MustNotUpload, None)):
                 with patch.object(
                     bridge,
                     "cleanup_uploaded_recording",
@@ -1718,7 +1727,7 @@ class BridgeTests(unittest.TestCase):
                 side_effect=AssertionError("retry must reuse AI cover"),
             ), patch.object(
                 bridge,
-                "import_y2a",
+                "import_app",
                 return_value=(FakeUploader, None),
             ):
                 self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
@@ -1977,7 +1986,7 @@ class BridgeTests(unittest.TestCase):
                 "generate_recording_cover_with_ai",
                 return_value=(None, {"ai_cover_enabled": False}),
             ) as generate_cover, patch.object(
-                bridge, "import_y2a", return_value=(FakeUploader, None)
+                bridge, "import_app", return_value=(FakeUploader, None)
             ), patch.object(
                 bridge,
                 "generate_danmaku_metadata_with_ai",
@@ -2033,13 +2042,13 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(store.close_multipart_session("room-1"))
             self.assertEqual(store.multipart_session("room-1"), {})
 
-    def test_recording_metadata_uses_y2a_tags_partition_and_cover_setting(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+    def test_recording_metadata_uses_app_tags_partition_and_cover_setting(self):
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             cover = root / "cover.jpg"
             cover.write_bytes(b"cover")
-            cfg = {"_config_dir": str(root), "y2a_root": str(y2a_root)}
+            cfg = {"_config_dir": str(root), "app_root": str(app_root)}
             selection = {
                 "id": "129",
                 "source": "ai",
@@ -2375,9 +2384,9 @@ class BridgeTests(unittest.TestCase):
         )
 
     def test_guest_avatar_uses_official_participant_room_id(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
-        if str(y2a_root) not in sys.path:
-            sys.path.insert(0, str(y2a_root))
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
         from modules import live_recorder_manager as manager_module
 
         def search_rooms(query, limit):
@@ -2430,9 +2439,9 @@ class BridgeTests(unittest.TestCase):
         )
 
     def test_guest_avatar_uses_unique_exact_douyu_search_result(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
-        if str(y2a_root) not in sys.path:
-            sys.path.insert(0, str(y2a_root))
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
         from modules import live_recorder_manager as manager_module
 
         candidates = [
@@ -2462,9 +2471,9 @@ class BridgeTests(unittest.TestCase):
         search.assert_called_once_with("B神", 10)
 
     def test_guest_avatar_accepts_two_identity_aliases_but_rejects_ambiguity(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
-        if str(y2a_root) not in sys.path:
-            sys.path.insert(0, str(y2a_root))
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
         from modules import live_recorder_manager as manager_module
 
         with patch.object(
@@ -2575,7 +2584,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("绝对不能画成蛋壳", instruction)
 
     def test_ai_recording_cover_uses_ai_title_and_forbids_time(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
@@ -2618,7 +2627,7 @@ class BridgeTests(unittest.TestCase):
                     streamer="土豆",
                     cfg={
                         "_config_dir": str(root),
-                        "y2a_root": str(y2a_root),
+                        "app_root": str(app_root),
                         "ffmpeg": "ffmpeg",
                         "cover_reference_path": str(character_base),
                         "ai_cover_prompt": "采用低饱和蓝紫色，并突出 Roshan 团战。",
@@ -2659,7 +2668,7 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn("2026-07-23", prompt)
 
     def test_yyf_recording_cover_defaults_to_current_room_avatar(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
@@ -2703,7 +2712,7 @@ class BridgeTests(unittest.TestCase):
                     streamer="yyfyyf",
                     cfg={
                         "_config_dir": str(root),
-                        "y2a_root": str(y2a_root),
+                        "app_root": str(app_root),
                         "ffmpeg": "ffmpeg",
                         "streamer_avatar_url": "https://example.com/yyf-avatar.jpg",
                     },
@@ -2737,7 +2746,7 @@ class BridgeTests(unittest.TestCase):
         )
 
     def test_recording_cover_uses_danmaku_hero_without_inventing_equipment(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
@@ -2789,7 +2798,7 @@ class BridgeTests(unittest.TestCase):
                     streamer="果小果",
                     cfg={
                         "_config_dir": str(root),
-                        "y2a_root": str(y2a_root),
+                        "app_root": str(app_root),
                         "ffmpeg": "ffmpeg",
                         "cover_reference_path": str(character_base),
                         "douyu_stats_enabled": True,
@@ -2815,7 +2824,7 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn("主播本局最终六格主装备", prompt)
 
     def test_dota2_item_icon_sheet_is_sent_to_image_model(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
@@ -2860,7 +2869,7 @@ class BridgeTests(unittest.TestCase):
                     streamer="新主播",
                     cfg={
                         "_config_dir": str(root),
-                        "y2a_root": str(y2a_root),
+                        "app_root": str(app_root),
                         "ffmpeg": "ffmpeg",
                         "cover_reference_path": str(character_base),
                     },
@@ -2883,7 +2892,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得绘制仿冒的装备图标", prompt)
 
     def test_unknown_streamer_uses_room_avatar_as_character_base(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
@@ -2924,7 +2933,7 @@ class BridgeTests(unittest.TestCase):
                     streamer="新主播",
                     cfg={
                         "_config_dir": str(root),
-                        "y2a_root": str(y2a_root),
+                        "app_root": str(app_root),
                         "ffmpeg": "ffmpeg",
                         "streamer_avatar_url": "https://example.com/avatar.jpg",
                     },
@@ -2943,7 +2952,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不要替换成无关人物或角色", image_edit.call_args.kwargs["prompt"])
 
     def test_unknown_streamer_without_room_avatar_still_stops_cover_generation(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         ai_module = types.ModuleType("modules.ai_enhancer")
         ai_module.get_openai_client = Mock()
         config_module = types.ModuleType("modules.config_manager")
@@ -2963,13 +2972,13 @@ class BridgeTests(unittest.TestCase):
                     streamer="新主播",
                     cfg={
                         "_config_dir": temp,
-                        "y2a_root": str(y2a_root),
+                        "app_root": str(app_root),
                     },
                     work_dir=Path(temp) / "artifacts",
                 )
 
     def test_custom_room_reference_overrides_bundled_streamer_reference(self):
-        y2a_root = Path(bridge.__file__).resolve().parent / "y2a-auto"
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             work_dir = root / "artifacts"
@@ -3008,7 +3017,7 @@ class BridgeTests(unittest.TestCase):
                     streamer="YYF",
                     cfg={
                         "_config_dir": str(root),
-                        "y2a_root": str(y2a_root),
+                        "app_root": str(app_root),
                         "ffmpeg": "ffmpeg",
                         "cover_reference_path": str(custom_reference),
                     },
@@ -3151,7 +3160,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(ass_stage[0], "failed")
             self.assertIn("弹幕 XML 为空", ass_stage[1])
 
-    def test_dry_run_validates_without_importing_y2a(self):
+    def test_dry_run_validates_without_importing_app(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "alice.mp4"
@@ -3449,7 +3458,7 @@ class BridgeTests(unittest.TestCase):
                 return_value=(None, {"ai_cover_enabled": False}),
             ), patch.object(
                 bridge,
-                "import_y2a",
+                "import_app",
                 return_value=(FakeUploader, None),
             ), patch.object(
                 bridge,

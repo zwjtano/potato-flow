@@ -7,9 +7,9 @@ umask 0027
 
 DATA_DIR="${DATA_DIR:-/data}"
 APP_DIR="/app"
-Y2A_DIR="${APP_DIR}/y2a-auto"
-APP_USER="biliup-y2a"
-APP_GROUP="biliup-y2a"
+APP_CODE_DIR="${APP_DIR}/potatoflow-app"
+APP_USER="potatoflow"
+APP_GROUP="potatoflow"
 LAYOUT_MARKER="${DATA_DIR}/.potato-flow-layout-v2"
 
 migrate_directory() {
@@ -126,17 +126,17 @@ link_persistent_path() {
 
 link_persistent_path "${DATA_DIR}/state/recording" "${APP_DIR}/.bridge"
 link_persistent_path "${PIPELINE_CONFIG}" "${APP_DIR}/bridge.config.json"
-link_persistent_path "${DATA_DIR}/config" "${Y2A_DIR}/config"
-link_persistent_path "${DATA_DIR}/credentials/cookies" "${Y2A_DIR}/cookies"
-link_persistent_path "${DATA_DIR}/database" "${Y2A_DIR}/db"
-link_persistent_path "${DATA_DIR}/downloads" "${Y2A_DIR}/downloads"
-link_persistent_path "${DATA_DIR}/logs" "${Y2A_DIR}/logs"
+link_persistent_path "${DATA_DIR}/config" "${APP_CODE_DIR}/config"
+link_persistent_path "${DATA_DIR}/credentials/cookies" "${APP_CODE_DIR}/cookies"
+link_persistent_path "${DATA_DIR}/database" "${APP_CODE_DIR}/db"
+link_persistent_path "${DATA_DIR}/downloads" "${APP_CODE_DIR}/downloads"
+link_persistent_path "${DATA_DIR}/logs" "${APP_CODE_DIR}/logs"
 link_persistent_path "${DATA_DIR}/recordings" "${APP_DIR}/recordings"
-# 兼容旧工具仍从 y2a-auto/recordings 读取文件。
-link_persistent_path "${APP_DIR}/recordings" "${Y2A_DIR}/recordings"
-link_persistent_path "${DATA_DIR}/credentials/security" "${Y2A_DIR}/security"
-link_persistent_path "${DATA_DIR}/covers" "${Y2A_DIR}/static/covers"
-link_persistent_path "${DATA_DIR}/runtime" "${Y2A_DIR}/temp"
+# 兼容旧工具仍从 potatoflow-app/recordings 读取文件。
+link_persistent_path "${APP_DIR}/recordings" "${APP_CODE_DIR}/recordings"
+link_persistent_path "${DATA_DIR}/credentials/security" "${APP_CODE_DIR}/security"
+link_persistent_path "${DATA_DIR}/covers" "${APP_CODE_DIR}/static/covers"
+link_persistent_path "${DATA_DIR}/runtime" "${APP_CODE_DIR}/temp"
 
 # PID 与心跳只对当前容器进程命名空间有效，不能跨重建保留。
 rm -f \
@@ -165,8 +165,8 @@ if [[ ! -f "${LAYOUT_MARKER}" ]]; then
 fi
 
 # 启动斗鱼弹幕统计 daemon（后台常驻，可独立关闭便于隔离测试）
-if [[ "${DOUYU_STATS_ENABLED:-1}" == "1" && -f "${Y2A_DIR}/modules/douyu_stats_daemon.py" ]]; then
-  gosu "${APP_USER}" python3 "${Y2A_DIR}/modules/douyu_stats_daemon.py" &
+if [[ "${DOUYU_STATS_ENABLED:-1}" == "1" && -f "${APP_CODE_DIR}/modules/douyu_stats_daemon.py" ]]; then
+  gosu "${APP_USER}" python3 "${APP_CODE_DIR}/modules/douyu_stats_daemon.py" &
   echo "[entrypoint] douyu_stats_daemon started (pid $!)"
 fi
 

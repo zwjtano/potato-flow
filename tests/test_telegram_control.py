@@ -4,9 +4,9 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-Y2A_ROOT = ROOT / "y2a-auto"
-if str(Y2A_ROOT) not in sys.path:
-    sys.path.insert(0, str(Y2A_ROOT))
+APP_ROOT = ROOT / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from modules.telegram_control import TelegramControlService  # noqa: E402
 
@@ -397,13 +397,13 @@ class TelegramControlTests(unittest.TestCase):
         self.assertIn("🔒正在录制", self.session.last_payload["text"])
 
     def test_settings_expose_control_switch_and_allowlist(self):
-        template = (Y2A_ROOT / "templates" / "settings.html").read_text(
+        template = (APP_ROOT / "templates" / "settings.html").read_text(
             encoding="utf-8"
         )
         config_source = (
-            Y2A_ROOT / "modules" / "config_manager.py"
+            APP_ROOT / "modules" / "config_manager.py"
         ).read_text(encoding="utf-8")
-        app_source = (Y2A_ROOT / "app.py").read_text(encoding="utf-8")
+        app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
 
         for field in (
             "TELEGRAM_CONTROL_ENABLED",

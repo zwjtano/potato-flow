@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bridge finalized biliup segments to Y2A-Auto uploaders."""
+"""Bridge finalized recorder segments to PotatoFlow uploaders."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from danmaku_pipeline import (
     build_ass,
     burn_ass,
     format_comments_for_ai,
-    inspect_biliup_xml,
-    parse_biliup_xml,
+    inspect_danmaku_xml,
+    parse_danmaku_xml,
     probe_video_size,
     select_summary_comments,
 )
@@ -616,6 +616,15 @@ def resolve_path(value: str | os.PathLike[str], cfg: dict[str, Any]) -> Path:
     return path.resolve()
 
 
+def resolve_app_root(cfg: dict[str, Any]) -> Path:
+    """Resolve the canonical app path while accepting the legacy config key."""
+    configured = cfg.get("app_root") or cfg.get("y2a_root") or "potatoflow-app"
+    resolved = resolve_path(str(configured), cfg)
+    if str(configured) == "y2a-auto" and not (resolved / "modules").is_dir():
+        return resolve_path("potatoflow-app", cfg)
+    return resolved
+
+
 def effective_config(base: dict[str, Any], video: Path) -> dict[str, Any]:
     cfg = dict(base)
     cfg["_recording_profiles"] = [
@@ -640,12 +649,9 @@ def emit_recording_task_added_notification(
 ) -> None:
     """Queue a TASK_ADDED notification for a newly claimed recording job."""
     try:
-        y2a_root = resolve_path(
-            str(cfg.get("y2a_root") or "y2a-auto"),
-            cfg,
-        )
-        if str(y2a_root) not in sys.path:
-            sys.path.insert(0, str(y2a_root))
+        app_root = resolve_app_root(cfg)
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
         from modules.notifications import (
             EVENT_TASK_ADDED,
             NotificationEvent,
@@ -693,12 +699,9 @@ def emit_recording_task_result_notification(
     if status not in {"completed", "failed"}:
         return
     try:
-        y2a_root = resolve_path(
-            str(cfg.get("y2a_root") or "y2a-auto"),
-            cfg,
-        )
-        if str(y2a_root) not in sys.path:
-            sys.path.insert(0, str(y2a_root))
+        app_root = resolve_app_root(cfg)
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
         from modules.notifications import (
             EVENT_TASK_COMPLETED,
             EVENT_TASK_FAILED,
@@ -814,7 +817,7 @@ def wait_for_danmaku_xml(
     timeout: float = 8.0,
     interval: float = 0.25,
 ) -> Path | None:
-    """Wait for biliup to finish rolling the XML before ASS generation."""
+    """Wait for the recorder to finish rolling the XML before ASS generation."""
     deadline = time.monotonic() + max(0.0, timeout)
     while True:
         danmaku_xml = find_danmaku_xml(video, paths)
@@ -1509,7 +1512,7 @@ def danmaku_stage_details(
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
     """Describe XML coverage and flag implausibly sparse long recordings."""
-    details = inspect_biliup_xml(danmaku_xml, comments)
+    details = inspect_danmaku_xml(danmaku_xml, comments)
     duration = video_duration_seconds(video, str(cfg.get("ffprobe", "ffprobe")))
     duration_minutes = max(0.0, float(duration or 0.0) / 60.0)
     rate = len(comments) / duration_minutes if duration_minutes > 0 else 0.0
@@ -1688,7 +1691,7 @@ class StateStore:
     def claim(self, key: str, path: Path, platform: str, retry: bool = False) -> bool:
         now = utc_now()
         with self.connect() as db:
-            # Serialize the read/claim pair. Multiple biliup workers may finish
+            # Serialize the read/claim pair. Multiple recorder workers may finish
             # segments at nearly the same instant.
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT status FROM uploads WHERE fingerprint = ?", (key,)).fetchone()
@@ -2627,13 +2630,13 @@ def generate_recording_cover_with_ai(
     game_context_locked: bool = False,
 ) -> tuple[Path | None, dict[str, Any]]:
     """Generate one independent AI cover for the requested Bilibili aspect ratio."""
-    root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+    root = resolve_app_root(cfg)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     from modules.ai_enhancer import get_openai_client  # type: ignore
-    from modules.config_manager import load_config as load_y2a_config  # type: ignore
+    from modules.config_manager import load_config as load_app_config  # type: ignore
 
-    ai_cfg = load_y2a_config()
+    ai_cfg = load_app_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
     cover_event_context, cover_context_source = recording_cover_event_context(description)
     cover_subject_name = recording_cover_subject_name(
@@ -3374,14 +3377,14 @@ def render_metadata(
     return title, description, tags
 
 
-def import_y2a(cfg: dict[str, Any]):
-    root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+def import_app(cfg: dict[str, Any]):
+    root = resolve_app_root(cfg)
     if not (root / "modules").is_dir():
-        raise FileNotFoundError(f"Y2A 目录无效: {root}")
+        raise FileNotFoundError(f"PotatoFlow 应用目录无效: {root}")
     sys.path.insert(0, str(root))
     from modules.bilibili_uploader import BilibiliUploader  # type: ignore
-    from modules.config_manager import load_config as load_y2a_config  # type: ignore
-    return BilibiliUploader, load_y2a_config
+    from modules.config_manager import load_config as load_app_config  # type: ignore
+    return BilibiliUploader, load_app_config
 
 
 def enhance_recording_metadata(
@@ -3392,8 +3395,8 @@ def enhance_recording_metadata(
     fallback_partition_id: str,
     cfg: dict[str, Any],
 ) -> tuple[list[str], str, dict[str, Any]]:
-    """Apply Y2A's tag and Bilibili partition automation to a recording."""
-    root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+    """Apply PotatoFlow tag and Bilibili partition automation to a recording."""
+    root = resolve_app_root(cfg)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     from modules.ai_enhancer import (  # type: ignore
@@ -3401,9 +3404,9 @@ def enhance_recording_metadata(
         recommend_bilibili_partition,
     )
     from modules.bilibili_zones import get_zone_list_sub  # type: ignore
-    from modules.config_manager import load_config as load_y2a_config  # type: ignore
+    from modules.config_manager import load_config as load_app_config  # type: ignore
 
-    ai_cfg = load_y2a_config()
+    ai_cfg = load_app_config()
     generate_tags_enabled = bool(ai_cfg.get("GENERATE_TAGS", False))
     recommend_partition_enabled = bool(ai_cfg.get("RECOMMEND_PARTITION", False))
     include_cover = bool(ai_cfg.get("RECOMMEND_PARTITION_WITH_COVER", False))
@@ -3489,15 +3492,15 @@ def generate_danmaku_metadata_with_ai(
     if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
         return base_description, ""
     try:
-        root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
+        root = resolve_app_root(cfg)
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
         from modules.ai_enhancer import get_openai_client, _request_json_object  # type: ignore
-        from modules.config_manager import load_config as load_y2a_config  # type: ignore
+        from modules.config_manager import load_config as load_app_config  # type: ignore
 
-        ai_cfg = load_y2a_config()
+        ai_cfg = load_app_config()
         if not ai_cfg.get("OPENAI_API_KEY"):
-            print("WARN 未配置 Y2A OPENAI_API_KEY，跳过弹幕 AI 简介", file=sys.stderr)
+            print("WARN 未配置 PotatoFlow OPENAI_API_KEY，跳过弹幕 AI 简介", file=sys.stderr)
             return base_description, ""
         selected = select_summary_comments(comments, int(cfg.get("ai_danmaku_max_comments", 400)))
         timeline_minimum, timeline_maximum = timeline_target_range(
@@ -3621,7 +3624,7 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
             temperature=0.2,
             thinking_enabled=thinking_enabled,
             logger_obj=None,
-            scene_name="biliup_danmaku_summary",
+            scene_name="recording_danmaku_summary",
         )
         generated_description = str((result or {}).get("description", "")).strip()
         generated_description = strip_live_stats_from_description(
@@ -3677,7 +3680,7 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                     temperature=0.1,
                     thinking_enabled=thinking_enabled,
                     logger_obj=None,
-                    scene_name="biliup_danmaku_description_regenerate",
+                    scene_name="recording_danmaku_description_regenerate",
                 )
                 regenerated_description = str(
                     (retry_result or {}).get("description", "")
@@ -3770,7 +3773,7 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                 temperature=0.25,
                 thinking_enabled=thinking_enabled,
                 logger_obj=None,
-                scene_name="biliup_danmaku_title_from_description",
+                scene_name="recording_danmaku_title_from_description",
             )
             title_topic = re.sub(
                 r"[\r\n｜|]+",
@@ -3924,7 +3927,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         comments = []
         store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml) if danmaku_xml else None})
         if danmaku_xml and bool(cfg.get("danmaku_enabled", True)):
-            comments = parse_biliup_xml(danmaku_xml)
+            comments = parse_danmaku_xml(danmaku_xml)
             if comments:
                 width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
                 ass_path = build_ass(
@@ -3962,7 +3965,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         work_dir / f"{video.stem}.danmaku.mp4",
                         ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
                         fonts_dir=resolve_path(
-                            str(cfg.get("danmaku_fonts_dir", "y2a-auto/fonts")), cfg
+                            str(cfg.get("danmaku_fonts_dir", "potatoflow-app/fonts")), cfg
                         ),
                         preset=str(cfg.get("danmaku_encode_preset", "medium")),
                         crf=int(cfg.get("danmaku_encode_crf", 20)),
@@ -4029,9 +4032,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         # Collect stable live context before AI so metadata and both cover
         # variants are grounded in the same recording and the same game.
-        y2a_root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
-        if str(y2a_root) not in sys.path:
-            sys.path.insert(0, str(y2a_root))
+        app_root = resolve_app_root(cfg)
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
         stats_enabled = bool(cfg.get("douyu_stats_enabled", True))
         append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
         cover_context_enabled = bool(cfg.get("douyu_stats_cover_context_enabled", True))
@@ -4414,9 +4417,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         ai_stage_status = "completed" if ai_was_used else "skipped"
         store.stage(key, "ai", ai_stage_status, ai_details)
 
-        y2a_root = resolve_path(str(cfg.get("y2a_root", "y2a-auto")), cfg)
-        if str(y2a_root) not in sys.path:
-            sys.path.insert(0, str(y2a_root))
+        app_root = resolve_app_root(cfg)
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
         stats_enabled = bool(cfg.get("douyu_stats_enabled", True))
         cover_context_enabled = bool(cfg.get("douyu_stats_cover_context_enabled", True))
 
@@ -4813,7 +4816,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         }
         upload_stage_details["worker_pid"] = os.getpid()
         store.stage(key, "upload", "queued", upload_stage_details)
-        BilibiliUploader, _ = import_y2a(cfg)
+        BilibiliUploader, _ = import_app(cfg)
         cookie = resolve_path(str(cfg.get("bilibili_cookies", "")), cfg)
         if not cookie.is_file():
             raise ValueError(f"bilibili Cookie 文件不存在：{cookie}")
@@ -5045,7 +5048,7 @@ def generate_record_only_ass(
     if danmaku_xml is None:
         print(f"WARN 仅录制文件未找到同名 XML，无法生成 ASS: {video}", file=sys.stderr)
         return None
-    comments = parse_biliup_xml(danmaku_xml)
+    comments = parse_danmaku_xml(danmaku_xml)
     if not comments:
         print(
             f"ERROR 弹幕 XML 中没有可用弹幕，未生成空 ASS: {danmaku_xml}",
@@ -5080,7 +5083,7 @@ def generate_record_only_cover(video: Path, base_cfg: dict[str, Any]) -> Path:
     ai_topic = recording_metadata_values(video, cfg)["ai_topic"]
     danmaku_xml = find_danmaku_xml(video)
     if danmaku_xml and bool(cfg.get("ai_danmaku_summary_enabled", True)):
-        comments = parse_biliup_xml(danmaku_xml)
+        comments = parse_danmaku_xml(danmaku_xml)
         if comments:
             description, ai_topic = generate_danmaku_metadata_with_ai(
                 comments,
@@ -5234,7 +5237,7 @@ def remux_record_only_flv_with_cover(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="将 biliup 录制产物交给 Y2A-Auto 上传")
+    parser = argparse.ArgumentParser(description="将录制产物交给 PotatoFlow 上传")
     parser.add_argument("--config", default="bridge.config.json", help="JSON 配置文件")
     sub = parser.add_subparsers(dest="command", required=True)
     ingest = sub.add_parser("ingest", help="处理参数或 stdin 中的视频路径")
@@ -5484,7 +5487,7 @@ def main(argv: list[str] | None = None) -> int:
                             burned_output,
                             ffmpeg=str(record_cfg.get("ffmpeg", "ffmpeg")),
                             fonts_dir=resolve_path(
-                                str(record_cfg.get("danmaku_fonts_dir", "y2a-auto/fonts")),
+                                str(record_cfg.get("danmaku_fonts_dir", "potatoflow-app/fonts")),
                                 record_cfg,
                             ),
                             preset=str(record_cfg.get("danmaku_encode_preset", "medium")),
@@ -5686,7 +5689,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not ok and str(getattr(args, "session_key", "") or "") and not retry:
         # A failed segment is already visible and retryable in the WebUI.  Do
-        # not abort biliup's live event stream here: later segments still need
+        # not abort the recorder live event stream here: later segments still need
         # to be recorded, and the end-of-stream hook must close this session so
         # the next broadcast cannot append to the old submission.
         print("WARN 分P处理失败已记录，录制与后续分段将继续", file=sys.stderr)

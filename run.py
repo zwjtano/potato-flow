@@ -10,11 +10,11 @@ from runtime_environment import configure_linux_ca_environment
 
 
 ROOT = Path(__file__).resolve().parent
-APP_ROOT = ROOT / "y2a-auto"
+APP_ROOT = ROOT / "potatoflow-app"
 PYTHON = APP_ROOT / ".venv" / "bin" / "python"
 
 if not PYTHON.exists():
-    raise SystemExit("缺少运行环境，请先在 y2a-auto/.venv 中安装 requirements.txt")
+    raise SystemExit("缺少运行环境，请先在 potatoflow-app/.venv 中安装 requirements.lock")
 
 os.chdir(APP_ROOT)
 os.environ.setdefault("PORT", "5001")
