@@ -91,11 +91,15 @@ from version import __author__, __version__
 from modules.runtime_info import build_runtime_info
 from modules.task_queue_view import (
     build_queue_summary,
+    filter_recording_jobs,
     filter_queue_items,
     normalize_queue_filter,
+    normalize_recording_time_filter,
+    normalize_recording_type_filter,
     normalize_source_filter,
     paginate_items,
     recording_queue_bucket,
+    recording_room_options,
     youtube_queue_bucket,
 )
 from modules.bilibili_accounts import (
@@ -2777,6 +2781,11 @@ def tasks():
     per_page = 20  # 每页显示20条记录
     queue_filter = normalize_queue_filter(request.args.get('status'))
     source_filter = normalize_source_filter(request.args.get('source'))
+    recording_page = request.args.get('recording_page', 1, type=int)
+    recording_keyword = str(request.args.get('recording_q') or '').strip()[:120]
+    recording_room = str(request.args.get('recording_room') or 'all').strip()[:160]
+    recording_type = normalize_recording_type_filter(request.args.get('recording_type'))
+    recording_time = normalize_recording_time_filter(request.args.get('recording_time'))
 
     config = load_config()
     all_youtube_tasks = get_all_tasks()
@@ -2784,17 +2793,34 @@ def tasks():
         _decorate_youtube_task_for_view(task, config)
     all_recording_jobs = live_recorder_manager.pipeline_jobs(500)
     queue_summary = build_queue_summary(all_youtube_tasks, all_recording_jobs)
+    room_options = recording_room_options(all_recording_jobs)
+    allowed_rooms = {'all', *(item['value'] for item in room_options)}
+    if recording_room not in allowed_rooms:
+        recording_room = 'all'
 
     youtube_tasks = (
         filter_queue_items(all_youtube_tasks, queue_filter, youtube_queue_bucket)
         if source_filter in {'all', 'youtube'}
         else []
     )
-    recording_jobs = (
+    status_filtered_recording_jobs = (
         filter_queue_items(all_recording_jobs, queue_filter, recording_queue_bucket)
         if source_filter in {'all', 'recording'}
         else []
     )
+    filtered_recording_jobs = filter_recording_jobs(
+        status_filtered_recording_jobs,
+        keyword=recording_keyword,
+        room=recording_room,
+        task_type=recording_type,
+        time_range=recording_time,
+    )
+    recording_pagination = paginate_items(
+        filtered_recording_jobs,
+        page=recording_page,
+        per_page=per_page,
+    )
+    recording_jobs = recording_pagination['tasks']
     pagination_data = paginate_items(youtube_tasks, page=page, per_page=per_page)
     return render_template('tasks.html', 
                          tasks=pagination_data['tasks'],
@@ -2804,6 +2830,12 @@ def tasks():
                          queue_summary=queue_summary,
                          queue_filter=queue_filter,
                          source_filter=source_filter,
+                         recording_keyword=recording_keyword,
+                         recording_room=recording_room,
+                         recording_type=recording_type,
+                         recording_time=recording_time,
+                         recording_room_options=room_options,
+                         recording_pagination=recording_pagination,
                          bilibili_partition_names=_build_bilibili_partition_name_map(),
                          bilibili_accounts=normalize_accounts(config),
                          bilibili_default_account_id=default_account_id(config))
