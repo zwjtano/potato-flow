@@ -66,6 +66,20 @@ class BrandingTests(unittest.TestCase):
         self.assertIn("settings_recording_directories", settings_template)
         self.assertIn('"RECORDINGS_PATH": "docker-data/recordings"', config_source)
 
+    def test_encoder_fallback_notice_uses_theme_aware_info_style(self):
+        settings_template = (
+            ROOT / "y2a-auto" / "templates" / "settings.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'class="alert alert-info mt-3 mb-0" id="danmaku-encoder-result"',
+            settings_template,
+        )
+        self.assertNotIn(
+            'class="alert alert-light border mt-3 mb-0" id="danmaku-encoder-result"',
+            settings_template,
+        )
+
     def test_ai_credentials_use_provider_neutral_labels(self):
         settings_template = (
             ROOT / "y2a-auto" / "templates" / "settings.html"

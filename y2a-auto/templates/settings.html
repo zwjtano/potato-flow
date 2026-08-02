@@ -293,7 +293,7 @@
                                                     <div class="col-md-4"><label class="form-label" for="danmaku-preset">编码预设</label><input class="form-control" id="danmaku-preset" name="DANMAKU_ENCODE_PRESET" maxlength="24" value="{{ config.get('DANMAKU_ENCODE_PRESET', 'medium') }}"></div>
                                                     <div class="col-md-4 d-flex align-items-end"><button class="btn btn-outline-primary w-100" id="detect-danmaku-encoder" type="button"><i class="bi bi-cpu"></i> 检测并推荐</button></div>
                                                 </div>
-                                                <div class="alert alert-light border mt-3 mb-0" id="danmaku-encoder-result">硬件编码失败时，当前任务自动回退 CPU medium / CRF 20，不改动已保存设置。</div>
+                                                <div class="alert alert-info mt-3 mb-0" id="danmaku-encoder-result">硬件编码失败时，当前任务自动回退 CPU medium / CRF 20，不改动已保存设置。</div>
                                                 {% if windows_desktop_mode %}
                                                 <div class="row g-3 mt-2" id="windows-desktop-settings">
                                                     <div class="col-md-6"><label class="checkbox-label"><input type="checkbox" name="DESKTOP_ALLOW_LAN" {% if config.get('DESKTOP_ALLOW_LAN', False) %}checked{% endif %}> Windows 桌面版允许局域网访问</label><p class="help-text mb-0">默认仅本机 127.0.0.1，修改后下次启动生效。</p></div>
