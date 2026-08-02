@@ -1941,18 +1941,18 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         }
         if (job.review_override?.hold_before_cover) {
             return `<div class="recording-detail-ai-review">
-                <div><strong>人工闸门已设置</strong><span>AI 信息完成后将在封面生图前自动暂停。</span></div>
-                <button type="button" class="btn btn-sm btn-outline-primary" disabled><i class="bi bi-check2"></i> 等待 AI 完成</button>
+                <div><strong>正在进入人工编辑</strong><span>后续封面与投稿流程已被阻断。</span></div>
+                <a class="btn btn-sm btn-primary" href="${reviewUrl}"><i class="bi bi-pencil-square"></i> 打开编辑页</a>
             </div>`;
         }
         const completed = ['completed', 'skipped'].includes(String(stageStatus || ''));
-        const label = completed ? '暂停后续流程并编辑' : 'AI 完成后暂停编辑';
+        const label = completed ? '立即介入并编辑' : 'AI 完成后可介入';
         const hint = completed
-            ? '立即阻止后续封面与投稿，保留已有产物。'
-            : '先设置人工闸门；AI 信息生成后会在生图前自动暂停。';
+            ? '点击后立即阻止后续封面与投稿，保留已有产物。'
+            : '无需提前设置；AI 标题和简介完成后可直接介入。';
         return `<div class="recording-detail-ai-review">
-            <div><strong>需要人工介入</strong><span>${hint}</span></div>
-            <button type="button" class="btn btn-sm btn-primary" data-recording-ai-review data-job-id="${escapeRecordingDetail(job.id)}">
+            <div><strong>${completed ? '需要人工介入？' : 'AI 正在生成投稿信息'}</strong><span>${hint}</span></div>
+            <button type="button" class="btn btn-sm btn-primary" data-recording-ai-review data-job-id="${escapeRecordingDetail(job.id)}" ${completed ? '' : 'disabled'}>
                 <i class="bi bi-pause-circle"></i> ${label}
             </button>
         </div>`;
@@ -1963,7 +1963,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         if (!jobId || button.disabled) return;
         const original = button.innerHTML;
         button.disabled = true;
-        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>正在设置…';
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>正在介入…';
         try {
             const response = await fetch(`/live-recording/jobs/${encodeURIComponent(jobId)}/review-hold`, {
                 method: 'POST',
@@ -1971,12 +1971,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
             });
             const result = await response.json();
             if (!response.ok || !result.ok) throw new Error(result.error || '无法设置人工介入');
-            if (result.paused || result.mode === 'published') {
-                window.location.assign(result.review_url);
-                return;
-            }
-            button.innerHTML = '<i class="bi bi-check2"></i> 已设置，等待 AI 完成';
-            window.setTimeout(() => refreshActiveRecordingDetail(), 900);
+            window.location.assign(result.review_url);
         } catch (error) {
             button.disabled = false;
             button.innerHTML = original;

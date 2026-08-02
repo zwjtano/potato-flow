@@ -88,7 +88,7 @@ class ManualReviewTests(unittest.TestCase):
         self.assertNotIn("window.confirm(", editor_template)
         self.assertIn('html[data-theme="dark"] .ai-regenerate-panel', editor_template)
 
-    def test_running_recording_can_hold_after_ai_and_edit_before_cover(self):
+    def test_running_recording_can_be_interrupted_after_ai_before_cover(self):
         app_source = (ROOT / "potatoflow-app" / "app.py").read_text(encoding="utf-8")
         manager_source = (
             ROOT / "potatoflow-app" / "modules" / "live_recorder_manager.py"
@@ -109,8 +109,9 @@ class ManualReviewTests(unittest.TestCase):
             hold_index,
             bridge_source.index('current_stage = "cover_16x9"', hold_index),
         )
-        self.assertIn("AI 完成后暂停编辑", tasks_template)
-        self.assertIn("暂停后续流程并编辑", tasks_template)
+        self.assertIn("AI 完成后可介入", tasks_template)
+        self.assertIn("立即介入并编辑", tasks_template)
+        self.assertIn("无需提前设置", tasks_template)
         self.assertIn("PRE-PUBLISH AI REVIEW", editor_template)
         self.assertIn("先生成简介，再基于新简介生成标题", editor_template)
         self.assertIn('value="save_and_continue"', editor_template)

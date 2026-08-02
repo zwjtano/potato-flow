@@ -2760,12 +2760,12 @@ def generate_recording_cover_with_ai(
         streamer,
         cover_subject_name,
     )
-    guest_candidates = recording_cover_guest_candidates(
-        streamer,
-        title,
-        ai_topic,
-        description,
-    )
+    # The current streamer's custom character reference or room avatar is the
+    # primary identity source. Only people explicitly named in the final
+    # submission title may add a guest reference. Timeline descriptions often
+    # mention many players incidentally; attaching those avatars lets a clearer
+    # guest photo override a stylized current-room reference.
+    guest_candidates = recording_cover_guest_candidates(streamer, title)
     guest_references: list[dict[str, str]] = []
     guest_reference_errors: list[dict[str, str]] = []
     for guest_candidate in guest_candidates:
@@ -2794,6 +2794,7 @@ def generate_recording_cover_with_ai(
             })
     details["ai_cover_guest_streamers"] = guest_references
     details["ai_cover_guest_reference_errors"] = guest_reference_errors
+    details["ai_cover_guest_candidate_source"] = "submission_title"
     if guest_references:
         guest_identity_instruction = (
             "额外主播身份参考：在封面人物底稿之后上传的头像依次对应 "
