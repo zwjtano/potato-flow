@@ -90,17 +90,53 @@ class BridgeTests(unittest.TestCase):
             ["yyfyyf", "直播回放"],
         )
 
-    def test_unverified_dota_hero_metadata_is_removed(self):
+    def test_unverified_dota_hero_discussion_is_kept_but_tag_is_removed(self):
         topic, description, tags, details = bridge.filter_unverified_dota2_metadata(
             "死灵法师翻盘",
             "弹幕热议输赢。影魔最终六神装。\n观众讨论赛后复盘。",
             ["YYF", "影魔", "DOTA2"],
         )
 
-        self.assertEqual(topic, "")
-        self.assertEqual(description, "弹幕热议输赢。\n观众讨论赛后复盘。")
+        self.assertEqual(topic, "死灵法师翻盘")
+        self.assertEqual(
+            description,
+            "弹幕热议输赢。影魔最终六神装。\n观众讨论赛后复盘。",
+        )
         self.assertEqual(tags, ["YYF", "DOTA2"])
         self.assertEqual(details["unverified_hero_tags_removed"], ["影魔"])
+
+    def test_unverified_owner_hero_claim_is_removed_without_blank_placeholder(self):
+        topic, description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "YYF影魔最终六神装",
+            "00:10 开场互动\n05:03 YYF影魔最终六神装。\n19:34 观众复盘",
+            ["YYF", "影魔"],
+            streamer="YYF",
+        )
+
+        self.assertEqual(topic, "")
+        self.assertEqual(description, "00:10 开场互动\n19:34 观众复盘")
+        self.assertNotIn("\n\n", description)
+        self.assertTrue(details["unverified_hero_description_removed"])
+
+    def test_ordinary_phrase_and_other_hero_discussion_are_not_deleted(self):
+        description = (
+            "00:00 开场互动\n"
+            "05:03 原班人马重组，队伍被吐槽全员说谎\n"
+            "55:17 霸气提问大鱼加速能否被末日驱散\n"
+            "57:28 团战出现虚空大幻象的低级失误"
+        )
+
+        _topic, filtered, _tags, details = bridge.filter_unverified_dota2_metadata(
+            "赛后趣味问答",
+            description,
+            ["谢彬DD", "DOTA2"],
+            streamer="谢彬DD",
+            verified_timeline=description,
+        )
+
+        self.assertEqual(filtered, description)
+        self.assertFalse(details["unverified_hero_description_removed"])
+        self.assertEqual(bridge._dota2_hero_identity_keys("原班人马重组"), set())
 
     def test_verified_owner_timeline_preserves_hero_metadata_without_gsi(self):
         timeline = (
