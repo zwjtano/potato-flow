@@ -224,10 +224,34 @@ Telegram 自动使用“账号与网络”中的通用代理，并可开启机�
 项目包含根目录集成测试和 `potatoflow-app` 模块测试。请使用统一入口，避免只运行其中一套：
 
 ```bash
-bash scripts/test-all.sh
+bash ops/test-all.sh
 ```
 
-## Docker 安装
+## Docker 一键安装（推荐）
+
+Linux 国内服务器直接执行：
+
+```bash
+git clone https://ghfast.top/https://github.com/zwjtano/potato-flow.git && cd potato-flow && ./ops/install-docker.sh
+```
+
+脚本会自动检查并安装 Docker/Compose，使用国内 Docker、Debian、PyPI、PyTorch、Cargo
+和 GitHub 下载源，构建生产镜像、启动容器并等待健康检查。现有 `docker-data/` 会保留，
+重复执行可用于升级，不会清空配置、Cookie 或录播文件。
+
+自定义 Web 端口：
+
+```bash
+POTATOFLOW_PORT=15017 ./ops/install-docker.sh
+```
+
+境外服务器关闭国内源：
+
+```bash
+POTATOFLOW_CHINA_MIRROR=0 ./ops/install-docker.sh
+```
+
+### 手动 Docker 安装
 
 ### 环境要求
 
@@ -314,7 +338,7 @@ cp -a docker-data docker-data.backup
 
 镜像构建使用 `potatoflow-app/requirements.lock` 中经过测试的精确直接依赖版本，
 不会在每次重建时静默拉取新的 `yt-dlp` 或 SDK。升级依赖时应显式修改该文件，
-执行 `./scripts/test-all.sh` 后再重建镜像。
+执行 `./ops/test-all.sh` 后再重建镜像。
 
 `/api/version` 会同时返回进程已加载版本、磁盘源码版本和构建提交。
 两者不一致时侧边栏显示“需重启”，用于识别代码已经更新但旧进程仍在运行的情况。
@@ -340,19 +364,19 @@ Ubuntu / Debian 可以使用项目安装脚本：
 ```bash
 git clone https://github.com/zwjtano/potato-flow.git
 cd potato-flow
-./scripts/install-linux.sh
+./ops/install-linux.sh
 ```
 
 启动：
 
 ```bash
-./potatoflow-app/.venv/bin/python run.py
+./potatoflow-app/.venv/bin/python potatoflow-app/run.py
 ```
 
 安装 systemd 服务：
 
 ```bash
-./scripts/install-systemd.sh
+./ops/install-systemd.sh
 sudo systemctl enable --now potato-flow
 ```
 

@@ -1,9 +1,14 @@
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 from PIL import Image
+
+APP_ROOT = Path(__file__).resolve().parents[1] / "potatoflow-app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from dota2_abilities import (
     build_dota2_ability_reference_sheet,

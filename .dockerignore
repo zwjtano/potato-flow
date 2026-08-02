@@ -19,6 +19,7 @@
 docker-data
 .bridge
 bridge.config.json
+potatoflow-app/bridge.config.json
 potatoflow-app/config
 potatoflow-app/cookies
 potatoflow-app/db

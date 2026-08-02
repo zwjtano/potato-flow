@@ -40,7 +40,7 @@ def create_spec_file() -> None:
     static = str(PROJECT_ROOT / "static")
     fonts = str(PROJECT_ROOT / "fonts")
     bili_sdk_data = str(PROJECT_ROOT / "modules" / "bili_sdk" / "data")
-    bridge_example = str(REPOSITORY_ROOT / "bridge.config.example.json")
+    bridge_example = str(PROJECT_ROOT / "bridge.config.example.json")
     icon = str(PROJECT_ROOT / "static" / "img" / "favicon.ico")
     spec = f'''# -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all, collect_submodules

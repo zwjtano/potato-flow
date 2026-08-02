@@ -44,16 +44,13 @@ RECORDER_CONFIG_PATH = CONFIG_DIR / "recorder.generated.yaml"
 BRIDGE_CONFIG_PATH = (
     DATA_ROOT / "bridge.config.json"
     if str(os.environ.get("POTATOFLOW_DATA_DIR") or "").strip()
-    else WORKSPACE_ROOT / "bridge.config.json"
+    else (
+        APP_ROOT / "bridge.config.json"
+        if (APP_ROOT / "bridge.config.json").exists() or not (WORKSPACE_ROOT / "bridge.config.json").exists()
+        else WORKSPACE_ROOT / "bridge.config.json"
+    )
 )
-BRIDGE_CONFIG_EXAMPLE = next(
-    (
-        candidate
-        for candidate in (APP_ROOT / "bridge.config.example.json", WORKSPACE_ROOT / "bridge.config.example.json")
-        if candidate.is_file()
-    ),
-    WORKSPACE_ROOT / "bridge.config.example.json",
-)
+BRIDGE_CONFIG_EXAMPLE = APP_ROOT / "bridge.config.example.json"
 LOG_PATH = DATA_ROOT / "logs" / "recorder.log"
 PID_PATH = DATA_ROOT / "temp" / "biliup-recorder.pid"
 STATUS_PATH = DATA_ROOT / "temp" / "biliup-recorder-status.json"
@@ -138,7 +135,7 @@ class RecorderConfigError(ValueError):
 def _bridge_command_base() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, "--potatoflow-internal-bridge"]
-    return [str(APP_ROOT / ".venv" / "bin" / "python"), str(WORKSPACE_ROOT / "bridge.py")]
+    return [str(APP_ROOT / ".venv" / "bin" / "python"), str(APP_ROOT / "bridge.py")]
 
 
 def recordings_dir(value: Any = None) -> Path:
@@ -933,8 +930,8 @@ class LiveRecorderManager:
     @staticmethod
     def recording_prompt_defaults() -> dict[str, str]:
         """Return the built-in prompts displayed by each room editor."""
-        if str(WORKSPACE_ROOT) not in sys.path:
-            sys.path.insert(0, str(WORKSPACE_ROOT))
+        if str(APP_ROOT) not in sys.path:
+            sys.path.insert(0, str(APP_ROOT))
         try:
             import bridge
         except ModuleNotFoundError as exc:
@@ -1030,8 +1027,8 @@ class LiveRecorderManager:
             custom_path = ROOM_REFERENCE_DIR / custom_name
             if custom_path.is_file():
                 return custom_path, "custom"
-        if str(WORKSPACE_ROOT) not in sys.path:
-            sys.path.insert(0, str(WORKSPACE_ROOT))
+        if str(APP_ROOT) not in sys.path:
+            sys.path.insert(0, str(APP_ROOT))
         try:
             import bridge
         except ModuleNotFoundError as exc:
@@ -2701,7 +2698,7 @@ class LiveRecorderManager:
                 command.append(str(video))
                 result = subprocess.run(
                     command,
-                    cwd=WORKSPACE_ROOT,
+                    cwd=APP_ROOT,
                     stdout=log_handle,
                     stderr=subprocess.STDOUT,
                     check=False,
@@ -3594,8 +3591,8 @@ class LiveRecorderManager:
             raise RecorderConfigError("只有已成功上传到 B站的录播任务可以重新生成稿件信息")
 
         try:
-            if str(WORKSPACE_ROOT) not in sys.path:
-                sys.path.insert(0, str(WORKSPACE_ROOT))
+            if str(APP_ROOT) not in sys.path:
+                sys.path.insert(0, str(APP_ROOT))
             import bridge
             from .ai_enhancer import (
                 _request_json_object,
@@ -5073,7 +5070,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     log_handle.flush()
                 subprocess.Popen(
                     command,
-                    cwd=WORKSPACE_ROOT, stdout=log_handle, stderr=subprocess.STDOUT,
+                    cwd=APP_ROOT, stdout=log_handle, stderr=subprocess.STDOUT,
                     start_new_session=True, close_fds=True,
                 )
         except OSError as exc:

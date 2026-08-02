@@ -73,7 +73,7 @@ install -d -m 0700 -o "${APP_USER}" -g "${APP_GROUP}" \
 PIPELINE_CONFIG="${DATA_DIR}/config/pipeline.json"
 if [[ ! -f "${PIPELINE_CONFIG}" ]]; then
   install -m 0600 -o "${APP_USER}" -g "${APP_GROUP}" \
-    "${APP_DIR}/bridge.config.example.json" "${PIPELINE_CONFIG}"
+    "${APP_CODE_DIR}/bridge.config.example.json" "${PIPELINE_CONFIG}"
 fi
 
 # Resolve the historical relative database path against the new config
@@ -125,7 +125,7 @@ link_persistent_path() {
 }
 
 link_persistent_path "${DATA_DIR}/state/recording" "${APP_DIR}/.bridge"
-link_persistent_path "${PIPELINE_CONFIG}" "${APP_DIR}/bridge.config.json"
+link_persistent_path "${PIPELINE_CONFIG}" "${APP_CODE_DIR}/bridge.config.json"
 link_persistent_path "${DATA_DIR}/config" "${APP_CODE_DIR}/config"
 link_persistent_path "${DATA_DIR}/credentials/cookies" "${APP_CODE_DIR}/cookies"
 link_persistent_path "${DATA_DIR}/database" "${APP_CODE_DIR}/db"

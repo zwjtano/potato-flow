@@ -8,7 +8,7 @@ Type=simple
 User=@USER@
 Group=@GROUP@
 WorkingDirectory=@ROOT@
-ExecStart="@PYTHON@" "@ROOT@/run.py"
+ExecStart="@PYTHON@" "@ROOT@/potatoflow-app/run.py"
 Environment=PORT=5001
 Environment=AUTO_START_RECORDER=1
 Restart=on-failure

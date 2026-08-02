@@ -159,7 +159,7 @@ class BrandingTests(unittest.TestCase):
             version_source,
         ).group(1)
         project_files = [
-            ROOT / "bridge.py",
+            ROOT / "potatoflow-app" / "bridge.py",
             ROOT / "README.md",
             ROOT / "Dockerfile",
             ROOT / "docker-compose.yml",

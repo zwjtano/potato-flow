@@ -10,12 +10,30 @@ Docker 是 PotatoFlow 在 Linux 上的推荐安装方式。仓库只启动一个
 - 至少 8 GB 可用磁盘空间用于首次构建
 - 能访问直播平台、哔哩哔哩和你选择的 AI API
 
-## 安装
+## 一键安装（推荐）
 
 ```bash
-git clone https://github.com/zwjtano/potato-flow.git
-cd potato-flow
+git clone https://github.com/zwjtano/potato-flow.git && cd potato-flow && ./ops/install-docker.sh
+```
 
+国内服务器默认使用国内 Docker、Debian、PyPI、PyTorch、Cargo 与 GitHub 下载源，
+并自动安装 Docker/Compose、构建镜像、启动服务和等待健康检查。
+
+自定义端口可执行：
+
+```bash
+POTATOFLOW_PORT=15017 ./ops/install-docker.sh
+```
+
+境外服务器执行：
+
+```bash
+POTATOFLOW_CHINA_MIRROR=0 ./ops/install-docker.sh
+```
+
+## 手动安装
+
+```bash
 docker compose up -d --build
 ```
 

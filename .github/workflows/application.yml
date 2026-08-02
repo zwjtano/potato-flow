@@ -39,7 +39,7 @@ jobs:
       - name: Run all test suites
         env:
           POTATO_PYTHON: python
-        run: bash scripts/test-all.sh
+        run: bash ops/test-all.sh
 
   docker:
     runs-on: ubuntu-latest

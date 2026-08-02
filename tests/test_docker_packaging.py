@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class DockerPackagingTests(unittest.TestCase):
     def test_compose_exposes_only_unified_port(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertIn('"5001:5001"', compose)
+        self.assertIn('"${POTATOFLOW_PORT:-5001}:5001"', compose)
         self.assertNotIn("19159", compose)
         self.assertNotIn("5050", compose)
         self.assertEqual(compose.count("container_name:"), 1)
@@ -39,13 +39,15 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("COPY recorder-core/.sqlx ./.sqlx", dockerfile)
         self.assertIn("COPY recorder-core/crates ./crates", dockerfile)
         self.assertNotIn("COPY recorder-core/ ./", dockerfile)
+        self.assertIn("COPY --chown=potatoflow:potatoflow potatoflow-app/ /app/potatoflow-app/", dockerfile)
+        self.assertNotIn("COPY --chown=potatoflow:potatoflow . /app", dockerfile)
 
         upstream_root = ROOT / "recorder-core"
         for unused_path in (".github", "app", "biliup", "docs", "public", "tauri-app"):
             self.assertFalse((upstream_root / unused_path).exists())
 
     def test_linux_installer_uses_canonical_runtime_lock(self):
-        installer = (ROOT / "scripts" / "install-linux.sh").read_text(
+        installer = (ROOT / "ops" / "install-linux.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn('"${APP_ROOT}/requirements.lock"', installer)
@@ -55,14 +57,14 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertFalse((ROOT / "potatoflow-app" / "requirements.txt").exists())
 
     def test_image_contains_only_current_bundled_cover_references(self):
-        reference_root = ROOT / "assets" / "streamer-references"
+        reference_root = ROOT / "potatoflow-app" / "assets" / "streamer-references"
         reference = reference_root / "guoxiaoguo.png"
         self.assertTrue(reference.is_file())
         self.assertGreater(reference.stat().st_size, 1024)
         self.assertFalse((reference_root / "yyf.png").exists())
 
     def test_entrypoint_persists_runtime_data(self):
-        entrypoint = (ROOT / "deploy" / "docker-entrypoint.sh").read_text(
+        entrypoint = (ROOT / "ops" / "docker-entrypoint.sh").read_text(
             encoding="utf-8"
         )
         for directory in (
@@ -93,7 +95,7 @@ class DockerPackagingTests(unittest.TestCase):
 
     def test_potato_flow_branding_and_systemd_service(self):
         base = (ROOT / "potatoflow-app" / "templates" / "base.html").read_text(encoding="utf-8")
-        installer = (ROOT / "scripts" / "install-systemd.sh").read_text(encoding="utf-8")
+        installer = (ROOT / "ops" / "install-systemd.sh").read_text(encoding="utf-8")
 
         self.assertIn("PotatoFlow · 土豆录播姬", base)
         self.assertIn("img/potato-flow.png", base)
@@ -101,7 +103,22 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertTrue((ROOT / "potatoflow-app" / "static" / "img" / "potato-flow.png").is_file())
         self.assertTrue((ROOT / "potatoflow-app" / "static" / "img" / "favicon.png").is_file())
         self.assertIn('SERVICE_NAME="potato-flow"', installer)
-        self.assertTrue((ROOT / "deploy" / "potato-flow.service").is_file())
+        self.assertTrue((ROOT / "ops" / "potato-flow.service").is_file())
+
+    def test_one_click_docker_installer_uses_safe_domestic_defaults(self):
+        installer = (ROOT / "ops" / "install-docker.sh").read_text(encoding="utf-8")
+
+        self.assertIn('CHINA_MIRROR="${POTATOFLOW_CHINA_MIRROR:-1}"', installer)
+        self.assertIn('WEB_PORT="${POTATOFLOW_PORT:-5001}"', installer)
+        self.assertIn("docker.1ms.run/library/rust:bookworm", installer)
+        self.assertIn("sparse+https://rsproxy.cn/index/", installer)
+        self.assertIn("docker-compose-v2", installer)
+        self.assertIn('needs_compose=1', installer)
+        self.assertIn('run_root env "POTATOFLOW_PORT=${POTATOFLOW_PORT}" docker', installer)
+        self.assertIn('compose up -d --no-deps potato-flow', installer)
+        self.assertIn('/healthz', installer)
+        self.assertNotIn("docker compose down", installer)
+        self.assertNotIn("docker-data/recordings --", installer)
 
     def test_recorder_upload_actor_does_not_block_other_room_sessions(self):
         source = (

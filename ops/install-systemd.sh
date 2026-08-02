@@ -20,7 +20,7 @@ run_root() {
 }
 
 if [[ ! -x "${PYTHON}" ]]; then
-  echo "尚未安装 Python 环境，请先运行 scripts/install-linux.sh。" >&2
+  echo "尚未安装 Python 环境，请先运行 ops/install-linux.sh。" >&2
   exit 1
 fi
 
@@ -38,7 +38,7 @@ sed \
   -e "s|@PYTHON@|${PYTHON_ESCAPED}|g" \
   -e "s|@USER@|${USER_ESCAPED}|g" \
   -e "s|@GROUP@|${GROUP_ESCAPED}|g" \
-  "${ROOT}/deploy/potato-flow.service" > "${TMPDIR:-/tmp}/${SERVICE_NAME}.service"
+  "${ROOT}/ops/potato-flow.service" > "${TMPDIR:-/tmp}/${SERVICE_NAME}.service"
 
 run_root install -m 0644 "${TMPDIR:-/tmp}/${SERVICE_NAME}.service" "${SERVICE_PATH}"
 run_root systemctl daemon-reload
