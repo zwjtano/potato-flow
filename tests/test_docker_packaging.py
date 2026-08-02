@@ -30,6 +30,20 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertNotIn("chromium", dockerfile.lower())
         self.assertNotIn("playwright", requirements.lower())
 
+    def test_recorder_builder_copies_only_rust_workspace_inputs(self):
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "COPY upstream-biliup/Cargo.toml upstream-biliup/Cargo.lock ./",
+            dockerfile,
+        )
+        self.assertIn("COPY upstream-biliup/.sqlx ./.sqlx", dockerfile)
+        self.assertIn("COPY upstream-biliup/crates ./crates", dockerfile)
+        self.assertNotIn("COPY upstream-biliup/ ./", dockerfile)
+
+        upstream_root = ROOT / "upstream-biliup"
+        for unused_path in (".github", "app", "biliup", "docs", "public", "tauri-app"):
+            self.assertFalse((upstream_root / unused_path).exists())
+
     def test_linux_installer_uses_canonical_runtime_lock(self):
         installer = (ROOT / "scripts" / "install-linux.sh").read_text(
             encoding="utf-8"

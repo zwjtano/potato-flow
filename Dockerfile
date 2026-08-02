@@ -15,7 +15,9 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build/upstream-biliup
-COPY upstream-biliup/ ./
+COPY upstream-biliup/Cargo.toml upstream-biliup/Cargo.lock ./
+COPY upstream-biliup/.sqlx ./.sqlx
+COPY upstream-biliup/crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/upstream-biliup/target \
     if [ -n "$CARGO_MIRROR_URL" ]; then \
