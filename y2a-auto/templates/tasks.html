@@ -45,6 +45,7 @@
         'paused': ('已暂停', 'bi-pause-circle'),
         'completed': ('已完成', 'bi-check2-circle')
     } %}
+    {% set recording_filters_active = recording_keyword or recording_room != 'all' or recording_type != 'all' or recording_time != 'all' %}
     <section class="task-queue-overview" aria-labelledby="taskQueueOverviewTitle">
         <div class="task-queue-overview-heading">
             <div>
@@ -55,6 +56,10 @@
             <form method="get" action="{{ url_for('tasks') }}" class="task-source-filter" aria-label="按任务来源筛选">
                 <label for="taskSourceFilter">任务来源</label>
                 <input type="hidden" name="status" value="{{ queue_filter }}">
+                <input type="hidden" name="recording_q" value="{{ recording_keyword }}">
+                <input type="hidden" name="recording_room" value="{{ recording_room }}">
+                <input type="hidden" name="recording_type" value="{{ recording_type }}">
+                <input type="hidden" name="recording_time" value="{{ recording_time }}">
                 <select class="form-select form-select-sm" id="taskSourceFilter" name="source" onchange="this.form.submit()">
                     <option value="all" {% if source_filter == 'all' %}selected{% endif %}>全部来源</option>
                     <option value="recording" {% if source_filter == 'recording' %}selected{% endif %}>直播录播</option>
@@ -66,18 +71,19 @@
             {% for filter_key in ['all', 'active', 'queued', 'review', 'failed', 'paused', 'completed'] %}
             {% set filter_meta = queue_labels[filter_key] %}
             <a class="task-queue-summary-item is-{{ filter_key }}{% if queue_filter == filter_key %} active{% endif %}"
-               href="{{ url_for('tasks', status=filter_key, source=source_filter) }}"
+               href="{{ url_for('tasks', status=filter_key, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}"
                {% if queue_filter == filter_key %}aria-current="page"{% endif %}>
                 <span class="task-queue-summary-icon"><i class="bi {{ filter_meta[1] }}" aria-hidden="true"></i></span>
                 <span class="task-queue-summary-copy"><small>{{ filter_meta[0] }}</small><strong>{{ queue_summary[filter_key] }}</strong></span>
             </a>
             {% endfor %}
         </nav>
-        {% if queue_filter != 'all' or source_filter != 'all' %}
+        {% if queue_filter != 'all' or source_filter != 'all' or recording_filters_active %}
         <div class="task-filter-result">
             <span><i class="bi bi-funnel" aria-hidden="true"></i>
                 当前显示：{{ queue_labels[queue_filter][0] }} ·
                 {{ {'all':'全部来源', 'recording':'直播录播', 'youtube':'YouTube / 手动'}[source_filter] }}
+                {% if recording_filters_active %} · 已筛选录播任务{% endif %}
             </span>
             <a href="{{ url_for('tasks') }}">清除筛选</a>
         </div>
@@ -91,7 +97,7 @@
                 <div class="d-flex align-items-center gap-2">
                     <span class="task-source-icon recording"><i class="bi bi-record-circle"></i></span>
                     <h2 id="recordingTasksTitle">直播录播任务</h2>
-                    <span class="badge rounded-pill text-bg-light">{{ recording_jobs|length }}</span>
+                    <span class="badge rounded-pill text-bg-light">{{ recording_pagination.total }}</span>
                 </div>
                 <p>斗鱼与哔哩哔哩录制完成后，在这里查看 ASS、AI 简介和投稿流水线。</p>
             </div>
@@ -99,6 +105,44 @@
                 <i class="bi bi-broadcast"></i> 直播录制
             </a>
         </div>
+
+        <form method="get" action="{{ url_for('tasks') }}" class="recording-task-filters" aria-label="筛选直播录播任务">
+            <input type="hidden" name="status" value="{{ queue_filter }}">
+            <input type="hidden" name="source" value="{{ source_filter }}">
+            <label class="recording-filter-search">
+                <span>关键词</span>
+                <input class="form-control form-control-sm" type="search" name="recording_q" value="{{ recording_keyword }}" placeholder="标题、文件名、任务编号、BV号">
+            </label>
+            <label>
+                <span>直播间</span>
+                <select class="form-select form-select-sm" name="recording_room">
+                    <option value="all">全部直播间</option>
+                    {% for room in recording_room_options %}<option value="{{ room.value }}" {% if recording_room == room.value %}selected{% endif %}>{{ room.name }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>任务类型</span>
+                <select class="form-select form-select-sm" name="recording_type">
+                    <option value="all" {% if recording_type == 'all' %}selected{% endif %}>全部</option>
+                    <option value="upload" {% if recording_type == 'upload' %}selected{% endif %}>自动投稿</option>
+                    <option value="record_only" {% if recording_type == 'record_only' %}selected{% endif %}>仅录制</option>
+                </select>
+            </label>
+            <label>
+                <span>时间</span>
+                <select class="form-select form-select-sm" name="recording_time">
+                    <option value="all" {% if recording_time == 'all' %}selected{% endif %}>全部时间</option>
+                    <option value="today" {% if recording_time == 'today' %}selected{% endif %}>今天</option>
+                    <option value="3d" {% if recording_time == '3d' %}selected{% endif %}>近3天</option>
+                    <option value="7d" {% if recording_time == '7d' %}selected{% endif %}>近7天</option>
+                    <option value="30d" {% if recording_time == '30d' %}selected{% endif %}>近30天</option>
+                </select>
+            </label>
+            <div class="recording-filter-actions">
+                <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> 筛选</button>
+                {% if recording_filters_active %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('tasks', status=queue_filter, source=source_filter) }}">重置</a>{% endif %}
+            </div>
+        </form>
 
         {% if recording_jobs %}
         <div class="modern-list recording-task-list">
@@ -154,6 +198,7 @@
                                             {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
                                         </div>
                                         <code class="recording-task-file">{{ job.video_name }}</code>
+                                        <span class="recording-task-number"><span>任务编号</span><code>{{ job.display_id or '未编号' }}</code></span>
                                     </div>
                                 </div>
                             </td>
@@ -288,6 +333,7 @@
                                     {% if job.record_only %}<span class="record-only-badge ms-1">仅录制</span>{% endif %}
                                 </div>
                                 <div class="small text-muted mt-1">{{ job.room_name }}</div>
+                                <span class="recording-task-number"><span>任务编号</span><code>{{ job.display_id or '未编号' }}</code></span>
                                 {% if job.record_only %}
                                 <div class="recording-no-upload mt-1"><i class="bi bi-hdd"></i> 无需投稿</div>
                                 {% else %}
@@ -338,6 +384,13 @@
             {% endfor %}
             </div>
         </div>
+        {% if recording_pagination.total_pages > 1 %}
+        <nav class="recording-pagination" aria-label="直播录播任务分页">
+            {% if recording_pagination.has_prev %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('tasks', page=pagination.page, recording_page=recording_pagination.prev_page, status=queue_filter, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}"><i class="bi bi-chevron-left"></i> 上一页</a>{% else %}<span></span>{% endif %}
+            <span>第 {{ recording_pagination.page }} / {{ recording_pagination.total_pages }} 页，共 {{ recording_pagination.total }} 条</span>
+            {% if recording_pagination.has_next %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('tasks', page=pagination.page, recording_page=recording_pagination.next_page, status=queue_filter, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}">下一页 <i class="bi bi-chevron-right"></i></a>{% else %}<span></span>{% endif %}
+        </nav>
+        {% endif %}
         {% else %}
         <div class="task-section-empty"><i class="bi bi-camera-video"></i><span>当前筛选条件下没有直播录播任务。</span></div>
         {% endif %}
@@ -414,13 +467,13 @@
             {%- set end_page = pagination.page + 2 if pagination.page + 2 < pagination.total_pages else pagination.total_pages -%}
             <div class="pagination pagination-sm mb-0" role="list">{{- '' -}}
             {%- if pagination.has_prev -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.prev_page, status=queue_filter, source=source_filter) }}" aria-label="上一页"><span aria-hidden="true">&laquo;</span></a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.prev_page, recording_page=recording_pagination.page, status=queue_filter, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}" aria-label="上一页"><span aria-hidden="true">&laquo;</span></a></div>{{- '' -}}
             {%- else -%}
                 <div class="page-item disabled" role="listitem"><span class="page-link" aria-label="上一页"><span aria-hidden="true">&laquo;</span></span></div>{{- '' -}}
             {%- endif -%}
 
             {%- if start_page > 1 -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=1, status=queue_filter, source=source_filter) }}">1</a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=1, recording_page=recording_pagination.page, status=queue_filter, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}">1</a></div>{{- '' -}}
                 {%- if start_page > 2 -%}
                     <div class="page-item disabled" role="listitem"><span class="page-link">...</span></div>{{- '' -}}
                 {%- endif -%}
@@ -430,7 +483,7 @@
                 {%- if page_num == pagination.page -%}
                     <div class="page-item active" role="listitem" aria-current="page"><span class="page-link">{{ page_num }}</span></div>{{- '' -}}
                 {%- else -%}
-                    <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=page_num, status=queue_filter, source=source_filter) }}">{{ page_num }}</a></div>{{- '' -}}
+                    <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=page_num, recording_page=recording_pagination.page, status=queue_filter, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}">{{ page_num }}</a></div>{{- '' -}}
                 {%- endif -%}
             {%- endfor -%}
 
@@ -438,11 +491,11 @@
                 {%- if end_page < pagination.total_pages - 1 -%}
                     <div class="page-item disabled" role="listitem"><span class="page-link">...</span></div>{{- '' -}}
                 {%- endif -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.total_pages, status=queue_filter, source=source_filter) }}">{{ pagination.total_pages }}</a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.total_pages, recording_page=recording_pagination.page, status=queue_filter, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}">{{ pagination.total_pages }}</a></div>{{- '' -}}
             {%- endif -%}
 
             {%- if pagination.has_next -%}
-                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.next_page, status=queue_filter, source=source_filter) }}" aria-label="下一页"><span aria-hidden="true">&raquo;</span></a></div>{{- '' -}}
+                <div class="page-item" role="listitem"><a class="page-link" href="{{ url_for('tasks', page=pagination.next_page, recording_page=recording_pagination.page, status=queue_filter, source=source_filter, recording_q=recording_keyword, recording_room=recording_room, recording_type=recording_type, recording_time=recording_time) }}" aria-label="下一页"><span aria-hidden="true">&raquo;</span></a></div>{{- '' -}}
             {%- else -%}
                 <div class="page-item disabled" role="listitem"><span class="page-link" aria-label="下一页"><span aria-hidden="true">&raquo;</span></span></div>{{- '' -}}
             {%- endif -%}
@@ -961,6 +1014,26 @@ html[data-theme="dark"] .task-filter-result { color: #9aabbe; border-top-color: 
 }
 .task-section-heading h2 { margin: 0; font-size: 1.05rem; font-weight: 700; }
 .task-section-heading p { margin: .35rem 0 0; color: #8490a4; font-size: .85rem; }
+.recording-task-filters {
+    display: grid;
+    grid-template-columns: minmax(240px, 1.6fr) repeat(3, minmax(135px, .75fr)) auto;
+    align-items: end;
+    gap: .7rem;
+    margin-bottom: 1rem;
+    padding: .85rem;
+    border: 1px solid #dfe7f0;
+    border-radius: 14px;
+    background: #f8fbfe;
+}
+.recording-task-filters label { min-width: 0; }
+.recording-task-filters label > span { display: block; margin-bottom: .3rem; color: #66758a; font-size: .72rem; font-weight: 700; }
+.recording-filter-actions { display: flex; gap: .4rem; white-space: nowrap; }
+.recording-task-number { display: flex; align-items: center; gap: .35rem; min-width: 0; margin-top: .28rem; color: #78869a; font-size: .68rem; }
+.recording-task-number > span { flex: 0 0 auto; }
+.recording-task-number code { overflow: hidden; color: #27658d; font-size: .7rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.recording-pagination { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .75rem; margin-top: 1rem; color: #728096; font-size: .78rem; text-align: center; }
+.recording-pagination > :last-child { justify-self: end; }
+.recording-pagination > :first-child { justify-self: start; }
 .standard-task-heading { margin-top: 1.5rem; }
 .task-source-icon {
     width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
@@ -1109,6 +1182,11 @@ html[data-theme="dark"] .recording-task-card.status-failed {
     background: #2b1b22;
     box-shadow: inset 4px 0 0 #ff5f73;
 }
+html[data-theme="dark"] .recording-task-filters { border-color: #2b3e50; background: #14212d; }
+html[data-theme="dark"] .recording-task-filters label > span,
+html[data-theme="dark"] .recording-pagination { color: #9aabbe; }
+html[data-theme="dark"] .recording-task-number { color: #91a2b6; }
+html[data-theme="dark"] .recording-task-number code { color: #75cfff; }
 html[data-theme="dark"] .youtube-account-cell strong,
 html[data-theme="dark"] .youtube-mobile-account strong { color: #e1ebf5; }
 html[data-theme="dark"] .youtube-task-meta,
@@ -1315,6 +1393,10 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     background: var(--studio-surface-soft);
 }
 @media (max-width: 767.98px) {
+    .recording-task-filters { grid-template-columns: 1fr 1fr; }
+    .recording-filter-search, .recording-filter-actions { grid-column: 1 / -1; }
+    .recording-filter-actions .btn { flex: 1; }
+    .recording-pagination { grid-template-columns: auto 1fr auto; }
     .recording-detail-stage > summary { grid-template-columns: 34px 1fr 14px; }
     .recording-detail-stage-status { grid-column: 2; }
     .recording-detail-stage > summary::after { grid-column: 3; grid-row: 1 / span 2; }
