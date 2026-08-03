@@ -767,7 +767,15 @@ def emit_recording_task_result_notification(
 def stdin_paths() -> list[Path]:
     if sys.stdin.isatty():
         return []
-    return [Path(line.strip()).expanduser() for line in sys.stdin if line.strip()]
+    # Rust hooks always write UTF-8 bytes.  A windowed Python executable on a
+    # Chinese Windows locale otherwise wraps stdin with the active ANSI code
+    # page and corrupts non-ASCII recording paths before Path sees them.
+    binary_stream = getattr(sys.stdin, "buffer", None)
+    if binary_stream is not None:
+        text = binary_stream.read().decode("utf-8")
+    else:
+        text = sys.stdin.read()
+    return [Path(line.strip()).expanduser() for line in text.splitlines() if line.strip()]
 
 
 def input_paths(values: list[str], include_stdin: bool = True) -> list[Path]:

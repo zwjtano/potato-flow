@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sqlite3
@@ -1067,6 +1068,22 @@ class BridgeTests(unittest.TestCase):
             xml.write_text("<i/>", encoding="utf-8")
             paths = bridge.input_paths([str(video), str(xml)], include_stdin=False)
             self.assertEqual(bridge.find_danmaku_xml(video, paths), xml.resolve())
+
+    def test_stdin_paths_decode_rust_hook_input_as_utf8_on_windows(self):
+        expected = Path(r"C:\录播\陪伴每一天.flv")
+
+        class HookInput:
+            def __init__(self, value: str):
+                self.buffer = io.BytesIO((value + "\n").encode("utf-8"))
+
+            @staticmethod
+            def isatty():
+                return False
+
+        with patch.object(sys, "stdin", HookInput(str(expected))):
+            received = bridge.stdin_paths()
+
+        self.assertEqual(received, [expected])
 
     def test_videos_shorter_than_five_minutes_never_create_a_task(self):
         for command in ("ingest", "record-only"):
