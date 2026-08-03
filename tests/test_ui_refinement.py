@@ -13,7 +13,7 @@ REFINEMENT_SOURCE = (
 class UiRefinementTests(unittest.TestCase):
     def test_refinement_layer_loads_after_page_specific_styles(self):
         self.assertIn("css/ui-refinement.css", BASE_SOURCE)
-        self.assertIn("?v={{ app_version }}-3", BASE_SOURCE)
+        self.assertIn("?v={{ app_version }}-4", BASE_SOURCE)
         self.assertLess(
             BASE_SOURCE.index("{% block extra_css %}"),
             BASE_SOURCE.index("css/ui-refinement.css"),

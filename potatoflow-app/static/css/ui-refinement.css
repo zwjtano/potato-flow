@@ -27,8 +27,7 @@
     --pf-shadow-float: 0 18px 54px rgba(26, 54, 82, .14);
 }
 
-/* Windows desktop ships one deliberate, high-contrast console theme. */
-:root, html[data-theme="dark"] {
+html[data-theme="dark"] {
     --pf-canvas: #0d141c;
     --pf-surface: #121d27;
     --pf-surface-soft: #16222d;
@@ -45,10 +44,10 @@
     --pf-shadow-float: 0 18px 54px rgba(0, 0, 0, .34);
 }
 
-.app-theme-toggle, .app-mobile-header, #mobileNav { display: none !important; }
+.app-theme-toggle { display: inline-grid !important; }
 body.app-shell-body { min-width: 0; background: var(--pf-canvas); overflow-x: hidden; }
-.app-topbar { background: rgba(13, 20, 28, .94) !important; border-color: var(--pf-line) !important; }
-.app-sidebar { width: 224px; background: #0b1219; box-shadow: 1px 0 0 var(--pf-line); }
+.app-topbar { background: color-mix(in srgb, var(--pf-surface) 94%, transparent) !important; border-color: var(--pf-line) !important; }
+.app-sidebar { width: 224px; background: var(--pf-surface); box-shadow: 1px 0 0 var(--pf-line); }
 .app-frame { margin-left: 224px; }
 .app-sidebar,.app-frame{transition:width .18s ease,margin-left .18s ease}.sidebar-collapse-button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border:1px solid var(--pf-line);border-radius:8px;background:transparent;color:var(--pf-copy)}body.sidebar-collapsed .app-sidebar{width:72px}body.sidebar-collapsed .app-frame{margin-left:72px}body.sidebar-collapsed .app-brand span,body.sidebar-collapsed .app-nav-label,body.sidebar-collapsed .app-nav-link span,body.sidebar-collapsed .app-sidebar-status span,body.sidebar-collapsed .app-release-meta,body.sidebar-collapsed .sidebar-collapse-button span{display:none}body.sidebar-collapsed .app-brand,body.sidebar-collapsed .app-nav-link{justify-content:center}body.sidebar-collapsed .sidebar-collapse-button{justify-content:center}
 .app-nav-link:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {

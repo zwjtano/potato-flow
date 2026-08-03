@@ -7,9 +7,23 @@
     <title>{% block title %}PotatoFlow · 土豆录播姬{% endblock %}</title>
     <script>
     (function () {
-        document.documentElement.dataset.theme = 'dark';
-        document.documentElement.dataset.themePreference = 'dark';
-        document.documentElement.style.colorScheme = 'dark';
+        const allowedThemes = ['light', 'dark', 'auto', 'schedule'];
+        let preference = 'auto';
+        try {
+            const stored = localStorage.getItem('potatoflow-theme');
+            if (allowedThemes.includes(stored)) preference = stored;
+        } catch (_) {
+        }
+        let resolved = preference;
+        if (preference === 'auto') {
+            resolved = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        } else if (preference === 'schedule') {
+            const hour = new Date().getHours();
+            resolved = hour >= 19 || hour < 7 ? 'dark' : 'light';
+        }
+        document.documentElement.dataset.theme = resolved === 'dark' ? 'dark' : 'light';
+        document.documentElement.dataset.themePreference = preference;
+        document.documentElement.style.colorScheme = resolved === 'dark' ? 'dark' : 'light';
     }());
     </script>
     <!-- 使用本地Bootstrap CSS -->
@@ -17,11 +31,11 @@
     <!-- 使用本地Bootstrap Icons -->
     <link rel="stylesheet" href="{{ url_for('static', filename='lib/icons/bootstrap-icons.css') }}">
     <!-- 自定义样式 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ app_version }}-9">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ app_version }}-10">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
     {% block extra_css %}{% endblock %}
     <!-- 全局界面精修层：放在页面样式之后，统一跨页面视觉语言 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/ui-refinement.css') }}?v={{ app_version }}-3">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/ui-refinement.css') }}?v={{ app_version }}-4">
 </head>
 <body class="app-shell-body {% block body_class %}{% endblock %}" data-app-version="{{ app_version }}">
     <aside class="app-sidebar" id="appSidebar">
@@ -39,10 +53,8 @@
             <a class="app-nav-link {% if request.path.startswith('/bilibili-archives') %}active{% endif %}" href="{{ url_for('bilibili_archives') }}" aria-label="投稿中心" title="投稿中心"><i class="bi bi-collection-play"></i><span>投稿中心</span></a>
             <a class="app-nav-link {% if request.path.startswith('/tasks') or request.path.startswith('/task/') %}active{% endif %}" href="{{ url_for('tasks') }}" aria-label="任务中心" title="任务中心"><i class="bi bi-diagram-3"></i><span>任务中心</span></a>
             <a class="app-nav-link {% if request.path.startswith('/manual_review') %}active{% endif %}" href="{{ url_for('manual_review') }}" aria-label="审核工作台" title="审核工作台"><i class="bi bi-shield-check"></i><span>审核工作台</span></a>
-            <a class="app-nav-link" href="{{ url_for('live_recording') }}#recording-files" aria-label="文件库" title="文件库"><i class="bi bi-folder2-open"></i><span>文件库</span></a>
             <div class="app-nav-label">系统</div>
             <a class="app-nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}" aria-label="系统设置" title="系统设置"><i class="bi bi-sliders2"></i><span>系统设置</span></a>
-            <a class="app-nav-link {% if request.path == url_for('desktop_diagnostics') %}active{% endif %}" href="{{ url_for('desktop_diagnostics') }}" aria-label="诊断与日志" title="诊断与日志"><i class="bi bi-activity"></i><span>诊断与日志</span></a>
         </nav>
         <div class="app-sidebar-footer">
             <button class="sidebar-collapse-button" id="sidebarCollapse" type="button" aria-label="折叠侧边导航" title="折叠侧边导航"><i class="bi bi-layout-sidebar-inset"></i><span>折叠导航</span></button>
@@ -86,7 +98,7 @@
         {% elif request.path.startswith('/settings') %}{% set shell_section = '系统设置' %}{% set shell_icon = 'bi-sliders2' %}{% endif %}
         <header class="app-topbar">
             <div class="app-breadcrumb"><span>PotatoFlow</span><i class="bi bi-chevron-right"></i><strong><i class="bi {{ shell_icon }}"></i>{{ shell_section }}</strong></div>
-            <div class="app-topbar-status"><span class="topbar-runtime" id="topbarRuntime"><i class="bi bi-circle-fill"></i><span>录制核心检查中</span></span><span class="topbar-count" id="topbarRecording">录制 0</span><span class="topbar-disk" id="topbarDisk">磁盘 --</span><button class="app-theme-toggle" type="button" data-theme-toggle aria-label="切换为暗黑模式" title="切换为暗黑模式"><i class="bi bi-moon-stars"></i></button><time id="appClock"></time>{% if show_logout_in_nav %}<span class="app-admin-account" title="管理员账号 {{ current_admin_username }}">{% if admin_avatar_url %}<img src="{{ admin_avatar_url }}" alt="">{% else %}<i class="bi bi-person-circle"></i>{% endif %}<span>{{ current_admin_username }}</span></span><a href="{{ url_for('logout') }}" title="退出登录" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}</div>
+            <div class="app-topbar-status"><button class="app-theme-toggle" type="button" data-theme-toggle aria-label="切换为暗黑模式" title="切换为暗黑模式"><i class="bi bi-moon-stars"></i></button><time id="appClock"></time>{% if show_logout_in_nav %}<span class="app-admin-account" title="管理员账号 {{ current_admin_username }}">{% if admin_avatar_url %}<img src="{{ admin_avatar_url }}" alt="">{% else %}<i class="bi bi-person-circle"></i>{% endif %}<span>{{ current_admin_username }}</span></span><a href="{{ url_for('logout') }}" title="退出登录" aria-label="退出登录"><i class="bi bi-box-arrow-right"></i></a>{% endif %}</div>
         </header>
         <main class="app-main {% block main_class %}{% endblock %}">
         {% with messages = get_flashed_messages(with_categories=true) %}

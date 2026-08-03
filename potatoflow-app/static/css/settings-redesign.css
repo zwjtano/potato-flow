@@ -1,0 +1,456 @@
+/* Settings workspace redesign: compact, section-first, and button-driven. */
+.settings-redesign-page .app-main {
+    padding: 18px 20px 28px;
+}
+
+.settings-redesign-page .settings-container {
+    width: min(100%, 1380px);
+    margin: 0 auto;
+}
+
+.settings-redesign-page .settings-page-header {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(280px, 1fr) minmax(360px, 520px);
+    align-items: end;
+    gap: 24px;
+    margin: 0 0 12px;
+    padding: 4px 2px 16px;
+    border: 0;
+    border-bottom: 1px solid var(--settings-line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.settings-redesign-page .settings-title-block .page-eyebrow {
+    margin-bottom: 5px;
+    font-size: 9px;
+}
+
+.settings-redesign-page .settings-container .settings-title-block h1 {
+    font-size: 24px;
+    letter-spacing: -.025em;
+}
+
+.settings-redesign-page .settings-title-block .section-lead {
+    max-width: 580px;
+    font-size: 11px;
+}
+
+.settings-redesign-page .settings-header-tools {
+    gap: 8px;
+}
+
+.settings-redesign-page .settings-health-list {
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.settings-redesign-page .settings-health-item {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 9px;
+}
+
+.settings-redesign-page .settings-search-bar .input-group {
+    border-radius: 8px;
+    background: var(--settings-surface);
+}
+
+.settings-redesign-page .settings-search-bar .input-group-text,
+.settings-redesign-page .settings-search-bar .form-control,
+.settings-redesign-page .settings-search-bar .btn {
+    min-height: 36px;
+    background: transparent;
+}
+
+.settings-redesign-page .settings-layout {
+    display: block;
+}
+
+.settings-redesign-page .settings-appearance-strip {
+    margin-bottom: 12px;
+}
+
+.settings-redesign-page .settings-appearance-strip .settings-card {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    align-items: stretch;
+}
+
+.settings-redesign-page .settings-appearance-strip .settings-card-header {
+    border-right: 1px solid var(--settings-line);
+    border-bottom: 0;
+}
+
+.settings-redesign-page .settings-appearance-strip .settings-card-body {
+    justify-content: center;
+}
+
+.settings-redesign-page .settings-navigation-panel {
+    position: sticky;
+    top: 54px;
+    z-index: 20;
+    overflow: visible;
+    margin-bottom: 12px;
+    padding: 5px;
+    border: 1px solid var(--settings-line);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--settings-surface) 94%, transparent);
+    box-shadow: 0 7px 22px rgba(15, 23, 42, .07);
+    backdrop-filter: blur(14px);
+}
+
+.settings-redesign-page .settings-nav-heading {
+    display: none;
+}
+
+.settings-redesign-page .settings-nav {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    padding: 0;
+}
+
+.settings-redesign-page .settings-layout .settings-nav .nav-link {
+    display: flex;
+    min-height: 38px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 7px;
+    box-shadow: none;
+}
+
+.settings-redesign-page .settings-layout .settings-nav .nav-link:hover {
+    border: 0;
+}
+
+.settings-redesign-page .settings-layout .settings-nav .nav-link.active {
+    color: #eafcff;
+    border: 0;
+    background: #087f9f;
+    box-shadow: 0 3px 10px rgba(8, 127, 159, .22);
+}
+
+.settings-redesign-page .settings-nav-icon {
+    display: inline-grid;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+}
+
+.settings-redesign-page .settings-layout .settings-nav .nav-link.active .settings-nav-icon {
+    color: inherit;
+    border: 0;
+    background: rgba(255, 255, 255, .1);
+}
+
+.settings-redesign-page .settings-layout .settings-nav .settings-nav-icon i {
+    font-size: 12px;
+}
+
+.settings-redesign-page .settings-nav-copy {
+    display: block;
+}
+
+.settings-redesign-page .settings-nav-copy strong {
+    font-size: 10px;
+}
+
+.settings-redesign-page .settings-nav-copy small,
+.settings-redesign-page .settings-nav-state {
+    display: none !important;
+}
+
+.settings-redesign-page .settings-nav-dirty {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    font-size: 8px;
+}
+
+.settings-redesign-page .settings-content-column {
+    width: 100%;
+}
+
+.settings-redesign-page .settings-section {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.settings-redesign-page .settings-section-header {
+    display: flex;
+    min-height: 0;
+    margin: 0 0 10px;
+    padding: 12px 2px 10px;
+    border-bottom: 1px solid var(--settings-line);
+}
+
+.settings-redesign-page .settings-section h3 {
+    font-size: 16px;
+}
+
+.settings-redesign-page .settings-section-header .section-lead {
+    font-size: 9px;
+}
+
+.settings-redesign-page .settings-stack,
+.settings-redesign-page .settings-pane-grid {
+    gap: 10px;
+}
+
+.settings-redesign-page .settings-pane-grid {
+    --bs-gutter-x: 10px;
+    --bs-gutter-y: 10px;
+}
+
+.settings-redesign-page .settings-card {
+    overflow: hidden;
+    border: 1px solid var(--settings-line);
+    border-radius: 9px;
+    background: var(--settings-surface);
+    box-shadow: none;
+}
+
+.settings-redesign-page .settings-card-header {
+    min-height: 48px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--settings-line);
+    background: var(--settings-soft);
+}
+
+.settings-redesign-page .settings-card-header h4 {
+    margin-top: 1px;
+    font-size: 11px;
+}
+
+.settings-redesign-page .section-eyebrow {
+    font-size: 7px;
+}
+
+.settings-redesign-page .settings-card-body {
+    gap: 9px;
+    padding: 12px;
+}
+
+.settings-redesign-page .settings-card-body .row {
+    --bs-gutter-x: 10px;
+    --bs-gutter-y: 10px;
+}
+
+.settings-redesign-page .settings-subcard,
+.settings-redesign-page .settings-toggle-field,
+.settings-redesign-page .settings-option-card {
+    padding: 10px;
+    border-radius: 7px;
+}
+
+.settings-redesign-page .settings-toggle-field {
+    gap: 7px;
+}
+
+.settings-redesign-page .settings-subcard-header {
+    margin-bottom: 8px;
+}
+
+.settings-redesign-page .settings-subcard-header h5 {
+    font-size: 11px;
+}
+
+.settings-redesign-page .settings-container .form-control:not(.form-control-sm),
+.settings-redesign-page .settings-container .form-select:not(.form-select-sm) {
+    min-height: 34px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 10px;
+}
+
+.settings-redesign-page .settings-container textarea.form-control:not(.form-control-sm) {
+    min-height: 76px;
+}
+
+.settings-redesign-page .settings-card-body .form-label {
+    margin-bottom: 4px;
+    font-size: 9px;
+}
+
+.settings-redesign-page .help-text,
+.settings-redesign-page .form-text {
+    margin-top: 4px;
+    font-size: 8px;
+    line-height: 1.45;
+}
+
+.settings-redesign-page .settings-note,
+.settings-redesign-page .alert {
+    padding: 9px 10px;
+    border-radius: 7px;
+    font-size: 9px;
+}
+
+.settings-redesign-page .settings-status-badge {
+    padding: 3px 6px;
+    font-size: 7px;
+}
+
+.settings-redesign-page .theme-preference-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.settings-redesign-page .theme-preference-option {
+    min-height: 52px;
+    grid-template-columns: 26px minmax(0, 1fr) 14px;
+    gap: 8px;
+    padding: 8px 9px;
+    border-radius: 7px;
+}
+
+.settings-redesign-page .theme-preference-option > i:first-child {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.settings-redesign-page .settings-boolean-control {
+    min-height: 32px;
+}
+
+.settings-redesign-page .settings-boolean-title {
+    font-size: 10px;
+}
+
+.settings-redesign-page .settings-boolean-actions {
+    flex: 0 0 auto;
+}
+
+.settings-redesign-page .settings-boolean-choice {
+    min-width: 42px;
+    min-height: 25px;
+    padding: 4px 8px;
+    font-size: 9px;
+}
+
+.settings-redesign-page .settings-actions-bar {
+    bottom: 8px;
+    min-height: 50px;
+    margin-top: 10px;
+    padding: 7px 8px 7px 11px;
+    border-radius: 8px;
+}
+
+.settings-redesign-page .settings-actions-bar .btn {
+    min-height: 32px;
+    padding: 6px 10px;
+}
+
+html[data-theme="dark"] .settings-redesign-page .settings-navigation-panel {
+    background: rgba(23, 33, 44, .94);
+}
+
+html[data-theme="dark"] .settings-redesign-page .settings-layout .settings-nav .nav-link.active {
+    color: #e7fbff;
+    background: #087f9f;
+}
+
+html[data-theme="dark"] .settings-redesign-page .settings-card-header {
+    background: #111a24;
+}
+
+@media (max-width: 991.98px) {
+    .settings-redesign-page .settings-page-header {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .settings-redesign-page .settings-health-list {
+        justify-content: flex-start;
+    }
+
+    .settings-redesign-page .settings-navigation-panel {
+        top: 50px;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .settings-redesign-page .settings-navigation-panel::-webkit-scrollbar {
+        display: none;
+    }
+
+    .settings-redesign-page .settings-nav {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        width: max-content;
+        min-width: 100%;
+    }
+
+    .settings-redesign-page .settings-layout .settings-nav .nav-link {
+        min-width: 132px;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .settings-redesign-page .app-main {
+        padding: 12px 10px 20px;
+    }
+
+    .settings-redesign-page .settings-page-header {
+        padding-bottom: 12px;
+    }
+
+    .settings-redesign-page .settings-health-list {
+        display: flex;
+        gap: 8px 12px;
+    }
+
+    .settings-redesign-page .settings-layout .settings-nav .nav-link {
+        min-width: 118px;
+    }
+
+    .settings-redesign-page .theme-preference-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-redesign-page .settings-appearance-strip .settings-card {
+        display: block;
+    }
+
+    .settings-redesign-page .settings-appearance-strip .settings-card-header {
+        border-right: 0;
+        border-bottom: 1px solid var(--settings-line);
+    }
+
+    .settings-redesign-page .settings-card-body {
+        padding: 10px;
+    }
+
+    .settings-redesign-page .settings-boolean-control {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .settings-redesign-page .settings-boolean-actions {
+        width: 100%;
+    }
+
+    .settings-redesign-page .settings-boolean-choice {
+        flex: 1 1 50%;
+    }
+
+    .settings-redesign-page .settings-actions-bar {
+        position: static;
+    }
+}

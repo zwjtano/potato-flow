@@ -9,6 +9,7 @@ import mimetypes
 import re
 import shutil
 import secrets
+import subprocess
 import sys
 import time
 import uuid
@@ -2013,6 +2014,44 @@ def bilibili_archive_replacements():
 @login_required
 def live_recording_files():
     return jsonify(live_recorder_manager.recording_files())
+
+
+@app.route('/live-recording/files/open-folder', methods=['POST'])
+@login_required
+def live_recording_files_open_folder():
+    if request.remote_addr not in {'127.0.0.1', '::1'}:
+        return jsonify({
+            'ok': False,
+            'error': '打开文件夹仅支持在 PotatoFlow 所在电脑本机操作。',
+        }), 403
+
+    try:
+        path = validate_recordings_dir(load_config().get('RECORDINGS_PATH', 'docker-data/recordings'))
+        if sys.platform == 'win32':
+            os.startfile(str(path))
+        elif sys.platform == 'darwin':
+            subprocess.Popen(
+                ['open', str(path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        elif os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'):
+            subprocess.Popen(
+                ['xdg-open', str(path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            return jsonify({
+                'ok': False,
+                'error': f'当前服务器没有可用的桌面文件管理器。录播目录：{path}',
+            }), 409
+    except (OSError, RecorderConfigError) as exc:
+        return jsonify({'ok': False, 'error': f'无法打开录播文件夹：{exc}'}), 500
+
+    return jsonify({'ok': True, 'message': '已在系统文件管理器中打开录播文件夹。', 'path': str(path)})
 
 
 @app.route('/live-recording/files/<file_id>/download')

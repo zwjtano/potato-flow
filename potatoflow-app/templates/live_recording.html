@@ -552,6 +552,7 @@
         <label class="file-search"><i class="bi bi-search"></i><input type="search" data-role="file-search" placeholder="搜索文件名或目录" autocomplete="off"></label>
         <select class="form-select" data-role="file-room" aria-label="按直播间筛选"><option value="">全部直播间</option>{% for room in rooms %}<option value="{{ room.id }}">{{ room.name }}</option>{% endfor %}<option value="unmatched">未匹配直播间</option></select>
         <select class="form-select" data-role="file-type" aria-label="按文件类型筛选"><option value="">全部类型</option><option value="video">录播视频</option><option value="xml">XML 弹幕</option><option value="ass">ASS 字幕</option></select>
+        <button class="btn btn-primary" type="button" data-action="open-recordings-folder"><i class="bi bi-folder2-open"></i> 打开文件夹</button>
         <button class="btn btn-light border" type="button" data-action="refresh-files"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
     </div>
     <div class="file-batch-toolbar">
@@ -955,6 +956,26 @@ document.addEventListener('DOMContentLoaded', function () {
             updateFileSelectionControls();
         }
     }
+    async function openRecordingsFolder(event) {
+        const button = event.currentTarget;
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 正在打开';
+        try {
+            const response = await fetch('/live-recording/files/open-folder', {
+                method: 'POST',
+                headers: {'Accept': 'application/json'},
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '无法打开录播文件夹');
+            window.PotatoUI.notify(result.message || '已打开录播文件夹。', 'success');
+        } catch (error) {
+            window.PotatoUI.notify(error.message, 'danger');
+        } finally {
+            button.disabled = false;
+            button.innerHTML = original;
+        }
+    }
     async function loadFiles(options = {}) {
         if (!filesModal || recordingFilesRefreshInFlight || document.hidden) return;
         const silent = Boolean(options?.silent);
@@ -1175,6 +1196,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
+    filesModal?.querySelector('[data-action="open-recordings-folder"]')?.addEventListener('click', openRecordingsFolder);
     filesModal?.querySelector('[data-action="delete-selected-files"]')?.addEventListener('click', deleteSelectedFiles);
     filesModal?.querySelectorAll('[data-role^="file-select-all"]').forEach(input => input.addEventListener('change', selectVisibleFiles));
     filesModal?.querySelector('[data-role="file-search"]')?.addEventListener('input', renderFiles);
