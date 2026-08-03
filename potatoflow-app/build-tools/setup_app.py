@@ -88,7 +88,6 @@ def configure_windows_runtime() -> tuple[Path, Path]:
     layout = ensure_windows_layout(resolve_windows_runtime(sys.executable, resource_root()))
     configure_runtime_environment(layout)
     data_root = layout.data_root
-    os.environ.setdefault("PORT", "5001")
     os.chdir(data_root)
     return resource_root(), data_root
 
@@ -145,13 +144,34 @@ def _http_json(url: str, *, token: str = "", method: str = "GET", timeout: float
         return json.loads(response.read().decode("utf-8"))
 
 
-def _wait_for_health(process: subprocess.Popen, url: str, timeout: float = 120) -> None:
+def _select_server_port(requested: str | None = None) -> int:
+    """Return an available loopback port instead of trusting a stale fixed-port service."""
+    requested_port = int(requested or 0)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", requested_port))
+        return int(probe.getsockname()[1])
+
+
+def _wait_for_health(
+    process: subprocess.Popen,
+    url: str,
+    *,
+    token: str,
+    instance_id: str,
+    timeout: float = 120,
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError(f"PotatoFlow 内部服务启动失败（{process.returncode}）")
         try:
-            if _http_json(f"{url}/healthz").get("status") == "ok":
+            health = _http_json(f"{url}/healthz")
+            desktop = _http_json(f"{url}/api/desktop/status", token=token)
+            if (
+                health.get("status") == "ok"
+                and health.get("desktop_instance") == instance_id
+                and desktop.get("desktop_instance") == instance_id
+            ):
                 return
         except Exception:
             time.sleep(1)
@@ -181,11 +201,14 @@ def run_desktop(data_root: Path) -> int:
 
     import pystray
     import webview
-    port = int(os.environ.get("PORT", "5001"))
+    port = _select_server_port(os.environ.get("PORT"))
     url = f"http://127.0.0.1:{port}"
     token = secrets.token_urlsafe(32)
+    instance_id = secrets.token_urlsafe(24)
     child_env = dict(os.environ)
+    child_env["PORT"] = str(port)
     child_env["POTATOFLOW_DESKTOP_TOKEN"] = token
+    child_env["POTATOFLOW_DESKTOP_INSTANCE_ID"] = instance_id
     child_env["POTATOFLOW_DESKTOP_MODE"] = "1"
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     process = subprocess.Popen(
@@ -196,7 +219,7 @@ def run_desktop(data_root: Path) -> int:
     )
     process_job = assign_kill_on_close_job(process)
     try:
-        _wait_for_health(process, url)
+        _wait_for_health(process, url, token=token, instance_id=instance_id)
     except Exception:
         process.terminate()
         raise
