@@ -79,6 +79,18 @@ RECORDING_FILE_SUFFIXES = {
 }
 DEFAULT_RECORDING_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_RECORDING_DESCRIPTION_TEMPLATE = "{recording_intro}"
+
+
+def _background_process_kwargs() -> dict[str, Any]:
+    """Return Windows flags that keep console workers invisible and controllable."""
+    if os.name != "nt":
+        return {"start_new_session": True}
+    return {
+        "creationflags": (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    }
 LEGACY_RECORDING_TITLE_TEMPLATES = {
     "",
     "{stem}",
@@ -2527,9 +2539,9 @@ class LiveRecorderManager:
                 cwd=RECORDER_RUNTIME_DIR,
                 stdout=self._log_handle,
                 stderr=subprocess.STDOUT,
-                start_new_session=True,
                 text=True,
                 env=process_env,
+                **_background_process_kwargs(),
             )
             atomic_write_text(PID_PATH, str(self._process.pid))
             time.sleep(0.25)
@@ -5236,7 +5248,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 subprocess.Popen(
                     command,
                     cwd=APP_ROOT, stdout=log_handle, stderr=subprocess.STDOUT,
-                    start_new_session=True, close_fds=True,
+                    close_fds=True, **_background_process_kwargs(),
                 )
         except OSError as exc:
             if claimed:

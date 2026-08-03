@@ -23,7 +23,7 @@ import requests
 from shutil import which as _which
 
 from .config_manager import load_config
-from .utils import get_app_root_dir, get_resource_root_dir
+from .utils import get_app_root_dir, get_app_subdir, get_resource_root_dir
 
 log = logging.getLogger(__name__)
 
@@ -169,8 +169,11 @@ def download_ffmpeg_bundled(
         log_obj.debug("Skipping ffmpeg auto-download on non-Windows platform")
         return None
 
-    app_root = get_resource_root_dir()
-    target_dir = os.path.join(app_root, 'ffmpeg')
+    # PyInstaller resources live below Program Files in an installed build and
+    # are intentionally read-only.  Missing runtime tools must be downloaded
+    # into the per-user data tree instead.
+    app_root = get_app_root_dir()
+    target_dir = get_app_subdir('ffmpeg')
     os.makedirs(target_dir, exist_ok=True)
 
     ffmpeg_exe = os.path.join(target_dir, 'ffmpeg.exe')
@@ -366,18 +369,16 @@ def _resolve_ffmpeg_path(
 
     search_order: list[tuple[str, Optional[str]]] = []
 
+    env_candidate = _resolve_from_location(os.environ.get('FFMPEG_LOCATION'), 'ffmpeg')
+    if env_candidate:
+        search_order.append(('runtime', env_candidate))
+
     config_candidate = _resolve_from_location(config.get('FFMPEG_LOCATION'), 'ffmpeg')
     if config_candidate:
         search_order.append(('config', config_candidate))
 
     for candidate in _bundled_candidates('ffmpeg'):
         search_order.append(('bundled', candidate))
-
-    auto_download = config.get('FFMPEG_AUTO_DOWNLOAD', True)
-    if os.name == 'nt' and auto_download:
-        downloaded = download_ffmpeg_bundled(log_obj, progress_callback=progress_callback)
-        if downloaded:
-            search_order.append(('downloaded', downloaded))
 
     if allow_system:
         which_target = 'ffmpeg.exe' if os.name == 'nt' else 'ffmpeg'
@@ -390,7 +391,7 @@ def _resolve_ffmpeg_path(
             continue
         if source != 'system' and not os.path.exists(candidate):
             continue
-        if progress_callback and source in ('downloaded', 'bundled', 'config'):
+        if progress_callback and source in ('downloaded', 'bundled', 'config', 'runtime'):
             progress_callback({
                 'stage': 'verifying_ffmpeg',
                 'message': '正在验证 FFmpeg',
@@ -405,6 +406,18 @@ def _resolve_ffmpeg_path(
             _META_CACHE['platform'] = platform.platform()
             log_obj.info("Using %s ffmpeg: %s", source, candidate)
             return candidate
+
+    # Only download after every configured, packaged and system candidate has
+    # actually failed validation.  This avoids writes and network traffic in a
+    # normal installed build where bin/ffmpeg.exe is already present.
+    auto_download = config.get('FFMPEG_AUTO_DOWNLOAD', True)
+    if os.name == 'nt' and auto_download:
+        downloaded = download_ffmpeg_bundled(log_obj, progress_callback=progress_callback)
+        if downloaded and is_ffmpeg_usable(downloaded, log_obj):
+            _META_CACHE['source'] = 'downloaded'
+            _META_CACHE['platform'] = platform.platform()
+            log_obj.info("Using downloaded ffmpeg: %s", downloaded)
+            return downloaded
 
     log_obj.error("No usable ffmpeg binary found; checked bundled and system paths")
     return None
