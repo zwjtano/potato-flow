@@ -250,6 +250,7 @@ def healthz():
         'runtime_mode': os.environ.get('POTATOFLOW_RUNTIME_MODE', 'source'),
         'architecture': os.environ.get('PROCESSOR_ARCHITECTURE') or os.environ.get('PROCESSOR_ARCHITEW6432') or '',
         'recorder_core_version': '1.2.2',
+        'desktop_instance': os.environ.get('POTATOFLOW_DESKTOP_INSTANCE_ID', ''),
     })
 
 
@@ -271,6 +272,7 @@ def desktop_status():
         return jsonify({'error': 'forbidden'}), 403
     rooms = live_recorder_manager.rooms_with_status()
     return jsonify({
+        'desktop_instance': os.environ.get('POTATOFLOW_DESKTOP_INSTANCE_ID', ''),
         'recording': any(bool(item.get('runtime', {}).get('recording')) for item in rooms),
         'rooms': [
             str(item.get('name') or '')

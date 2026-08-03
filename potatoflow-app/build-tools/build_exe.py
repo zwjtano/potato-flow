@@ -209,7 +209,9 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
+CloseApplicationsFilter=PotatoFlow.exe
 RestartApplications=no
+AppMutex=Local\\PotatoFlowDesktop-v1
 
 [Files]
 Source: "{str(BUNDLE_DIR)!s}\\*"; DestDir: "{{app}}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -225,6 +227,9 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Registry]
 Root: HKCU; Subkey: "Software\\Microsoft\\Windows\\CurrentVersion\\Run"; ValueName: "PotatoFlow"; Flags: uninsdeletevalue dontcreatekey
 
+[UninstallDelete]
+Type: filesandordirs; Name: "{{app}}\\*"
+
 [Run]
 Filename: "{{tmp}}\\{webview_installer.name}"; Parameters: "/silent /install"; StatusMsg: "正在安装 Microsoft WebView2 Runtime……"; Flags: waituntilterminated; Check: not IsWebView2Installed
 Filename: "{{app}}\\PotatoFlow.exe"; Description: "启动 PotatoFlow"; Flags: nowait postinstall skipifsilent
@@ -234,6 +239,16 @@ function IsWebView2Installed: Boolean;
 begin
   Result := DirExists(ExpandConstant('{{pf32}}\\Microsoft\\EdgeWebView\\Application')) or
             DirExists(ExpandConstant('{{localappdata}}\\Microsoft\\EdgeWebView\\Application'));
+end;
+
+function InitializeUninstall: Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{{sys}}\\taskkill.exe'), '/F /T /IM PotatoFlow.exe', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+  Result := True;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -249,9 +264,19 @@ begin
     DelTree(InternalData, True, True, True);
   if MsgBox('录播和导出默认永久保留。是否继续查看删除确认？' + #13#10 + UserFiles,
     mbConfirmation, MB_YESNO) = IDYES then
-    if MsgBox('将删除该目录中的全部录播、XML、ASS、封面和导出，无法恢复：' + #13#10 + UserFiles,
+    if MsgBox('仅删除 recordings 和 exports 中的录播、XML、ASS、封面及导出，无法恢复：' + #13#10 + UserFiles,
       mbError, MB_YESNO) = IDYES then
-      DelTree(UserFiles, True, True, True);
+    begin
+      if DirExists(UserFiles + '\\.git') or
+         (FileExists(UserFiles + '\\Dockerfile') and DirExists(UserFiles + '\\potatoflow-app')) then
+        MsgBox('检测到源码仓库，已拒绝清理该目录。', mbError, MB_OK)
+      else
+      begin
+        DelTree(UserFiles + '\\recordings', True, True, True);
+        DelTree(UserFiles + '\\exports', True, True, True);
+        RemoveDir(UserFiles);
+      end;
+    end;
 end;
 '''
     INNO_PATH.write_text(script, encoding="utf-8-sig")
