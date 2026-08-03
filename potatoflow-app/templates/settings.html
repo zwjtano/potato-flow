@@ -1,6 +1,10 @@
 {% extends 'base.html' %}
 
 {% block title %}PotatoFlow - 系统设置{% endblock %}
+{% block body_class %}settings-redesign-page{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings-redesign.css') }}?v={{ app_version }}-1">
+{% endblock %}
 
 {% block content %}
 {% set default_target = 'bilibili' %}
@@ -182,7 +186,7 @@
                                                 <div class="settings-field mb-2">
                                                     <div>
                                                         <strong>斗鱼直播数据</strong>
-                                                        <p class="help-text mb-0">按单次录播 XML 的绝对时间整理礼物、在线人数与 DOTA2 对局数据；关闭总开关后后台停止采集。</p>
+                                                        <p class="help-text mb-0">按单次录播 XML 的绝对时间整理礼物、在线人数与 DOTA2 对局数据；设为停用后后台停止采集。</p>
                                                     </div>
                                                 </div>
                                                 <div class="settings-inline-options">
@@ -563,7 +567,7 @@
                                                         <div class="form-group">
                                                             <label for="network-proxy-url" class="form-label">代理地址（可选）</label>
                                                             <input type="text" id="network-proxy-url" name="NETWORK_PROXY_URL" value="{{ config.get('NETWORK_PROXY_URL', '') }}" class="form-control" autocomplete="off" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
-                                                            <div class="form-text">YouTube 下载、YouTube 监控 API 和 Telegram 共用这一处代理。留空时全部直连；YouTube 是否使用代理仍由各自开关控制。</div>
+                                                            <div class="form-text">YouTube 下载、YouTube 监控 API 和 Telegram 共用这一处代理。留空时全部直连；YouTube 是否使用代理仍由各自的启用/停用按钮控制。</div>
                                                         </div>
                                                     </div>
                                                     <div class="col-md-6">
@@ -1492,7 +1496,7 @@
                                                         </div>
                                                     </div>
                                                     <div class="col-12">
-                                                        <p class="help-text mb-0">自动化流程在开启字幕翻译时会下载字幕；勾选后还会额外尝试下载 YouTube 自动生成字幕，适用于原视频没有人工字幕的情况。</p>
+                                                        <p class="help-text mb-0">自动化流程在启用字幕翻译时会下载字幕；设为启用后还会额外尝试下载 YouTube 自动生成字幕，适用于原视频没有人工字幕的情况。</p>
                                                     </div>
                                                     <div class="col-md-4">
                                                         <div class="form-group">
@@ -1830,7 +1834,7 @@
                                                         扫码登录失败
                                                     </label>
                                                 </div>
-                                                <p class="help-text mt-3 mb-0">事件开关为全局共享。已启用但凭据不完整的渠道不会阻塞主流程，只会跳过发送。</p>
+                                                <p class="help-text mt-3 mb-0">事件启停状态为全局共享。已启用但凭据不完整的渠道不会阻塞主流程，只会跳过发送。</p>
                                             </div>
                                         </article>
                                     </div>
@@ -2430,6 +2434,204 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    const settingsTabContent = document.getElementById('settings-tabContent');
+    const settingsNav = document.getElementById('settings-nav');
+    const settingsLayout = document.querySelector('.settings-layout');
+    const categoryDefinitions = [
+        {
+            id: 'vtab-recording-publish', icon: 'bi-record-circle', name: '录播与投稿',
+            description: '流程、投稿、弹幕烧录与审核',
+            titles: ['自动化流程', '投稿策略', 'ASS 弹幕与烧录', '内容审核与阿里云凭证']
+        },
+        {
+            id: 'vtab-platform-accounts', icon: 'bi-person-badge', name: '平台账号',
+            description: 'B站、抖音与 CookieCloud',
+            titles: ['B站投稿账号', '抖音录制账号', 'CookieCloud（YouTube）']
+        },
+        {
+            id: 'vtab-network-downloads', icon: 'bi-globe2', name: '网络与下载',
+            description: '代理、节点、下载与 FFmpeg',
+            titles: ['投稿节点探测与测试', '通用网络代理', 'YouTube 下载与代理', 'FFmpeg 环境', 'YouTube 监控 API']
+        },
+        {
+            id: 'vtab-ai-content', icon: 'bi-stars', name: 'AI 内容',
+            description: '模型、分段与元数据提示词',
+            titles: ['AI 模型与专项配置', 'AI 智能分段', '元数据翻译主提示词', '简介重试提示词']
+        },
+        {
+            id: 'vtab-subtitles', icon: 'bi-badge-cc', name: '字幕与语音',
+            description: '识别、时间轴、翻译与质检',
+            titles: ['语音识别提供商', 'Whisper 配置', 'Voxtral 配置', '扫描窗、时间戳与回退', '字幕翻译与质检', '字幕翻译主提示词', '严格补救提示词']
+        },
+        {
+            id: 'vtab-notify-control', icon: 'bi-send', name: '通知与远程',
+            description: '通知事件、渠道与 Bot 控制',
+            titles: ['通知策略', '群机器人', 'Turbo 通道', '自建消息网关', 'Bot 消息']
+        },
+        {
+            id: 'vtab-storage-security', icon: 'bi-shield-lock', name: '存储与安全',
+            description: '目录、并发、清理与管理员',
+            titles: ['录播文件夹', '任务并发', '日志清理', '下载内容清理', '管理员账号']
+        }
+    ];
+
+    if (settingsTabContent && settingsNav && settingsLayout) {
+        const cardsByTitle = new Map();
+        settingsTabContent.querySelectorAll('.settings-card').forEach(function (card) {
+            const heading = card.querySelector('.settings-card-header h4');
+            const title = String(heading?.textContent || '').replace(/\s+/g, ' ').trim();
+            const wrapper = card.closest('[class*="col-"]') || card;
+            if (title && !cardsByTitle.has(title)) cardsByTitle.set(title, wrapper);
+        });
+
+        const themeWrapper = cardsByTitle.get('显示主题');
+        if (themeWrapper) {
+            themeWrapper.className = 'settings-appearance-strip';
+            settingsLayout.parentNode.insertBefore(themeWrapper, settingsLayout);
+            cardsByTitle.delete('显示主题');
+        }
+
+        settingsNav.replaceChildren();
+        settingsTabContent.replaceChildren();
+        const assigned = new Set();
+        categoryDefinitions.forEach(function (category, index) {
+            const link = document.createElement('a');
+            link.className = 'nav-link' + (index === 0 ? ' active' : '');
+            link.id = category.id + '-tab';
+            link.href = '#' + category.id;
+            link.setAttribute('data-bs-toggle', 'pill');
+            link.setAttribute('role', 'tab');
+            link.setAttribute('aria-controls', category.id);
+            link.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+            const icon = document.createElement('span');
+            icon.className = 'settings-nav-icon';
+            const iconGlyph = document.createElement('i');
+            iconGlyph.className = 'bi ' + category.icon;
+            icon.appendChild(iconGlyph);
+            const copy = document.createElement('span');
+            copy.className = 'settings-nav-copy';
+            const strong = document.createElement('strong');
+            strong.textContent = category.name;
+            const small = document.createElement('small');
+            small.textContent = category.description;
+            copy.append(strong, small);
+            const state = document.createElement('span');
+            state.className = 'settings-nav-state';
+            link.append(icon, copy, state);
+            settingsNav.appendChild(link);
+
+            const pane = document.createElement('div');
+            pane.className = 'tab-pane fade' + (index === 0 ? ' show active' : '');
+            pane.id = category.id;
+            pane.setAttribute('role', 'tabpanel');
+            pane.setAttribute('aria-labelledby', link.id);
+            const stack = document.createElement('div');
+            stack.className = 'settings-stack';
+            const section = document.createElement('section');
+            section.className = 'settings-section';
+            const header = document.createElement('div');
+            header.className = 'settings-section-header';
+            const headerCopy = document.createElement('div');
+            const heading = document.createElement('h3');
+            heading.className = 'mb-1';
+            heading.textContent = category.name;
+            const lead = document.createElement('p');
+            lead.className = 'section-lead mb-0';
+            lead.textContent = category.description;
+            headerCopy.append(heading, lead);
+            header.appendChild(headerCopy);
+            const grid = document.createElement('div');
+            grid.className = 'row g-4 settings-pane-grid';
+            category.titles.forEach(function (title) {
+                const wrapper = cardsByTitle.get(title);
+                if (!wrapper || assigned.has(wrapper)) return;
+                assigned.add(wrapper);
+                grid.appendChild(wrapper);
+            });
+            section.append(header, grid);
+            stack.appendChild(section);
+            pane.appendChild(stack);
+            settingsTabContent.appendChild(pane);
+        });
+
+        cardsByTitle.forEach(function (wrapper) {
+            if (assigned.has(wrapper)) return;
+            const fallbackGrid = settingsTabContent.querySelector('#vtab-storage-security .settings-pane-grid');
+            if (fallbackGrid) fallbackGrid.appendChild(wrapper);
+        });
+    }
+
+    const booleanSettingsForm = document.getElementById('settings-form');
+    if (booleanSettingsForm) {
+        booleanSettingsForm.querySelectorAll('input[type="checkbox"]').forEach(function (input) {
+            if (input.dataset.booleanButtonReady === 'true') return;
+
+            const label = input.labels && input.labels.length ? input.labels[0] : input.closest('label');
+            const labelCopy = label ? label.cloneNode(true) : null;
+            labelCopy?.querySelectorAll('input, button').forEach(function (node) { node.remove(); });
+            const title = String(labelCopy?.textContent || input.name || '选项')
+                .replace(/\s+/g, ' ')
+                .trim();
+            const shell = document.createElement('div');
+            shell.className = 'settings-boolean-control';
+            const titleNode = document.createElement('span');
+            titleNode.className = 'settings-boolean-title';
+            titleNode.textContent = title;
+            const actions = document.createElement('span');
+            actions.className = 'settings-boolean-actions';
+            actions.setAttribute('role', 'group');
+            actions.setAttribute('aria-label', title);
+            const enableButton = document.createElement('button');
+            enableButton.type = 'button';
+            enableButton.className = 'settings-boolean-choice';
+            enableButton.textContent = '启用';
+            enableButton.setAttribute('aria-label', title + '，设为启用');
+            const disableButton = document.createElement('button');
+            disableButton.type = 'button';
+            disableButton.className = 'settings-boolean-choice';
+            disableButton.textContent = '停用';
+            disableButton.setAttribute('aria-label', title + '，设为停用');
+            actions.append(enableButton, disableButton);
+
+            if (label && label.contains(input)) {
+                label.parentNode.insertBefore(shell, label);
+                shell.append(label, titleNode, actions);
+            } else {
+                input.parentNode.insertBefore(shell, input);
+                shell.append(input);
+                if (label) shell.append(label);
+                shell.append(titleNode, actions);
+            }
+
+            input.dataset.booleanButtonReady = 'true';
+            input.classList.add('settings-boolean-input');
+            input.tabIndex = -1;
+            input.setAttribute('aria-hidden', 'true');
+            if (label) label.classList.add('settings-boolean-source');
+
+            const syncButton = function () {
+                const enabled = Boolean(input.checked);
+                enableButton.classList.toggle('is-active', enabled);
+                disableButton.classList.toggle('is-active', !enabled);
+                enableButton.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+                disableButton.setAttribute('aria-pressed', enabled ? 'false' : 'true');
+                enableButton.disabled = Boolean(input.disabled);
+                disableButton.disabled = Boolean(input.disabled);
+            };
+
+            const setBooleanValue = function (enabled) {
+                if (input.disabled || input.checked === enabled) return;
+                input.checked = enabled;
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            };
+            enableButton.addEventListener('click', function () { setBooleanValue(true); });
+            disableButton.addEventListener('click', function () { setBooleanValue(false); });
+            input.addEventListener('change', syncButton);
+            syncButton();
+        });
+    }
+
     const navLinks = document.querySelectorAll('.settings-nav .nav-link[data-bs-toggle="pill"]');
     const summaryCards = document.querySelectorAll('[data-settings-target]');
     const youtubeQualityModeSelect = document.getElementById('youtube-download-quality-mode');
@@ -2449,9 +2651,20 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     const activateTabFromHash = function () {
-        const hash = window.location.hash;
+        const legacyCategoryMap = {
+            '#vtab-general': '#vtab-recording-publish',
+            '#vtab-accounts': '#vtab-platform-accounts',
+            '#vtab-ai-models': '#vtab-ai-content',
+            '#vtab-subtitle-voice': '#vtab-subtitles',
+            '#vtab-notifications': '#vtab-notify-control',
+            '#vtab-ops': '#vtab-storage-security'
+        };
+        const hash = legacyCategoryMap[window.location.hash] || window.location.hash;
         if (!hash || !hash.startsWith('#vtab-')) {
             return false;
+        }
+        if (hash !== window.location.hash) {
+            window.history.replaceState(window.history.state, '', hash);
         }
         return showTabBySelector(hash);
     };
@@ -2769,7 +2982,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
         if (!exportAllowed) {
-            setCookieCloudStatus('当前可直接测试连接；若要把 CookieCloud Cookies 写入本地文件供 yt-dlp / 任务使用，请勾选“允许明文导出”。', 'neutral');
+            setCookieCloudStatus('当前可直接测试连接；若要把 CookieCloud Cookies 写入本地文件供 yt-dlp / 任务使用，请将“允许明文导出”设为启用。', 'neutral');
             return;
         }
         if (cookieCloudStatusText && !cookieCloudStatusText.textContent.trim()) {
@@ -2795,7 +3008,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
         if (endpoint === cookieCloudSyncEndpoint && !isCookieCloudPlaintextExportAllowed()) {
-            showSettingsToast('warning', '“立即拉取一次”需要先勾选“允许明文导出”，因为它会写入本地 YouTube Cookies 文件。');
+            showSettingsToast('warning', '“立即拉取一次”需要先将“允许明文导出”设为启用，因为它会写入本地 YouTube Cookies 文件。');
             return;
         }
 

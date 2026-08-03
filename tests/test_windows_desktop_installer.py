@@ -98,11 +98,12 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         with namespace["load_tray_icon"]() as icon:
             self.assertEqual(icon.size, (128, 128))
 
-    def test_desktop_shell_is_adaptive_and_has_locked_dark_theme(self):
+    def test_desktop_shell_is_adaptive_and_supports_saved_theme(self):
         base = (APP_ROOT / "templates" / "base.html").read_text(encoding="utf-8")
         css = (APP_ROOT / "static" / "css" / "ui-refinement.css").read_text(encoding="utf-8")
         shell = (APP_ROOT / "static" / "js" / "desktop-shell.js").read_text(encoding="utf-8")
-        self.assertIn("dataset.theme = 'dark'", base)
+        self.assertIn("localStorage.getItem('potatoflow-theme')", base)
+        self.assertIn("dataset.themePreference = preference", base)
         self.assertIn("sidebarCollapse", base)
         self.assertIn("max-width:1320px", css)
         self.assertIn("max-height:780px", css)

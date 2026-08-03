@@ -66,7 +66,11 @@ class OverviewDashboardTests(unittest.TestCase):
         self.assertIn("--studio-sidebar: #111a24", STYLE_SOURCE)
         self.assertIn("--studio-primary: #00aeec", STYLE_SOURCE)
         self.assertIn("--studio-canvas: #0e141b", STYLE_SOURCE)
-        self.assertIn("document.documentElement.dataset.theme = 'dark'", BASE_TEMPLATE_SOURCE)
+        self.assertIn("localStorage.getItem('potatoflow-theme')", BASE_TEMPLATE_SOURCE)
+        self.assertIn(
+            "document.documentElement.dataset.theme = resolved === 'dark' ? 'dark' : 'light'",
+            BASE_TEMPLATE_SOURCE,
+        )
         self.assertIn("录播工作流", BASE_TEMPLATE_SOURCE)
         self.assertIn("任务中心", BASE_TEMPLATE_SOURCE)
         self.assertIn("<span>总览</span>", BASE_TEMPLATE_SOURCE)
