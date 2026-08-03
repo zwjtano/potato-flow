@@ -1154,6 +1154,26 @@ document.addEventListener('DOMContentLoaded', function () {
             : '';
     });
     filesModal?.addEventListener('shown.bs.modal', () => loadFiles());
+    const syncFileLibraryRoute = () => {
+        if (!filesModal || window.location.hash !== '#recording-files') return;
+        document.querySelectorAll('.app-nav-link').forEach(link => {
+            const isFileLibrary = link.getAttribute('href')?.endsWith('#recording-files');
+            link.classList.toggle('active', Boolean(isFileLibrary));
+        });
+        bootstrap.Modal.getOrCreateInstance(filesModal).show();
+    };
+    window.addEventListener('hashchange', syncFileLibraryRoute);
+    syncFileLibraryRoute();
+    filesModal?.addEventListener('hidden.bs.modal', () => {
+        if (window.location.hash !== '#recording-files') return;
+        const url = new URL(window.location.href);
+        url.hash = '';
+        window.history.replaceState(window.history.state, '', url);
+        document.querySelectorAll('.app-nav-link').forEach(link => {
+            const isLiveRecording = link.getAttribute('href') === '{{ url_for("live_recording") }}';
+            link.classList.toggle('active', isLiveRecording);
+        });
+    });
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
     filesModal?.querySelector('[data-action="delete-selected-files"]')?.addEventListener('click', deleteSelectedFiles);
     filesModal?.querySelectorAll('[data-role^="file-select-all"]').forEach(input => input.addEventListener('change', selectVisibleFiles));

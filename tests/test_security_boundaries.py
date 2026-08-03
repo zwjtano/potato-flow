@@ -30,7 +30,13 @@ class SecurityBoundaryTests(unittest.TestCase):
             response = self.client.get("/healthz")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(set(response.get_json()), {"status", "version"})
+        self.assertEqual(
+            set(response.get_json()),
+            {
+                "status", "version", "application_version", "runtime_mode",
+                "architecture", "recorder_core_version", "desktop_instance",
+            },
+        )
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["X-Frame-Options"], "SAMEORIGIN")
         self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
