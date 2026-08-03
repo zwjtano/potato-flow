@@ -27,6 +27,39 @@
     --pf-shadow-float: 0 18px 54px rgba(26, 54, 82, .14);
 }
 
+/* Windows desktop ships one deliberate, high-contrast console theme. */
+:root, html[data-theme="dark"] {
+    --pf-canvas: #0d141c;
+    --pf-surface: #121d27;
+    --pf-surface-soft: #16222d;
+    --pf-surface-muted: #1b2a36;
+    --pf-ink: #edf7fb;
+    --pf-copy: #aec0cc;
+    --pf-muted: #8397a5;
+    --pf-line: #263947;
+    --pf-line-strong: #345064;
+    --pf-signal: #27c3ed;
+    --pf-signal-deep: #62d7f5;
+    --pf-focus: rgba(39, 195, 237, .32);
+    --pf-shadow-card: 0 8px 24px rgba(0, 0, 0, .2);
+    --pf-shadow-float: 0 18px 54px rgba(0, 0, 0, .34);
+}
+
+.app-theme-toggle, .app-mobile-header, #mobileNav { display: none !important; }
+body.app-shell-body { min-width: 0; background: var(--pf-canvas); overflow-x: hidden; }
+.app-topbar { background: rgba(13, 20, 28, .94) !important; border-color: var(--pf-line) !important; }
+.app-sidebar { width: 224px; background: #0b1219; box-shadow: 1px 0 0 var(--pf-line); }
+.app-frame { margin-left: 224px; }
+.app-sidebar,.app-frame{transition:width .18s ease,margin-left .18s ease}.sidebar-collapse-button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border:1px solid var(--pf-line);border-radius:8px;background:transparent;color:var(--pf-copy)}body.sidebar-collapsed .app-sidebar{width:72px}body.sidebar-collapsed .app-frame{margin-left:72px}body.sidebar-collapsed .app-brand span,body.sidebar-collapsed .app-nav-label,body.sidebar-collapsed .app-nav-link span,body.sidebar-collapsed .app-sidebar-status span,body.sidebar-collapsed .app-release-meta,body.sidebar-collapsed .sidebar-collapse-button span{display:none}body.sidebar-collapsed .app-brand,body.sidebar-collapsed .app-nav-link{justify-content:center}body.sidebar-collapsed .sidebar-collapse-button{justify-content:center}
+.app-nav-link:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--pf-signal); outline-offset: 2px;
+}
+.app-topbar-status { font-variant-numeric: tabular-nums; }
+.topbar-runtime,.topbar-count,.topbar-disk{display:inline-flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid var(--pf-line);border-radius:7px;color:var(--pf-copy);font-size:12px}.topbar-runtime i{font-size:7px;color:#ef4f59}.topbar-runtime.running i{color:#30c878}.topbar-runtime.running{color:var(--pf-ink)}
+.diagnostic-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:20px 0}.diagnostic-card,.diagnostic-panel{border:1px solid var(--pf-line);border-radius:10px;background:var(--pf-surface);padding:20px}.diagnostic-card span,.diagnostic-card small{display:block;color:var(--pf-muted)}.diagnostic-card strong{display:block;margin:8px 0;font:700 24px var(--pf-font-data)}.diagnostic-panel header,.component-row{display:grid;grid-template-columns:auto 150px minmax(280px,1fr) minmax(260px,1fr);gap:12px;align-items:center}.diagnostic-panel header{display:flex;justify-content:space-between;border-bottom:1px solid var(--pf-line);padding-bottom:14px}.component-row{padding:15px 0;border-bottom:1px solid var(--pf-line)}.component-row:last-child{border:0}.component-row code,.component-row small{color:var(--pf-muted);overflow-wrap:anywhere;font:12px var(--pf-font-data)}
+@media(max-width:1320px){.app-sidebar{width:72px}.app-frame{margin-left:72px}.app-sidebar .app-brand span,.app-sidebar .app-nav-label,.app-sidebar .app-nav-link span,.app-sidebar .app-sidebar-status span,.app-sidebar .app-release-meta,.app-sidebar .sidebar-collapse-button span{display:none}.app-sidebar .app-brand,.app-sidebar .app-nav-link,.app-sidebar .sidebar-collapse-button{justify-content:center}.home-choice-grid,.diagnostic-grid{grid-template-columns:1fr!important}.app-main{padding-left:20px;padding-right:20px}.component-row{grid-template-columns:auto 130px minmax(220px,1fr)}.component-row small{grid-column:2/4}}
+@media(max-height:780px){.app-main{padding-top:18px;padding-bottom:18px}.app-sidebar{overflow-y:auto}.app-sidebar-footer{position:static;margin-top:20px}.studio-page-header,.recorder-header,.settings-page-header{padding-top:18px;padding-bottom:18px}}
+
 html {
     scrollbar-color: #b7c8d7 transparent;
     scrollbar-width: thin;

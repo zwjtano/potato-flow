@@ -13,6 +13,8 @@ use tracing::{error, info};
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum HookStep {
+    /// Structured process invocation. Arguments are passed without a shell.
+    Exec { executable: String, #[serde(default)] args: Vec<String> },
     /// 执行命令格式：{run: "command"}
     Run { run: String },
     /// 移动文件格式：{mv: "target_dir"}
@@ -37,6 +39,11 @@ impl HookStep {
     /// 执行成功返回Ok(())，失败返回错误信息
     pub async fn execute(&self, video_paths: &[&Path]) -> AppResult<()> {
         match self {
+            HookStep::Exec { executable, args } => {
+                let paths: Vec<String> = video_paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+                if paths.is_empty() { return Err(AppError::Unknown.into()); }
+                self.execute_program(executable, args, paths.join("\n").as_bytes()).await?;
+            }
             HookStep::Run { run } => {
                 // 执行自定义命令
                 let paths: Vec<String> = video_paths
@@ -187,6 +194,9 @@ impl HookStep {
     /// 执行成功返回Ok(())，失败返回错误信息
     pub async fn execute_with(&self, src: &[u8]) -> AppResult<()> {
         match self {
+            HookStep::Exec { executable, args } => {
+                self.execute_program(executable, args, src).await?;
+            }
             HookStep::Run { run } => {
                 self.execute_command(run, src).await?;
             }
@@ -264,6 +274,29 @@ impl HookStep {
             )));
         }
 
+        Ok(())
+    }
+
+    async fn execute_program(&self, executable: &str, args: &[String], src: &[u8]) -> AppResult<()> {
+        let mut process = Command::new(executable)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .change_context_lazy(|| AppError::Custom(format!("failed to spawn structured hook: {}", executable)))?;
+        if let Some(mut stdin) = process.stdin.take() {
+            stdin.write_all(src).await.change_context(AppError::Unknown)?;
+        }
+        let output = process.wait_with_output().await.change_context(AppError::Unknown)?;
+        if !output.status.success() {
+            bail!(AppError::Custom(format!(
+                "structured hook failed (status {:?}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
         Ok(())
     }
 
@@ -431,17 +464,20 @@ mod tests {
     #[test]
     fn deserialize_yaml_variants() {
         let yaml = r#"
+- executable: "C:\\Program Files\\PotatoFlow\\PotatoFlow.exe"
+  args: ["--potatoflow-internal-bridge", "ingest"]
 - run: "echo hi"
 - mv: "/dst"
 - remux: "mp4"
 - "rm"
 "#;
         let steps: Vec<HookStep> = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(steps.len(), 4);
-        assert!(matches!(steps[0], HookStep::Run { .. }));
-        assert!(matches!(steps[1], HookStep::Move { .. }));
-        assert!(matches!(steps[2], HookStep::Remux { .. }));
-        assert!(matches!(steps[3], HookStep::Remove(_)));
+        assert_eq!(steps.len(), 5);
+        assert!(matches!(steps[0], HookStep::Exec { .. }));
+        assert!(matches!(steps[1], HookStep::Run { .. }));
+        assert!(matches!(steps[2], HookStep::Move { .. }));
+        assert!(matches!(steps[3], HookStep::Remux { .. }));
+        assert!(matches!(steps[4], HookStep::Remove(_)));
     }
 
     #[test]

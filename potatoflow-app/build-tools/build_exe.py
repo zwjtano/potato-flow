@@ -18,6 +18,7 @@ PROJECT_ROOT = BUILD_TOOLS.parent
 REPOSITORY_ROOT = PROJECT_ROOT.parent
 DIST_ROOT = BUILD_TOOLS / "dist"
 BUNDLE_DIR = DIST_ROOT / "PotatoFlow"
+RECORDER_EXE = REPOSITORY_ROOT / "recorder-core" / "target" / "release" / "biliup.exe"
 SPEC_PATH = BUILD_TOOLS / "PotatoFlow.spec"
 INNO_PATH = BUILD_TOOLS / "PotatoFlow.iss"
 FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
@@ -38,7 +39,8 @@ def create_spec_file() -> None:
     repository_root = str(REPOSITORY_ROOT)
     templates = str(PROJECT_ROOT / "templates")
     static = str(PROJECT_ROOT / "static")
-    fonts = str(PROJECT_ROOT / "fonts")
+    font_file = str(PROJECT_ROOT / "fonts" / "NotoSansCJKsc-Regular.otf")
+    font_license = str(PROJECT_ROOT / "fonts" / "LICENSE.txt")
     bili_sdk_data = str(PROJECT_ROOT / "modules" / "bili_sdk" / "data")
     bridge_example = str(PROJECT_ROOT / "bridge.config.example.json")
     icon = str(PROJECT_ROOT / "static" / "img" / "favicon.ico")
@@ -49,7 +51,8 @@ curl_datas, curl_binaries, curl_hiddenimports = collect_all("curl_cffi")
 datas = [
     ({templates!r}, "templates"),
     ({static!r}, "static"),
-    ({fonts!r}, "fonts"),
+    ({font_file!r}, "fonts"),
+    ({font_license!r}, "licenses/fonts"),
     ({bili_sdk_data!r}, "modules/bili_sdk/data"),
     ({bridge_example!r}, "."),
 ] + curl_datas
@@ -85,10 +88,19 @@ coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=True, name="PotatoFlow
 def build_executable() -> None:
     create_spec_file()
     subprocess.run([
-        sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm",
+        sys.executable, "-m", "PyInstaller", "--noconfirm",
         "--distpath", str(DIST_ROOT), "--workpath", str(BUILD_TOOLS / "build"),
         str(SPEC_PATH),
     ], cwd=PROJECT_ROOT, check=True)
+
+
+def install_recorder_core() -> None:
+    if not RECORDER_EXE.is_file():
+        cargo = shutil.which("cargo") or str(Path.home() / ".cargo" / "bin" / "cargo.exe")
+        subprocess.run([cargo, "build", "--release", "-p", "biliup-cli"], cwd=REPOSITORY_ROOT / "recorder-core", check=True)
+    target = BUNDLE_DIR / "bin"
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(RECORDER_EXE, target / "biliup.exe")
 
 
 def _download(url: str, path: Path) -> None:
@@ -109,12 +121,45 @@ def install_ffmpeg() -> None:
     license_file = find_gplv3_license(extract_dir)
     if not ffmpeg or not ffprobe or not license_file:
         raise RuntimeError("Downloaded FFmpeg archive is incomplete")
-    target = BUNDLE_DIR / "ffmpeg"
+    target = BUNDLE_DIR / "bin"
     target.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ffmpeg, target / "ffmpeg.exe")
     shutil.copy2(ffprobe, target / "ffprobe.exe")
     shutil.copy2(license_file, target / "FFMPEG_GPLv3.txt")
     subprocess.run([target / "ffmpeg.exe", "-version"], check=True)
+
+
+def write_runtime_manifest() -> Path:
+    components = []
+    for path in sorted((BUNDLE_DIR / "bin").glob("*.exe")):
+        components.append({
+            "name": path.name,
+            "version": "bundled",
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size": path.stat().st_size,
+        })
+    manifest = {
+        "schema": 1,
+        "application": {"name": "PotatoFlow", "version": app_version(), "architecture": "x64"},
+        "components": components,
+    }
+    path = BUNDLE_DIR / "runtime-manifest.json"
+    path.write_text(__import__('json').dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def build_portable() -> Path:
+    marker = BUNDLE_DIR / "portable.mode"
+    marker.write_text("PotatoFlow portable distribution\n", encoding="utf-8")
+    portable = DIST_ROOT / f"PotatoFlow-v{app_version()}-Windows-x64-Portable.zip"
+    with zipfile.ZipFile(portable, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for path in BUNDLE_DIR.rglob("*"):
+            if path.is_file():
+                archive.write(path, Path("PotatoFlow") / path.relative_to(BUNDLE_DIR))
+    marker.unlink()
+    digest = hashlib.sha256(portable.read_bytes()).hexdigest()
+    portable.with_suffix(portable.suffix + ".sha256").write_text(f"{digest}  {portable.name}\n", encoding="ascii")
+    return portable
 
 
 def find_gplv3_license(extract_dir: Path) -> Path | None:
@@ -190,6 +235,24 @@ begin
   Result := DirExists(ExpandConstant('{{pf32}}\\Microsoft\\EdgeWebView\\Application')) or
             DirExists(ExpandConstant('{{localappdata}}\\Microsoft\\EdgeWebView\\Application'));
 end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  InternalData, UserFiles: String;
+begin
+  if CurUninstallStep <> usPostUninstall then Exit;
+  if UninstallSilent then Exit;
+  InternalData := ExpandConstant('{{localappdata}}\PotatoFlow');
+  UserFiles := ExpandConstant('{{userdocs}}\PotatoFlow');
+  if MsgBox('默认保留配置、数据库和缓存。是否删除内部数据？' + #13#10 + InternalData,
+    mbConfirmation, MB_YESNO) = IDYES then
+    DelTree(InternalData, True, True, True);
+  if MsgBox('录播和导出默认永久保留。是否继续查看删除确认？' + #13#10 + UserFiles,
+    mbConfirmation, MB_YESNO) = IDYES then
+    if MsgBox('将删除该目录中的全部录播、XML、ASS、封面和导出，无法恢复：' + #13#10 + UserFiles,
+      mbError, MB_YESNO) = IDYES then
+      DelTree(UserFiles, True, True, True);
+end;
 '''
     INNO_PATH.write_text(script, encoding="utf-8-sig")
 
@@ -199,6 +262,7 @@ def build_installer() -> Path:
     create_inno_script(webview)
     candidates = [
         Path(os.environ.get("INNO_SETUP_COMPILER", "")),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
         Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
         Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
     ]
@@ -220,9 +284,11 @@ def main() -> None:
     if os.name != "nt":
         raise SystemExit("The Windows installer must be built on Windows")
     shutil.rmtree(DIST_ROOT, ignore_errors=True)
-    shutil.rmtree(BUILD_TOOLS / "build", ignore_errors=True)
     build_executable()
+    install_recorder_core()
     install_ffmpeg()
+    write_runtime_manifest()
+    build_portable()
     build_installer()
 
 

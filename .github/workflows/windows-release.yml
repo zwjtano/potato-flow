@@ -42,6 +42,12 @@ jobs:
           $version = python -c "import sys; sys.path.insert(0, 'potatoflow-app'); from version import __version__; print(__version__)"
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "installer=PotatoFlow-v$version-Windows-x64-Setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "portable=PotatoFlow-v$version-Windows-x64-Portable.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Set up Rust MSVC
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Install application and build dependencies
         shell: pwsh
@@ -142,6 +148,11 @@ jobs:
           $checksum = (Get-Content "$installer.sha256" -Raw).Trim().Split(' ')[0]
           $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($checksum -ne $actual) { throw 'Installer SHA-256 mismatch.' }
+          $portableName = '${{ steps.release_meta.outputs.portable }}'
+          $portable = Join-Path $dist $portableName
+          $portableChecksum = (Get-Content "$portable.sha256" -Raw).Trim().Split(' ')[0]
+          $portableActual = (Get-FileHash $portable -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($portableChecksum -ne $portableActual) { throw 'Portable SHA-256 mismatch.' }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -150,6 +161,8 @@ jobs:
           path: |
             potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }}
             potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.portable }}
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.portable }}.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -163,4 +176,6 @@ jobs:
           gh release upload $env:RELEASE_TAG `
             potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }} `
             potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }}.sha256 `
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.portable }} `
+            potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.portable }}.sha256 `
             --clobber

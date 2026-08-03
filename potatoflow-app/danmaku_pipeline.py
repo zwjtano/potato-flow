@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - production runs on Linux/macOS
 _BURN_THREAD_LOCK = threading.Lock()
 _ENCODER_PROBE_LOCK = threading.Lock()
 _ENCODER_PROBE_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_ENCODER_PROBE_SIZE = "128x128"
 
 ENCODER_PROFILES: dict[str, dict[str, Any]] = {
     "cpu": {
@@ -101,7 +102,10 @@ def probe_encoding_capabilities(
     for backend, profile in ENCODER_PROFILES.items():
         command = [
             str(ffmpeg), "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-            "-i", "color=c=black:s=64x64:d=0.12", "-frames:v", "1",
+            # AMD AMF rejects 64x64 input even though normal recording sizes,
+            # including 1080p and 2160p, encode correctly. 128x128 keeps the
+            # probe cheap while staying inside the hardware encoder's limits.
+            "-i", f"color=c=black:s={_ENCODER_PROBE_SIZE}:d=0.12", "-frames:v", "1",
             *_encoder_video_args(backend, str(profile["preset"]), int(profile["quality"])),
             "-an", "-f", "null", "-",
         ]

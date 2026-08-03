@@ -24,6 +24,14 @@ bilibili_uploader = importlib.import_module("modules.bilibili_uploader")
 
 
 class SubmissionEngineAdapterTests(unittest.TestCase):
+    def test_recorder_binary_detects_windows_release_executable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "recorder-core" / "target" / "release" / "biliup.exe"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"windows executable")
+            with patch.object(submission_engine, "get_resource_root_dir", return_value=temp):
+                self.assertEqual(submission_engine._recorder_binary(), str(binary))
+
     def _fake_binary(self, directory: str, result: dict) -> str:
         path = Path(directory) / "fake-recorder"
         path.write_text(

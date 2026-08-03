@@ -36,6 +36,24 @@ SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 class DanmakuPipelineTests(unittest.TestCase):
+    def test_encoder_probe_uses_amf_compatible_frame_size(self):
+        commands = []
+
+        def fake_run(command, **_kwargs):
+            commands.append(command)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("danmaku_pipeline.subprocess.run", side_effect=fake_run):
+            probe_encoding_capabilities(
+                "test-ffmpeg-probe-size", force_refresh=True
+            )
+
+        self.assertTrue(commands)
+        for command in commands:
+            source = command[command.index("-i") + 1]
+            self.assertIn("s=128x128", source)
+            self.assertNotIn("s=64x64", source)
+
     def test_encoder_probe_prefers_configured_available_backend(self):
         def fake_run(command, **_kwargs):
             encoder = command[command.index("-c:v") + 1]

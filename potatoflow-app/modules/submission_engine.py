@@ -32,6 +32,7 @@ def _recorder_binary() -> str:
     ).strip()
     candidates = [
         configured,
+        os.path.join(get_resource_root_dir(), "recorder-core", "target", "release", "biliup.exe"),
         os.path.join(get_resource_root_dir(), "recorder-core", "target", "release", "biliup"),
         "biliup",
     ]

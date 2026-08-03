@@ -34,10 +34,17 @@ APP_ROOT = Path(get_resource_root_dir())
 WORKSPACE_ROOT = APP_ROOT.parent
 DATA_ROOT = Path(get_app_root_dir())
 CONFIG_DIR = DATA_ROOT / "config"
+WINDOWS_DOCUMENTS_RECORDINGS_DIR = Path.home() / "Documents" / "PotatoFlow" / "recordings"
 RECORDINGS_DIR = (
-    DATA_ROOT / "recordings"
+    Path(os.environ["POTATOFLOW_RECORDINGS_DIR"]).expanduser().resolve()
+    if str(os.environ.get("POTATOFLOW_RECORDINGS_DIR") or "").strip()
+    else DATA_ROOT / "recordings"
     if str(os.environ.get("POTATOFLOW_DATA_DIR") or "").strip()
-    else WORKSPACE_ROOT / "docker-data" / "recordings"
+    else (
+        WINDOWS_DOCUMENTS_RECORDINGS_DIR
+        if os.name == "nt"
+        else WORKSPACE_ROOT / "docker-data" / "recordings"
+    )
 )
 ROOMS_PATH = CONFIG_DIR / "live_recorders.json"
 RECORDER_CONFIG_PATH = CONFIG_DIR / "recorder.generated.yaml"
@@ -58,7 +65,13 @@ CONTROL_PATH = DATA_ROOT / "temp" / "biliup-recorder-control.json"
 RELOAD_PATH = DATA_ROOT / "temp" / "biliup-recorder-reload.json"
 RECORDER_RUNTIME_DIR = DATA_ROOT / "temp" / "recorder-engine"
 ROOM_REFERENCE_DIR = DATA_ROOT / ".bridge" / "room-references"
-FFMPEG_DIR = APP_ROOT / "ffmpeg" / "darwin_arm64"
+FFMPEG_DIR = (
+    Path(os.environ["FFMPEG_LOCATION"]).expanduser().resolve().parent
+    if str(os.environ.get("FFMPEG_LOCATION") or "").strip()
+    else APP_ROOT / "ffmpeg"
+    if os.name == "nt"
+    else APP_ROOT / "ffmpeg" / "darwin_arm64"
+)
 RECORDING_FILE_SUFFIXES = {
     ".mp4": "video", ".flv": "video", ".mkv": "video", ".webm": "video",
     ".ts": "video", ".m2ts": "video", ".mov": "video",
@@ -135,7 +148,7 @@ class RecorderConfigError(ValueError):
 def _bridge_command_base() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, "--potatoflow-internal-bridge"]
-    return [str(APP_ROOT / ".venv" / "bin" / "python"), str(APP_ROOT / "bridge.py")]
+    return [sys.executable, str(APP_ROOT / "bridge.py")]
 
 
 def recordings_dir(value: Any = None) -> Path:
@@ -839,6 +852,7 @@ class LiveRecorderManager:
         self._recording_notification_lock = threading.Lock()
         self._recording_notification_states: dict[str, bool] = {}
         self._recording_notification_details: dict[str, dict[str, Any]] = {}
+        self._recording_file_samples: dict[str, tuple[float, int]] = {}
         if os.environ.pop("POTATO_FLOW_CONTAINER_START", "") == "1":
             self.recover_interrupted_pipeline_jobs()
             self._ensure_upload_retry_thread()
@@ -850,9 +864,15 @@ class LiveRecorderManager:
         ).strip()
         if override:
             return Path(override).expanduser().resolve()
-        release = WORKSPACE_ROOT / "recorder-core" / "target" / "release" / "biliup"
-        debug = WORKSPACE_ROOT / "recorder-core" / "target" / "debug" / "biliup"
-        return release if release.is_file() else debug
+        release_dir = WORKSPACE_ROOT / "recorder-core" / "target" / "release"
+        debug_dir = WORKSPACE_ROOT / "recorder-core" / "target" / "debug"
+        candidates = (
+            release_dir / "biliup.exe",
+            release_dir / "biliup",
+            debug_dir / "biliup.exe",
+            debug_dir / "biliup",
+        )
+        return next((path for path in candidates if path.is_file()), candidates[-1])
 
     def list_rooms(self) -> list[dict[str, Any]]:
         try:
@@ -1167,7 +1187,10 @@ class LiveRecorderManager:
                 "started_at": started_at,
                 "live_title": live_title,
                 "current_file": "",
+                "current_file_path": "",
                 "current_file_size_bytes": 0,
+                "write_speed_bytes_per_second": 0,
+                "last_updated_at": "",
                 "segment_time": cls._room_segment_time(room),
                 "segment_enabled": bool(room.get("segment_enabled", True)),
                 "segment_minutes": cls._room_segment_minutes(room),
@@ -1197,8 +1220,7 @@ class LiveRecorderManager:
                 return url_room_id
         return ""
 
-    @staticmethod
-    def _attach_current_recording_files(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _attach_current_recording_files(self, rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Attach the most recently written video to each actively recording room."""
         active_markers = {
             _room_file_marker(room): room
@@ -1228,9 +1250,21 @@ class LiveRecorderManager:
             current = latest_by_marker.get(marker)
             if current is None:
                 continue
-            _, path, size_bytes = current
+            modified_at, path, size_bytes = current
+            sample_key = str(path.resolve(strict=False))
+            sampled_at = time.time()
+            previous = self._recording_file_samples.get(sample_key)
+            write_speed = 0
+            if previous and sampled_at > previous[0]:
+                write_speed = max(0, int((size_bytes - previous[1]) / (sampled_at - previous[0])))
+            self._recording_file_samples[sample_key] = (sampled_at, size_bytes)
             room["runtime"]["current_file"] = path.name
+            room["runtime"]["current_file_path"] = sample_key
             room["runtime"]["current_file_size_bytes"] = size_bytes
+            room["runtime"]["write_speed_bytes_per_second"] = write_speed
+            room["runtime"]["last_updated_at"] = datetime.fromtimestamp(
+                modified_at, timezone.utc
+            ).isoformat()
         return rooms
 
     def rooms_with_status(self) -> list[dict[str, Any]]:
@@ -1254,6 +1288,7 @@ class LiveRecorderManager:
         return {
             "running": status["running"],
             "pid": status["pid"],
+            "worker_healthy": bool(status["running"]),
             "recordings_path": status["recordings_path"],
             "recordings_free_bytes": status["recordings_free_bytes"],
             "recordings_free_text": status["recordings_free_text"],
@@ -2264,17 +2299,14 @@ class LiveRecorderManager:
             record_only = bool(room.get("record_only", False))
             multipart_enabled = self.room_multipart_enabled(room)
             quality_override = self._room_recording_quality_override(room)
-            bridge_base = [
-                *(_yaml_string(value) for value in _bridge_command_base()),
-                "--config",
-                _yaml_string(str(BRIDGE_CONFIG_PATH)),
-            ]
-            segment_args = [*bridge_base, "record-only", "--room-id", _yaml_string(session_key)]
+            bridge_command = _bridge_command_base()
+            bridge_executable = bridge_command[0]
+            bridge_base_args = [*bridge_command[1:], "--config", str(BRIDGE_CONFIG_PATH)]
+            segment_args = [*bridge_base_args, "record-only", "--room-id", session_key]
             if not record_only:
-                segment_args = [*bridge_base, "ingest"]
+                segment_args = [*bridge_base_args, "ingest"]
                 if multipart_enabled:
-                    segment_args.extend(["--session-key", _yaml_string(session_key)])
-            segment_command = " ".join(segment_args)
+                    segment_args.extend(["--session-key", session_key])
             room_lines = [
                 f"  {_yaml_string(key)}:",
                 "    url:",
@@ -2295,18 +2327,22 @@ class LiveRecorderManager:
                 room_lines.append(f"      {quality_key}: {rendered_quality}")
             room_lines.extend([
                 "    segment_processor:",
-                f"      - run: {_yaml_string(segment_command)}",
+                f"      - executable: {_yaml_string(bridge_executable)}",
+                "        args:",
+                *(f"          - {_yaml_string(value)}" for value in segment_args),
             ])
             if multipart_enabled:
-                finalize_command = " ".join([
-                    *bridge_base,
+                finalize_args = [
+                    *bridge_base_args,
                     "finalize-session",
                     "--session-key",
-                    _yaml_string(session_key),
-                ])
+                    session_key,
+                ]
                 room_lines.extend([
                     "    postprocessor:",
-                    f"      - run: {_yaml_string(finalize_command)}",
+                    f"      - executable: {_yaml_string(bridge_executable)}",
+                    "        args:",
+                    *(f"          - {_yaml_string(value)}" for value in finalize_args),
                 ])
             lines.extend(room_lines)
         atomic_write_text(RECORDER_CONFIG_PATH, "\n".join(lines) + "\n", private=True)
@@ -2514,18 +2550,46 @@ class LiveRecorderManager:
         with self._lock:
             pid = self._pid()
             if pid is not None:
-                try:
-                    os.killpg(pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
+                if os.name == "nt":
+                    if self._process is not None:
+                        try:
+                            self._process.send_signal(signal.CTRL_BREAK_EVENT)
+                            self._process.wait(timeout=15)
+                        except (OSError, subprocess.TimeoutExpired):
+                            subprocess.run(
+                                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                                capture_output=True, text=True, timeout=15, check=False,
+                            )
+                    else:
+                        try:
+                            os.kill(pid, signal.CTRL_BREAK_EVENT)
+                            deadline = time.monotonic() + 15
+                            while time.monotonic() < deadline:
+                                try:
+                                    os.kill(pid, 0)
+                                except OSError:
+                                    break
+                                time.sleep(.25)
+                            else:
+                                raise TimeoutError
+                        except (OSError, TimeoutError):
+                            subprocess.run(
+                                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                                capture_output=True, text=True, timeout=15, check=False,
+                            )
+                else:
                     try:
-                        os.kill(pid, signal.SIGTERM)
+                        os.killpg(pid, signal.SIGTERM)
                     except (ProcessLookupError, PermissionError):
-                        pass
-                if self._process is not None:
-                    try:
-                        self._process.wait(timeout=8)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(pid, signal.SIGKILL)
+                        try:
+                            os.kill(pid, signal.SIGTERM)
+                        except (ProcessLookupError, PermissionError):
+                            pass
+                    if self._process is not None:
+                        try:
+                            self._process.wait(timeout=8)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(pid, signal.SIGKILL)
             self._process = None
             if self._log_handle is not None:
                 self._log_handle.close()
