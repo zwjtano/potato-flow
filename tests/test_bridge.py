@@ -83,6 +83,9 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("封面核心文案必须自然包含主角名", prompt)
         self.assertIn("封面人物底稿", prompt)
         self.assertIn("不得替换主角或混合人脸", prompt)
+        self.assertIn("只有最终投稿标题明确出现", prompt)
+        self.assertIn("简介、时间线或弹幕中顺带提及的人物一律不得出镜", prompt)
+        self.assertNotIn("只有在弹幕可靠提及其他主播", prompt)
 
     def test_recording_tags_dedupe_repeated_streamer_aliases(self):
         self.assertEqual(
@@ -2753,6 +2756,8 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得排成“主角｜主题”", prompt)
         self.assertIn("封面主角身份锁定", prompt)
         self.assertIn("人物外观只能依据随请求上传的封面人物底稿", prompt)
+        self.assertIn("Image 1: 当前直播间主播", prompt)
+        self.assertIn("Image 1 始终是当前主播的唯一身份来源", prompt)
         self.assertIn("Dota 2 游戏角色消歧规则", prompt)
         self.assertIn("Dota 2 装备规则", prompt)
         self.assertIn("斗鱼 Dota 2 主播昵称规则", prompt)
@@ -2830,6 +2835,11 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("YYF 的表情与本段内容联动", edit_kwargs["prompt"])
         self.assertIn("碾压或连胜", edit_kwargs["prompt"])
         self.assertIn("被翻盘用错愕后的懊恼", edit_kwargs["prompt"])
+        self.assertNotIn("骇客徐杰", edit_kwargs["prompt"])
+        self.assertNotIn("老蔡", edit_kwargs["prompt"])
+        self.assertNotIn("已核验时间线事件", edit_kwargs["prompt"])
+        self.assertIn("人物出镜白名单：YYF", edit_kwargs["prompt"])
+        self.assertIn("Image 1: 当前直播间主播 YYF", edit_kwargs["prompt"])
         self.assertEqual(details["ai_cover_reference_kind"], "avatar")
         self.assertEqual(details["ai_cover_reference_count"], 1)
         self.assertEqual(details["ai_cover_guest_streamers"], [])
@@ -2841,6 +2851,8 @@ class BridgeTests(unittest.TestCase):
             details["ai_cover_reference_paths"],
             [str(avatar)],
         )
+        self.assertEqual(len(details["ai_cover_reference_roles"]), 1)
+        self.assertIn("唯一身份来源", details["ai_cover_reference_roles"][0])
         avatar_download.assert_called_once_with(
             "https://example.com/yyf-avatar.jpg",
             ANY,
@@ -2923,6 +2935,15 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("画面中的主播游戏角色只能是 巫医", prompt)
         self.assertIn("不得根据标题、简介或常识补画其他具体英雄、装备", prompt)
         self.assertNotIn("主播本局最终六格主装备", prompt)
+        edit_images = image_edit.call_args.kwargs["image"]
+        self.assertEqual(
+            [Path(handle.name) for handle in edit_images],
+            [character_base, hero_reference],
+        )
+        self.assertEqual(len(details["ai_cover_reference_roles"]), 2)
+        self.assertIn("唯一身份来源", details["ai_cover_reference_roles"][0])
+        self.assertIn("不得作为当前主播", details["ai_cover_reference_roles"][1])
+        self.assertIn("Image 2: Valve 官方 Dota 2 英雄 巫医 参考", prompt)
 
     def test_dota2_item_icon_sheet_is_sent_to_image_model(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
