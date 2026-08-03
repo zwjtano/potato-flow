@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 78755)
-Total output lines: 4134
-
 {% extends 'base.html' %}
 
 {% block title %}PotatoFlow - 系统设置{% endblock %}
@@ -1225,7 +1222,741 @@ Total output lines: 4134
                                                 <div class="vad-overview-card">
                                                     <div class="vad-overview-main">
                                                         <label class="checkbox-label">
-                                                            <input type="checkbox" name="VAD_EN…18755 tokens truncated…                                           </label>
+                                                            <input type="checkbox" name="VAD_ENABLED" {% if config.get('VAD_ENABLED', True) %}checked{% endif %}>
+                                                            启用 VAD 语音扫描窗
+                                                        </label>
+                                                    </div>
+                                                    <div class="vad-overview-side">
+                                                        <span class="settings-mini-kicker">当前说明</span>
+                                                        <p class="mb-0" id="shared-vad-provider-copy">当前为 Whisper 模式，扫描窗、segment 时间戳和失败回退会共同决定最终字幕时间轴。</p>
+                                                    </div>
+                                                </div>
+                                                <div class="mt-3">
+                                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#advancedVadOptions" aria-expanded="true" aria-controls="advancedVadOptions">
+                                                        <i class="bi bi-sliders"></i> 扫描窗与分片选项
+                                                    </button>
+                                                    <div class="collapse show mt-3" id="advancedVadOptions">
+                                                        <div class="row g-3">
+                                                            <div class="col-lg-6">
+                                                                <div class="settings-option-card">
+                                                                    <h5>质量与容错</h5>
+                                                                    <div class="row g-3">
+                                                                        <div class="col-md-6">
+                                                                            <div class="form-group mb-0">
+                                                                                <label for="whisper-max-retries" class="form-label">最大重试次数</label>
+                                                                                <input type="number" min="1" id="whisper-max-retries" name="WHISPER_MAX_RETRIES" value="{{ config.get('WHISPER_MAX_RETRIES', 3) }}" class="form-control">
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="col-md-6">
+                                                                            <div class="form-group mb-0">
+                                                                                <label for="vad-min-coverage" class="form-label">最低语音覆盖率</label>
+                                                                                <input type="number" min="0" step="0.001" id="vad-min-coverage" name="VAD_MIN_SPEECH_COVERAGE_RATIO" value="{{ config.get('VAD_MIN_SPEECH_COVERAGE_RATIO', 0.015) }}" class="form-control">
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="col-12">
+                                                                            <label class="checkbox-label">
+                                                                                <input type="checkbox" name="VAD_REFINEMENT_ENABLED" {% if config.get('VAD_REFINEMENT_ENABLED', True) %}checked{% endif %}>
+                                                                                启用二次边界收敛
+                                                                            </label>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-lg-6">
+                                                                <div class="settings-option-card">
+                                                                    <h5>分片与回退</h5>
+                                                                    <div class="row g-3">
+                                                                        <div class="col-md-6">
+                                                                            <div class="form-group mb-0">
+                                                                                <label for="audio-chunk-window" class="form-label">分片窗口（秒）</label>
+                                                                                <input type="number" min="5" step="0.5" id="audio-chunk-window" name="AUDIO_CHUNK_WINDOW_S" value="{{ config.get('AUDIO_CHUNK_WINDOW_S', 15.0) }}" class="form-control">
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="col-md-6">
+                                                                            <div class="form-group mb-0">
+                                                                                <label for="audio-chunk-overlap" class="form-label">分片重叠（秒）</label>
+                                                                                <input type="number" min="0" step="0.05" id="audio-chunk-overlap" name="AUDIO_CHUNK_OVERLAP_S" value="{{ config.get('AUDIO_CHUNK_OVERLAP_S', 0.4) }}" class="form-control">
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-12">
+                                                                <div class="settings-option-card">
+                                                                    <h5>VAD 扫描参数</h5>
+                                                                    <div class="row g-3">
+                                                                        <div class="col-md-4">
+                                                                            <div class="form-group mb-0">
+                                                                                <label for="vad-threshold" class="form-label">语音阈值</label>
+                                                                                <input type="number" step="0.01" min="0" max="1" id="vad-threshold" name="VAD_SILERO_THRESHOLD" value="{{ config.get('VAD_SILERO_THRESHOLD', 0.55) }}" class="form-control">
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="col-md-4">
+                                                                            <div class="form-group mb-0">
+                                                                                <label for="vad-min-speech" class="form-label">最短语音（ms）</label>
+                                                                                <input type="number" id="vad-min-speech" name="VAD_SILERO_MIN_SPEECH_MS" value="{{ config.get('VAD_SILERO_MIN_SPEECH_MS', 300) }}" min="0" class="form-control">
+                                                                            </div>
+                                                                        </div>
+                                                                        <div class="col-md-4">
+                                                                            <div class="form-group mb-0">
+                                                                                <label for="vad-max-segment" class="form-label">最大片段（秒）</label>
+                                                                                <input type="number" id="vad-max-segment" name="VAD_MAX_SEGMENT_S" value="{{ config.get('VAD_MAX_SEGMENT_S', 15.0) }}" min="10" class="form-control">
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">语义重分段</span>
+                                                    <h4>AI 智能分段</h4>
+                                                </div>
+                                                <span class="settings-status-badge {{ 'is-info' if config.get('AI_SEGMENTATION_ENABLED', False) else 'is-neutral' }}">
+                                                    {{ '已启用' if config.get('AI_SEGMENTATION_ENABLED', False) else '未启用' }}
+                                                </span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3">
+                                                    <div class="col-12">
+                                                        <label class="checkbox-label">
+                                                            <input type="checkbox" name="AI_SEGMENTATION_ENABLED" {% if config.get('AI_SEGMENTATION_ENABLED', False) %}checked{% endif %}>
+                                                            启用 AI 智能分段
+                                                        </label>
+                                                        <div class="form-text">基于 ASR 返回的字级时间戳，由 AI 按语义重新切分字幕，获得更自然的断句与节奏。需 ASR 支持字级时间戳（如 Whisper 时间戳粒度包含 <code>word</code>，模型如 <code>parakeet-crispasr</code>）；不支持时自动降级到段级 AI 分段，再失败则回退规则分段。</div>
+                                                    </div>
+                                                </div>
+                                                <div class="settings-subcard mt-3">
+                                                    <div class="settings-subcard-header">
+                                                        <h5>智能分段专用模型</h5>
+                                                        <span class="settings-status-badge {{ 'is-info' if config.get('AI_SEGMENTATION_API_KEY') or config.get('AI_SEGMENTATION_MODEL_NAME') or config.get('AI_SEGMENTATION_BASE_URL') else 'is-neutral' }}">
+                                                            {{ '已覆盖全局配置' if config.get('AI_SEGMENTATION_API_KEY') or config.get('AI_SEGMENTATION_MODEL_NAME') or config.get('AI_SEGMENTATION_BASE_URL') else '留空即继承全局' }}
+                                                        </span>
+                                                    </div>
+                                                    <div class="row g-3">
+                                                        <div class="col-12">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-url" class="form-label">智能分段专用接口地址</label>
+                                                                <input type="text" id="ai-seg-url" name="AI_SEGMENTATION_BASE_URL" value="{{ config.get('AI_SEGMENTATION_BASE_URL', '') }}" class="form-control" placeholder="留空则沿用全局">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-6">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-key" class="form-label">智能分段专用 API 密钥</label>
+                                                                <input type="password" id="ai-seg-key" name="AI_SEGMENTATION_API_KEY" value="{{ secret_field_value('AI_SEGMENTATION_API_KEY') }}" class="form-control" autocomplete="off" placeholder="留空则沿用全局">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-6">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-model" class="form-label">智能分段专用模型名</label>
+                                                                <input type="text" id="ai-seg-model" name="AI_SEGMENTATION_MODEL_NAME" value="{{ config.get('AI_SEGMENTATION_MODEL_NAME', '') }}" class="form-control" placeholder="留空则沿用全局">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-12">
+                                                            <div class="form-check form-switch">
+                                                                <input class="form-check-input" type="checkbox" id="ai-seg-thinking-enabled" name="AI_SEGMENTATION_THINKING_ENABLED" {% if config.get('AI_SEGMENTATION_THINKING_ENABLED', False) %}checked{% endif %}>
+                                                                <label class="form-check-label" for="ai-seg-thinking-enabled">智能分段模型启用思考模式</label>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="settings-subcard mt-3">
+                                                    <div class="settings-subcard-header">
+                                                        <h5>节奏与批次参数</h5>
+                                                    </div>
+                                                    <div class="row g-3">
+                                                        <div class="col-md-3">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-min-dur" class="form-label">最短显示时长（秒）</label>
+                                                                <input type="number" step="0.1" min="0.2" id="ai-seg-min-dur" name="AI_SEGMENTATION_MIN_CUE_DURATION_S" value="{{ config.get('AI_SEGMENTATION_MIN_CUE_DURATION_S', 0.8) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-3">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-max-dur" class="form-label">最长段长（秒）</label>
+                                                                <input type="number" step="0.1" min="1" id="ai-seg-max-dur" name="AI_SEGMENTATION_MAX_CUE_DURATION_S" value="{{ config.get('AI_SEGMENTATION_MAX_CUE_DURATION_S', 7.0) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-3">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-max-cps" class="form-label">最大字符速率（字/秒）</label>
+                                                                <input type="number" step="0.1" min="1" id="ai-seg-max-cps" name="AI_SEGMENTATION_MAX_CPS" value="{{ config.get('AI_SEGMENTATION_MAX_CPS', 18.0) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-3">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-batch" class="form-label">批次窗口（秒）</label>
+                                                                <input type="number" step="1" min="10" id="ai-seg-batch" name="AI_SEGMENTATION_BATCH_WINDOW_S" value="{{ config.get('AI_SEGMENTATION_BATCH_WINDOW_S', 120.0) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-max-chars" class="form-label">单批次最大字符数</label>
+                                                                <input type="number" step="100" min="500" id="ai-seg-max-chars" name="AI_SEGMENTATION_MAX_CHARS_PER_BATCH" value="{{ config.get('AI_SEGMENTATION_MAX_CHARS_PER_BATCH', 8000) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-temp" class="form-label">采样温度</label>
+                                                                <input type="number" step="0.1" min="0" max="2" id="ai-seg-temp" name="AI_SEGMENTATION_TEMPERATURE" value="{{ config.get('AI_SEGMENTATION_TEMPERATURE', 0.2) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="ai-seg-retries" class="form-label">失败重试次数</label>
+                                                                <input type="number" step="1" min="0" max="5" id="ai-seg-retries" name="AI_SEGMENTATION_MAX_RETRIES" value="{{ config.get('AI_SEGMENTATION_MAX_RETRIES', 2) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">翻译与质检</span>
+                                                    <h4>字幕翻译与质检</h4>
+                                                </div>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3">
+                                                    <div class="col-md-6">
+                                                        <label class="checkbox-label">
+                                                            <input type="checkbox" name="SUBTITLE_TRANSLATION_ENABLED" {% if config.SUBTITLE_TRANSLATION_ENABLED %}checked{% endif %}>
+                                                            启用字幕翻译
+                                                        </label>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label class="checkbox-label">
+                                                            <input type="checkbox" name="SUBTITLE_QC_ENABLED" {% if config.get('SUBTITLE_QC_ENABLED', False) %}checked{% endif %}>
+                                                            启用 ASR 源字幕质检
+                                                        </label>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label class="checkbox-label">
+                                                            <input type="checkbox" name="YOUTUBE_AUTO_GENERATED_SUBTITLES_ENABLED" {% if config.get('YOUTUBE_AUTO_GENERATED_SUBTITLES_ENABLED', False) %}checked{% endif %}>
+                                                            下载 YouTube 自动生成字幕
+                                                        </label>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-source-lang" class="form-label">源语言</label>
+                                                            <select name="SUBTITLE_SOURCE_LANGUAGE" id="subtitle-source-lang" class="form-select">
+                                                                <option value="auto" {% if config.SUBTITLE_SOURCE_LANGUAGE == 'auto' %}selected{% endif %}>自动检测</option>
+                                                                <option value="en" {% if config.SUBTITLE_SOURCE_LANGUAGE == 'en' %}selected{% endif %}>英语</option>
+                                                                <option value="ja" {% if config.SUBTITLE_SOURCE_LANGUAGE == 'ja' %}selected{% endif %}>日语</option>
+                                                                <option value="ko" {% if config.SUBTITLE_SOURCE_LANGUAGE == 'ko' %}selected{% endif %}>韩语</option>
+                                                                <option value="zh" {% if config.SUBTITLE_SOURCE_LANGUAGE == 'zh' %}selected{% endif %}>中文</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-target-lang" class="form-label">目标语言</label>
+                                                            <select name="SUBTITLE_TARGET_LANGUAGE" id="subtitle-target-lang" class="form-select">
+                                                                <option value="zh" {% if config.SUBTITLE_TARGET_LANGUAGE == 'zh' %}selected{% endif %}>中文</option>
+                                                                <option value="en" {% if config.SUBTITLE_TARGET_LANGUAGE == 'en' %}selected{% endif %}>英语</option>
+                                                                <option value="ja" {% if config.SUBTITLE_TARGET_LANGUAGE == 'ja' %}selected{% endif %}>日语</option>
+                                                                <option value="ko" {% if config.SUBTITLE_TARGET_LANGUAGE == 'ko' %}selected{% endif %}>韩语</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-font-name" class="form-label">烧录字体文件</label>
+                                                            <input type="text" id="subtitle-font-name" name="SUBTITLE_FONT_NAME" value="{{ config.get('SUBTITLE_FONT_NAME', 'NotoSansCJKsc-Regular.otf') }}" class="form-control" placeholder="NotoSansCJKsc-Regular.otf">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <hr class="my-2">
+                                                        <h5 class="section-eyebrow mb-2">电影级烧录样式</h5>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label class="checkbox-label">
+                                                            <input type="checkbox" name="SUBTITLE_PREFER_SINGLE_LINE" {% if config.get('SUBTITLE_PREFER_SINGLE_LINE', True) %}checked{% endif %}>
+                                                            优先单行显示（横屏短句自动合并为一行）
+                                                        </label>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-single-line-min-font-scale" class="form-label">单行最小字体缩放（0.5-1.0）</label>
+                                                            <input type="number" id="subtitle-single-line-min-font-scale" name="SUBTITLE_SINGLE_LINE_MIN_FONT_SCALE" value="{{ config.get('SUBTITLE_SINGLE_LINE_MIN_FONT_SCALE', 0.60) }}" min="0.5" max="1.0" step="0.01" class="form-control">
+                                                            <p class="help-text mb-0">默认字体放不下时，会优先缩小到该比例；极长横屏字幕会继续使用安全字号兜底以保持单行。</p>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <p class="help-text mb-0">自动化流程在启用字幕翻译时会下载字幕；设为启用后还会额外尝试下载 YouTube 自动生成字幕，适用于原视频没有人工字幕的情况。</p>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-batch-size" class="form-label">批次大小</label>
+                                                            <input type="number" id="subtitle-batch-size" name="SUBTITLE_BATCH_SIZE" value="{{ config.SUBTITLE_BATCH_SIZE }}" min="1" max="20" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-max-retries" class="form-label">最大重试次数</label>
+                                                            <input type="number" id="subtitle-max-retries" name="SUBTITLE_MAX_RETRIES" value="{{ config.SUBTITLE_MAX_RETRIES }}" min="1" max="10" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-retry-delay" class="form-label">重试延迟（秒）</label>
+                                                            <input type="number" id="subtitle-retry-delay" name="SUBTITLE_RETRY_DELAY" value="{{ config.SUBTITLE_RETRY_DELAY }}" min="1" max="30" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label class="checkbox-label">
+                                                            <input type="checkbox" name="SUBTITLE_EMBED_IN_VIDEO" {% if config.SUBTITLE_EMBED_IN_VIDEO %}checked{% endif %}>
+                                                            将字幕嵌入视频
+                                                        </label>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label class="checkbox-label">
+                                                            <input type="checkbox" name="SUBTITLE_KEEP_ORIGINAL" {% if config.SUBTITLE_KEEP_ORIGINAL %}checked{% endif %}>
+                                                            保留原始字幕文件
+                                                        </label>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="subtitleMaxWorkers" class="form-label">字幕翻译最大并发线程数</label>
+                                                            <input type="number" class="form-control" id="subtitleMaxWorkers" name="SUBTITLE_MAX_WORKERS" value="{{ config.get('SUBTITLE_MAX_WORKERS', 0) }}" min="0" step="1" inputmode="numeric" pattern="[0-9]*">
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="mt-3">
+                                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#advancedSubtitleQc" aria-expanded="false" aria-controls="advancedSubtitleQc">
+                                                        <i class="bi bi-chevron-down"></i> 质检高级参数
+                                                    </button>
+                                                    <div class="collapse mt-3" id="advancedSubtitleQc">
+                                                        <div class="row g-3">
+                                                            <div class="col-md-4">
+                                                                <div class="form-group">
+                                                                    <label for="subtitle-qc-threshold" class="form-label">通过阈值</label>
+                                                                    <input type="number" step="0.05" min="0" max="1" id="subtitle-qc-threshold" name="SUBTITLE_QC_THRESHOLD" value="{{ config.get('SUBTITLE_QC_THRESHOLD', 0.35) }}" class="form-control">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-4">
+                                                                <div class="form-group">
+                                                                    <label for="subtitle-qc-sample" class="form-label">AI 抽样上限</label>
+                                                                    <input type="number" min="10" max="300" step="1" id="subtitle-qc-sample" name="SUBTITLE_QC_SAMPLE_MAX_ITEMS" value="{{ config.get('SUBTITLE_QC_SAMPLE_MAX_ITEMS', 80) }}" class="form-control">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-4">
+                                                                <div class="form-group">
+                                                                    <label for="subtitle-qc-maxchars" class="form-label">送检字符上限</label>
+                                                                    <input type="number" min="1000" max="30000" step="500" id="subtitle-qc-maxchars" name="SUBTITLE_QC_MAX_CHARS" value="{{ config.get('SUBTITLE_QC_MAX_CHARS', 9000) }}" class="form-control">
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">字幕翻译</span>
+                                                    <h4>字幕翻译主提示词</h4>
+                                                </div>
+                                                <span class="settings-status-badge {{ 'is-info' if config.get('SUBTITLE_TRANSLATE_TEXT', '') else 'is-neutral' }}">
+                                                    {{ '已自定义' if config.get('SUBTITLE_TRANSLATE_TEXT', '') else '使用内置' }}
+                                                </span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3">
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-translate-mode" class="form-label">模式</label>
+                                                            <select id="subtitle-translate-mode" name="SUBTITLE_TRANSLATE_MODE" class="form-select prompt-mode-select" data-preview-id="builtin-preview-subtitle-translate">
+                                                                <option value="builtin" {% if config.get('SUBTITLE_TRANSLATE_MODE', 'builtin') == 'builtin' %}selected{% endif %}>内置</option>
+                                                                <option value="append" {% if config.get('SUBTITLE_TRANSLATE_MODE', 'builtin') == 'append' %}selected{% endif %}>追加</option>
+                                                                <option value="override" {% if config.get('SUBTITLE_TRANSLATE_MODE', 'builtin') == 'override' %}selected{% endif %}>覆盖</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12 builtin-prompt-preview" id="builtin-preview-subtitle-translate" {% if config.get('SUBTITLE_TRANSLATE_MODE', 'builtin') != 'builtin' %}style="display:none"{% endif %}>
+                                                        <div class="alert alert-secondary mb-0">
+                                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                                <strong><i class="bi bi-eye"></i> 当前内置提示词</strong>
+                                                                <button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#builtin-text-subtitle-translate" aria-expanded="false">
+                                                                    <i class="bi bi-chevron-down"></i> 展开/收起
+                                                                </button>
+                                                            </div>
+                                                            <div class="collapse" id="builtin-text-subtitle-translate">
+                                                                <pre class="mb-0 small text-muted builtin-prompt-pre">{{ builtin_prompts.get('SUBTITLE_TRANSLATE', {}).get('builtin_text', '') }}</pre>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <div class="form-group">
+                                                            <label for="subtitle-translate-text" class="form-label">自定义指令</label>
+                                                            <textarea id="subtitle-translate-text" name="SUBTITLE_TRANSLATE_TEXT" rows="5" class="form-control" maxlength="3000" placeholder="例如：保留音乐术语不翻译；人名音译用常用写法；技术缩写保留原文">{{ config.get('SUBTITLE_TRANSLATE_TEXT', '') }}</textarea>
+                                                            <p class="help-text mb-0">可用变量：<code>{target_language_name}</code>（目标语言名称）。留空则使用内置默认模板。</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">字幕翻译 · 高级</span>
+                                                    <h4>严格补救提示词</h4>
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#advancedStrictPrompt" aria-expanded="false" aria-controls="advancedStrictPrompt">
+                                                    <i class="bi bi-chevron-down"></i> 展开
+                                                </button>
+                                            </div>
+                                            <div class="collapse mt-2" id="advancedStrictPrompt">
+                                                <div class="settings-card-body pt-0">
+                                                    <p class="help-text">首轮翻译后若检测到大量漏译条目，会用此提示词以严格模式再补翻一次。</p>
+                                                    <div class="row g-3">
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="subtitle-translate-strict-mode" class="form-label">模式</label>
+                                                                <select id="subtitle-translate-strict-mode" name="SUBTITLE_TRANSLATE_STRICT_MODE" class="form-select prompt-mode-select" data-preview-id="builtin-preview-subtitle-strict">
+                                                                    <option value="builtin" {% if config.get('SUBTITLE_TRANSLATE_STRICT_MODE', 'builtin') == 'builtin' %}selected{% endif %}>内置</option>
+                                                                    <option value="append" {% if config.get('SUBTITLE_TRANSLATE_STRICT_MODE', 'builtin') == 'append' %}selected{% endif %}>追加</option>
+                                                                    <option value="override" {% if config.get('SUBTITLE_TRANSLATE_STRICT_MODE', 'builtin') == 'override' %}selected{% endif %}>覆盖</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-12 builtin-prompt-preview" id="builtin-preview-subtitle-strict" {% if config.get('SUBTITLE_TRANSLATE_STRICT_MODE', 'builtin') != 'builtin' %}style="display:none"{% endif %}>
+                                                            <div class="alert alert-secondary mb-0">
+                                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                                    <strong><i class="bi bi-eye"></i> 当前内置提示词</strong>
+                                                                    <button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#builtin-text-subtitle-strict" aria-expanded="false">
+                                                                        <i class="bi bi-chevron-down"></i> 展开/收起
+                                                                    </button>
+                                                                </div>
+                                                                <div class="collapse" id="builtin-text-subtitle-strict">
+                                                                    <pre class="mb-0 small text-muted builtin-prompt-pre">{{ builtin_prompts.get('SUBTITLE_TRANSLATE_STRICT', {}).get('builtin_text', '') }}</pre>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-12">
+                                                            <div class="form-group mb-0">
+                                                                <label for="subtitle-translate-strict-text" class="form-label">自定义指令</label>
+                                                                <textarea id="subtitle-translate-strict-text" name="SUBTITLE_TRANSLATE_STRICT_TEXT" rows="4" class="form-control" maxlength="3000" placeholder="留空则使用内置默认模板">{{ config.get('SUBTITLE_TRANSLATE_STRICT_TEXT', '') }}</textarea>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">标题/简介翻译</span>
+                                                    <h4>元数据翻译主提示词</h4>
+                                                </div>
+                                                <span class="settings-status-badge {{ 'is-info' if config.get('METADATA_TRANSLATE_TEXT', '') else 'is-neutral' }}">
+                                                    {{ '已自定义' if config.get('METADATA_TRANSLATE_TEXT', '') else '使用内置' }}
+                                                </span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="row g-3">
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="metadata-translate-mode" class="form-label">模式</label>
+                                                            <select id="metadata-translate-mode" name="METADATA_TRANSLATE_MODE" class="form-select prompt-mode-select" data-preview-id="builtin-preview-metadata-translate">
+                                                                <option value="builtin" {% if config.get('METADATA_TRANSLATE_MODE', 'builtin') == 'builtin' %}selected{% endif %}>内置</option>
+                                                                <option value="append" {% if config.get('METADATA_TRANSLATE_MODE', 'builtin') == 'append' %}selected{% endif %}>追加</option>
+                                                                <option value="override" {% if config.get('METADATA_TRANSLATE_MODE', 'builtin') == 'override' %}selected{% endif %}>覆盖</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12 builtin-prompt-preview" id="builtin-preview-metadata-translate" {% if config.get('METADATA_TRANSLATE_MODE', 'builtin') != 'builtin' %}style="display:none"{% endif %}>
+                                                        <div class="alert alert-secondary mb-0">
+                                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                                <strong><i class="bi bi-eye"></i> 当前内置提示词</strong>
+                                                                <button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#builtin-text-metadata-translate" aria-expanded="false">
+                                                                    <i class="bi bi-chevron-down"></i> 展开/收起
+                                                                </button>
+                                                            </div>
+                                                            <div class="collapse" id="builtin-text-metadata-translate">
+                                                                <pre class="mb-0 small text-muted builtin-prompt-pre">{{ builtin_prompts.get('METADATA_TRANSLATE', {}).get('builtin_text', '') }}</pre>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <div class="form-group mb-0">
+                                                            <label for="metadata-translate-text" class="form-label">自定义指令</label>
+                                                            <textarea id="metadata-translate-text" name="METADATA_TRANSLATE_TEXT" rows="5" class="form-control" maxlength="3000" placeholder="例如：标题风格偏口语化；简介保留原始段落结构">{{ config.get('METADATA_TRANSLATE_TEXT', '') }}</textarea>
+                                                            <p class="help-text mb-0">可用变量：<code>{target_language_name}</code>。留空则使用内置默认模板。</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">标题/简介翻译 · 高级</span>
+                                                    <h4>简介重试提示词</h4>
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#advancedDescRetryPrompt" aria-expanded="false" aria-controls="advancedDescRetryPrompt">
+                                                    <i class="bi bi-chevron-down"></i> 展开
+                                                </button>
+                                            </div>
+                                            <div class="collapse mt-2" id="advancedDescRetryPrompt">
+                                                <div class="settings-card-body pt-0">
+                                                    <p class="help-text">标题/简介首轮翻译后，若简介字段校验失败（如格式不自然、含导流残留等），会用此提示词单独重试简介。</p>
+                                                    <div class="row g-3">
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="metadata-desc-retry-mode" class="form-label">模式</label>
+                                                                <select id="metadata-desc-retry-mode" name="METADATA_DESC_RETRY_MODE" class="form-select prompt-mode-select" data-preview-id="builtin-preview-desc-retry">
+                                                                    <option value="builtin" {% if config.get('METADATA_DESC_RETRY_MODE', 'builtin') == 'builtin' %}selected{% endif %}>内置</option>
+                                                                    <option value="append" {% if config.get('METADATA_DESC_RETRY_MODE', 'builtin') == 'append' %}selected{% endif %}>追加</option>
+                                                                    <option value="override" {% if config.get('METADATA_DESC_RETRY_MODE', 'builtin') == 'override' %}selected{% endif %}>覆盖</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-12 builtin-prompt-preview" id="builtin-preview-desc-retry" {% if config.get('METADATA_DESC_RETRY_MODE', 'builtin') != 'builtin' %}style="display:none"{% endif %}>
+                                                            <div class="alert alert-secondary mb-0">
+                                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                                    <strong><i class="bi bi-eye"></i> 当前内置提示词</strong>
+                                                                    <button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#builtin-text-desc-retry" aria-expanded="false">
+                                                                        <i class="bi bi-chevron-down"></i> 展开/收起
+                                                                    </button>
+                                                                </div>
+                                                                <div class="collapse" id="builtin-text-desc-retry">
+                                                                    <pre class="mb-0 small text-muted builtin-prompt-pre">{{ builtin_prompts.get('METADATA_DESC_RETRY', {}).get('builtin_text', '') }}</pre>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-12">
+                                                            <div class="form-group mb-0">
+                                                                <label for="metadata-desc-retry-text" class="form-label">自定义指令</label>
+                                                                <textarea id="metadata-desc-retry-text" name="METADATA_DESC_RETRY_TEXT" rows="4" class="form-control" maxlength="3000" placeholder="留空则使用内置默认模板">{{ config.get('METADATA_DESC_RETRY_TEXT', '') }}</textarea>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                    <div class="tab-pane fade" id="vtab-notifications" role="tabpanel" aria-labelledby="vtab-notifications-tab">
+                        <div class="settings-stack">
+                            <section class="settings-section">
+                                <div class="settings-section-header">
+                                    <div>
+                                        <h3 class="mb-1">消息推送</h3>
+                                        <p class="section-lead mb-0">将任务新增、完成、报错和关键登录事件推送到企业微信、Server酱、message-pusher 或 Telegram。</p>
+                                    </div>
+                                </div>
+                                <div class="row g-4 settings-pane-grid">
+                                    <div class="col-xl-5">
+                                        <article class="settings-card h-100">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">总控</span>
+                                                    <h4>通知策略</h4>
+                                                </div>
+                                                <span class="settings-status-badge {{ 'is-success' if config.get('NOTIFY_ENABLED', False) else 'is-neutral' }}">
+                                                    {{ '已启用' if config.get('NOTIFY_ENABLED', False) else '未启用' }}
+                                                </span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <label class="checkbox-label mb-3">
+                                                    <input type="checkbox" name="NOTIFY_ENABLED" {% if config.get('NOTIFY_ENABLED', False) %}checked{% endif %}>
+                                                    启用主动消息推送
+                                                </label>
+                                                <div class="settings-inline-options">
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_TASK_ADDED" {% if config.get('NOTIFY_EVENT_TASK_ADDED', True) %}checked{% endif %}>
+                                                        任务新增
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_TASK_COMPLETED" {% if config.get('NOTIFY_EVENT_TASK_COMPLETED', True) %}checked{% endif %}>
+                                                        任务完成
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_TASK_FAILED" {% if config.get('NOTIFY_EVENT_TASK_FAILED', True) %}checked{% endif %}>
+                                                        任务报错
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_RECORDING_STARTED" {% if config.get('NOTIFY_EVENT_RECORDING_STARTED', True) %}checked{% endif %}>
+                                                        录制开始
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_RECORDING_STOPPED" {% if config.get('NOTIFY_EVENT_RECORDING_STOPPED', True) %}checked{% endif %}>
+                                                        录制停止
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_COOKIE_INVALID" {% if config.get('NOTIFY_EVENT_COOKIE_INVALID', True) %}checked{% endif %}>
+                                                        Cookie 失效
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_LOGIN_SUCCESS" {% if config.get('NOTIFY_EVENT_LOGIN_SUCCESS', True) %}checked{% endif %}>
+                                                        后台登录成功
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_LOGIN_LOCKED" {% if config.get('NOTIFY_EVENT_LOGIN_LOCKED', True) %}checked{% endif %}>
+                                                        登录锁定
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_QR_LOGIN_SUCCESS" {% if config.get('NOTIFY_EVENT_QR_LOGIN_SUCCESS', True) %}checked{% endif %}>
+                                                        扫码登录成功
+                                                    </label>
+                                                    <label class="checkbox-label">
+                                                        <input type="checkbox" name="NOTIFY_EVENT_QR_LOGIN_FAILED" {% if config.get('NOTIFY_EVENT_QR_LOGIN_FAILED', True) %}checked{% endif %}>
+                                                        扫码登录失败
+                                                    </label>
+                                                </div>
+                                                <p class="help-text mt-3 mb-0">事件启停状态为全局共享。已启用但凭据不完整的渠道不会阻塞主流程，只会跳过发送。</p>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-xl-7">
+                                        <div class="row g-4">
+                                            <div class="col-12">
+                                                <article class="settings-card">
+                                                    <div class="settings-card-header">
+                                                        <div>
+                                                            <span class="section-eyebrow">企业微信</span>
+                                                            <h4>群机器人</h4>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-card-body">
+                                                        <label class="checkbox-label mb-3">
+                                                            <input type="checkbox" name="NOTIFY_WECOM_ENABLED" {% if config.get('NOTIFY_WECOM_ENABLED', False) %}checked{% endif %}>
+                                                            启用企业微信群机器人通知
+                                                        </label>
+                                                        <div class="form-group mb-3">
+                                                            <label for="notify-wecom-webhook" class="form-label">Webhook URL</label>
+                                                            <input type="password" id="notify-wecom-webhook" name="NOTIFY_WECOM_WEBHOOK_URL" value="{{ secret_field_value('NOTIFY_WECOM_WEBHOOK_URL') }}" class="form-control" autocomplete="off" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
+                                                        </div>
+                                                        <div class="settings-inline-actions">
+                                                            <button type="button" class="btn btn-outline-primary notify-test-btn" data-channel="wecom">
+                                                                <i class="bi bi-send"></i> 发送测试消息
+                                                            </button>
+                                                            <span class="help-text">使用已保存的配置发送，不读取当前未保存表单内容。</span>
+                                                        </div>
+                                                    </div>
+                                                </article>
+                                            </div>
+
+                                            <div class="col-12">
+                                                <article class="settings-card">
+                                                    <div class="settings-card-header">
+                                                        <div>
+                                                            <span class="section-eyebrow">Server酱</span>
+                                                            <h4>Turbo 通道</h4>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-card-body">
+                                                        <label class="checkbox-label mb-3">
+                                                            <input type="checkbox" name="NOTIFY_SERVERCHAN_ENABLED" {% if config.get('NOTIFY_SERVERCHAN_ENABLED', False) %}checked{% endif %}>
+                                                            启用 Server酱 通知
+                                                        </label>
+                                                        <div class="form-group mb-3">
+                                                            <label for="notify-serverchan-sendkey" class="form-label">SendKey</label>
+                                                            <input type="password" id="notify-serverchan-sendkey" name="NOTIFY_SERVERCHAN_SENDKEY" value="{{ secret_field_value('NOTIFY_SERVERCHAN_SENDKEY') }}" class="form-control" autocomplete="off" placeholder="SCTxxxxxxxxxxxxxxxx">
+                                                        </div>
+                                                        <div class="settings-inline-actions">
+                                                            <button type="button" class="btn btn-outline-primary notify-test-btn" data-channel="serverchan">
+                                                                <i class="bi bi-send"></i> 发送测试消息
+                                                            </button>
+                                                            <span class="help-text">将以标题 + Markdown 正文的形式发送。</span>
+                                                        </div>
+                                                    </div>
+                                                </article>
+                                            </div>
+
+                                            <div class="col-12">
+                                                <article class="settings-card">
+                                                    <div class="settings-card-header">
+                                                        <div>
+                                                            <span class="section-eyebrow">message-pusher</span>
+                                                            <h4>自建消息网关</h4>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-card-body">
+                                                        <label class="checkbox-label mb-3">
+                                                            <input type="checkbox" name="NOTIFY_MESSAGE_PUSHER_ENABLED" {% if config.get('NOTIFY_MESSAGE_PUSHER_ENABLED', False) %}checked{% endif %}>
+                                                            启用 message-pusher 通知
+                                                        </label>
+                                                        <div class="row g-3">
+                                                            <div class="col-md-6">
+                                                                <div class="form-group">
+                                                                    <label for="notify-message-pusher-server" class="form-label">服务地址</label>
+                                                                    <input type="url" id="notify-message-pusher-server" name="NOTIFY_MESSAGE_PUSHER_SERVER" value="{{ config.get('NOTIFY_MESSAGE_PUSHER_SERVER', '') }}" class="form-control" placeholder="https://push.example.com">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <div class="form-group">
+                                                                    <label for="notify-message-pusher-username" class="form-label">用户名</label>
+                                                                    <input type="text" id="notify-message-pusher-username" name="NOTIFY_MESSAGE_PUSHER_USERNAME" value="{{ config.get('NOTIFY_MESSAGE_PUSHER_USERNAME', '') }}" class="form-control" placeholder="admin">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <div class="form-group">
+                                                                    <label for="notify-message-pusher-token" class="form-label">Token</label>
+                                                                    <input type="password" id="notify-message-pusher-token" name="NOTIFY_MESSAGE_PUSHER_TOKEN" value="{{ secret_field_value('NOTIFY_MESSAGE_PUSHER_TOKEN') }}" class="form-control" autocomplete="off">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <div class="form-group">
+                                                                    <label for="notify-message-pusher-channel" class="form-label">通道名（可选）</label>
+                                                                    <input type="text" id="notify-message-pusher-channel" name="NOTIFY_MESSAGE_PUSHER_CHANNEL" value="{{ config.get('NOTIFY_MESSAGE_PUSHER_CHANNEL', '') }}" class="form-control" placeholder="corp / email / 自定义通道名">
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="settings-inline-actions mt-3">
+                                                            <button type="button" class="btn btn-outline-primary notify-test-btn" data-channel="message_pusher">
+                                                                <i class="bi bi-send"></i> 发送测试消息
+                                                            </button>
+                                                            <span class="help-text">留空通道名时使用服务端默认通道。</span>
+                                                        </div>
+                                                    </div>
+                                                </article>
+                                            </div>
+
+                                            <div class="col-12 order-first">
+                                                <article class="settings-card">
+                                                    <div class="settings-card-header">
+                                                        <div>
+                                                            <span class="section-eyebrow">Telegram</span>
+                                                            <h4><i class="bi bi-telegram me-1"></i> Bot 消息</h4>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-card-body">
+                                                        <label class="checkbox-label mb-3">
+                                                            <input type="checkbox" name="NOTIFY_TELEGRAM_ENABLED" {% if config.get('NOTIFY_TELEGRAM_ENABLED', False) %}checked{% endif %}>
+                                                            启用 Telegram Bot 通知
+                                                        </label>
                                                         <div class="row g-3">
                                                             <div class="col-md-7">
                                                                 <div class="form-group">
