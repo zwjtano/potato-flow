@@ -62,19 +62,19 @@ class OverviewDashboardTests(unittest.TestCase):
         self.assertIn("url_for('live_recording', add_room=1)", TEMPLATE_SOURCE)
         self.assertIn("get('add_room') === '1'", live_template)
 
-    def test_desktop_sidebar_uses_light_theme_tokens(self):
-        self.assertIn("--studio-sidebar: #eef4fa", STYLE_SOURCE)
+    def test_desktop_sidebar_uses_professional_dark_console_tokens(self):
+        self.assertIn("--studio-sidebar: #111a24", STYLE_SOURCE)
         self.assertIn("--studio-primary: #00aeec", STYLE_SOURCE)
-        self.assertIn("background: #eafaff", STYLE_SOURCE)
-        self.assertIn("核心功能", BASE_TEMPLATE_SOURCE)
+        self.assertIn("--studio-canvas: #0e141b", STYLE_SOURCE)
+        self.assertIn("document.documentElement.dataset.theme = 'dark'", BASE_TEMPLATE_SOURCE)
+        self.assertIn("录播工作流", BASE_TEMPLATE_SOURCE)
         self.assertIn("任务中心", BASE_TEMPLATE_SOURCE)
-        self.assertIn("<span>首页</span>", BASE_TEMPLATE_SOURCE)
+        self.assertIn("<span>总览</span>", BASE_TEMPLATE_SOURCE)
         self.assertIn("shell_section = '首页'", BASE_TEMPLATE_SOURCE)
         self.assertLess(
-            BASE_TEMPLATE_SOURCE.index("直播录制"),
+            BASE_TEMPLATE_SOURCE.index("直播间"),
             BASE_TEMPLATE_SOURCE.index("YouTube 监控"),
         )
-        self.assertNotIn("--studio-sidebar: #191c23", STYLE_SOURCE)
 
     def test_theme_can_toggle_or_follow_the_system(self):
         self.assertIn("potatoflow-theme", BASE_TEMPLATE_SOURCE)

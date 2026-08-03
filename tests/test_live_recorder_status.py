@@ -1074,21 +1074,27 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertIn('segment_time: "01:00:00"', content)
             recordings_root = root / "recordings"
             self.assertIn(
-                f'filename_prefix: "{recordings_root}/{{streamer}}_{{title}}_%Y-%m-%d_%H-%M"',
+                "filename_prefix: " + recorder_module._yaml_string(
+                    str(recordings_root / "{streamer}_{title}_%Y-%m-%d_%H-%M")
+                ),
                 content,
             )
             self.assertIn(
-                f'filename_prefix: "{recordings_root}/开播主播/'
-                '开播主播_{title}_{live_start}/开播主播_{title}_%Y-%m-%d_%H-%M"',
+                "filename_prefix: " + recorder_module._yaml_string(str(
+                    recordings_root / "开播主播" /
+                    "开播主播_{title}_{live_start}" /
+                    "开播主播_{title}_%Y-%m-%d_%H-%M"
+                )),
                 content,
             )
             self.assertNotIn("aaaaaa", content.split("filename_prefix:", 2)[-1].splitlines()[0])
             self.assertNotIn("file_size: 2621440000", content)
             self.assertIn("filtering_threshold: 0", content)
             self.assertIn("segment_processor:", content)
-            self.assertIn("ingest --session-key", content)
+            self.assertIn('- "ingest"', content)
+            self.assertIn('- "--session-key"', content)
             self.assertIn("aaaaaa111111", content)
-            self.assertIn("finalize-session --session-key", content)
+            self.assertIn('- "finalize-session"', content)
 
     def test_config_enables_douyin_danmaku_and_persisted_cookie(self):
         manager = LiveRecorderManager()
@@ -1199,9 +1205,9 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
             content = config_path.read_text(encoding="utf-8")
             self.assertIn("segment_processor:", content)
-            self.assertIn(" ingest", content)
-            self.assertNotIn("ingest --session-key", content)
-            self.assertNotIn("finalize-session", content)
+            self.assertIn('- "ingest"', content)
+            self.assertNotIn('- "--session-key"', content)
+            self.assertNotIn('- "finalize-session"', content)
 
     def test_config_can_record_a_room_without_segmentation(self):
         manager = LiveRecorderManager()
@@ -1385,9 +1391,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 manager.sync_configs([room])
 
             content = config_path.read_text(encoding="utf-8")
-            self.assertIn("record-only --room-id", content)
-            self.assertNotIn(" ingest", content)
-            self.assertNotIn("finalize-session", content)
+            self.assertIn('- "record-only"', content)
+            self.assertIn('- "--room-id"', content)
+            self.assertNotIn('- "ingest"', content)
+            self.assertNotIn('- "finalize-session"', content)
             self.assertFalse(manager.room_multipart_enabled(room))
 
     def test_readding_legacy_room_updates_profile_without_duplicate(self):

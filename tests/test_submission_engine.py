@@ -29,6 +29,7 @@ class SubmissionEngineAdapterTests(unittest.TestCase):
             binary = Path(temp) / "recorder-core" / "target" / "release" / "biliup.exe"
             binary.parent.mkdir(parents=True)
             binary.write_bytes(b"windows executable")
+            binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
             with patch.object(submission_engine, "get_resource_root_dir", return_value=temp):
                 self.assertEqual(submission_engine._recorder_binary(), str(binary))
 
