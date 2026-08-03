@@ -246,6 +246,10 @@ def healthz():
     return jsonify({
         'status': 'ok',
         'version': __version__,
+        'application_version': __version__,
+        'runtime_mode': os.environ.get('POTATOFLOW_RUNTIME_MODE', 'source'),
+        'architecture': os.environ.get('PROCESSOR_ARCHITECTURE') or os.environ.get('PROCESSOR_ARCHITEW6432') or '',
+        'recorder_core_version': '1.2.2',
     })
 
 
@@ -3803,6 +3807,103 @@ def get_path_debug_info(file_path):
         logger.warning("获取路径调试信息失败: %s", e)
         return {'error': _public_health_check_error_message('路径')}
 
+
+def _desktop_onboarding_path() -> Path:
+    return Path(get_app_subdir('state')) / 'onboarding.json'
+
+
+@app.route('/onboarding')
+@login_required
+def desktop_onboarding():
+    data_root = Path(os.environ.get('POTATOFLOW_DATA_DIR') or get_app_subdir('state')).resolve()
+    paths = {
+        'data': str(data_root),
+        'recordings': str(recordings_dir()),
+        'exports': str(Path(os.environ.get('POTATOFLOW_EXPORTS_DIR') or data_root / 'exports').resolve()),
+    }
+    return render_template('onboarding.html', paths=paths)
+
+
+@app.route('/api/onboarding/status')
+@login_required
+def desktop_onboarding_status():
+    path = _desktop_onboarding_path()
+    try:
+        state = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+    except (OSError, ValueError):
+        state = {}
+    return jsonify({'completed': bool(state.get('completed')), 'version': state.get('version', '')})
+
+
+@app.route('/api/onboarding/complete', methods=['POST'])
+@login_required
+def desktop_onboarding_complete():
+    payload = request.get_json(silent=True) or {}
+    encoder = str(payload.get('encoder') or 'auto').lower()
+    if encoder not in {'auto', 'cpu', 'amd', 'nvidia', 'intel'}:
+        return jsonify({'success': False, 'error': '无效的编码器'}), 400
+    updates = {
+        'RECORDINGS_PATH': str(recordings_dir()),
+        'DANMAKU_ENCODER': encoder,
+    }
+    update_config(updates)
+    state = {'completed': True, 'version': __version__, 'completed_at': datetime.now().isoformat()}
+    path = _desktop_onboarding_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+    return jsonify({'success': True, 'redirect': url_for('index')})
+
+
+@app.route('/diagnostics')
+@login_required
+def desktop_diagnostics():
+    from modules.desktop_runtime import component_diagnostics, resolve_windows_runtime
+
+    layout = resolve_windows_runtime(sys.executable, Path(__file__).resolve().parent)
+    # The launcher is authoritative in frozen mode; source mode uses the active paths.
+    data_root = Path(os.environ.get('POTATOFLOW_DATA_DIR') or layout.data_root).resolve()
+    recordings_root = Path(os.environ.get('POTATOFLOW_RECORDINGS_DIR') or recordings_dir()).resolve()
+    usage_target = recordings_root
+    while not usage_target.exists() and usage_target.parent != usage_target:
+        usage_target = usage_target.parent
+    usage = shutil.disk_usage(usage_target)
+    diagnostics = {
+        'mode': os.environ.get('POTATOFLOW_RUNTIME_MODE', 'source'),
+        'architecture': os.environ.get('PROCESSOR_ARCHITECTURE', ''),
+        'version': __version__,
+        'data_root': str(data_root),
+        'recordings_root': str(recordings_root),
+        'recordings_writable': os.access(recordings_root if recordings_root.exists() else usage_target, os.W_OK),
+        'disk_free_gb': round(usage.free / 1024 ** 3, 1),
+        'components': component_diagnostics(layout),
+    }
+    return render_template('diagnostics.html', diagnostics=diagnostics)
+
+
+@app.route('/api/runtime-diagnostics')
+@login_required
+def desktop_runtime_diagnostics_api():
+    from modules.desktop_runtime import component_diagnostics, resolve_windows_runtime
+
+    layout = resolve_windows_runtime(sys.executable, Path(__file__).resolve().parent)
+    components = component_diagnostics(layout)
+    webview2 = False
+    if os.name == 'nt':
+        try:
+            import winreg
+            for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    key = r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' if root == winreg.HKEY_LOCAL_MACHINE else r'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+                    with winreg.OpenKey(root, key):
+                        webview2 = True
+                        break
+                except OSError:
+                    continue
+        except ImportError:
+            pass
+    components.append({'name': 'WebView2 Runtime', 'exists': webview2, 'path': 'Windows Runtime', 'sha256': ''})
+    return jsonify({'components': components, 'mode': os.environ.get('POTATOFLOW_RUNTIME_MODE', 'source')})
+
 @app.route('/system_health')
 @login_required
 def system_health():
@@ -5602,11 +5703,7 @@ if __name__ == '__main__':
         logger.info(f"服务启动，监听地址: http://127.0.0.1:{port}")
         # 使用标准Flask运行
         desktop_mode = str(os.environ.get('POTATOFLOW_DESKTOP_MODE') or '').strip().lower() in ('1', 'true', 'yes')
-        host = (
-            '0.0.0.0'
-            if not desktop_mode or bool(config.get('DESKTOP_ALLOW_LAN', False))
-            else '127.0.0.1'
-        )
+        host = '127.0.0.1' if desktop_mode else '0.0.0.0'
         if desktop_mode:
             from werkzeug.serving import make_server
 

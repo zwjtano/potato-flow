@@ -10,7 +10,11 @@ from runtime_environment import configure_linux_ca_environment
 
 
 APP_ROOT = Path(__file__).resolve().parent
-PYTHON = APP_ROOT / ".venv" / "bin" / "python"
+PYTHON_CANDIDATES = (
+    APP_ROOT / ".venv" / "Scripts" / "python.exe",
+    APP_ROOT / ".venv" / "bin" / "python",
+)
+PYTHON = next((path for path in PYTHON_CANDIDATES if path.is_file()), PYTHON_CANDIDATES[-1])
 
 if not PYTHON.exists():
     raise SystemExit("缺少运行环境，请先在 potatoflow-app/.venv 中安装 requirements.lock")

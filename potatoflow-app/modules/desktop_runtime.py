@@ -6,6 +6,8 @@ import json
 import os
 import shutil
 import sys
+import hashlib
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -15,6 +17,23 @@ MIGRATION_ITEMS = (
     "config", "cookies", "db", "downloads", "logs", "recordings", "state", "temp", ".bridge"
 )
 MIGRATION_FILES = ("bridge.config.json",)
+RUNTIME_MANIFEST = "runtime-manifest.json"
+PORTABLE_MARKER = "portable.mode"
+
+
+@dataclass(frozen=True)
+class WindowsRuntimeLayout:
+    mode: str
+    install_root: Path
+    resource_root: Path
+    data_root: Path
+    recordings_root: Path
+    exports_root: Path
+    bin_root: Path
+    manifest_path: Path
+
+    def public_dict(self) -> dict[str, str]:
+        return {key: str(value) for key, value in asdict(self).items()}
 
 
 def default_windows_data_dir() -> Path:
@@ -24,11 +43,116 @@ def default_windows_data_dir() -> Path:
     return Path(local_app_data).expanduser().resolve() / "PotatoFlow"
 
 
+def default_windows_documents_dir() -> Path:
+    """Return the visible per-user Documents folder, including redirected folders."""
+    configured = str(os.environ.get("POTATOFLOW_DOCUMENTS_DIR") or "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            path = ctypes.create_unicode_buffer(32768)
+            # CSIDL_PERSONAL. This also follows OneDrive/domain folder redirection.
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, path) == 0:
+                return Path(path.value).resolve()
+        except (AttributeError, OSError):
+            pass
+    return (Path.home() / "Documents").resolve()
+
+
+def resolve_windows_runtime(
+    executable: Path | None = None,
+    resources: Path | None = None,
+) -> WindowsRuntimeLayout:
+    executable = Path(executable or sys.executable).resolve()
+    install_root = executable.parent
+    resource_root = Path(resources or install_root).resolve()
+    portable = (install_root / PORTABLE_MARKER).is_file()
+    mode = "portable" if portable else "installed"
+    if portable:
+        data_root = install_root / "data"
+        recordings_root = install_root / "recordings"
+        exports_root = install_root / "exports"
+    else:
+        data_root = default_windows_data_dir()
+        documents_root = default_windows_documents_dir() / "PotatoFlow"
+        recordings_root = documents_root / "recordings"
+        exports_root = documents_root / "exports"
+    bin_root = install_root / "bin"
+    if not bin_root.is_dir():
+        bin_root = resource_root / "bin"
+    manifest_path = install_root / RUNTIME_MANIFEST
+    if not manifest_path.is_file():
+        manifest_path = resource_root / RUNTIME_MANIFEST
+    return WindowsRuntimeLayout(
+        mode=mode,
+        install_root=install_root,
+        resource_root=resource_root,
+        data_root=data_root.resolve(),
+        recordings_root=recordings_root.resolve(),
+        exports_root=exports_root.resolve(),
+        bin_root=bin_root.resolve(),
+        manifest_path=manifest_path.resolve(),
+    )
+
+
 def ensure_data_layout(data_dir: Path) -> Path:
     root = Path(data_dir).expanduser().resolve()
     for name in ("config", "cookies", "db", "downloads", "logs", "recordings", "state", "temp"):
         (root / name).mkdir(parents=True, exist_ok=True)
     return root
+
+
+def ensure_windows_layout(layout: WindowsRuntimeLayout) -> WindowsRuntimeLayout:
+    ensure_data_layout(layout.data_root)
+    layout.recordings_root.mkdir(parents=True, exist_ok=True)
+    layout.exports_root.mkdir(parents=True, exist_ok=True)
+    return layout
+
+
+def configure_runtime_environment(layout: WindowsRuntimeLayout) -> None:
+    os.environ["POTATOFLOW_DATA_DIR"] = str(layout.data_root)
+    os.environ["POTATOFLOW_RECORDINGS_DIR"] = str(layout.recordings_root)
+    os.environ["POTATOFLOW_EXPORTS_DIR"] = str(layout.exports_root)
+    os.environ["POTATOFLOW_RUNTIME_MODE"] = layout.mode
+    os.environ["PATH"] = str(layout.bin_root) + os.pathsep + os.environ.get("PATH", "")
+    for component, variable in (
+        ("biliup.exe", "RECORDER_BIN"),
+        ("ffmpeg.exe", "FFMPEG_LOCATION"),
+        ("ffprobe.exe", "FFPROBE_LOCATION"),
+    ):
+        candidate = layout.bin_root / component
+        if candidate.is_file():
+            os.environ[variable] = str(candidate)
+
+
+def load_runtime_manifest(layout: WindowsRuntimeLayout) -> dict[str, object]:
+    try:
+        value = json.loads(layout.manifest_path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def component_diagnostics(layout: WindowsRuntimeLayout) -> list[dict[str, object]]:
+    manifest = load_runtime_manifest(layout)
+    expected = manifest.get("components") if isinstance(manifest.get("components"), list) else []
+    names = {"biliup.exe", "ffmpeg.exe", "ffprobe.exe"}
+    names.update(str(item.get("name")) for item in expected if isinstance(item, dict))
+    results = []
+    for name in sorted(filter(None, names)):
+        path = layout.bin_root / name
+        digest = ""
+        if path.is_file():
+            sha256 = hashlib.sha256()
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    sha256.update(block)
+            digest = sha256.hexdigest()
+        results.append({"name": name, "path": str(path), "exists": path.is_file(), "sha256": digest})
+    return results
 
 
 def legacy_data_candidates(path: Path) -> Iterable[Path]:

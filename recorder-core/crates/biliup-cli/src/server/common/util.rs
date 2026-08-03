@@ -102,8 +102,14 @@ fn append_suffix(base: &str, suffix: &str) -> PathBuf {
 /// - 保留 '%'，以便 strftime 能正常工作
 fn sanitize_filename(name: &str) -> String {
     let normalized = name.replace('\\', "/");
-    let is_absolute = normalized.starts_with('/');
-    let parts: Vec<String> = normalized
+    let windows_drive = normalized
+        .as_bytes()
+        .get(0..3)
+        .filter(|prefix| prefix[0].is_ascii_alphabetic() && prefix[1] == b':' && prefix[2] == b'/')
+        .map(|_| &normalized[..2]);
+    let is_absolute = normalized.starts_with('/') || windows_drive.is_some();
+    let path_body = windows_drive.map_or(normalized.as_str(), |_| &normalized[3..]);
+    let parts: Vec<String> = path_body
         .split('/')
         .filter(|part| !part.is_empty() && *part != "." && *part != "..")
         .map(|part| {
@@ -121,6 +127,8 @@ fn sanitize_filename(name: &str) -> String {
         .collect();
     if parts.is_empty() {
         "_".to_string()
+    } else if let Some(drive) = windows_drive {
+        format!("{drive}/{}", parts.join("/"))
     } else if is_absolute {
         format!("/{}", parts.join("/"))
     } else {
@@ -204,6 +212,7 @@ mod tests {
     use crate::server::common::util::media_ext_from_url;
     use crate::server::infrastructure::models::StreamerInfo;
     use chrono::{Local, TimeZone, Utc};
+    use std::path::PathBuf;
 
     #[test]
     fn it_works() {
@@ -251,6 +260,14 @@ mod tests {
         assert_eq!(
             sanitize_filename("/data/recordings/YYF/直播:回放_%Y-%m-%d"),
             "/data/recordings/YYF/直播_回放_%Y-%m-%d"
+        );
+    }
+
+    #[test]
+    fn recording_template_preserves_windows_absolute_output_root() {
+        assert_eq!(
+            sanitize_filename(r"C:\recordings\YYF\直播:回放_%Y-%m-%d"),
+            "C:/recordings/YYF/直播_回放_%Y-%m-%d"
         );
     }
 

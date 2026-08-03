@@ -25,6 +25,46 @@ CHECK_DESKTOP_ASSETS_FLAG = "--check-desktop-assets"
 ACTIVATION_PORT = 45160
 
 
+def assign_kill_on_close_job(process: subprocess.Popen) -> object | None:
+    """Put the server and all descendants in a Windows Job Object."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class BASIC_LIMIT(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount", "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+    class EXTENDED_LIMIT(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", BASIC_LIMIT), ("IoInfo", IO_COUNTERS),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.CreateJobObjectW(None, None)
+    if not handle:
+        return None
+    limits = EXTENDED_LIMIT()
+    limits.BasicLimitInformation.LimitFlags = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+        kernel32.CloseHandle(handle); return None
+    if not kernel32.AssignProcessToJobObject(handle, wintypes.HANDLE(process._handle)):
+        kernel32.CloseHandle(handle); return None
+    return handle
+
+
 def resource_root() -> Path:
     internal = str(getattr(sys, "_MEIPASS", "") or "").strip()
     if internal:
@@ -39,15 +79,16 @@ def configure_windows_runtime() -> tuple[Path, Path]:
             locale.setlocale(locale.LC_ALL, "")
         except locale.Error:
             pass
-    from modules.desktop_runtime import default_windows_data_dir, ensure_data_layout
+    from modules.desktop_runtime import (
+        configure_runtime_environment,
+        ensure_windows_layout,
+        resolve_windows_runtime,
+    )
 
-    data_root = ensure_data_layout(default_windows_data_dir())
-    os.environ.setdefault("POTATOFLOW_DATA_DIR", str(data_root))
+    layout = ensure_windows_layout(resolve_windows_runtime(sys.executable, resource_root()))
+    configure_runtime_environment(layout)
+    data_root = layout.data_root
     os.environ.setdefault("PORT", "5001")
-    bundled_ffmpeg = Path(sys.executable).resolve().parent / "ffmpeg"
-    if bundled_ffmpeg.is_dir():
-        os.environ["PATH"] = str(bundled_ffmpeg) + os.pathsep + os.environ.get("PATH", "")
-        os.environ.setdefault("FFMPEG_LOCATION", str(bundled_ffmpeg / "ffmpeg.exe"))
     os.chdir(data_root)
     return resource_root(), data_root
 
@@ -140,8 +181,6 @@ def run_desktop(data_root: Path) -> int:
 
     import pystray
     import webview
-    from modules.desktop_runtime import import_legacy_data
-
     port = int(os.environ.get("PORT", "5001"))
     url = f"http://127.0.0.1:{port}"
     token = secrets.token_urlsafe(32)
@@ -155,6 +194,7 @@ def run_desktop(data_root: Path) -> int:
         env=child_env,
         creationflags=creationflags,
     )
+    process_job = assign_kill_on_close_job(process)
     try:
         _wait_for_health(process, url)
     except Exception:
@@ -163,8 +203,8 @@ def run_desktop(data_root: Path) -> int:
 
     initial_html = "<html><body style='font-family:Segoe UI;padding:32px'><h2>PotatoFlow</h2><p>正在准备桌面界面……</p></body></html>"
     window = webview.create_window(
-        "PotatoFlow", html=initial_html, width=1280, height=820,
-        min_size=(960, 640), confirm_close=False,
+        "PotatoFlow", html=initial_html, width=1440, height=900,
+        min_size=(1180, 720), confirm_close=False,
     )
     state = {"exiting": False}
 
@@ -174,6 +214,18 @@ def run_desktop(data_root: Path) -> int:
             window.restore()
         except Exception:
             pass
+
+    def open_recordings(*_args) -> None:
+        path = Path(os.environ["POTATOFLOW_RECORDINGS_DIR"])
+        path.mkdir(parents=True, exist_ok=True)
+        os.startfile(path)
+
+    def recording_label(_item=None) -> str:
+        try:
+            status = _http_json(f"{url}/api/desktop/status", token=token)
+            return f"当前录制：{len(status.get('rooms') or [])}"
+        except Exception:
+            return "当前录制：状态不可用"
 
     def activation_listener() -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
@@ -231,23 +283,16 @@ def run_desktop(data_root: Path) -> int:
         "PotatoFlow", icon_image, "PotatoFlow",
         menu=pystray.Menu(
             pystray.MenuItem("打开 PotatoFlow", show_window, default=True),
+            pystray.MenuItem(recording_label, None, enabled=False),
+            pystray.MenuItem("打开录播目录", open_recordings),
             pystray.MenuItem("退出", shutdown),
         ),
     )
     threading.Thread(target=tray.run, daemon=True, name="desktop-tray").start()
 
     def on_started() -> None:
-        marker = data_root / "state" / "desktop-first-run.json"
-        if not marker.exists():
-            try:
-                selected = window.create_file_dialog(webview.FOLDER_DIALOG, allow_multiple=False)
-                if selected:
-                    import_legacy_data(Path(selected[0]), data_root)
-            except Exception:
-                pass
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"completed": True}), encoding="utf-8")
-        window.load_url(url)
+        marker = data_root / "state" / "onboarding.json"
+        window.load_url(f"{url}/onboarding" if not marker.exists() else url)
 
     try:
         webview.start(on_started, gui="edgechromium", debug=False)
@@ -263,6 +308,9 @@ def run_desktop(data_root: Path) -> int:
                 process.wait(timeout=15)
             except Exception:
                 process.terminate()
+        if process_job and os.name == "nt":
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(process_job)
     return 0
 
 

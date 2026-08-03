@@ -1,0 +1,11 @@
+(function(){
+  let current=0; const articles=[...document.querySelectorAll('[data-step]')]; const steps=[...document.querySelectorAll('#steps li')];
+  const back=document.getElementById('back'), next=document.getElementById('next'), progress=document.getElementById('progress');
+  function render(){articles.forEach((el,i)=>el.hidden=i!==current);steps.forEach((el,i)=>el.classList.toggle('active',i<=current));back.disabled=current===0;next.textContent=current===4?'进入 PotatoFlow':'下一步';progress.style.width=((current+1)*20)+'%'}
+  back.onclick=()=>{if(current>0){current--;render()}};
+  next.onclick=async()=>{if(current<4){current++;render();return} const response=await fetch('/api/onboarding/complete',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({encoder:document.getElementById('encoder').value})});const data=await response.json();if(data.success)location.href=data.redirect};
+  async function inspectComponents(){const box=document.getElementById('components');try{const response=await fetch('/api/runtime-diagnostics');const data=await response.json();box.innerHTML='';data.components.forEach(value=>{const row=document.createElement('span');row.innerHTML='<i class="bi '+(value.exists?'bi-check-circle-fill':'bi-x-circle-fill')+'"></i><b>'+value.name+'</b> '+(value.exists?'已就绪':'缺失');box.appendChild(row)})}catch(error){box.textContent='组件检查失败：'+error.message}}
+  document.getElementById('probe').onclick=async()=>{const box=document.getElementById('encoders');box.innerHTML='<span>正在运行 FFmpeg 编码探测…</span>';try{const response=await fetch('/api/encoding-capabilities');const data=await response.json();const list=data.encoders||data.capabilities||{};box.innerHTML='';Object.entries(list).forEach(([name,value])=>{const ok=Boolean(value.available);const row=document.createElement('span');row.innerHTML='<i class="bi '+(ok?'bi-check-circle-fill':'bi-x-circle-fill')+'"></i><b>'+name+'</b> '+(ok?'可用':(value.reason||'不可用'));box.appendChild(row)});document.getElementById('encoder').value=data.recommended?.id||data.recommended||'auto'}catch(error){box.textContent='检测失败：'+error.message}};
+  inspectComponents();
+  render();
+}());

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}诊断与日志 · PotatoFlow{% endblock %}
+{% block content %}
+<header class="studio-page-header"><div><span class="page-eyebrow">DIAGNOSTICS</span><h1>诊断与日志</h1><p>组件、目录和运行环境均显示真实位置。导出诊断包时不会包含 Cookie、API 密钥、Token 或直播流签名。</p></div></header>
+<section class="diagnostic-grid">
+  <article class="diagnostic-card"><span>运行模式</span><strong>{{ diagnostics.mode }}</strong><small>PotatoFlow {{ diagnostics.version }} · {{ diagnostics.architecture or 'x64' }}</small></article>
+  <article class="diagnostic-card"><span>磁盘剩余</span><strong>{{ diagnostics.disk_free_gb }} GB</strong><small>{{ diagnostics.recordings_root }}</small></article>
+  <article class="diagnostic-card"><span>目录权限</span><strong>{{ '可写' if diagnostics.recordings_writable else '检测失败' }}</strong><small>{{ diagnostics.data_root }}</small></article>
+</section>
+<section class="diagnostic-panel"><header><h2>锁定运行组件</h2><span>SHA-256</span></header>
+{% for component in diagnostics.components %}<div class="component-row"><i class="bi {{ 'bi-check-circle-fill text-success' if component.exists else 'bi-x-circle-fill text-danger' }}"></i><strong>{{ component.name }}</strong><code>{{ component.path }}</code><small>{{ component.sha256 or '文件缺失' }}</small></div>{% endfor %}
+</section>
+{% endblock %}
