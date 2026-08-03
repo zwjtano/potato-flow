@@ -83,7 +83,8 @@ DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "围绕本段标题的核心事件构图，封面核心文案必须自然包含主角名，不使用“主角名｜事件”"
     "这种机械标签。主体醒目、对比清楚、适合手机缩略图；当前主播必须使用已上传的封面人物底稿，"
     "所有主播别名都指向底稿中的同一人，不得根据昵称猜测长相、另画陌生人或按字面生成动植物。"
-    "只有在弹幕可靠提及其他主播且获得唯一匹配头像时，才可将其作为次要人物；不得替换主角或混合人脸。"
+    "只有最终投稿标题明确出现、且获得唯一匹配头像的其他主播，才可作为次要人物；"
+    "简介、时间线或弹幕中顺带提及的人物一律不得出镜，不得替换主角或混合人脸。"
     "DOTA2 英雄和技能必须符合游戏原设；"
     "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备，"
     "禁止自绘或仿冒装备图标。"
@@ -2678,13 +2679,8 @@ def generate_recording_cover_with_ai(
     ai_cfg = load_app_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
     cover_event_context, cover_context_source = recording_cover_event_context(description)
-    cover_subject_name = recording_cover_subject_name(
-        streamer,
-        title,
-        ai_topic,
-        cover_event_context,
-    )
-    headline = recording_cover_headline(title, ai_topic, streamer)
+    cover_subject_name = recording_cover_subject_name(streamer, title)
+    headline = recording_cover_headline(title, "", streamer)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
         "ai_cover_headline": headline,
@@ -2743,6 +2739,23 @@ def generate_recording_cover_with_ai(
         reference_kind = "avatar"
     reference_name = reference[0]
     reference_paths: list[Path] = [reference[1]]
+    reference_roles: list[str] = [
+        (
+            f"当前直播间主播 {reference_name or streamer or '主播'} 的人物身份底稿；"
+            "这是当前主播脸部、发型、服装、配饰和画风的唯一身份来源"
+        )
+    ]
+
+    def add_cover_reference(path: Path, role: str) -> int:
+        """Append one reference with an explicit, index-aligned visual role."""
+        if path in reference_paths:
+            index = reference_paths.index(path)
+            if role not in reference_roles[index]:
+                reference_roles[index] = f"{reference_roles[index]}；{role}"
+            return index + 1
+        reference_paths.append(path)
+        reference_roles.append(role)
+        return len(reference_paths)
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
     elif reference_kind == "custom":
@@ -2781,11 +2794,17 @@ def generate_recording_cover_with_ai(
                 resolved_guest["avatar_url"],
                 cfg,
             )
-            if guest_reference not in reference_paths:
-                reference_paths.append(guest_reference)
+            reference_index = add_cover_reference(
+                guest_reference,
+                (
+                    f"最终投稿标题中的次要人物 {resolved_guest['name']} 的身份头像；"
+                    "只定义该次要人物，不得改变或混入当前主播身份"
+                ),
+            )
             guest_references.append({
                 **resolved_guest,
                 "reference_path": str(guest_reference),
+                "reference_index": str(reference_index),
             })
         except Exception as exc:
             guest_reference_errors.append({
@@ -2797,9 +2816,9 @@ def generate_recording_cover_with_ai(
     details["ai_cover_guest_candidate_source"] = "submission_title"
     if guest_references:
         guest_identity_instruction = (
-            "额外主播身份参考：在封面人物底稿之后上传的头像依次对应 "
+            "额外主播身份参考："
             + "；".join(
-                f"标题中的“{guest['mentioned_as']}”＝主播 {guest['name']}"
+                f"Image {guest['reference_index']} 对应标题中的“{guest['mentioned_as']}”＝主播 {guest['name']}"
                 for guest in guest_references
             )
             + "。只有内容确实需要该主播出镜时才能添加，其外观必须依据对应头像；"
@@ -2807,12 +2826,13 @@ def generate_recording_cover_with_ai(
         )
     elif guest_candidates:
         guest_identity_instruction = (
-            "内容提到了其他主播，但未能从已保存直播间或斗鱼接口取得唯一可靠的头像；"
+            "最终投稿标题提到了其他主播，但未能从已保存直播间或斗鱼接口取得唯一可靠的头像；"
             "禁止在画面中生成或猜测该人物的脸。"
         )
     else:
         guest_identity_instruction = (
-            "本次未发现需要出镜的其他主播；不要根据普通人名、弹幕用户名或职业选手外号"
+            "最终投稿标题未发现可可靠出镜的其他主播；不要根据简介、时间线、普通人名、"
+            "弹幕用户名或职业选手外号"
             "自行增加陌生人物。"
         )
     dota2_instruction = recording_cover_dota2_instruction(
@@ -2960,7 +2980,10 @@ def generate_recording_cover_with_ai(
         ]
         details["ai_cover_dota2_item_reference_errors"] = item_reference_errors
         if item_reference_path is not None:
-            reference_paths.append(item_reference_path)
+            add_cover_reference(
+                item_reference_path,
+                "Valve 官方装备图标表；只定义装备外观，不得提供、改变或生成任何人物身份",
+            )
             details["ai_cover_dota2_item_reference_used"] = True
             details["ai_cover_dota2_item_reference_path"] = str(item_reference_path)
         else:
@@ -2987,7 +3010,13 @@ def generate_recording_cover_with_ai(
         )
         details["ai_cover_dota2_hero_reference_error"] = hero_reference_error
         if hero_reference_path is not None:
-            reference_paths.append(hero_reference_path)
+            add_cover_reference(
+                hero_reference_path,
+                (
+                    f"Valve 官方 Dota 2 英雄 {tooltip_hero} 参考；只定义游戏英雄外观，"
+                    "不得作为当前主播或任何真人的脸部参考"
+                ),
+            )
             details["ai_cover_dota2_hero_reference_used"] = True
             details["ai_cover_dota2_hero_reference_path"] = str(hero_reference_path)
             dota2_instruction = (
@@ -3037,7 +3066,10 @@ def generate_recording_cover_with_ai(
             ability_reference_errors
         )
         if ability_reference_path is not None:
-            reference_paths.append(ability_reference_path)
+            add_cover_reference(
+                ability_reference_path,
+                "Valve 官方 Dota 2 技能图标表；只定义技能视觉元素，不得提供或改变人物身份",
+            )
             details["ai_cover_dota2_ability_reference_used"] = True
             details["ai_cover_dota2_ability_reference_path"] = str(
                 ability_reference_path
@@ -3047,14 +3079,27 @@ def generate_recording_cover_with_ai(
     dota2_streamer_instruction = recording_cover_dota2_streamer_instruction(
         streamer,
         title,
-        ai_topic,
-        description,
     )
     streamer_expression_instruction = recording_cover_streamer_expression_instruction(
         streamer,
         title,
-        ai_topic,
-        description,
+    )
+    reference_map_instruction = "\n".join(
+        f"Image {index}: {role}。"
+        for index, role in enumerate(reference_roles, start=1)
+    )
+    allowed_people = [
+        normalize_dota2_streamer_name(streamer) or str(streamer or "主播"),
+        *(str(guest.get("name") or "").strip() for guest in guest_references),
+    ]
+    allowed_people_text = "、".join(
+        dedupe_recording_tags(name for name in allowed_people if name)
+    ) or "当前主播"
+    final_identity_instruction = (
+        f"人物出镜白名单：{allowed_people_text}。只有这个白名单中的真人主播或选手可以出镜；"
+        "最终投稿标题未出现、或没有唯一可靠身份参考的人物，即使在简介、完整时间线、弹幕、"
+        "昵称映射或房间自定义提示词中出现，也一律不得画进封面。Image 1 始终是当前主播的"
+        "唯一身份来源，其他图片不得改变、融合或替换 Image 1 的脸部与角色特征。"
     )
     target_width, target_height = target_size or (1146, 717)
     orientation = "横向" if target_width >= target_height else "竖向"
@@ -3083,7 +3128,6 @@ def generate_recording_cover_with_ai(
 主播：{streamer or "主播"}
 封面主角称呼：{cover_subject_name or streamer or "主播"}
 与投稿标题共用的核心事件：{headline}
-已核验时间线事件（仅用于选取画面主题，不得绘制时间戳）：{cover_event_context[:500]}
 
 只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 核心文案必须清晰保留主角称呼“{cover_subject_name or streamer or "主播"}”，称呼可以放在开头或自然融入句子，
@@ -3097,9 +3141,12 @@ def generate_recording_cover_with_ai(
 {subject_identity_instruction}
 {guest_identity_instruction}
 {reference_instruction}
+输入图片职责（不得跨图片混用身份）：
+{reference_map_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
 本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
+{final_identity_instruction}
 """.strip()
     image_client = get_openai_client(client_config).images
     requested_ratio = (target_width / target_height) if target_height else 0
@@ -3137,6 +3184,7 @@ def generate_recording_cover_with_ai(
                 "ai_cover_reference_name": reference_name,
                 "ai_cover_reference_path": str(reference_paths[0]),
                 "ai_cover_reference_paths": [str(path) for path in reference_paths],
+                "ai_cover_reference_roles": list(reference_roles),
                 "ai_cover_reference_count": len(reference_paths),
                 "ai_cover_reference_kind": reference_kind,
             })
