@@ -43,6 +43,8 @@ class DanmakuPipelineTests(unittest.TestCase):
         with patch("danmaku_pipeline.platform.system", return_value="Windows"), patch(
             "danmaku_pipeline.platform.processor", return_value="Intel Core i7-9700"
         ), patch(
+            "danmaku_pipeline.Path.is_file", return_value=False
+        ), patch(
             "danmaku_pipeline.os.cpu_count", return_value=8
         ):
             cpu = danmaku_pipeline._cpu_device()
