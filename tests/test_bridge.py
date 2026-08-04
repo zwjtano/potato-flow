@@ -3214,12 +3214,14 @@ class BridgeTests(unittest.TestCase):
             video = root / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.flv"
             xml = video.with_suffix(".xml")
             legacy_ass = video.with_suffix(".ass")
+            legacy_language_ass = video.with_name(f"{video.stem}.zh-CN.ass")
             video.write_bytes(b"video")
             xml.write_text(
                 '<i><d p="1.0,1,25,16777215,0,0,1,0">中文弹幕</d></i>',
                 encoding="utf-8",
             )
             legacy_ass.write_text("legacy", encoding="utf-8")
+            legacy_language_ass.write_text("legacy", encoding="utf-8")
 
             with patch.object(bridge, "probe_video_size", return_value=(1920, 1080)):
                 result = bridge.generate_record_only_ass(
@@ -3230,10 +3232,11 @@ class BridgeTests(unittest.TestCase):
 
             self.assertEqual(
                 result,
-                root / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.zh-CN.ass",
+                root / "ass" / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.zh-CN.ass",
             )
             self.assertTrue(result.is_file())
             self.assertFalse(legacy_ass.exists())
+            self.assertFalse(legacy_language_ass.exists())
             self.assertIn(
                 "中文弹幕",
                 result.read_text(encoding="utf-8-sig"),
@@ -3262,6 +3265,9 @@ class BridgeTests(unittest.TestCase):
             self.assertFalse(video.with_suffix(".ass").exists())
             self.assertFalse(
                 video.with_name(f"{video.stem}.zh-CN.ass").exists()
+            )
+            self.assertFalse(
+                (video.parent / "ass" / f"{video.stem}.zh-CN.ass").exists()
             )
 
     def test_record_only_empty_xml_marks_ass_failed_and_preserves_video(self):
