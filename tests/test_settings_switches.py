@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STYLE_FILE = ROOT / "potatoflow-app" / "static" / "css" / "style.css"
 REFINEMENT_STYLE_FILE = ROOT / "potatoflow-app" / "static" / "css" / "ui-refinement.css"
+SETTINGS_REDESIGN_STYLE_FILE = ROOT / "potatoflow-app" / "static" / "css" / "settings-redesign.css"
 SETTINGS_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "settings.html"
 BASE_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "base.html"
 APP_SOURCE = ROOT / "potatoflow-app" / "app.py"
@@ -56,6 +57,14 @@ class SettingsSwitchTests(unittest.TestCase):
         ):
             self.assertIn("name: '" + category + "'", template)
         self.assertIn("settings-appearance-strip", template)
+
+    def test_mobile_settings_navigation_uses_a_wrapping_grid(self):
+        css = SETTINGS_REDESIGN_STYLE_FILE.read_text(encoding="utf-8")
+        template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", css)
+        self.assertIn("overflow: visible;", css)
+        self.assertIn("?v={{ app_version }}-2", template)
 
     def test_douyu_recording_pipeline_switches_are_visible(self):
         template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")

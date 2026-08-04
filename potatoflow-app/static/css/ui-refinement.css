@@ -702,9 +702,42 @@ html[data-theme="dark"] .app-confirm-copy p {
 }
 
 @media (max-width: 767.98px) {
+    .app-frame,
+    body.sidebar-collapsed .app-frame {
+        width: 100%;
+        margin-left: 0;
+    }
+
     .app-main,
     .live-console-main {
         padding: 18px 12px 32px;
+    }
+
+    .app-mobile-header > .btn-dark,
+    .app-mobile-header .app-theme-toggle {
+        width: 44px;
+        height: 44px;
+        min-height: 44px;
+    }
+
+    .diagnostic-grid {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .diagnostic-card,
+    .diagnostic-panel {
+        min-width: 0;
+        padding: 16px;
+    }
+
+    .component-row {
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px 10px;
+    }
+
+    .component-row code,
+    .component-row small {
+        grid-column: 2;
     }
 
     .studio-page-header,

@@ -416,8 +416,25 @@ html[data-theme="dark"] .settings-redesign-page .settings-card-header {
         gap: 8px 12px;
     }
 
+    .settings-redesign-page .settings-navigation-panel {
+        overflow: visible;
+    }
+
+    .settings-redesign-page .settings-nav {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+        min-width: 0;
+        gap: 6px;
+    }
+
     .settings-redesign-page .settings-layout .settings-nav .nav-link {
-        min-width: 118px;
+        min-width: 0;
+        white-space: normal;
+    }
+
+    .settings-redesign-page .settings-boolean-choice {
+        min-height: 36px;
     }
 
     .settings-redesign-page .theme-preference-grid {
