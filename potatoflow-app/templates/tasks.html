@@ -1404,6 +1404,35 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     .recording-cover-grid { grid-template-columns: 1fr; }
     .recording-cover-technical .recording-detail-field { grid-template-columns: 1fr; }
 }
+@media (max-width: 575.98px) {
+    .tasks-container .page-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .tasks-container .page-actions > * {
+        width: 100%;
+        min-width: 0;
+    }
+    .tasks-container .page-actions > :last-child:nth-child(odd) {
+        grid-column: 1 / -1;
+    }
+    .task-queue-summary {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin: 0;
+        padding: 0;
+        overflow: visible;
+        scroll-snap-type: none;
+    }
+    .task-queue-summary-item {
+        min-height: 58px;
+        min-width: 0;
+        flex-basis: auto;
+    }
+    .task-queue-summary-item:last-child:nth-child(odd) {
+        grid-column: 1 / -1;
+    }
+}
 .min-w-0 { min-width: 0; }
 </style>
 {% endblock %}
