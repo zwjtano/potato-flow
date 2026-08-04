@@ -136,8 +136,11 @@
                                     重新生成六个标签
                                 </button>
                                 {% if published_editor %}
-                                <button type="submit" name="action" value="regenerate_cover" class="btn btn-sm btn-outline-primary ai-generate-btn">
-                                    重新生成两种封面
+                                <button type="submit" name="action" value="regenerate_cover_16x9" class="btn btn-sm btn-outline-primary ai-generate-btn">
+                                    重新生成 16:9 封面
+                                </button>
+                                <button type="submit" name="action" value="regenerate_cover_4x3" class="btn btn-sm btn-outline-primary ai-generate-btn">
+                                    重新生成 4:3 封面
                                 </button>
                                 {% endif %}
                                 <button type="submit" name="action" value="regenerate_all" class="btn btn-sm btn-primary ai-generate-btn">

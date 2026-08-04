@@ -1693,11 +1693,9 @@ def live_recording_job_review(fingerprint):
                 'regenerate_title': {'title'},
                 'regenerate_description': {'description'},
                 'regenerate_tags': {'tags'},
-                'regenerate_cover': {'cover'},
-                'regenerate_all': (
-                    {'title', 'description', 'tags', 'cover'}
-                    if published else {'title', 'description', 'tags'}
-                ),
+                'regenerate_cover_16x9': {'cover_16x9'},
+                'regenerate_cover_4x3': {'cover_4x3'},
+                'regenerate_all': {'title', 'description', 'tags'},
             }
             if action in regenerate_fields:
                 regenerated = live_recorder_manager.regenerate_published_metadata(
@@ -1708,10 +1706,14 @@ def live_recording_job_review(fingerprint):
                     'title': '标题',
                     'description': '简介',
                     'tags': '标签',
-                    'cover': '封面',
+                    'cover_16x9': '16:9 封面',
+                    'cover_4x3': '4:3 封面',
                 }
                 selected_names = '、'.join(
-                    field_names[field] for field in ('title', 'description', 'tags', 'cover')
+                    field_names[field]
+                    for field in (
+                        'title', 'description', 'tags', 'cover_16x9', 'cover_4x3'
+                    )
                     if field in regenerate_fields[action]
                 )
                 cover_errors = regenerated.get('ai_cover_regeneration_errors') or []

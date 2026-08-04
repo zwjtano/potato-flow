@@ -435,7 +435,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(ai_enhancer._request_json_object.call_count, 2)
         store.assert_not_called()
 
-    def test_cover_regeneration_uses_reviewed_title_body_and_matching_hero_only(self):
+    def test_4x3_cover_regeneration_uses_reviewed_title_and_only_updates_4x3(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -506,9 +506,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 "bridge.generate_recording_cover_with_ai",
                 side_effect=generate_cover,
             ) as generate:
-                result = manager.regenerate_published_metadata("a" * 64, {"cover"})
+                result = manager.regenerate_published_metadata(
+                    "a" * 64,
+                    {"cover_4x3"},
+                )
 
-        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(generate.call_count, 1)
         for call in generate.call_args_list:
             self.assertIn("蓝猫残局送人头", call.kwargs["ai_topic"])
             self.assertNotIn("陪伴每一天", call.kwargs["ai_topic"])
@@ -517,20 +520,16 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertTrue(call.kwargs["game_context_locked"])
         self.assertEqual(
             [call.kwargs["target_size"] for call in generate.call_args_list],
-            [(1920, 1080), (1600, 1200)],
+            [(1600, 1200)],
         )
         self.assertTrue(generate.call_args_list[0].kwargs["output_path"].name.startswith(
-            ".ai_cover_16x9-"
-        ))
-        self.assertTrue(generate.call_args_list[1].kwargs["output_path"].name.startswith(
             ".ai_cover_4x3-"
         ))
         self.assertEqual(result["title"], title)
-        self.assertEqual(result["ai_regenerated_fields"], ["cover"])
-        self.assertTrue(result["cover_path"].endswith("ai_cover_16x9.jpg"))
+        self.assertEqual(result["ai_regenerated_fields"], ["cover_4x3"])
+        self.assertIsNone(result["cover_path"])
         self.assertTrue(result["cover43_path"].endswith("ai_cover_4x3.jpg"))
         self.assertTrue(result["pending_published_update"])
-        self.assertEqual(result["ai_cover_details"]["16x9"]["target_size"], (1920, 1080))
         self.assertEqual(result["ai_cover_details"]["4x3"]["target_size"], (1600, 1200))
         store.assert_called_once_with("a" * 64, result)
 
@@ -609,7 +608,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(result["ai_title_topic"], "虚空出装遭弹幕质疑")
         store.assert_called_once_with("a" * 64, result)
 
-    def test_cover_regeneration_updates_successful_variant_and_keeps_failed_variant(self):
+    def test_16x9_cover_regeneration_does_not_touch_4x3_variant(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -641,8 +640,6 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ai_enhancer.get_openai_client = mock.Mock()
 
             def generate_cover(**kwargs):
-                if kwargs["target_size"] == (1600, 1200):
-                    raise RuntimeError("4:3 failed")
                 kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
                 kwargs["output_path"].write_bytes(b"new-16x9")
                 return kwargs["output_path"], {"ai_cover_generated": True}
@@ -669,15 +666,21 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ), mock.patch(
                 "bridge.generate_recording_cover_with_ai",
                 side_effect=generate_cover,
-            ):
-                result = manager.regenerate_published_metadata("a" * 64, {"cover"})
+            ) as generate:
+                result = manager.regenerate_published_metadata(
+                    "a" * 64,
+                    {"cover_16x9"},
+                )
 
+            self.assertEqual(generate.call_count, 1)
+            self.assertEqual(generate.call_args.kwargs["target_size"], (1920, 1080))
             self.assertEqual(old_cover.read_bytes(), b"new-16x9")
             self.assertEqual(old_cover43.read_bytes(), b"old-4x3")
             self.assertEqual(list(old_cover.parent.glob(".ai_cover-*")), [])
             self.assertEqual(result["cover_path"], str(old_cover))
             self.assertEqual(result["cover43_path"], str(old_cover43))
-            self.assertEqual(result["ai_cover_regeneration_errors"], ["4x3: 4:3 failed"])
+            self.assertEqual(result["ai_regenerated_fields"], ["cover_16x9"])
+            self.assertEqual(result["ai_cover_regeneration_errors"], [])
             store.assert_called_once_with("a" * 64, result)
 
     def test_default_recordings_directory_uses_docker_mount_when_available(self):
