@@ -12,12 +12,21 @@ ONBOARDING_SOURCE = (APP_ROOT / "templates" / "onboarding.html").read_text(encod
 ONBOARDING_STYLE_SOURCE = (
     APP_ROOT / "static" / "css" / "onboarding.css"
 ).read_text(encoding="utf-8")
+YOUTUBE_MONITOR_SOURCE = (
+    APP_ROOT / "templates" / "youtube_monitor.html"
+).read_text(encoding="utf-8")
+MANUAL_REVIEW_SOURCE = (
+    APP_ROOT / "templates" / "manual_review.html"
+).read_text(encoding="utf-8")
+BILIBILI_ARCHIVES_SOURCE = (
+    APP_ROOT / "templates" / "bilibili_archives.html"
+).read_text(encoding="utf-8")
 
 
 class UiRefinementTests(unittest.TestCase):
     def test_refinement_layer_loads_after_page_specific_styles(self):
         self.assertIn("css/ui-refinement.css", BASE_SOURCE)
-        self.assertIn("?v={{ app_version }}-5", BASE_SOURCE)
+        self.assertIn("?v={{ app_version }}-6", BASE_SOURCE)
         self.assertLess(
             BASE_SOURCE.index("{% block extra_css %}"),
             BASE_SOURCE.index("css/ui-refinement.css"),
@@ -57,6 +66,16 @@ class UiRefinementTests(unittest.TestCase):
         self.assertIn("width: 100%;", REFINEMENT_SOURCE)
         self.assertIn("margin-left: 0;", REFINEMENT_SOURCE)
 
+    def test_collapsed_navigation_rules_do_not_hide_mobile_nav_labels(self):
+        self.assertIn(
+            "body.sidebar-collapsed .app-sidebar .app-nav-link span",
+            REFINEMENT_SOURCE,
+        )
+        self.assertNotIn(
+            "body.sidebar-collapsed .app-nav-link span",
+            REFINEMENT_SOURCE,
+        )
+
     def test_mobile_diagnostics_can_reflow_without_horizontal_overflow(self):
         self.assertIn("grid-template-columns: auto minmax(0, 1fr);", REFINEMENT_SOURCE)
         self.assertIn(".component-row code,", REFINEMENT_SOURCE)
@@ -66,8 +85,32 @@ class UiRefinementTests(unittest.TestCase):
         self.assertIn(".app-mobile-header > .btn-dark", REFINEMENT_SOURCE)
         self.assertIn("min-height: 44px;", REFINEMENT_SOURCE)
         self.assertIn("body {\n        min-width: 0;", ONBOARDING_STYLE_SOURCE)
+        self.assertIn("@media (max-width: 1179.98px)", ONBOARDING_STYLE_SOURCE)
+        self.assertNotIn("@media (max-width: 767.98px)", ONBOARDING_STYLE_SOURCE)
         self.assertIn("grid-template-columns: repeat(5, minmax(0, 1fr));", ONBOARDING_STYLE_SOURCE)
-        self.assertIn("?v={{ app_version }}-1", ONBOARDING_SOURCE)
+        self.assertIn("?v={{ app_version }}-2", ONBOARDING_SOURCE)
+
+    def test_mobile_youtube_cards_preserve_touch_targets_and_dark_theme(self):
+        self.assertIn("width: 44px;\n        height: 44px;", YOUTUBE_MONITOR_SOURCE)
+        self.assertIn(
+            'html[data-theme="dark"] .youtube-monitor-table tbody tr',
+            YOUTUBE_MONITOR_SOURCE,
+        )
+
+    def test_mobile_review_actions_stack_without_overflow(self):
+        self.assertIn(
+            ".review-container .card-footer > .d-flex",
+            MANUAL_REVIEW_SOURCE,
+        )
+        self.assertIn("flex-direction: column;", MANUAL_REVIEW_SOURCE)
+        self.assertIn("min-height: 44px;", MANUAL_REVIEW_SOURCE)
+
+    def test_mobile_archive_danger_action_stacks_safely(self):
+        self.assertIn("archive-danger-action", BILIBILI_ARCHIVES_SOURCE)
+        self.assertIn(
+            ".archive-danger-action { align-items: stretch !important; flex-direction: column; }",
+            BILIBILI_ARCHIVES_SOURCE,
+        )
 
     def test_stylesheet_braces_are_balanced(self):
         self.assertEqual(

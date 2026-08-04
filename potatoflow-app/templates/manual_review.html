@@ -394,6 +394,23 @@ document.querySelectorAll('.recording-review-retry').forEach((button) => {
         max-height: 220px;
         overflow-y: auto;
     }
+
+    @media (max-width: 575.98px) {
+        .review-container .card-header {
+            flex-wrap: wrap;
+            gap: .5rem;
+        }
+
+        .review-container .card-footer > .d-flex {
+            flex-direction: column;
+            gap: .5rem;
+        }
+
+        .review-container .card-footer > .d-flex > .btn {
+            width: 100%;
+            min-height: 44px;
+        }
+    }
 </style>
 {% endblock %}
 

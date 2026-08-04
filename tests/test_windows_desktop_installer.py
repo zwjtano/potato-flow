@@ -108,6 +108,9 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn("max-width:1320px", css)
         self.assertIn("max-height:780px", css)
         self.assertIn("matchMedia('(max-width: 1320px)')", shell)
+        self.assertIn("apply(compact.matches||savedPreference(),false)", shell)
+        self.assertIn("event.matches||savedPreference(),false", shell)
+        self.assertIn("js/desktop-shell.js') }}?v={{ app_version }}-2", base)
 
     def test_first_run_wizard_covers_five_required_steps(self):
         wizard = (APP_ROOT / "templates" / "onboarding.html").read_text(encoding="utf-8")

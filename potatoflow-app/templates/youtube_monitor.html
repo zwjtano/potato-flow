@@ -375,15 +375,25 @@ html[data-theme="dark"] .monitor-readiness-item.is-error .monitor-readiness-icon
         text-align: right;
         padding-right: .8rem;
     }
-    /* Slightly smaller icon buttons on mobile */
+    /* Keep icon actions large enough for touch input. */
     .btn-icon {
-        width: 30px;
-        height: 30px;
+        width: 44px;
+        height: 44px;
+        min-height: 44px;
     }
     /* Make name stand out but not too large */
     .youtube-monitor-table tbody td[data-label="名称"] strong,
     .history-table tbody td[data-label="配置名称"] {
         font-size: 1rem;
+    }
+    html[data-theme="dark"] .youtube-monitor-table tbody tr,
+    html[data-theme="dark"] .history-table tbody tr {
+        border-color: var(--studio-border);
+        background: var(--studio-surface);
+    }
+    html[data-theme="dark"] .youtube-monitor-table tbody td::before,
+    html[data-theme="dark"] .history-table tbody td::before {
+        color: var(--studio-text);
     }
 }
 </style>
