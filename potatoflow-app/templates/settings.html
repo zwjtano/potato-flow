@@ -43,6 +43,8 @@
         </div>
     </div>
 
+    <div id="settings-layout-mount"></div>
+    <template id="settings-layout-source">
     <div class="settings-layout">
         <aside class="settings-navigation-panel">
             <div class="settings-nav-heading">
@@ -2366,6 +2368,7 @@
             </form>
         </div>
     </div>
+    </template>
 
     <form method="post" action="{{ url_for('cleanup_logs_route') }}" class="d-none" id="cleanup-form">
         <input type="hidden" name="hours" id="cleanup-hours-input" value="{{ config.LOG_CLEANUP_HOURS }}">
@@ -2434,6 +2437,13 @@
 {% block extra_js %}
 <script>
 (function initializeSettingsLayoutBeforeFirstPaint() {
+    const settingsLayoutMount = document.getElementById('settings-layout-mount');
+    const settingsLayoutSource = document.getElementById('settings-layout-source');
+    if (settingsLayoutMount && settingsLayoutSource) {
+        settingsLayoutMount.replaceChildren(settingsLayoutSource.content.cloneNode(true));
+        settingsLayoutSource.remove();
+    }
+
     const settingsTabContent = document.getElementById('settings-tabContent');
     const settingsNav = document.getElementById('settings-nav');
     const settingsLayout = document.querySelector('.settings-layout');
