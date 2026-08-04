@@ -901,6 +901,7 @@ class LiveRecorderManager:
             room.setdefault("danmaku_settings_inherit", True)
             room.setdefault("recording_quality", DEFAULT_RECORDING_QUALITY)
             room.setdefault("bilibili_account_id", "")
+            room.setdefault("bilibili_collection_id", "")
             room.setdefault("ai_danmaku_reaction_delay_seconds", 8)
             room.setdefault("recording_schedule_enabled", False)
             room.setdefault("recording_schedule_start", "00:00")
@@ -1758,6 +1759,7 @@ class LiveRecorderManager:
         danmaku_burn_in: bool = False,
         recording_quality: str = DEFAULT_RECORDING_QUALITY,
         bilibili_account_id: str = "",
+        bilibili_collection_id: str = "",
     ) -> dict[str, Any]:
         try:
             minutes = int(segment_minutes)
@@ -1777,7 +1779,22 @@ class LiveRecorderManager:
                 recording_quality
             ),
             "bilibili_account_id": str(bilibili_account_id or "").strip(),
+            "bilibili_collection_id": LiveRecorderManager._normalize_bilibili_collection_id(
+                bilibili_collection_id
+            ),
         }
+
+    @staticmethod
+    def _normalize_bilibili_collection_id(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        match = re.search(r"(?:[?&]sid=|/lists/)(\d+)", text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        if re.fullmatch(r"\d+", text):
+            return text
+        raise RecorderConfigError("B站合集请填写数字合集 ID，或包含 sid/列表 ID 的合集链接")
 
     def add_room_from_url(
         self,
@@ -1790,6 +1807,7 @@ class LiveRecorderManager:
         danmaku_burn_in: bool | None = None,
         recording_quality: str | None = None,
         bilibili_account_id: str | None = None,
+        bilibili_collection_id: str | None = None,
     ) -> dict[str, Any]:
         resolved = self.resolve_room(url)
         settings_provided = any(
@@ -1802,6 +1820,7 @@ class LiveRecorderManager:
                 danmaku_burn_in,
                 recording_quality,
                 bilibili_account_id,
+                bilibili_collection_id,
             )
         )
         recording_settings = (
@@ -1825,6 +1844,7 @@ class LiveRecorderManager:
                     else recording_quality
                 ),
                 bilibili_account_id=bilibili_account_id or "",
+                bilibili_collection_id=bilibili_collection_id or "",
             )
             if settings_provided
             else {}
@@ -2141,6 +2161,7 @@ class LiveRecorderManager:
         danmaku_encode_quality: Any = 20,
         recording_quality: str = DEFAULT_RECORDING_QUALITY,
         bilibili_account_id: str = "",
+        bilibili_collection_id: str = "",
         recording_schedule_enabled: bool = False,
         recording_schedule_start: str = "00:00",
         recording_schedule_end: str = "23:59",
@@ -2198,6 +2219,9 @@ class LiveRecorderManager:
                     recording_quality
                 ),
                 "bilibili_account_id": str(bilibili_account_id or "").strip(),
+                "bilibili_collection_id": self._normalize_bilibili_collection_id(
+                    bilibili_collection_id
+                ),
                 "recording_schedule_enabled": bool(recording_schedule_enabled),
                 "recording_schedule_start": schedule_start,
                 "recording_schedule_end": schedule_end,
@@ -2457,6 +2481,9 @@ class LiveRecorderManager:
                 "bilibili_account_id": str(account["id"]),
                 "bilibili_account_name": str(account["name"]),
                 "bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path"))),
+                "bilibili_collection_id": str(
+                    room.get("bilibili_collection_id") or ""
+                ),
             }
             if not bool(room.get("danmaku_settings_inherit", True)):
                 for key in (

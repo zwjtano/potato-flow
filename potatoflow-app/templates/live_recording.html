@@ -200,6 +200,13 @@
                             <span><strong>B站投稿账号</strong><small>仅影响这个直播间生成的新投稿任务</small></span>
                             {{ bilibili_account_picker(bilibili_accounts, room.bilibili_account_id or bilibili_default_account_id) }}
                         </label>
+                        <label class="room-recording-duration{% if room.record_only %} d-none{% endif %}"
+                               data-role="bilibili-collection-field">
+                            <span><strong>自动加入 B站合集</strong><small>可填写合集 ID 或合集链接；留空则不加入</small></span>
+                            <input class="form-control" name="bilibili_collection_id" inputmode="numeric"
+                                   value="{{ room.bilibili_collection_id|default('') }}"
+                                   placeholder="例如 123456 或包含 sid 的合集链接">
+                        </label>
                         <label class="room-recording-setting-option">
                             <span class="room-setting-switch">
                                 <input type="checkbox" name="segment_enabled" value="on"
@@ -452,6 +459,11 @@
             <label class="room-recording-duration" data-role="bilibili-account-field">
                 <span><strong>B站投稿账号</strong><small>后续录播任务固定使用该账号</small></span>
                 {{ bilibili_account_picker(bilibili_accounts, bilibili_default_account_id) }}
+            </label>
+            <label class="room-recording-duration" data-role="bilibili-collection-field">
+                <span><strong>自动加入 B站合集</strong><small>可填写合集 ID 或合集链接；留空则不加入</small></span>
+                <input class="form-control" name="bilibili_collection_id" inputmode="numeric"
+                       placeholder="例如 123456 或包含 sid 的合集链接">
             </label>
             <label class="room-recording-setting-option">
                 <span class="room-setting-switch">
@@ -1051,6 +1063,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const recordOnly = form.querySelector('[data-role="record-only"]');
         const accountField = form.querySelector('[data-role="bilibili-account-field"]');
         const accountInput = accountField?.querySelector('input[name="bilibili_account_id"]');
+        const collectionField = form.querySelector('[data-role="bilibili-collection-field"]');
+        const collectionInput = collectionField?.querySelector('input[name="bilibili_collection_id"]');
         const inheritDanmaku = form.querySelector('[data-role="danmaku-settings-inherit"]');
         const danmakuOverrides = form.querySelector('[data-role="danmaku-overrides"]');
         const scheduleEnabled = form.querySelector('[data-role="recording-schedule-enabled"]');
@@ -1071,6 +1085,9 @@ document.addEventListener('DOMContentLoaded', function () {
             accountField?.classList.toggle('d-none', recordOnlyActive);
             accountField?.setAttribute('aria-hidden', recordOnlyActive ? 'true' : 'false');
             if (accountInput) accountInput.disabled = recordOnlyActive;
+            collectionField?.classList.toggle('d-none', recordOnlyActive);
+            collectionField?.setAttribute('aria-hidden', recordOnlyActive ? 'true' : 'false');
+            if (collectionInput) collectionInput.disabled = recordOnlyActive;
             if (danmakuOverrides) {
                 const inherited = Boolean(inheritDanmaku?.checked);
                 danmakuOverrides.classList.toggle('is-disabled', inherited);

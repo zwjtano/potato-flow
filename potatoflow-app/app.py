@@ -2122,6 +2122,7 @@ def live_recording_save_room():
             ),
             recording_quality=request.form.get('recording_quality', 'source'),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
+            bilibili_collection_id=request.form.get('bilibili_collection_id', ''),
         )
         room_name = str(room.get('name') or '直播间')
         if reload_state == 'reloaded':
@@ -2243,6 +2244,7 @@ def live_recording_room_recording_settings(room_id):
             danmaku_encode_quality=request.form.get('danmaku_encode_quality', '20'),
             recording_quality=request.form.get('recording_quality', 'source'),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
+            bilibili_collection_id=request.form.get('bilibili_collection_id', ''),
             recording_schedule_enabled=_coerce_checkbox_value(
                 request.form.get('recording_schedule_enabled', 'off')
             ),
