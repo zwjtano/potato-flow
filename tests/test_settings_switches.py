@@ -66,6 +66,22 @@ class SettingsSwitchTests(unittest.TestCase):
         self.assertIn("overflow: visible;", css)
         self.assertIn("?v={{ app_version }}-2", template)
 
+    def test_runtime_settings_categories_use_the_available_width(self):
+        css = SETTINGS_REDESIGN_STYLE_FILE.read_text(encoding="utf-8")
+        template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("wrapper.className = 'settings-pane-item'", template)
+        self.assertIn("wideCardTitles.has(title)", template)
+        self.assertIn(
+            ".settings-pane-item:last-child:nth-child(odd)",
+            css,
+        )
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", css)
+        self.assertIn(
+            '.settings-card[data-settings-title="自动化流程"] .settings-inline-options',
+            css,
+        )
+
     def test_douyu_recording_pipeline_switches_are_visible(self):
         template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
 

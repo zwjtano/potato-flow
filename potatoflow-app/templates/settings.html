@@ -2481,6 +2481,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const heading = card.querySelector('.settings-card-header h4');
             const title = String(heading?.textContent || '').replace(/\s+/g, ' ').trim();
             const wrapper = card.closest('[class*="col-"]') || card;
+            if (title) card.dataset.settingsTitle = title;
             if (title && !cardsByTitle.has(title)) cardsByTitle.set(title, wrapper);
         });
 
@@ -2541,11 +2542,17 @@ document.addEventListener('DOMContentLoaded', function () {
             headerCopy.append(heading, lead);
             header.appendChild(headerCopy);
             const grid = document.createElement('div');
-            grid.className = 'row g-4 settings-pane-grid';
+            grid.className = 'settings-pane-grid';
+            const wideCardTitles = new Set([
+                'ASS 弹幕与烧录',
+                '内容审核与阿里云凭证'
+            ]);
             category.titles.forEach(function (title) {
                 const wrapper = cardsByTitle.get(title);
                 if (!wrapper || assigned.has(wrapper)) return;
                 assigned.add(wrapper);
+                wrapper.className = 'settings-pane-item';
+                if (wideCardTitles.has(title)) wrapper.classList.add('is-wide');
                 grid.appendChild(wrapper);
             });
             section.append(header, grid);
@@ -2557,7 +2564,10 @@ document.addEventListener('DOMContentLoaded', function () {
         cardsByTitle.forEach(function (wrapper) {
             if (assigned.has(wrapper)) return;
             const fallbackGrid = settingsTabContent.querySelector('#vtab-storage-security .settings-pane-grid');
-            if (fallbackGrid) fallbackGrid.appendChild(wrapper);
+            if (fallbackGrid) {
+                wrapper.className = 'settings-pane-item';
+                fallbackGrid.appendChild(wrapper);
+            }
         });
     }
 
