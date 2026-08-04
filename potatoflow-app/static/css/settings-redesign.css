@@ -211,8 +211,29 @@
 }
 
 .settings-redesign-page .settings-pane-grid {
-    --bs-gutter-x: 10px;
-    --bs-gutter-y: 10px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+}
+
+.settings-redesign-page .settings-pane-item {
+    display: flex;
+    min-width: 0;
+}
+
+.settings-redesign-page .settings-pane-item.is-wide,
+.settings-redesign-page .settings-pane-item:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+}
+
+.settings-redesign-page .settings-card[data-settings-title="自动化流程"] .settings-inline-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px 14px;
+}
+
+.settings-redesign-page .settings-card[data-settings-title="自动化流程"] .settings-inline-options > .help-text {
+    grid-column: 1 / -1;
 }
 
 .settings-redesign-page .settings-card {
@@ -397,6 +418,16 @@ html[data-theme="dark"] .settings-redesign-page .settings-card-header {
         min-width: 100%;
     }
 
+    .settings-redesign-page .settings-pane-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-redesign-page .settings-pane-item,
+    .settings-redesign-page .settings-pane-item.is-wide,
+    .settings-redesign-page .settings-pane-item:last-child:nth-child(odd) {
+        grid-column: auto;
+    }
+
     .settings-redesign-page .settings-layout .settings-nav .nav-link {
         min-width: 132px;
     }
@@ -452,6 +483,14 @@ html[data-theme="dark"] .settings-redesign-page .settings-card-header {
 
     .settings-redesign-page .settings-card-body {
         padding: 10px;
+    }
+
+    .settings-redesign-page .settings-card[data-settings-title="自动化流程"] .settings-inline-options {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-redesign-page .settings-card[data-settings-title="自动化流程"] .settings-inline-options > .help-text {
+        grid-column: auto;
     }
 
     .settings-redesign-page .settings-boolean-control {

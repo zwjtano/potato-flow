@@ -3738,8 +3738,16 @@ class LiveRecorderManager:
         fields: set[str],
     ) -> dict[str, Any]:
         """Generate an editable preview before upload or for a published archive."""
-        allowed_fields = {"title", "description", "tags", "cover"}
+        allowed_fields = {
+            "title",
+            "description",
+            "tags",
+            "cover",
+            "cover_16x9",
+            "cover_4x3",
+        }
         selected = {str(field).strip().lower() for field in fields} & allowed_fields
+        selected_cover_fields = selected & {"cover", "cover_16x9", "cover_4x3"}
         if not selected:
             raise RecorderConfigError("请选择要重新生成的标题、简介或封面")
         job = self.pipeline_job(fingerprint)
@@ -3758,7 +3766,7 @@ class LiveRecorderManager:
         )
         if not published and not pre_upload_review:
             raise RecorderConfigError("请先暂停后续流程，再重新生成 AI 投稿信息")
-        if pre_upload_review and "cover" in selected:
+        if pre_upload_review and selected_cover_fields:
             raise RecorderConfigError("投稿前审核阶段不会生图；确认标题和简介后再继续封面流程")
 
         try:
@@ -3776,7 +3784,7 @@ class LiveRecorderManager:
             if selected & {"title", "description", "tags"} and not app_config.get("OPENAI_API_KEY"):
                 raise RecorderConfigError("未配置全局 AI API Key，无法重新生成标题、简介或标签")
             if (
-                "cover" in selected
+                selected_cover_fields
                 and not (
                     app_config.get("OPENAI_IMAGE_API_KEY")
                     or app_config.get("OPENAI_API_KEY")
@@ -4078,9 +4086,14 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             previous = previous if isinstance(previous, dict) else {}
             cover_path = str(previous.get("cover_path") or "").strip()
             cover43_path = str(previous.get("cover43_path") or "").strip()
-            cover_details: dict[str, Any] = {}
+            previous_cover_details = previous.get("ai_cover_details")
+            cover_details: dict[str, Any] = dict(
+                previous_cover_details
+                if isinstance(previous_cover_details, dict)
+                else {}
+            )
             errors: list[str] = []
-            if "cover" in selected:
+            if selected_cover_fields:
                 # A cover-only regeneration follows the title currently saved
                 # in the review form. The AI-stage topic belongs to the
                 # original upload and may be stale after a manual title edit.
@@ -4147,6 +4160,14 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     ("16x9", (1920, 1080), artifact_dir / "ai_cover_16x9.jpg"),
                     ("4x3", (1600, 1200), artifact_dir / "ai_cover_4x3.jpg"),
                 )
+                if "cover" not in selected:
+                    requested_variants = {
+                        "16x9" if "cover_16x9" in selected else "",
+                        "4x3" if "cover_4x3" in selected else "",
+                    }
+                    variants = tuple(
+                        item for item in variants if item[0] in requested_variants
+                    )
                 for variant, target_size, output_path in variants:
                     staged_output = output_path.with_name(
                         f".{output_path.stem}-{generation_id}{output_path.suffix}"
@@ -4191,7 +4212,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         staged_output.unlink(missing_ok=True)
                 if errors and not generated_variants:
                     raise RecorderConfigError(
-                        "AI 双封面均未生成，已保留上一版：" + "；".join(errors)
+                        "AI 封面未生成，已保留上一版：" + "；".join(errors)
                     )
 
             now = datetime.now(timezone.utc).isoformat()
@@ -4206,7 +4227,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 "ai_regenerated_fields": sorted(selected),
                 "ai_regenerated_at": now,
                 "ai_title_topic": title_topic or None,
-                "ai_cover_details": cover_details or previous.get("ai_cover_details"),
+                "ai_cover_details": cover_details or None,
                 "ai_cover_regeneration_errors": errors,
                 "timeline_diagnostics": (
                     timeline_diagnostics
