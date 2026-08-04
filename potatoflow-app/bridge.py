@@ -5668,13 +5668,21 @@ def main(argv: list[str] | None = None) -> int:
                     })
                 else:
                     store.stage(key, "cover", "running")
-                    cover_path = generate_record_only_cover(path, cfg)
-                    store.stage(
-                        key,
-                        "cover",
-                        "completed",
-                        {"ai_cover_path": str(cover_path)},
-                    )
+                    try:
+                        cover_path = generate_record_only_cover(path, cfg)
+                    except Exception as exc:
+                        cover_path = None
+                        store.stage(key, "cover", "skipped", {
+                            "reason": str(exc),
+                            "continue_without_cover": True,
+                        })
+                    else:
+                        store.stage(
+                            key,
+                            "cover",
+                            "completed",
+                            {"ai_cover_path": str(cover_path)},
+                        )
 
                 def update_remux_progress(
                     event: str,
@@ -5694,21 +5702,34 @@ def main(argv: list[str] | None = None) -> int:
                     elif event == "cleanup_completed":
                         store.stage(key, "cleanup", "completed", details)
 
-                current_stage = "remux"
-                store.stage(
-                    key,
-                    "remux",
-                    "running",
-                    {"source_flv": str(path), "cover_path": str(cover_path)},
-                )
-                final_video = remux_record_only_flv_with_cover(
-                    remux_source,
-                    cover_path,
-                    record_cfg,
-                    progress_callback=update_remux_progress,
-                    output_path=path.with_suffix(".mp4"),
-                    original_flv=path,
-                )
+                if cover_path is None:
+                    store.stage(key, "remux", "skipped", {
+                        "reason": "未生成封面，无需封装 MP4",
+                        "source_video_path": str(remux_source),
+                    })
+                    store.stage(key, "verify", "skipped", {
+                        "reason": "未执行封面封装",
+                    })
+                    store.stage(key, "cleanup", "skipped", {
+                        "reason": "保留原始录制文件",
+                    })
+                    final_video = remux_source
+                else:
+                    current_stage = "remux"
+                    store.stage(
+                        key,
+                        "remux",
+                        "running",
+                        {"source_flv": str(path), "cover_path": str(cover_path)},
+                    )
+                    final_video = remux_record_only_flv_with_cover(
+                        remux_source,
+                        cover_path,
+                        record_cfg,
+                        progress_callback=update_remux_progress,
+                        output_path=path.with_suffix(".mp4"),
+                        original_flv=path,
+                    )
                 if final_video != path:
                     store.exclude_recording(final_video, str(args.room_id))
                 result = {
@@ -5718,11 +5739,11 @@ def main(argv: list[str] | None = None) -> int:
                     "final_video_path": str(final_video),
                     "danmaku_xml": str(danmaku_xml),
                     "ass_path": str(ass_path),
-                    "cover_path": str(cover_path),
-                    "attached_pic": 1,
+                    "cover_path": str(cover_path) if cover_path else None,
+                    "attached_pic": int(cover_path is not None),
                     "danmaku_burn_in": burn_enabled,
                     "burned_video_path": str(final_video) if burn_enabled else None,
-                    "original_flv_deleted": final_video != path,
+                    "original_flv_deleted": cover_path is not None and final_video != path,
                     "video_duration_seconds": video_duration_seconds(
                         final_video,
                         str(record_cfg.get("ffprobe", "ffprobe")),
@@ -5759,7 +5780,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             print(
                 f"OK 仅录制文件已保留并跳过自动投稿: "
-                f"{final_video}，ASS: {ass_path}，封面: {cover_path}"
+                f"{final_video}，ASS: {ass_path}，封面: {cover_path or '已跳过'}"
             )
         return 0 if ok else 1
 
