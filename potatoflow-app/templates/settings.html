@@ -4125,7 +4125,8 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!response.ok) throw new Error(data.error || '编码器检测失败');
             const recommendation = data.recommendation || {};
             const states = (data.capabilities || []).map(function (item) {
-                return `${item.label}: ${item.available ? '可用' : '不可用'}`;
+                const state = item.available ? '可用' : '不可用';
+                return `${item.label}: ${state}（${item.reason || '未提供详情'}）`;
             }).join('；');
             result.replaceChildren();
             const text = document.createElement('span');

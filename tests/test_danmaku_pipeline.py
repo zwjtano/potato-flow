@@ -1,4 +1,5 @@
 import io
+import json
 import re
 import subprocess
 import tempfile
@@ -25,6 +26,7 @@ from danmaku_pipeline import (
     danmaku_burn_slot,
     probe_encoding_capabilities,
 )
+import danmaku_pipeline
 
 
 SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -37,6 +39,49 @@ SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 class DanmakuPipelineTests(unittest.TestCase):
+    def test_cpu_query_reports_model_and_logical_cores(self):
+        with patch("danmaku_pipeline.platform.system", return_value="Windows"), patch(
+            "danmaku_pipeline.platform.processor", return_value="Intel Core i7-9700"
+        ), patch(
+            "danmaku_pipeline.Path.is_file", return_value=False
+        ), patch(
+            "danmaku_pipeline.os.cpu_count", return_value=8
+        ):
+            cpu = danmaku_pipeline._cpu_device()
+
+        self.assertEqual(cpu, {"name": "Intel Core i7-9700", "logical_cores": 8})
+
+    def test_windows_gpu_query_classifies_nvidia_amd_and_intel(self):
+        output = json.dumps([
+            {"Name": "NVIDIA GeForce RTX 2060", "DriverVersion": "32.0.15.7680", "PNPDeviceID": "PCI\\VEN_10DE"},
+            {"Name": "AMD Radeon 780M", "DriverVersion": "31.0", "PNPDeviceID": "PCI\\VEN_1002"},
+            {"Name": "Intel UHD Graphics 630", "DriverVersion": "30.0", "PNPDeviceID": "PCI\\VEN_8086"},
+        ])
+        result = types.SimpleNamespace(returncode=0, stdout=output, stderr="")
+        with patch("danmaku_pipeline.os.name", "nt"), patch(
+            "danmaku_pipeline.shutil.which", return_value="powershell.exe"
+        ), patch("danmaku_pipeline.subprocess.run", return_value=result):
+            devices = danmaku_pipeline._windows_graphics_devices()
+
+        self.assertEqual([device["backend"] for device in devices], ["nvidia", "amd", "intel"])
+
+    def test_nvidia_device_query_reports_model_and_driver(self):
+        result = types.SimpleNamespace(
+            returncode=0,
+            stdout="NVIDIA GeForce RTX 2060, 576.80\n",
+            stderr="",
+        )
+        with patch("danmaku_pipeline.shutil.which", return_value="nvidia-smi"), patch(
+            "danmaku_pipeline.subprocess.run", return_value=result
+        ) as run:
+            devices = danmaku_pipeline._nvidia_devices()
+
+        self.assertEqual(
+            devices,
+            [{"name": "NVIDIA GeForce RTX 2060", "driver": "576.80"}],
+        )
+        self.assertIn("--query-gpu=name,driver_version", run.call_args.args[0])
+
     def test_encoder_probe_uses_amf_compatible_frame_size(self):
         commands = []
 
@@ -44,7 +89,11 @@ class DanmakuPipelineTests(unittest.TestCase):
             commands.append(command)
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        with patch("danmaku_pipeline.subprocess.run", side_effect=fake_run):
+        with patch("danmaku_pipeline._cpu_device", return_value={"name": "Test CPU", "logical_cores": 8}), patch(
+            "danmaku_pipeline._graphics_devices", return_value=[]
+        ), patch(
+            "danmaku_pipeline.subprocess.run", side_effect=fake_run
+        ):
             probe_encoding_capabilities(
                 "test-ffmpeg-probe-size", force_refresh=True
             )
@@ -53,13 +102,16 @@ class DanmakuPipelineTests(unittest.TestCase):
         for command in commands:
             source = command[command.index("-i") + 1]
             self.assertNotIn("s=64x64", source)
-        amf_command = next(command for command in commands if "h264_amf" in command)
-        amf_source = amf_command[amf_command.index("-i") + 1]
-        self.assertIn("s=640x360", amf_source)
+        hardware_commands = [command for command in commands if "libx264" not in command]
+        self.assertTrue(hardware_commands)
+        for command in hardware_commands:
+            source = command[command.index("-i") + 1]
+            self.assertIn("s=640x360", source)
         for command in commands:
-            if command is not amf_command:
+            if command not in hardware_commands:
                 source = command[command.index("-i") + 1]
                 self.assertIn("s=128x128", source)
+        amf_command = next(command for command in commands if "h264_amf" in command)
         self.assertEqual(amf_command[amf_command.index("-rc") + 1], "qvbr")
         self.assertIn("-qvbr_quality_level", amf_command)
         self.assertNotIn("-qp_i", amf_command)
@@ -74,13 +126,48 @@ class DanmakuPipelineTests(unittest.TestCase):
                 stderr="" if available else "encoder unavailable",
             )
 
-        with patch("danmaku_pipeline.subprocess.run", side_effect=fake_run):
+        with patch("danmaku_pipeline._cpu_device", return_value={"name": "Test CPU", "logical_cores": 8}), patch(
+            "danmaku_pipeline._graphics_devices", return_value=[]
+        ), patch(
+            "danmaku_pipeline.subprocess.run", side_effect=fake_run
+        ):
             result = probe_encoding_capabilities(
                 "test-ffmpeg-qsv", preferred="intel", force_refresh=True
             )
 
         self.assertEqual(result["recommendation"]["id"], "intel")
         self.assertEqual(result["recommendation"]["quality_name"], "global_quality")
+
+    def test_encoder_probe_reports_nvidia_model_and_uses_compatible_size(self):
+        commands = []
+
+        def fake_run(command, **_kwargs):
+            commands.append(command)
+            encoder = command[command.index("-c:v") + 1]
+            return types.SimpleNamespace(
+                returncode=0 if encoder in {"libx264", "h264_nvenc"} else 1,
+                stdout="",
+                stderr="" if encoder == "h264_nvenc" else "encoder unavailable",
+            )
+
+        devices = [{"name": "NVIDIA GeForce RTX 2060", "driver": "576.80"}]
+        graphics = [{**device, "backend": "nvidia"} for device in devices]
+        with patch("danmaku_pipeline._cpu_device", return_value={"name": "Test CPU", "logical_cores": 8}), patch(
+            "danmaku_pipeline._graphics_devices", return_value=graphics
+        ), patch(
+            "danmaku_pipeline.subprocess.run", side_effect=fake_run
+        ):
+            result = probe_encoding_capabilities(
+                "test-ffmpeg-rtx-2060", force_refresh=True
+            )
+
+        nvidia = next(item for item in result["capabilities"] if item["id"] == "nvidia")
+        self.assertTrue(nvidia["available"])
+        self.assertEqual(nvidia["devices"], graphics)
+        self.assertEqual(nvidia["probe_size"], "640x360")
+        self.assertIn("RTX 2060", nvidia["label"])
+        self.assertIn("驱动 576.80", nvidia["label"])
+        self.assertEqual(result["recommendation"]["id"], "nvidia")
 
     def test_hardware_burn_failure_falls_back_to_cpu_medium_crf20(self):
         commands = []
