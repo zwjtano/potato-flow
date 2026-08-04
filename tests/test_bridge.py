@@ -1291,7 +1291,7 @@ class BridgeTests(unittest.TestCase):
                     ("cleanup", "completed"),
                 ],
             )
-            ass = video.with_name(f"{video.stem}.zh-CN.ass")
+            ass = video.parent / "ass" / f"{video.stem}.zh-CN.ass"
             self.assertTrue(ass.is_file())
             self.assertIn("测试弹幕", ass.read_text(encoding="utf-8-sig"))
 
@@ -1375,7 +1375,7 @@ class BridgeTests(unittest.TestCase):
                 expected_cover,
             )
 
-    def test_record_only_failed_cover_is_visible_and_preserves_flv(self):
+    def test_record_only_missing_cover_is_skipped_and_pipeline_continues(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "failed-cover.flv"
@@ -1397,25 +1397,33 @@ class BridgeTests(unittest.TestCase):
                 bridge,
                 "generate_record_only_cover",
                 side_effect=RuntimeError("图片模型不可用"),
-            ):
+            ), patch.object(
+                bridge,
+                "remux_record_only_flv_with_cover",
+            ) as remux:
                 result = bridge.main([
                     "--config", str(config),
                     "record-only", "--room-id", "room-1", str(video), str(xml),
                 ])
 
-            self.assertEqual(result, 1)
-            self.assertTrue(video.is_file())
+            self.assertEqual(result, 0)
+            remux.assert_not_called()
             with sqlite3.connect(state) as db:
-                task = db.execute("SELECT platform, status, error FROM uploads").fetchone()
+                task = db.execute("SELECT platform, status, result_json FROM uploads").fetchone()
                 cover_stage = db.execute(
-                    "SELECT status, error FROM upload_stages WHERE stage='cover'"
+                    "SELECT status, details_json FROM upload_stages WHERE stage='cover'"
                 ).fetchone()
-            self.assertEqual(task[0:2], ("record_only", "failed"))
-            self.assertIn("图片模型不可用", task[2])
-            self.assertEqual(cover_stage[0], "failed")
-            self.assertIn("图片模型不可用", cover_stage[1])
+            self.assertEqual(task[0:2], ("record_only", "completed"))
+            self.assertIsNone(json.loads(task[2])["cover_path"])
+            self.assertEqual(cover_stage[0], "skipped")
+            self.assertIn("图片模型不可用", json.loads(cover_stage[1])["reason"])
+            with sqlite3.connect(state) as db:
+                remux_stage = db.execute(
+                    "SELECT status FROM upload_stages WHERE stage='remux'"
+                ).fetchone()
+            self.assertEqual(remux_stage[0], "skipped")
 
-    def test_record_only_retry_reuses_completed_burn_when_cover_failed(self):
+    def test_record_only_missing_cover_keeps_completed_burn_without_remux(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "failed-cover.flv"
@@ -1432,33 +1440,25 @@ class BridgeTests(unittest.TestCase):
                 "danmaku_burn_in": True,
             }), encoding="utf-8")
             burned = video.with_suffix(".mp4")
-            cover = video.with_suffix(".jpg")
-            final_video = video.with_suffix(".mp4")
-
             def finish_burn(*_args, **_kwargs):
                 burned.write_bytes(b"already-burned-video")
                 return burned
-
-            def finish_cover(_video, _cfg):
-                cover.write_bytes(b"cover")
-                return cover
 
             with patch.object(bridge, "probe_video_size", return_value=(1280, 720)), \
                     patch.object(bridge, "burn_ass", side_effect=finish_burn) as burn, \
                     patch.object(
                         bridge,
                         "generate_record_only_cover",
-                        side_effect=[RuntimeError("图片模型不可用"), finish_cover(video, {})],
+                        side_effect=RuntimeError("图片模型不可用"),
                     ) as generate_cover, patch.object(
                         bridge,
                         "remux_record_only_flv_with_cover",
-                        return_value=final_video,
                     ) as remux:
                 first = bridge.main([
                     "--config", str(config),
                     "record-only", "--room-id", "room-1", str(video), str(xml),
                 ])
-                self.assertEqual(first, 1)
+                self.assertEqual(first, 0)
                 self.assertTrue(burned.is_file())
                 with sqlite3.connect(state) as db:
                     exclusions = db.execute(
@@ -1466,28 +1466,18 @@ class BridgeTests(unittest.TestCase):
                     ).fetchall()
                 self.assertIn((str(burned.resolve()),), exclusions)
 
-                second = bridge.main([
-                    "--config", str(config),
-                    "record-only", "--room-id", "room-1", str(video), str(xml),
-                ])
-
-            self.assertEqual(second, 0)
             self.assertEqual(burn.call_count, 1)
-            self.assertEqual(generate_cover.call_count, 2)
-            self.assertEqual(remux.call_args.args[0], burned)
+            self.assertEqual(generate_cover.call_count, 1)
+            remux.assert_not_called()
             with sqlite3.connect(state) as db:
                 task = db.execute(
                     "SELECT status, attempts FROM uploads"
                 ).fetchone()
-                ass_details = json.loads(db.execute(
-                    "SELECT details_json FROM upload_stages WHERE stage='ass'"
-                ).fetchone()[0])
                 burn_details = json.loads(db.execute(
                     "SELECT details_json FROM upload_stages WHERE stage='burn'"
                 ).fetchone()[0])
-            self.assertEqual(task, ("completed", 2))
-            self.assertTrue(ass_details["reused_on_retry"])
-            self.assertTrue(burn_details["reused_on_retry"])
+            self.assertEqual(task, ("completed", 1))
+            self.assertTrue(burn_details["burn_in"])
 
     def test_record_only_flv_is_remuxed_to_mp4_with_attached_cover(self):
         with tempfile.TemporaryDirectory() as temp:
