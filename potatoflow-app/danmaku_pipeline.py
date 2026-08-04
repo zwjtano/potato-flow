@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
+import platform
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -26,8 +29,8 @@ except ImportError:  # pragma: no cover - production runs on Linux/macOS
 _BURN_THREAD_LOCK = threading.Lock()
 _ENCODER_PROBE_LOCK = threading.Lock()
 _ENCODER_PROBE_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
-_ENCODER_PROBE_SIZE = "128x128"
-_AMF_QVBR_PROBE_SIZE = "640x360"
+_CPU_ENCODER_PROBE_SIZE = "128x128"
+_HARDWARE_ENCODER_PROBE_SIZE = "640x360"
 _DEFAULT_RENDER_BLOCKLIST = {"合成大西瓜"}
 
 ENCODER_PROFILES: dict[str, dict[str, Any]] = {
@@ -84,6 +87,168 @@ def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
     return ["-c:v", "libx264", "-preset", selected_preset, "-crf", value]
 
 
+def _nvidia_devices() -> list[dict[str, str]]:
+    """Return NVIDIA model and driver data when nvidia-smi is available."""
+    executable = shutil.which("nvidia-smi")
+    if not executable and os.name == "nt":
+        windows_dir = Path(os.environ.get("WINDIR") or r"C:\Windows")
+        candidates = [
+            windows_dir / "System32" / "nvidia-smi.exe",
+            Path(os.environ.get("ProgramFiles") or r"C:\Program Files")
+            / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe",
+        ]
+        executable = next((str(path) for path in candidates if path.is_file()), None)
+    if not executable:
+        return []
+    try:
+        result = subprocess.run(
+            [
+                executable,
+                "--query-gpu=name,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    devices = []
+    for line in str(result.stdout or "").splitlines():
+        name, separator, driver = line.partition(",")
+        name = name.strip()
+        if name:
+            devices.append({"name": name, "driver": driver.strip() if separator else ""})
+    return devices
+
+
+def _cpu_device() -> dict[str, Any]:
+    """Return a user-facing CPU identity without requiring optional packages."""
+    name = ""
+    if os.name == "nt":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            ) as key:
+                name = str(winreg.QueryValueEx(key, "ProcessorNameString")[0] or "").strip()
+        except (OSError, ImportError):
+            pass
+    if not name and platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                name = str(result.stdout or "").strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if not name and Path("/proc/cpuinfo").is_file():
+        try:
+            cpuinfo = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace")
+            match = re.search(r"^(?:model name|hardware)\s*:\s*(.+)$", cpuinfo, re.MULTILINE | re.IGNORECASE)
+            if match:
+                name = match.group(1).strip()
+        except OSError:
+            pass
+    if not name:
+        name = str(platform.processor() or "").strip()
+    name = re.sub(r"\s+", " ", name).strip() or "未识别型号的 CPU"
+    return {"name": name, "logical_cores": int(os.cpu_count() or 0)}
+
+
+def _windows_graphics_devices() -> list[dict[str, str]]:
+    """Enumerate Windows display adapters through the built-in CIM provider."""
+    if os.name != "nt":
+        return []
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        return []
+    script = (
+        "@(Get-CimInstance Win32_VideoController | "
+        "Select-Object Name,DriverVersion,PNPDeviceID) | ConvertTo-Json -Compress"
+    )
+    try:
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0 or not str(result.stdout or "").strip():
+        return []
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    rows = payload if isinstance(payload, list) else [payload]
+    devices = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("Name") or "").strip()
+        lowered = f"{name} {row.get('PNPDeviceID') or ''}".lower()
+        if "nvidia" in lowered:
+            backend = "nvidia"
+        elif "amd" in lowered or "radeon" in lowered or "advanced micro devices" in lowered:
+            backend = "amd"
+        elif "intel" in lowered:
+            backend = "intel"
+        else:
+            backend = "unknown"
+        if name:
+            devices.append({
+                "name": name,
+                "driver": str(row.get("DriverVersion") or "").strip(),
+                "backend": backend,
+            })
+    return devices
+
+
+def _graphics_devices() -> list[dict[str, str]]:
+    devices = _windows_graphics_devices()
+    for device in _nvidia_devices():
+        normalized = device["name"].casefold()
+        existing = next(
+            (item for item in devices if item["name"].casefold() == normalized),
+            None,
+        )
+        if existing:
+            existing["backend"] = "nvidia"
+            existing["driver"] = device.get("driver") or existing.get("driver", "")
+        else:
+            devices.append({**device, "backend": "nvidia"})
+    return devices
+
+
+def _probe_failure_reason(backend: str, error: str, devices: list[dict[str, str]]) -> str:
+    lowered = str(error or "").lower()
+    if backend == "nvidia" and devices:
+        names = "、".join(device["name"] for device in devices)
+        if "minimum" in lowered or "dimension" in lowered or "width" in lowered or "height" in lowered:
+            return f"已识别 {names}，但测试画面尺寸被当前驱动拒绝"
+        if "driver does not support" in lowered or "required nvenc api" in lowered:
+            return f"已识别 {names}，但 NVIDIA 驱动不支持当前 FFmpeg 所需的 NVENC API"
+        return f"已识别 {names}，但 NVENC 实际编码测试失败"
+    if devices:
+        names = "、".join(device["name"] for device in devices)
+        return f"已识别 {names}，但硬件编码实际测试失败"
+    if "unknown encoder" in lowered:
+        return "当前 FFmpeg 未包含该硬件编码器"
+    if "cannot load" in lowered or "not found" in lowered:
+        return "显卡驱动或硬件编码运行库未就绪"
+    return "实际编码测试未通过"
+
+
 def probe_encoding_capabilities(
     ffmpeg: str = "ffmpeg",
     *,
@@ -101,14 +266,23 @@ def probe_encoding_capabilities(
         if not force_refresh and cached and now - cached[0] < 300:
             return dict(cached[1])
 
+    cpu_device = _cpu_device()
+    graphics_devices = _graphics_devices()
     capabilities: list[dict[str, Any]] = []
     for backend, profile in ENCODER_PROFILES.items():
-        probe_size = _AMF_QVBR_PROBE_SIZE if backend == "amd" else _ENCODER_PROBE_SIZE
+        # Several hardware encoders reject tiny synthetic frames even when
+        # ordinary recordings encode correctly. This previously made a valid
+        # RTX 2060 appear unavailable because NVIDIA was probed at 128x128.
+        probe_size = (
+            _CPU_ENCODER_PROBE_SIZE
+            if backend == "cpu"
+            else _HARDWARE_ENCODER_PROBE_SIZE
+        )
         command = [
             str(ffmpeg), "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-            # AMF QVBR rejects tiny synthetic inputs even though real 1080p and
-            # 2160p recordings encode correctly. 640x360 is the smallest
-            # broadly compatible probe observed on current Windows drivers.
+            # Hardware encoders can reject tiny synthetic inputs even though
+            # real recordings encode correctly. Use a normal 16:9 frame for
+            # NVENC/QSV/AMF while keeping the CPU probe cheap.
             "-i", f"color=c=black:s={probe_size}:d=0.12", "-frames:v", "1",
             *_encoder_video_args(backend, str(profile["preset"]), int(profile["quality"])),
             "-an", "-f", "null", "-",
@@ -122,15 +296,37 @@ def probe_encoding_capabilities(
                 error = str(result.stderr or result.stdout or "").strip()[-800:]
         except (OSError, subprocess.SubprocessError) as exc:
             error = str(exc)
+        devices = (
+            [cpu_device]
+            if backend == "cpu"
+            else [device for device in graphics_devices if device.get("backend") == backend]
+        )
+        label = str(profile["label"])
+        if devices:
+            suffix = {
+                "cpu": "CPU / libx264",
+                "nvidia": "NVENC",
+                "intel": "QSV",
+                "amd": "AMF",
+            }[backend]
+            if backend == "cpu" and cpu_device.get("logical_cores"):
+                suffix += f"，{cpu_device['logical_cores']} 线程"
+            elif devices[0].get("driver"):
+                suffix += f"，驱动 {devices[0]['driver']}"
+            extra = f" 等 {len(devices)} 张" if len(devices) > 1 else ""
+            label = f"{devices[0]['name']}{extra}（{suffix}）"
         capabilities.append({
             "id": backend,
-            "label": profile["label"],
+            "label": label,
             "available": available,
             "ffmpeg_encoder": profile["ffmpeg_encoder"],
             "preset": profile["preset"],
             "quality_name": profile["quality_name"],
             "quality": profile["quality"],
             "error": error,
+            "reason": "实际编码测试通过" if available else _probe_failure_reason(backend, error, devices),
+            "devices": devices,
+            "probe_size": probe_size,
         })
 
     available_ids = {item["id"] for item in capabilities if item["available"]}
@@ -150,6 +346,7 @@ def probe_encoding_capabilities(
     recommendation["reason"] = reason
     payload = {
         "preferred": preferred,
+        "hardware": {"cpu": cpu_device, "gpus": graphics_devices},
         "capabilities": capabilities,
         "recommendation": recommendation,
         "cached_seconds": 300,
