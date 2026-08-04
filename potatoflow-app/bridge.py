@@ -5174,7 +5174,7 @@ def generate_record_only_ass(
     base_cfg: dict[str, Any],
     received_paths: list[Path] | None = None,
 ) -> Path | None:
-    """Generate a side-by-side ASS file without creating an upload task."""
+    """Generate a retained ASS file without triggering player auto-loading."""
     cfg = effective_config(base_cfg, video)
     danmaku_xml = wait_for_danmaku_xml(
         video,
@@ -5192,10 +5192,12 @@ def generate_record_only_ass(
         )
         return None
     width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
-    # Media servers infer an external subtitle's language from its filename.
-    # A plain ``video.ass`` is commonly shown as English/unknown, while
-    # ``video.zh-CN.ass`` is recognised as Simplified Chinese.
-    ass_path = video.with_name(f"{video.stem}.zh-CN.ass")
+    # Keep the editable subtitle inside the same recording session, but not
+    # beside the burned MP4. Many players automatically load a same-stem ASS;
+    # doing that for an already burned video renders every comment twice.
+    ass_dir = video.parent / "ass"
+    ass_dir.mkdir(parents=True, exist_ok=True)
+    ass_path = ass_dir / f"{video.stem}.zh-CN.ass"
     generated = build_ass(
         comments,
         ass_path,
@@ -5206,9 +5208,12 @@ def generate_record_only_ass(
         duration=float(cfg.get("danmaku_duration_seconds", 10)),
         opacity=float(cfg.get("danmaku_opacity", 0.92)),
     )
-    legacy_path = video.with_suffix(".ass")
-    if legacy_path != generated:
-        legacy_path.unlink(missing_ok=True)
+    for legacy_path in (
+        video.with_suffix(".ass"),
+        video.with_name(f"{video.stem}.zh-CN.ass"),
+    ):
+        if legacy_path != generated:
+            legacy_path.unlink(missing_ok=True)
     return generated
 
 

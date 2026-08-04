@@ -1,4 +1,5 @@
 import io
+import re
 import subprocess
 import tempfile
 import threading
@@ -51,8 +52,17 @@ class DanmakuPipelineTests(unittest.TestCase):
         self.assertTrue(commands)
         for command in commands:
             source = command[command.index("-i") + 1]
-            self.assertIn("s=128x128", source)
             self.assertNotIn("s=64x64", source)
+        amf_command = next(command for command in commands if "h264_amf" in command)
+        amf_source = amf_command[amf_command.index("-i") + 1]
+        self.assertIn("s=640x360", amf_source)
+        for command in commands:
+            if command is not amf_command:
+                source = command[command.index("-i") + 1]
+                self.assertIn("s=128x128", source)
+        self.assertEqual(amf_command[amf_command.index("-rc") + 1], "qvbr")
+        self.assertIn("-qvbr_quality_level", amf_command)
+        self.assertNotIn("-qp_i", amf_command)
 
     def test_encoder_probe_prefers_configured_available_backend(self):
         def fake_run(command, **_kwargs):
@@ -194,6 +204,71 @@ class DanmakuPipelineTests(unittest.TestCase):
             self.assertIn("\\move(", text)
             self.assertIn("\\an8", text)
             self.assertIn("底部弹幕", text)
+
+    def test_build_ass_drops_comments_when_all_lanes_are_occupied(self):
+        comments = [
+            DanmakuComment(time=0.0, mode=5, text="顶部"),
+            DanmakuComment(time=0.0, mode=1, text="滚动一"),
+            DanmakuComment(time=0.0, mode=4, text="底部"),
+            DanmakuComment(time=0.0, mode=1, text="不能覆盖"),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "dense.ass"
+            # 240p yields three usable lanes with the default 42px font.
+            build_ass(comments, path, width=320, height=240)
+            text = path.read_text(encoding="utf-8-sig")
+
+        dialogues = [line for line in text.splitlines() if line.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 3)
+        self.assertNotIn("不能覆盖", text)
+
+    def test_build_ass_does_not_reuse_fixed_lane_until_it_expires(self):
+        comments = [
+            DanmakuComment(time=0.0, mode=5, text=f"固定{index}")
+            for index in range(3)
+        ]
+        comments.extend(
+            [
+                DanmakuComment(time=1.0, mode=1, text="过早滚动"),
+                DanmakuComment(time=5.0, mode=1, text="到期可用"),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "mixed.ass"
+            build_ass(comments, path, width=320, height=240)
+            text = path.read_text(encoding="utf-8-sig")
+
+        self.assertNotIn("过早滚动", text)
+        self.assertIn("到期可用", text)
+
+    def test_build_ass_accounts_for_full_width_cjk_glyphs(self):
+        comments = [
+            DanmakuComment(time=0.0, mode=1, text="中文宽度测试"),
+            DanmakuComment(time=3.0, mode=1, text="中文宽度测试"),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "cjk-width.ass"
+            build_ass(comments, path, width=320, height=240, font_size=42, duration=9)
+            text = path.read_text(encoding="utf-8-sig")
+
+        moves = re.findall(r"\\move\(320,(\d+),-256,(\d+)\)", text)
+        self.assertEqual(len(moves), 2)
+        self.assertNotEqual(moves[0][0], moves[1][0])
+
+    def test_build_ass_blocks_configured_spam_phrase_without_changing_xml(self):
+        comments = [
+            DanmakuComment(time=0.0, mode=1, text="合成大西瓜"),
+            DanmakuComment(time=1.0, mode=1, text=" 合成 大西瓜 "),
+            DanmakuComment(time=2.0, mode=1, text="正常弹幕"),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "blocked.ass"
+            build_ass(comments, path)
+            text = path.read_text(encoding="utf-8-sig")
+
+        self.assertNotIn("合成大西瓜", text)
+        self.assertNotIn("合成 大西瓜", text)
+        self.assertIn("正常弹幕", text)
 
     def test_ai_sampling_deduplicates_spam(self):
         with tempfile.TemporaryDirectory() as temp:

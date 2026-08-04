@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 import xml.etree.ElementTree as ET
 from collections import deque
 from contextlib import contextmanager
@@ -26,6 +27,8 @@ _BURN_THREAD_LOCK = threading.Lock()
 _ENCODER_PROBE_LOCK = threading.Lock()
 _ENCODER_PROBE_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 _ENCODER_PROBE_SIZE = "128x128"
+_AMF_QVBR_PROBE_SIZE = "640x360"
+_DEFAULT_RENDER_BLOCKLIST = {"合成大西瓜"}
 
 ENCODER_PROFILES: dict[str, dict[str, Any]] = {
     "cpu": {
@@ -56,7 +59,7 @@ ENCODER_PROFILES: dict[str, dict[str, Any]] = {
         "label": "AMD（AMF）",
         "ffmpeg_encoder": "h264_amf",
         "preset": "balanced",
-        "quality_name": "CQP",
+        "quality_name": "QVBR",
         "quality": 20,
         "presets": ("speed", "balanced", "quality"),
     },
@@ -75,8 +78,8 @@ def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
         return ["-c:v", "h264_qsv", "-preset", selected_preset, "-global_quality", value]
     if backend == "amd":
         return [
-            "-c:v", "h264_amf", "-quality", selected_preset, "-rc", "cqp",
-            "-qp_i", value, "-qp_p", value,
+            "-c:v", "h264_amf", "-quality", selected_preset, "-rc", "qvbr",
+            "-qvbr_quality_level", value,
         ]
     return ["-c:v", "libx264", "-preset", selected_preset, "-crf", value]
 
@@ -100,12 +103,13 @@ def probe_encoding_capabilities(
 
     capabilities: list[dict[str, Any]] = []
     for backend, profile in ENCODER_PROFILES.items():
+        probe_size = _AMF_QVBR_PROBE_SIZE if backend == "amd" else _ENCODER_PROBE_SIZE
         command = [
             str(ffmpeg), "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-            # AMD AMF rejects 64x64 input even though normal recording sizes,
-            # including 1080p and 2160p, encode correctly. 128x128 keeps the
-            # probe cheap while staying inside the hardware encoder's limits.
-            "-i", f"color=c=black:s={_ENCODER_PROBE_SIZE}:d=0.12", "-frames:v", "1",
+            # AMF QVBR rejects tiny synthetic inputs even though real 1080p and
+            # 2160p recordings encode correctly. 640x360 is the smallest
+            # broadly compatible probe observed on current Windows drivers.
+            "-i", f"color=c=black:s={probe_size}:d=0.12", "-frames:v", "1",
             *_encoder_video_args(backend, str(profile["preset"]), int(profile["quality"])),
             "-an", "-f", "null", "-",
         ]
@@ -263,6 +267,20 @@ def _ass_bgr(color: int) -> str:
     return f"{blue:02X}{green:02X}{red:02X}"
 
 
+def _estimated_text_width(text: str, font_size: int) -> int:
+    """Conservatively estimate rendered width for mixed CJK/Latin danmaku."""
+    units = 0.0
+    for char in text:
+        if char.isspace():
+            units += 0.34
+        elif unicodedata.east_asian_width(char) in {"W", "F", "A"}:
+            units += 1.0
+        else:
+            units += 0.62
+    # Include a small allowance for the ASS outline and font metric variance.
+    return max(font_size, int(math.ceil(units * font_size)) + 4)
+
+
 def build_ass(
     comments: list[DanmakuComment],
     output: Path,
@@ -274,7 +292,7 @@ def build_ass(
     duration: float = 9.0,
     opacity: float = 0.92,
 ) -> Path:
-    """Render scrolling/top/bottom comments into an ASS file with simple lane allocation."""
+    """Render comments into ASS without allowing occupied lanes to overlap."""
     width = max(320, int(width))
     height = max(240, int(height))
     font_size = max(16, int(font_size))
@@ -282,11 +300,45 @@ def build_ass(
     alpha = max(0, min(255, int(round((1.0 - max(0.0, min(1.0, opacity))) * 255))))
     primary = f"&H{alpha:02X}FFFFFF"
     outline = "&H80000000"
-    lane_height = max(font_size + 8, int(font_size * 1.25))
-    lane_count = max(1, int((height * 0.72) // lane_height))
-    lane_free = [0.0] * lane_count
-    top_index = 0
-    bottom_index = 0
+    # Leave enough breathing room for the glyph outline and keep gameplay UI
+    # visible.  The old 42px/52px layout produced 14 tightly packed lanes at
+    # 1080p, which looked overlapped even when the lane math was technically
+    # collision-free.
+    lane_height = max(font_size + 12, int(math.ceil(font_size * 1.4)))
+    lane_count = max(1, int((height * 0.85) // lane_height))
+    # Each entry is ``(kind, start, end, estimated_width)``.  Scrolling
+    # comments may safely share a lane before the previous comment ends once
+    # both their leading and trailing edges can no longer catch each other.
+    # Fixed comments reserve the whole lane for their complete lifetime.
+    lane_state: list[tuple[str, float, float, int] | None] = [None] * lane_count
+
+    def scrolling_lane_available(
+        state: tuple[str, float, float, int] | None,
+        start: float,
+        estimated_width: int,
+    ) -> bool:
+        if state is None:
+            return True
+        kind, previous_start, previous_end, previous_width = state
+        if start >= previous_end:
+            return True
+        if kind != "scroll":
+            return False
+        delay = max(0.0, start - previous_start)
+        previous_entry = duration * previous_width / (width + previous_width)
+        current_entry = duration * estimated_width / (width + estimated_width)
+        return delay >= max(previous_entry, current_entry)
+
+    def first_free_fixed_lane(start: float, *, reverse: bool = False) -> int | None:
+        indices = range(lane_count - 1, -1, -1) if reverse else range(lane_count)
+        return next(
+            (
+                lane
+                for lane in indices
+                if lane_state[lane] is None or start >= lane_state[lane][2]
+            ),
+            None,
+        )
 
     header = f"""[Script Info]
 Title: 简体中文弹幕
@@ -305,26 +357,50 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
     lines = [header]
     for comment in comments:
+        if re.sub(r"\s+", "", comment.text).casefold() in _DEFAULT_RENDER_BLOCKLIST:
+            continue
         text = _escape_ass_text(comment.text)
         color_tag = f"\\c&H{_ass_bgr(comment.color)}&" if comment.color != 0xFFFFFF else ""
         if comment.mode == 5:  # fixed top
-            y = 20 + (top_index % max(1, lane_count // 3)) * lane_height
-            top_index += 1
             start = comment.time
             end = start + min(duration, 5.0)
+            lane = first_free_fixed_lane(start)
+            if lane is None:
+                continue
+            lane_state[lane] = ("fixed", start, end, 0)
+            y = 10 + lane * lane_height
             override = f"{{\\an8\\pos({width // 2},{y}){color_tag}}}"
         elif comment.mode == 4:  # fixed bottom
-            y = height - 20 - (bottom_index % max(1, lane_count // 3)) * lane_height
-            bottom_index += 1
             start = comment.time
             end = start + min(duration, 5.0)
+            lane = first_free_fixed_lane(start, reverse=True)
+            if lane is None:
+                continue
+            lane_state[lane] = ("fixed", start, end, 0)
+            y = 10 + (lane + 1) * lane_height
             override = f"{{\\an2\\pos({width // 2},{y}){color_tag}}}"
         else:
-            lane = min(range(lane_count), key=lambda idx: lane_free[idx])
             start = comment.time
-            estimated_width = max(font_size, int(len(comment.text) * font_size * 0.72))
+            estimated_width = _estimated_text_width(comment.text, font_size)
             end = start + duration
-            lane_free[lane] = start + min(duration * 0.45, 4.0)
+            available_lanes = [
+                index
+                for index, state in enumerate(lane_state)
+                if scrolling_lane_available(state, start, estimated_width)
+            ]
+            if not available_lanes:
+                continue
+            # Spread comments vertically by preferring the least recently used
+            # safe lane. Picking the first safe lane bunches sparse comments at
+            # the top even though the rest of the screen is available.
+            lane = min(
+                available_lanes,
+                key=lambda index: (
+                    lane_state[index][2] if lane_state[index] is not None else -1.0,
+                    index,
+                ),
+            )
+            lane_state[lane] = ("scroll", start, end, estimated_width)
             y = 10 + lane * lane_height
             override = f"{{\\an7\\move({width},{y},{-estimated_width},{y}){color_tag}}}"
         lines.append(
