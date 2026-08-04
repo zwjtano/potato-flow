@@ -2433,7 +2433,7 @@
 
 {% block extra_js %}
 <script>
-document.addEventListener('DOMContentLoaded', function () {
+(function initializeSettingsLayoutBeforeFirstPaint() {
     const settingsTabContent = document.getElementById('settings-tabContent');
     const settingsNav = document.getElementById('settings-nav');
     const settingsLayout = document.querySelector('.settings-layout');
@@ -3715,7 +3715,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-});
+})();
 
     /* 设置项搜索：按名称/标签/占位符定位设置卡片并切换到对应 tab */
     document.addEventListener('DOMContentLoaded', function () {

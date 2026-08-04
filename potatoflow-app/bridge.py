@@ -5009,6 +5009,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 page_titles=[page_title],
                 existing_submission=existing_submission,
                 is_original=True,
+                collection_id=str(cfg.get("bilibili_collection_id") or ""),
                 progress_detail_callback=_on_upload_progress,
                 queue_status_callback=_on_upload_queue_status,
             )

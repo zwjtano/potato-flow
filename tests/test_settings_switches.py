@@ -9,6 +9,7 @@ SETTINGS_REDESIGN_STYLE_FILE = ROOT / "potatoflow-app" / "static" / "css" / "set
 SETTINGS_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "settings.html"
 BASE_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "base.html"
 APP_SOURCE = ROOT / "potatoflow-app" / "app.py"
+LIVE_RECORDING_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "live_recording.html"
 
 
 class SettingsSwitchTests(unittest.TestCase):
@@ -57,6 +58,23 @@ class SettingsSwitchTests(unittest.TestCase):
         ):
             self.assertIn("name: '" + category + "'", template)
         self.assertIn("settings-appearance-strip", template)
+
+    def test_settings_layout_is_rebuilt_before_first_paint(self):
+        template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("(function initializeSettingsLayoutBeforeFirstPaint() {", template)
+        self.assertNotIn(
+            "document.addEventListener('DOMContentLoaded', function () {\n"
+            "    const settingsTabContent = document.getElementById('settings-tabContent');",
+            template,
+        )
+
+    def test_live_room_exposes_per_room_bilibili_collection(self):
+        template = LIVE_RECORDING_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(template.count('name="bilibili_collection_id"'), 2)
+        self.assertIn("自动加入 B站合集", template)
+        self.assertIn('data-role="bilibili-collection-field"', template)
 
     def test_mobile_settings_navigation_uses_a_wrapping_grid(self):
         css = SETTINGS_REDESIGN_STYLE_FILE.read_text(encoding="utf-8")

@@ -1254,6 +1254,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(room["recording_schedule_enabled"])
         self.assertEqual(room["recording_schedule_start"], "00:00")
         self.assertEqual(room["recording_schedule_end"], "23:59")
+        self.assertEqual(room["bilibili_collection_id"], "")
 
     def test_room_recording_settings_are_saved_per_room(self):
         manager = LiveRecorderManager()
@@ -1275,6 +1276,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 recording_schedule_enabled=True,
                 recording_schedule_start="22:30",
                 recording_schedule_end="06:15",
+                bilibili_collection_id="https://space.bilibili.com/1/lists/7320255",
             )
 
         self.assertEqual(state, "saved")
@@ -1287,6 +1289,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertTrue(room["recording_schedule_enabled"])
         self.assertEqual(room["recording_schedule_start"], "22:30")
         self.assertEqual(room["recording_schedule_end"], "06:15")
+        self.assertEqual(room["bilibili_collection_id"], "7320255")
         persisted_rooms = atomic_json.call_args_list[0].args[1]
         self.assertNotIn("segment_minutes", persisted_rooms[1])
         sync_configs.assert_called_once_with(persisted_rooms)

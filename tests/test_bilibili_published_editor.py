@@ -476,6 +476,85 @@ class PublishedMetadataEditorTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("保护现有视频", error)
 
+    def test_new_submission_can_be_added_to_room_collection(self):
+        class CollectionApi(_FakeApi):
+            calls = []
+
+            @property
+            def result(self):
+                async def resolve():
+                    self.__class__.calls.append(self)
+                    if self.url.endswith("/creative/web/seasons"):
+                        return {
+                            "seasons": [{
+                                "season": {"id": 7320255},
+                                "sections": {"sections": [{"id": 8081933}]},
+                            }]
+                        }
+                    if self.url.endswith("/x/web-interface/view"):
+                        return {"title": "录播标题", "pages": [{"cid": 456}]}
+                    return {}
+
+                return resolve()
+
+        uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+        with (
+            patch.object(bilibili_uploader, "configure_bilibili_runtime"),
+            patch.object(
+                bilibili_uploader,
+                "load_credential_from_file",
+                return_value=_Credential(),
+            ),
+            patch.object(bilibili_uploader, "Api", CollectionApi),
+        ):
+            result = uploader.add_to_collection(
+                {"aid": 123, "bvid": "BV1test"},
+                "7320255",
+            )
+
+        self.assertTrue(result["added"])
+        self.assertEqual(result["section_id"], 8081933)
+        add_call = next(
+            call for call in CollectionApi.calls
+            if call.url.endswith("/season/section/episodes/add")
+        )
+        self.assertEqual(add_call.data["sectionId"], 8081933)
+        self.assertEqual(add_call.data["episodes"][0]["aid"], 123)
+        self.assertEqual(add_call.data["episodes"][0]["cid"], 456)
+
+    def test_upload_wrapper_adds_only_new_submission_to_collection(self):
+        uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+        uploaded = {"aid": 123, "bvid": "BV1test"}
+        with (
+            patch.object(
+                uploader,
+                "_upload_video_unlocked",
+                return_value=(True, uploaded),
+            ),
+            patch.object(
+                uploader,
+                "add_to_collection",
+                return_value={"enabled": True, "added": True},
+            ) as add_to_collection,
+            patch.object(bilibili_uploader, "default_bilibili_upload_lock"),
+            patch.object(bilibili_uploader, "bilibili_upload_slot") as slot,
+        ):
+            slot.return_value.__enter__.return_value = None
+            slot.return_value.__exit__.return_value = False
+            ok, result = uploader.upload_video(
+                video_file_path="video.flv",
+                cover_file_path="cover.jpg",
+                title="标题",
+                description="简介",
+                tags=["直播"],
+                partition_id=171,
+                collection_id="7320255",
+            )
+
+        self.assertTrue(ok)
+        self.assertTrue(result["collection"]["added"])
+        add_to_collection.assert_called_once_with(uploaded, "7320255")
+
 
 if __name__ == "__main__":
     unittest.main()

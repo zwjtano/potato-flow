@@ -300,6 +300,113 @@ class BilibiliUploader:
         else:
             print(message)
 
+    def add_to_collection(self, result: dict, collection_id: str) -> dict:
+        """Add a newly submitted archive to the first section of a B站 collection."""
+        aid = int((result or {}).get("aid") or 0)
+        season_id = int(str(collection_id or "").strip() or 0)
+        details = {
+            "enabled": bool(season_id),
+            "added": False,
+            "season_id": season_id or None,
+            "aid": aid or None,
+        }
+        if not season_id:
+            return details
+        if not aid:
+            details["error"] = "投稿结果缺少 aid，无法加入合集"
+            return details
+
+        try:
+            configure_bilibili_runtime()
+            credential = load_credential_from_file(self.cookie_file)
+
+            async def _add():
+                seasons_payload = await (
+                    Api(
+                        url="https://member.bilibili.com/x2/creative/web/seasons",
+                        method="GET",
+                        verify=True,
+                        credential=credential,
+                    )
+                    .update_params(pn=1, ps=100, order="mtime", sort="desc", draft=1)
+                    .result
+                )
+                seasons = (
+                    seasons_payload.get("seasons", [])
+                    if isinstance(seasons_payload, dict)
+                    else []
+                )
+                selected = next(
+                    (
+                        item for item in seasons
+                        if int(((item or {}).get("season") or {}).get("id") or 0)
+                        == season_id
+                    ),
+                    None,
+                )
+                if not selected:
+                    raise RuntimeError(f"当前投稿账号没有找到合集 {season_id}")
+                section_rows = ((selected.get("sections") or {}).get("sections") or [])
+                if not section_rows:
+                    raise RuntimeError(f"合集 {season_id} 没有可用分区")
+                section_id = int((section_rows[0] or {}).get("id") or 0)
+                if not section_id:
+                    raise RuntimeError(f"合集 {season_id} 的默认分区 ID 无效")
+
+                video_info = await (
+                    Api(
+                        url="https://api.bilibili.com/x/web-interface/view",
+                        method="GET",
+                        credential=credential,
+                    )
+                    .update_params(aid=aid)
+                    .result
+                )
+                pages = video_info.get("pages", []) if isinstance(video_info, dict) else []
+                cid = int(((pages[0] if pages else {}) or {}).get("cid") or 0)
+                title = str((video_info or {}).get("title") or "").strip()
+                if not cid or not title:
+                    raise RuntimeError("B站没有返回稿件 cid 或标题，无法加入合集")
+
+                await (
+                    Api(
+                        url=(
+                            "https://member.bilibili.com/x2/creative/web/"
+                            "season/section/episodes/add"
+                        ),
+                        method="POST",
+                        verify=True,
+                        json_body=True,
+                        credential=credential,
+                    )
+                    .update_params(csrf=credential.bili_jct)
+                    .update_data(
+                        sectionId=section_id,
+                        episodes=[{
+                            "aid": aid,
+                            "cid": cid,
+                            "title": title,
+                            "charging_pay": 0,
+                        }],
+                    )
+                    .result
+                )
+                return section_id, title
+
+            try:
+                section_id, title = asyncio.run(_add())
+            except RuntimeError as exc:
+                if "cannot be called from a running event loop" not in str(exc):
+                    raise
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    section_id, title = pool.submit(asyncio.run, _add()).result()
+            details.update({"added": True, "section_id": section_id, "title": title})
+            self.log(f"Bilibili稿件已加入合集 {season_id}，分区 {section_id}")
+        except Exception as exc:
+            details["error"] = _compact_exception_text(str(exc))
+            self.log(f"Bilibili稿件加入合集失败（投稿已成功）: {details['error']}")
+        return details
+
     def publish_description_comment(
         self,
         result: dict,
@@ -1506,6 +1613,7 @@ class BilibiliUploader:
         page_titles: Optional[List[str]] = None,
         existing_submission: Optional[dict] = None,
         is_original: bool = False,
+        collection_id: str = "",
         queue_status_callback: Optional[Callable[[str], None]] = None,
         stage_callback: Optional[Callable[[str, str, str, Optional[dict]], None]] = None,
     ) -> Tuple[bool, Union[dict, str]]:
@@ -1521,7 +1629,7 @@ class BilibiliUploader:
 
         lock_path = default_bilibili_upload_lock(get_app_subdir("temp"))
         with bilibili_upload_slot(lock_path, report):
-            return self._upload_video_unlocked(
+            success, result = self._upload_video_unlocked(
                 video_file_path=video_file_path,
                 cover_file_path=cover_file_path,
                 cover43_file_path=cover43_file_path,
@@ -1540,6 +1648,14 @@ class BilibiliUploader:
                 is_original=is_original,
                 stage_callback=stage_callback,
             )
+            if (
+                success
+                and collection_id
+                and not existing_submission
+                and isinstance(result, dict)
+            ):
+                result["collection"] = self.add_to_collection(result, collection_id)
+            return success, result
 
     def _upload_video_unlocked(
         self,
