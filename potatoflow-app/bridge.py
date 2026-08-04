@@ -143,6 +143,10 @@ DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("PIS", ("PIS", "Pis", "姚羿成")),
     ("Inflame", ("Inflame", "小书童", "何雍正")),
     (
+        "国民大舅哥",
+        ("国民大舅哥", "国名大舅哥", "白毛", "大舅哥"),
+    ),
+    (
         "川神",
         (
             "川神",
