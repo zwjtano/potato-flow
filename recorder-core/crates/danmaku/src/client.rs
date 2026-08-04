@@ -805,7 +805,7 @@ fn format_output_path(template: &Path) -> PathBuf {
     // Replace strftime-like patterns
     let formatted = now.format(&path_str).to_string();
 
-    PathBuf::from(formatted).with_extension("xml")
+    PathBuf::from(format!("{formatted}.xml"))
 }
 
 #[cfg(test)]
@@ -896,5 +896,16 @@ mod tests {
         let result = format_output_path(&template);
         assert!(result.to_string_lossy().contains("/tmp/test_"));
         assert!(result.extension().map(|e| e == "xml").unwrap_or(false));
+    }
+
+    #[test]
+    fn format_output_path_preserves_dots_in_title() {
+        for template in [
+            "/tmp/国民大舅哥_224团播S10.5 前瞻_2026-08-04_22-01",
+            "/tmp/谢彬DD_喂,在吗_进来看Show了._2026-08-04_21-53",
+        ] {
+            let result = format_output_path(Path::new(template));
+            assert_eq!(result, PathBuf::from(format!("{template}.xml")));
+        }
     }
 }
