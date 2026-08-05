@@ -67,6 +67,34 @@ class SecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 400)
         self.assertEqual(accepted.status_code, 404)
 
+    def test_open_recording_file_folder_uses_containing_directory_on_windows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            recording = Path(temp) / "主播" / "finished.xml"
+            recording.parent.mkdir()
+            recording.write_text("<i/>", encoding="utf-8")
+            with self.client.session_transaction() as session_state:
+                session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+            with (
+                patch.object(app_module, "load_config", return_value={}),
+                patch.object(
+                    app_module.live_recorder_manager,
+                    "recording_file",
+                    return_value=(recording, {"name": recording.name}),
+                ),
+                patch.object(app_module.sys, "platform", "win32"),
+                patch.object(app_module.os, "startfile", create=True) as startfile,
+            ):
+                response = self.client.post(
+                    "/live-recording/files/open-folder",
+                    json={"file_id": "safe-file-id"},
+                    headers={"X-CSRF-Token": "known-token"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["path"], str(recording.parent))
+        self.assertEqual(response.get_json()["message"], "已打开文件所在文件夹。")
+        startfile.assert_called_once_with(str(recording.parent))
+
     def test_password_hash_and_legacy_password_verification(self):
         hashed = app_module.generate_password_hash("correct horse")
 

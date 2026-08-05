@@ -80,7 +80,9 @@ def _write_cookie_file(cookie_file: str) -> str:
     os.makedirs(temp_dir, exist_ok=True)
     fd, path = tempfile.mkstemp(prefix="submission-cookie-", suffix=".json", dir=temp_dir)
     try:
-        os.fchmod(fd, 0o600)
+        fchmod = getattr(os, "fchmod", None)
+        if callable(fchmod):
+            fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(_cookie_payload(cookie_file), handle, ensure_ascii=False)
         return path

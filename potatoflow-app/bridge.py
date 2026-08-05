@@ -872,6 +872,111 @@ def wait_until_stable(path: Path, checks: int, interval: float) -> None:
             time.sleep(max(0.1, interval))
 
 
+def reusable_burned_video(
+    candidate: Path,
+    source_video: Path,
+    ffprobe: str = "ffprobe",
+) -> tuple[bool, dict[str, Any]]:
+    """Validate a completed burn before reusing it for another upload attempt."""
+    details: dict[str, Any] = {"burned_video_path": str(candidate)}
+    try:
+        details["burned_video_size_bytes"] = candidate.stat().st_size
+    except OSError as exc:
+        details["burned_video_reuse_error"] = str(exc)
+        return False, details
+    if int(details["burned_video_size_bytes"]) <= 0:
+        details["burned_video_reuse_error"] = "烧录文件为空"
+        return False, details
+    try:
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type:format=duration",
+                "-of",
+                "json",
+                str(candidate),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        payload = json.loads(completed.stdout or "{}")
+    except (OSError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+        details["burned_video_reuse_error"] = str(exc)
+        return False, details
+    streams = payload.get("streams") if isinstance(payload, dict) else []
+    if completed.returncode != 0 or not any(
+        isinstance(stream, dict) and stream.get("codec_type") == "video"
+        for stream in (streams if isinstance(streams, list) else [])
+    ):
+        details["burned_video_reuse_error"] = "烧录文件未检测到有效视频流"
+        return False, details
+    try:
+        burned_duration = float((payload.get("format") or {}).get("duration") or 0)
+    except (AttributeError, TypeError, ValueError):
+        burned_duration = 0.0
+    source_duration = video_duration_seconds(source_video, ffprobe)
+    details.update({
+        "burned_video_duration_seconds": burned_duration,
+        "source_video_duration_seconds": source_duration,
+    })
+    if burned_duration <= 0:
+        details["burned_video_reuse_error"] = "烧录文件时长无效"
+        return False, details
+    if source_duration is not None:
+        tolerance = max(3.0, float(source_duration) * 0.02)
+        details["burned_video_duration_tolerance_seconds"] = tolerance
+        if abs(burned_duration - float(source_duration)) > tolerance:
+            details["burned_video_reuse_error"] = "烧录文件与原视频时长不一致"
+            return False, details
+    details["burned_video_reuse_validated"] = True
+    return True, details
+
+
+def reusable_burned_video_for_retry(
+    video: Path,
+    prior_burn_stage: dict[str, Any],
+    ffprobe: str = "ffprobe",
+) -> tuple[Path | None, dict[str, Any]]:
+    """Find and move a valid prior burn beside its recording source."""
+    expected = video.with_name(f"{video.stem}.danmaku.mp4")
+    prior_details = (
+        prior_burn_stage.get("details")
+        if isinstance(prior_burn_stage.get("details"), dict)
+        else {}
+    )
+    candidates = [expected]
+    prior_path = str(prior_details.get("burned_video_path") or "").strip()
+    if prior_path:
+        candidates.append(Path(prior_path))
+    seen: set[Path] = set()
+    last_details: dict[str, Any] = {}
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        valid, validation = reusable_burned_video(resolved, video, ffprobe)
+        last_details = validation
+        if not valid:
+            continue
+        expected.parent.mkdir(parents=True, exist_ok=True)
+        if resolved != expected.resolve():
+            expected.unlink(missing_ok=True)
+            shutil.move(str(resolved), str(expected))
+        return expected.resolve(), {
+            **prior_details,
+            **validation,
+            "burned_video_path": str(expected.resolve()),
+            "burned_video_location": "recording_directory",
+            "reused_on_retry": True,
+        }
+    return None, last_details
+
+
 def fingerprint(path: Path, sidecar: Path | None = None) -> str:
     stat = path.stat()
     digest = hashlib.sha256()
@@ -940,6 +1045,14 @@ _VAGUE_RECORDING_TITLE_RE = re.compile(
     r"|(?:争议|热门)话题$"
     r"|^(?:直播精彩内容|精彩内容|精彩直播|直播录像)$"
 )
+_DANMAKU_ONLY_REAL_WORLD_CLAIM_RE = re.compile(
+    r"(?:签约|解约|加入|归入|转入|转会|官宣|开除|辞职|结婚|分手|怀孕|患病|去世|"
+    r"违法|被捕|收入|欠款|诈骗|出轨|退货(?:成功|失败|没成功))"
+)
+_DANMAKU_CLAIM_ATTRIBUTION_RE = re.compile(
+    r"(?:弹幕|观众|直播间)(?:称|说|猜|传|热议|讨论|刷屏|调侃|质疑|认为)|"
+    r"(?:据弹幕|传闻|疑似)"
+)
 _MULTIPART_HEADING_RE = re.compile(r"^【P\d+(?:｜[^\n]*)?】$")
 _TIMELINE_SPAM_WINDOW_SECONDS = 60.0
 _TIMELINE_MIN_SPAM_MESSAGES = 3
@@ -965,6 +1078,18 @@ def recording_title_topic_is_vague(topic: str) -> bool:
     """Reject empty promotional conclusions that do not name the actual event."""
     clean = re.sub(r"[\s｜|：:，,。.!！]+", "", str(topic or ""))
     return not clean or bool(_VAGUE_RECORDING_TITLE_RE.search(clean))
+
+
+def qualify_danmaku_only_real_world_claim(topic: str) -> str:
+    """Keep viewer-reported offline claims attributed instead of stating them as facts."""
+    clean = re.sub(r"[\r\n｜|]+", " ", str(topic or "")).strip()
+    if (
+        clean
+        and _DANMAKU_ONLY_REAL_WORLD_CLAIM_RE.search(clean)
+        and not _DANMAKU_CLAIM_ATTRIBUTION_RE.search(clean)
+    ):
+        return f"弹幕称{clean}"[:28].strip()
+    return clean[:28].strip()
 
 
 def recording_title_topic_from_timeline(topic: str, timeline_text: str) -> str:
@@ -1899,16 +2024,21 @@ class StateStore:
                 is not None
             )
 
-    def exclude_recording(self, path: Path, room_id: str) -> None:
+    def exclude_recording(
+        self,
+        path: Path,
+        room_id: str,
+        reason: str = "record_only",
+    ) -> None:
         with self.connect() as db:
             db.execute(
                 """INSERT INTO recording_exclusions
                    (video_path, room_id, reason, created_at)
-                   VALUES (?, ?, 'record_only', ?)
+                   VALUES (?, ?, ?, ?)
                    ON CONFLICT(video_path) DO UPDATE SET
                      room_id=excluded.room_id,
                      reason=excluded.reason""",
-                (str(path.expanduser().resolve()), room_id, utc_now()),
+                (str(path.expanduser().resolve()), room_id, reason, utc_now()),
             )
 
     def claim(self, key: str, path: Path, platform: str, retry: bool = False) -> bool:
@@ -4161,6 +4291,10 @@ evidence_texts/evidence_keywords 就删除该事实，禁止生成脱离时间�
 timeline 只选择 sampled_comment_evidence 有直接证据或同一时间出现集中刷屏的事件。每项返回 event、evidence_texts
 和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
 evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
+签约、加入或转入某组织、官宣、解约、开除、婚恋、疾病、违法、收入等现实身份与状态属于高风险事实。
+本流程输入只有观众弹幕，无法独立核验画面、官方页面或当事人原话；即使大量弹幕声称“已经显示”“转了”或
+“宣布了”，event 也必须明确写成“弹幕称”“观众讨论”或“直播间刷屏调侃”，不得改写成“页面显示”或
+无来源限定的事实结论。只有 verified_live_context 中明确提供的结构化事实才可直接陈述。
 如果证据充足，timeline 应覆盖录播开头、中段和结尾，并返回 {timeline_minimum} 至
 {timeline_maximum} 个彼此不同的关键看点。适用于所有直播类型：优先选择内容推进、关键决定、
 意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
@@ -4527,6 +4661,8 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
 标题必须选择简介中最有看点的一个具体事件；核心动作、人物和结果必须能在简介或已核验时间点中找到。
 标题中的胜负、晋级、淘汰、夺冠、翻盘或被翻盘关系必须与 final_description 的人物和方向完全一致；
 不得把观战者写成获胜者，也不得因领先、欢呼、嘲讽或“五冠王”等身份梗推断本场结果。
+签约、加入或转入某组织、官宣、解约、开除、婚恋、疾病、违法、收入等现实身份与状态，如果仅由弹幕支持，
+标题必须保留“弹幕称”“观众讨论”或“直播间调侃”等来源限定，绝不能写成已经核实的事实。
 当前主播有可靠名称时，从 streamer_identity.editorial_names 中选择符合简介用法的名称并自然融入句子，
 位置不限；禁止“主播名｜事件”“主播名：事件”等标签格式，不含日期、时间和“直播回放”。
 {title_prompt}
@@ -4601,6 +4737,13 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                 "title_topic_before_result_filter": title_topic,
             })
             title_topic = ""
+        qualified_title_topic = qualify_danmaku_only_real_world_claim(title_topic)
+        if qualified_title_topic != title_topic:
+            diagnostics.update({
+                "title_topic_danmaku_claim_qualified": True,
+                "title_topic_before_danmaku_claim_filter": title_topic,
+            })
+            title_topic = qualified_title_topic
         final_verified_count = len(timeline_lines(final_description))
         diagnostics.update({
             "timeline_verified_count": final_verified_count,
@@ -4672,6 +4815,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             session_key = previous_session_key
     prior_result = store.results(key)
     review_override = store.review_override(key)
+    prior_burn_stage = store.stage_state(key, "burn") if retry else {}
     prior_ai_stage = store.stage_state(key, "ai") if retry else {}
     prior_cover16_stage = store.stage_state(key, "cover_16x9") if retry else {}
     prior_cover43_stage = store.stage_state(key, "cover_4x3") if retry else {}
@@ -4775,42 +4919,63 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 )
                 if bool(cfg.get("danmaku_burn_in", False)) and not dry_run:
                     current_stage = "burn"
+                    burned_output = video.with_name(f"{video.stem}.danmaku.mp4")
                     burn_stage_details = {
                         "source_video_path": str(video),
                         "ass_path": str(ass_path),
+                        "burned_video_path": str(burned_output),
+                        "burned_video_location": "recording_directory",
                     }
-                    store.stage(key, "burn", "queued", burn_stage_details)
-
-                    def update_burn_queue(status: str) -> None:
-                        store.stage(
-                            key,
-                            "burn",
-                            "running" if status == "burning" else "queued",
-                            burn_stage_details,
+                    reusable_burn = None
+                    if retry:
+                        reusable_burn, reuse_details = reusable_burned_video_for_retry(
+                            video,
+                            prior_burn_stage,
+                            str(cfg.get("ffprobe", "ffprobe")),
                         )
+                        if reusable_burn is not None:
+                            upload_video = reusable_burn
+                            burn_stage_details.update(reuse_details)
+                            store.stage(key, "burn", "completed", burn_stage_details)
 
-                    def update_burn_progress(progress: dict[str, Any]) -> None:
-                        burn_stage_details.update(progress)
-                        store.stage(key, "burn", "running", burn_stage_details)
-                    upload_video = burn_ass(
-                        video,
-                        ass_path,
-                        work_dir / f"{video.stem}.danmaku.mp4",
-                        ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
-                        fonts_dir=resolve_path(
-                            str(cfg.get("danmaku_fonts_dir", "potatoflow-app/fonts")), cfg
-                        ),
-                        preset=str(cfg.get("danmaku_encode_preset", "medium")),
-                        crf=int(cfg.get("danmaku_encode_crf", 20)),
-                        encoder=str(cfg.get("danmaku_encoder", "cpu")),
-                        queue_status_callback=update_burn_queue,
-                        progress_callback=update_burn_progress,
+                    if reusable_burn is None:
+                        store.stage(key, "burn", "queued", burn_stage_details)
+
+                        def update_burn_queue(status: str) -> None:
+                            store.stage(
+                                key,
+                                "burn",
+                                "running" if status == "burning" else "queued",
+                                burn_stage_details,
+                            )
+
+                        def update_burn_progress(progress: dict[str, Any]) -> None:
+                            burn_stage_details.update(progress)
+                            store.stage(key, "burn", "running", burn_stage_details)
+                        upload_video = burn_ass(
+                            video,
+                            ass_path,
+                            burned_output,
+                            ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
+                            fonts_dir=resolve_path(
+                                str(cfg.get("danmaku_fonts_dir", "potatoflow-app/fonts")), cfg
+                            ),
+                            preset=str(cfg.get("danmaku_encode_preset", "medium")),
+                            crf=int(cfg.get("danmaku_encode_crf", 20)),
+                            encoder=str(cfg.get("danmaku_encoder", "cpu")),
+                            queue_status_callback=update_burn_queue,
+                            progress_callback=update_burn_progress,
+                        )
+                        store.stage(key, "burn", "completed", {
+                            **burn_stage_details,
+                            "burned_video_path": str(upload_video),
+                            "burn_in": True,
+                        })
+                    store.exclude_recording(
+                        upload_video,
+                        "",
+                        reason="generated_burn",
                     )
-                    store.stage(key, "burn", "completed", {
-                        **burn_stage_details,
-                        "burned_video_path": str(upload_video),
-                        "burn_in": True,
-                    })
                 else:
                     store.stage(key, "burn", "skipped", {
                         "reason": (

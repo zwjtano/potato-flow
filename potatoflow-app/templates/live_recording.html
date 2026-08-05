@@ -421,7 +421,10 @@
                         </div>
                         <span class="generated-file-size">{{ file.size_bytes|filesizeformat }}</span>
                         {% if file.locked %}<span class="generated-file-lock"><i class="bi bi-record-circle"></i> {{ file.lock_reason }}</span>{% endif %}
-                        <a class="btn btn-sm btn-light border" href="{{ url_for('live_recording_file_download', file_id=file.id) }}" title="下载" aria-label="下载文件 {{ file.name }}"><i class="bi bi-download"></i></a>
+                        <div class="generated-file-actions">
+                            <a class="btn btn-sm btn-light border" href="{{ url_for('live_recording_file_download', file_id=file.id) }}" title="下载" aria-label="下载文件 {{ file.name }}"><i class="bi bi-download"></i></a>
+                            <button class="btn btn-sm btn-light border" type="button" data-action="open-file-folder" data-id="{{ file.id }}" title="打开所在文件夹" aria-label="打开文件 {{ file.name }} 所在文件夹"><i class="bi bi-folder2-open"></i></button>
+                        </div>
                     </div>
                     {% set file_state.count = file_state.count + 1 %}
                     {% endif %}
@@ -853,7 +856,7 @@ document.addEventListener('DOMContentLoaded', function () {
             ? `<span class="generated-file-lock"><i class="bi bi-record-circle"></i> ${escapeHtml(file.lock_reason || '处理中')}</span>`
             : '';
         const template = document.createElement('template');
-        template.innerHTML = `<div class="generated-file-row${file.has_cover ? ' has-cover' : ''}" data-file-id="${escapeHtml(file.id)}" data-file-signature="${escapeHtml(signature)}">${visual}<div class="generated-file-copy"><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small><span>${escapeHtml(extension)}</span><time>${escapeHtml(file.modified_at || '')}</time></small></div><span class="generated-file-size">${formatBytes(file.size_bytes)}</span>${lock}<a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载" aria-label="下载文件 ${escapeHtml(file.name)}"><i class="bi bi-download"></i></a></div>`;
+        template.innerHTML = `<div class="generated-file-row${file.has_cover ? ' has-cover' : ''}" data-file-id="${escapeHtml(file.id)}" data-file-signature="${escapeHtml(signature)}">${visual}<div class="generated-file-copy"><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small><span>${escapeHtml(extension)}</span><time>${escapeHtml(file.modified_at || '')}</time></small></div><span class="generated-file-size">${formatBytes(file.size_bytes)}</span>${lock}<div class="generated-file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载" aria-label="下载文件 ${escapeHtml(file.name)}"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-light border" type="button" data-action="open-file-folder" data-id="${escapeHtml(file.id)}" title="打开所在文件夹" aria-label="打开文件 ${escapeHtml(file.name)} 所在文件夹"><i class="bi bi-folder2-open"></i></button></div></div>`;
         return template.content.firstElementChild;
     }
     function renderRoomFileLists() {
@@ -902,7 +905,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const fileVisual = file.type === 'video' && file.has_cover
                 ? `<img class="file-cover-thumb" src="/live-recording/files/${encodeURIComponent(file.id)}/cover" alt="" loading="lazy">`
                 : `<span class="file-type-icon ${escapeHtml(file.type)}"><i class="bi ${typeIcons[file.type] || 'bi-file-earmark'}"></i></span>`;
-            return `<tr class="${selectedRecordingFileIds.has(file.id) ? 'selected' : ''}"><td class="file-check-column"><input class="form-check-input" type="checkbox" data-action="select-file" data-id="${escapeHtml(file.id)}" aria-label="选择 ${escapeHtml(file.name)}" ${selectedRecordingFileIds.has(file.id) ? 'checked' : ''} ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : ''}></td><td><div class="file-name">${fileVisual}<div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small title="${escapeHtml(file.relative_path)}">${escapeHtml(file.source === 'artifacts' ? '流水线产物 / ' : '录制目录 / ')}${escapeHtml(file.relative_path)}</small></div></div></td><td><span class="file-kind ${escapeHtml(file.type)}">${escapeHtml(typeNames[file.type] || file.extension)}</span></td><td>${formatBytes(file.size_bytes)}</td><td><time>${escapeHtml(new Date(file.modified_at).toLocaleString('zh-CN', {hour12: false}))}</time></td><td><div class="file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载" aria-label="下载文件 ${escapeHtml(file.name)}"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-outline-danger" type="button" data-action="delete-file" data-id="${escapeHtml(file.id)}" data-name="${escapeHtml(file.name)}" aria-label="${file.locked ? `文件已锁定：${escapeHtml(file.name)}` : `删除文件 ${escapeHtml(file.name)}`}" ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : 'title="删除"'}><i class="bi ${file.locked ? 'bi-lock-fill' : 'bi-trash3'}"></i></button></div></td></tr>`;
+            return `<tr class="${selectedRecordingFileIds.has(file.id) ? 'selected' : ''}"><td class="file-check-column"><input class="form-check-input" type="checkbox" data-action="select-file" data-id="${escapeHtml(file.id)}" aria-label="选择 ${escapeHtml(file.name)}" ${selectedRecordingFileIds.has(file.id) ? 'checked' : ''} ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : ''}></td><td><div class="file-name">${fileVisual}<div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small title="${escapeHtml(file.relative_path)}">${escapeHtml(file.source === 'artifacts' ? '流水线产物 / ' : '录制目录 / ')}${escapeHtml(file.relative_path)}</small></div></div></td><td><span class="file-kind ${escapeHtml(file.type)}">${escapeHtml(typeNames[file.type] || file.extension)}</span></td><td>${formatBytes(file.size_bytes)}</td><td><time>${escapeHtml(new Date(file.modified_at).toLocaleString('zh-CN', {hour12: false}))}</time></td><td><div class="file-actions"><a class="btn btn-sm btn-light border" href="/live-recording/files/${encodeURIComponent(file.id)}/download" title="下载" aria-label="下载文件 ${escapeHtml(file.name)}"><i class="bi bi-download"></i></a><button class="btn btn-sm btn-light border" type="button" data-action="open-file-folder" data-id="${escapeHtml(file.id)}" title="打开所在文件夹" aria-label="打开文件 ${escapeHtml(file.name)} 所在文件夹"><i class="bi bi-folder2-open"></i></button><button class="btn btn-sm btn-outline-danger" type="button" data-action="delete-file" data-id="${escapeHtml(file.id)}" data-name="${escapeHtml(file.name)}" aria-label="${file.locked ? `文件已锁定：${escapeHtml(file.name)}` : `删除文件 ${escapeHtml(file.name)}`}" ${file.locked ? `disabled title="${escapeHtml(file.lock_reason)}"` : 'title="删除"'}><i class="bi ${file.locked ? 'bi-lock-fill' : 'bi-trash3'}"></i></button></div></td></tr>`;
         }).join('');
         rows.querySelectorAll('[data-action="delete-file"]').forEach(button => button.addEventListener('click', deleteFile));
         rows.querySelectorAll('[data-action="select-file"]').forEach(input => input.addEventListener('change', toggleFileSelection));
@@ -968,15 +971,16 @@ document.addEventListener('DOMContentLoaded', function () {
             updateFileSelectionControls();
         }
     }
-    async function openRecordingsFolder(event) {
-        const button = event.currentTarget;
+    async function openRecordingsFolder(button) {
         const original = button.innerHTML;
+        const fileId = String(button.dataset.id || '');
         button.disabled = true;
         button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 正在打开';
         try {
             const response = await fetch('/live-recording/files/open-folder', {
                 method: 'POST',
-                headers: {'Accept': 'application/json'},
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                body: JSON.stringify(fileId ? {file_id: fileId} : {}),
             });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '无法打开录播文件夹');
@@ -1213,7 +1217,11 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
     filesModal?.querySelector('[data-action="refresh-files"]')?.addEventListener('click', loadFiles);
-    filesModal?.querySelector('[data-action="open-recordings-folder"]')?.addEventListener('click', openRecordingsFolder);
+    filesModal?.querySelector('[data-action="open-recordings-folder"]')?.addEventListener('click', event => openRecordingsFolder(event.currentTarget));
+    document.addEventListener('click', event => {
+        const button = event.target.closest('[data-action="open-file-folder"]');
+        if (button) openRecordingsFolder(button);
+    });
     filesModal?.querySelector('[data-action="delete-selected-files"]')?.addEventListener('click', deleteSelectedFiles);
     filesModal?.querySelectorAll('[data-role^="file-select-all"]').forEach(input => input.addEventListener('change', selectVisibleFiles));
     filesModal?.querySelector('[data-role="file-search"]')?.addEventListener('input', renderFiles);
