@@ -2199,6 +2199,50 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(recommend.call_args.kwargs["include_cover_for_ai"])
         self.assertEqual(recommend.call_args.kwargs["tags"], tags)
 
+    def test_dota2_recording_defaults_to_esports_partition(self):
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cover = root / "cover.jpg"
+            cover.write_bytes(b"cover")
+            cfg = {"_config_dir": str(root), "app_root": str(app_root)}
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.generate_video_tags = Mock(return_value=["DOTA2", "直播回放"])
+            recommend = Mock(return_value={"id": "65", "source": "ai"})
+            ai_module.recommend_bilibili_partition = recommend
+            zones_module = types.ModuleType("modules.bilibili_zones")
+            zones_module.get_zone_list_sub = Mock(return_value=[])
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "GENERATE_TAGS": True,
+                "RECOMMEND_PARTITION": True,
+                "RECOMMEND_PARTITION_WITH_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_MODEL_NAME": "vision-model",
+                "FIXED_PARTITION_ID_BILIBILI": "",
+            })
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.bilibili_zones": zones_module,
+                "modules.config_manager": config_module,
+            }):
+                tags, partition_id, details = bridge.enhance_recording_metadata(
+                    "YYF Dota 2 对局复盘",
+                    "弹幕讨论本场刀塔比赛",
+                    ["YYF"],
+                    cover,
+                    "65",
+                    cfg,
+                )
+
+        self.assertEqual(tags, ["YYF", "DOTA2", "直播回放"])
+        self.assertEqual(partition_id, "171")
+        self.assertEqual(details["recommended_partition_id"], "171")
+        self.assertEqual(details["selected_partition_id"], "171")
+        self.assertEqual(details["partition_source"], "dota2_default")
+        self.assertEqual(details["partition_confidence"], 1.0)
+        recommend.assert_not_called()
+
     def test_recording_cover_headline_removes_date_and_clock(self):
         headline = bridge.recording_cover_headline(
             "【直播回放】土豆｜深夜游戏挑战｜2026-07-23 21:30",
@@ -3399,7 +3443,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result["partition_id"], override["partition_id"])
             self.assertEqual(result["cover"], str(manual_cover))
 
-    def test_default_ai_title_stops_before_metadata_and_requires_manual_review(self):
+    def test_default_ai_title_recommends_partition_before_manual_review(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "主播_abcdef2026-07-23_09-00-00.flv"
@@ -3432,7 +3476,16 @@ class BridgeTests(unittest.TestCase):
             ), patch.object(
                 bridge,
                 "enhance_recording_metadata",
-                side_effect=AssertionError("默认标题不得继续生成标签和分区"),
+                return_value=(
+                    ["主播", "直播录像"],
+                    "65",
+                    {
+                        "partition_recommendation_enabled": True,
+                        "recommended_partition_id": "65",
+                        "selected_partition_id": "65",
+                        "partition_source": "ai",
+                    },
+                ),
             ), patch.object(
                 bridge,
                 "generate_recording_cover_with_ai",
@@ -3449,6 +3502,9 @@ class BridgeTests(unittest.TestCase):
             ai_stage = store.stage_state(key, "ai")
             self.assertEqual(ai_stage["status"], "failed")
             self.assertTrue(ai_stage["details"]["manual_review_required"])
+            self.assertEqual(ai_stage["details"]["recommended_partition_id"], "65")
+            self.assertEqual(ai_stage["details"]["selected_partition_id"], "65")
+            self.assertEqual(ai_stage["details"]["partition_source"], "ai")
             self.assertIn("默认标题", ai_stage["error"])
             self.assertIn("人工审核", ai_stage["error"])
             with store.connect() as db:
