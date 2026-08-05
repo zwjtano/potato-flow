@@ -384,10 +384,63 @@ class LiveRecorderStatusTests(unittest.TestCase):
         retry_payload = ai_enhancer._request_json_object.call_args_list[1].kwargs["payload"]
         self.assertEqual(first_payload["previous_topic"], "简介生成的新主题")
         self.assertTrue(first_payload["must_differ_from_current_title"])
+        self.assertEqual(first_payload["streamer_participation"]["mode"], "unknown")
+        self.assertFalse(first_payload["streamer_participation"]["gameplay_verified"])
+        self.assertEqual(first_payload["verified_streamer_game"], {})
         self.assertEqual(retry_payload["rejected_title_topic"], current_topic)
         self.assertEqual(result["title"], "30分钟豪言反噬遭一轮游｜08-01 20:01")
         self.assertEqual(result["ai_title_topic"], "30分钟豪言反噬遭一轮游")
         store.assert_called_once_with("a" * 64, result)
+
+    def test_title_only_regeneration_preserves_spectating_boundary(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "recording.flv"
+            video.write_bytes(b"video")
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "旧标题｜08-04 20:39",
+                "description": "24:12 YYF观战决赛，弹幕讨论DP与蓝猫的中路对线",
+                "tags": ["YYF"],
+                "partition_id": "171",
+                "room_name": "YYF",
+                "stages": [
+                    {"key": "xml_identity", "details": {"outcome": "no_data"}},
+                ],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock(
+                return_value={"title_topic": "YYF观战DP与蓝猫中路交锋"}
+            )
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock(return_value=object())
+
+            with mock.patch.dict(
+                sys.modules, {"modules.ai_enhancer": ai_enhancer}
+            ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager, "_store_pipeline_review_override"
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config", return_value={}
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "YYF", "date": "08-04", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.render_metadata",
+                side_effect=lambda _video, _cfg, ai_topic="": (
+                    f"{ai_topic}｜08-04 20:39", "", []
+                ),
+            ):
+                manager.regenerate_published_metadata("a" * 64, {"title"})
+
+        payload = ai_enhancer._request_json_object.call_args.kwargs["payload"]
+        self.assertEqual(payload["streamer_participation"]["mode"], "spectating")
+        self.assertFalse(payload["streamer_participation"]["gameplay_verified"])
+        self.assertEqual(payload["verified_streamer_game"], {})
 
     def test_title_regeneration_keeps_current_title_after_two_identical_results(self):
         manager = LiveRecorderManager()
