@@ -388,8 +388,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(first_payload["streamer_participation"]["gameplay_verified"])
         self.assertEqual(first_payload["verified_streamer_game"], {})
         self.assertEqual(retry_payload["rejected_title_topic"], current_topic)
-        self.assertEqual(result["title"], "30分钟豪言反噬遭一轮游｜08-01 20:01")
-        self.assertEqual(result["ai_title_topic"], "30分钟豪言反噬遭一轮游")
+        self.assertEqual(
+            result["title"],
+            "YYF直播间热议30分钟豪言反噬遭一轮游｜08-01 20:01",
+        )
+        self.assertEqual(
+            result["ai_title_topic"],
+            "YYF直播间热议30分钟豪言反噬遭一轮游",
+        )
         store.assert_called_once_with("a" * 64, result)
 
     def test_title_only_regeneration_preserves_spectating_boundary(self):
@@ -412,7 +418,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             }
             ai_enhancer = mock.Mock()
             ai_enhancer._request_json_object = mock.Mock(
-                return_value={"title_topic": "YYF观战DP与蓝猫中路交锋"}
+                return_value={"title_topic": "老蔡三角区跳吼，马甲首夺高导冠军"}
             )
             ai_enhancer.generate_video_tags = mock.Mock()
             ai_enhancer.get_openai_client = mock.Mock(return_value=object())
@@ -435,12 +441,16 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     f"{ai_topic}｜08-04 20:39", "", []
                 ),
             ):
-                manager.regenerate_published_metadata("a" * 64, {"title"})
+                result = manager.regenerate_published_metadata("a" * 64, {"title"})
 
         payload = ai_enhancer._request_json_object.call_args.kwargs["payload"]
         self.assertEqual(payload["streamer_participation"]["mode"], "spectating")
         self.assertFalse(payload["streamer_participation"]["gameplay_verified"])
         self.assertEqual(payload["verified_streamer_game"], {})
+        self.assertEqual(
+            result["title"],
+            "YYF观战老蔡三角区跳吼，马甲首夺高导冠军｜08-04 20:39",
+        )
 
     def test_title_regeneration_keeps_current_title_after_two_identical_results(self):
         manager = LiveRecorderManager()

@@ -17,15 +17,16 @@ import sys
 import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from danmaku_pipeline import (
+    batch_summary_comments,
     build_ass,
     burn_ass,
-    format_comments_for_ai,
     inspect_danmaku_xml,
     parse_danmaku_xml,
     probe_video_size,
@@ -56,7 +57,7 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "禁止用“引发热议”“引起争议”“出装引争议”“被吐槽”“被喷”“被赞完美适配”"
     "“争议话题”“直播精彩内容”等空泛、营销式评价代替具体事件；"
     "必须直接写清具体动作、选择、结果或节目效果。不要包含日期、时间和“直播回放”，"
-    "最多24个中文字符。"
+    "主播关系补全后最多28个字符。"
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "生成可直接用于哔哩哔哩投稿、内容充实的完整中文简介：用两至四段自然叙述，主要按弹幕内容随直播时间的"
@@ -1097,6 +1098,75 @@ def fit_multipart_description_preserving_sections(description: str, limit: int) 
     return "\n\n".join(pieces)[:budget].rstrip()
 
 
+def _person_hero_relations(value: str) -> list[tuple[tuple[str, ...], int]]:
+    """Return known person/hero pairs asserted by one candidate event."""
+    text = str(value or "")
+    hero_keys = _dota2_hero_identity_keys(text)
+    if not hero_keys:
+        return []
+    relations: list[tuple[tuple[str, ...], int]] = []
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
+        names = tuple(dict.fromkeys((canonical_name, *aliases)))
+        spans = [
+            span
+            for name in names
+            for span in _text_name_match_spans(text, name)
+        ]
+        if not spans:
+            continue
+        # “YYF观战南枫的末日” binds Doom to Nanfeng, not to YYF.
+        if any(re.match(
+            r"^(?:观战|观赛|旁观|OB|看比赛|看决赛|解说|点评|直播间(?:热议|讨论|关注))",
+            text[end:].lstrip(" ：:，,｜|"),
+            re.IGNORECASE,
+        ) for _start, end in spans):
+            continue
+        relations.extend((names, int(hero_key)) for hero_key in hero_keys)
+    return relations
+
+
+def _relation_supported_by_comments(
+    person_names: tuple[str, ...],
+    hero_key: int,
+    comments: list[Any],
+) -> bool:
+    """Require repeated, nearby and at least once explicit person/hero evidence."""
+    hero_name, hero_aliases = _DOTA2_HERO_ALIAS_GROUPS[hero_key]
+    hero_terms = (hero_name.split("（", 1)[0], *hero_aliases)
+    person_mentions = 0
+    hero_mentions = 0
+    explicit_mentions = 0
+    for comment in comments:
+        text = str(getattr(comment, "text", "") or "")
+        has_person = any(_text_mentions_name(text, name) for name in person_names)
+        has_hero = any(
+            _text_mentions_name(text, term)
+            if re.fullmatch(r"[a-z][a-z0-9' -]*", term.casefold())
+            else term.casefold() in text.casefold()
+            for term in hero_terms
+            if term
+        )
+        person_mentions += int(has_person)
+        hero_mentions += int(has_hero)
+        explicit_mentions += int(has_person and has_hero)
+    return person_mentions >= 2 and hero_mentions >= 2 and explicit_mentions >= 1
+
+
+def title_person_hero_relations_supported(title: str, verified_description: str) -> bool:
+    """Require every title person/hero binding to already exist in verified copy."""
+    title_relations = {
+        (names[0], hero_key)
+        for names, hero_key in _person_hero_relations(title)
+    }
+    if not title_relations:
+        return True
+    description_relations = {
+        (names[0], hero_key)
+        for names, hero_key in _person_hero_relations(verified_description)
+    }
+    return title_relations <= description_relations
+
+
 def render_grounded_danmaku_timeline(
     timeline: Any,
     selected_comments: list[Any],
@@ -1240,6 +1310,13 @@ def render_grounded_danmaku_timeline(
         if not event:
             reject("missing_event")
             continue
+        unsupported_relation = any(
+            not _relation_supported_by_comments(names, hero_key, matching_comments)
+            for names, hero_key in _person_hero_relations(event)
+        )
+        if unsupported_relation:
+            reject("person_hero_relation_not_supported")
+            continue
         earliest = min(matching_comments, key=lambda comment: float(comment.time))
         xml_anchor = max(0, int(float(earliest.time)))
         corrected = max(0, xml_anchor - delay)
@@ -1283,8 +1360,16 @@ def render_grounded_danmaku_timeline(
         return f"{minutes:02d}:{seconds:02d}"
 
     ordered = sorted(verified, key=lambda item: int(item["corrected_seconds"]))
-    if maximum_points is not None:
-        ordered = ordered[:max(0, int(maximum_points))]
+    if maximum_points is not None and len(ordered) > int(maximum_points):
+        point_limit = max(1, int(maximum_points))
+        if point_limit == 1:
+            ordered = [ordered[0]]
+        else:
+            indexes = {
+                round(index * (len(ordered) - 1) / (point_limit - 1))
+                for index in range(point_limit)
+            }
+            ordered = [ordered[index] for index in sorted(indexes)]
     lines = [
         f"{format_timestamp(int(item['corrected_seconds']))} {item['event']}"
         for item in ordered
@@ -2630,6 +2715,41 @@ def recording_cover_streamer_expression_instruction(
     )
 
 
+def recording_cover_streamer_role_instruction(
+    streamer: str,
+    title: str,
+) -> tuple[str, str]:
+    """Keep the cover's room-owner role consistent with the final title."""
+    title_text = str(title or "")
+    if topic_mentions_streamer(title_text, streamer) and re.search(
+        r"(?:观战|观赛|旁观|OB|看比赛|看决赛|解说|点评)",
+        title_text,
+        re.IGNORECASE,
+    ):
+        return (
+            "spectating",
+            "当前主播在本段是观战、解说或点评者。封面仍以当前主播头像为主视觉入口，"
+            "但只能表现观看、关注或反应，禁止把第三方选手的操作、英雄或冠军结果画成"
+            "当前主播完成；比赛事件应作为背景或次要叙事层。",
+        )
+    if topic_mentions_streamer(title_text, streamer) and re.search(
+        r"(?:直播间(?:热议|讨论|关注)|热议|讨论)",
+        title_text,
+        re.IGNORECASE,
+    ):
+        return (
+            "room_discussion",
+            "当前主播只是直播间身份与封面主视觉入口，标题没有证明其参赛或观战。"
+            "只能表现直播间关注、讨论或自然反应，不得把标题中的第三方动作、英雄、"
+            "胜负或荣誉归给当前主播。",
+        )
+    return (
+        "default_owner",
+        "当前主播是封面默认主视觉身份；具体动作、英雄、胜负和荣誉仍只能沿用最终标题"
+        "与已核验简介明确归属于当前主播的事实。",
+    )
+
+
 @contextmanager
 def image_generation_queue(cfg: dict[str, Any]):
     """Serialize image-model requests across web threads and bridge processes."""
@@ -2865,6 +2985,12 @@ def generate_recording_cover_with_ai(
             if not game_context_locked and recording_dir is not None:
                 from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
                 anchor = get_game_for_cover(recording_dir)
+            if anchor and not streamer_gameplay_is_verified(anchor):
+                details["ai_cover_unverified_game_context_rejected"] = {
+                    "hero": str(anchor.get("hero") or ""),
+                    "identity_source": str(anchor.get("identity_source") or ""),
+                }
+                anchor = None
             if anchor and not recording_cover_hero_matches_title(
                 str(anchor.get("hero") or ""),
                 f"{title}\n{cover_event_context}",
@@ -3094,6 +3220,10 @@ def generate_recording_cover_with_ai(
         streamer,
         title,
     )
+    streamer_role, streamer_role_instruction = (
+        recording_cover_streamer_role_instruction(streamer, title)
+    )
+    details["ai_cover_streamer_role"] = streamer_role
     reference_map_instruction = "\n".join(
         f"Image {index}: {role}。"
         for index, role in enumerate(reference_roles, start=1)
@@ -3148,6 +3278,7 @@ def generate_recording_cover_with_ai(
 {dota2_ability_instruction}
 {dota2_streamer_instruction}
 {streamer_expression_instruction}
+{streamer_role_instruction}
 {subject_identity_instruction}
 {guest_identity_instruction}
 {reference_instruction}
@@ -3474,6 +3605,65 @@ def infer_streamer_participation_mode(
     return "unknown"
 
 
+def streamer_gameplay_is_verified(game: Any) -> bool:
+    """Only owner-bound telemetry may prove that the room owner is playing."""
+    if not isinstance(game, dict) or not str(game.get("hero") or "").strip():
+        return False
+    return str(game.get("identity_source") or "").strip() not in {
+        "xml_repeated_hero_only",
+        "xml_dominant_hero_only",
+    }
+
+
+def contextualize_streamer_title_topic(
+    topic: str,
+    streamer: str,
+    participation_mode: str,
+) -> str:
+    """Relate a third-party event to the room owner without implying play."""
+    clean_topic = re.sub(r"^[\s｜|:：·-]+|[\s｜|]+$", "", str(topic or "")).strip()
+    clean_streamer = str(streamer or "").strip()
+    if not clean_topic or not clean_streamer or clean_streamer == "主播":
+        return clean_topic[:28]
+    streamer_key = _compact_alias(clean_streamer)
+    candidates = {clean_streamer, normalize_dota2_streamer_name(clean_streamer)}
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
+        group = {canonical_name, *aliases}
+        if streamer_key in {_compact_alias(name) for name in group}:
+            candidates.update(group)
+            break
+    leading_name = next(
+        (
+            name for name in sorted(candidates, key=len, reverse=True)
+            if name and clean_topic.casefold().startswith(name.casefold())
+        ),
+        "",
+    )
+    if topic_mentions_streamer(clean_topic, clean_streamer) and not leading_name:
+        return clean_topic[:28]
+    if leading_name:
+        remainder = re.sub(
+            r"^[\s｜|:：·-]+",
+            "",
+            clean_topic[len(leading_name):],
+        ).strip()
+        safe_relation = (
+            re.match(r"^(?:观战|观赛|旁观|OB|看比赛|看决赛|解说|点评)", remainder, re.I)
+            if participation_mode == "spectating"
+            else re.match(r"^(?:直播间(?:热议|讨论|关注)|热议|讨论)", remainder, re.I)
+        )
+        if safe_relation:
+            return clean_topic[:28]
+        clean_topic = remainder or clean_topic
+    if participation_mode == "spectating":
+        prefix = f"{clean_streamer}观战"
+    elif participation_mode == "unknown":
+        prefix = f"{clean_streamer}直播间热议"
+    else:
+        return clean_topic[:28]
+    return f"{prefix}{clean_topic}"[:28].strip()
+
+
 def render_metadata(
     video: Path,
     cfg: dict[str, Any],
@@ -3641,7 +3831,19 @@ def generate_danmaku_metadata_with_ai(
         if not ai_cfg.get("OPENAI_API_KEY"):
             print("WARN 未配置 PotatoFlow OPENAI_API_KEY，跳过弹幕 AI 简介", file=sys.stderr)
             return base_description, ""
-        selected = select_summary_comments(comments, int(cfg.get("ai_danmaku_max_comments", 400)))
+        full_batch_enabled = bool(cfg.get("ai_danmaku_full_batch_enabled", True))
+        if full_batch_enabled:
+            discovery_batches = batch_summary_comments(
+                comments,
+                int(cfg.get("ai_danmaku_batch_comments", 600)),
+            )
+            selected = [comment for batch in discovery_batches for comment in batch]
+        else:
+            selected = select_summary_comments(
+                comments,
+                int(cfg.get("ai_danmaku_max_comments", 800)),
+            )
+            discovery_batches = [selected]
         timeline_minimum, timeline_maximum = timeline_target_range(
             timeline_duration_seconds
         )
@@ -3658,16 +3860,21 @@ def generate_danmaku_metadata_with_ai(
             "timeline_cluster_window_seconds": int(_TIMELINE_SPAM_WINDOW_SECONDS),
             "timeline_min_screen_spam_messages": _TIMELINE_MIN_SPAM_MESSAGES,
             "timeline_retry_attempted": False,
+            "full_batch_enabled": full_batch_enabled,
+            "source_comment_count": len(comments),
+            "effective_comment_count": len(selected),
+            "discovery_batch_count": len(discovery_batches),
         })
         verified_game = (
             (grounding_context or {}).get("game")
             if isinstance(grounding_context, dict)
             else None
         )
-        streamer_gameplay_verified = bool(
-            isinstance(verified_game, dict) and verified_game.get("hero")
-        )
+        streamer_gameplay_verified = streamer_gameplay_is_verified(verified_game)
         participation_mode = "playing" if streamer_gameplay_verified else "unknown"
+        verified_live_context = dict(grounding_context or {})
+        if not streamer_gameplay_verified:
+            verified_live_context.pop("game", None)
         payload = {
             "base_description": base_description,
             "streamer_identity": {
@@ -3685,15 +3892,9 @@ def generate_danmaku_metadata_with_ai(
                 )),
             },
             "comment_count": len(comments),
-            "sampled_comments": format_comments_for_ai(selected),
-            "sampled_comment_evidence": [
-                {
-                    "timestamp_seconds": max(0, int(float(comment.time))),
-                    "text": str(comment.text),
-                }
-                for comment in selected
-            ],
-            "verified_live_context": grounding_context or {},
+            "sampled_comments": "",
+            "sampled_comment_evidence": [],
+            "verified_live_context": verified_live_context,
             "streamer_participation": {
                 "gameplay_verified": streamer_gameplay_verified,
                 "mode": participation_mode,
@@ -3771,6 +3972,8 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内再次手动减秒。
 如果最早证据本身位于录制开头的反应延迟窗口内，event 必须写成“开场已处于……”或“开场承接……”，
 不得将上一段已发生的动作伪装成本段 00:00 新发生的事件。
+当 payload 含 batch_context 时，本次只分析该批弹幕，并以 payload.timeline_target_count 为准，
+每批返回 1 至 3 个最重要的候选事件；程序会在全部批次完成后统一合并和筛选。
 {DOTA2_METADATA_DISAMBIGUATION}
 本直播间的简介要求：{description_prompt}
 {legacy_instruction}
@@ -3779,18 +3982,102 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
         ai_client = get_openai_client(ai_cfg)
         model_name = str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini"))
         thinking_enabled = bool(ai_cfg.get("OPENAI_THINKING_ENABLED", False))
-        result = _request_json_object(
-            client=ai_client,
-            model_name=model_name,
-            system_prompt=system_prompt,
-            payload=payload,
-            max_tokens=2200,
-            temperature=0.2,
-            thinking_enabled=thinking_enabled,
-            logger_obj=None,
-            scene_name="recording_danmaku_summary",
+        batch_concurrency = max(
+            1,
+            min(
+                6,
+                int(cfg.get("ai_danmaku_batch_concurrency", 3)),
+                len(discovery_batches),
+            ),
         )
-        generated_description = str((result or {}).get("description", "")).strip()
+        batch_started_at = time.perf_counter()
+
+        def analyze_batch(
+            batch_index: int,
+            batch: list[Any],
+        ) -> tuple[int, dict[str, Any], float]:
+            request_started_at = time.perf_counter()
+            batch_payload = dict(payload)
+            batch_payload["sampled_comment_evidence"] = [
+                {
+                    "timestamp_seconds": max(0, int(float(comment.time))),
+                    "text": str(comment.text),
+                }
+                for comment in batch
+            ]
+            batch_payload["batch_context"] = {
+                "index": batch_index,
+                "count": len(discovery_batches),
+                "comment_count": len(batch),
+            }
+            batch_payload["timeline_target_count"] = {
+                "minimum": 1,
+                "maximum": 3,
+            }
+            batch_result = _request_json_object(
+                client=ai_client,
+                model_name=model_name,
+                system_prompt=system_prompt,
+                payload=batch_payload,
+                max_tokens=1200,
+                temperature=0.2,
+                thinking_enabled=thinking_enabled,
+                logger_obj=None,
+                scene_name=(
+                    "recording_danmaku_summary"
+                    if len(discovery_batches) == 1
+                    else "recording_danmaku_summary_batch"
+                ),
+            )
+            return (
+                batch_index,
+                batch_result if isinstance(batch_result, dict) else {},
+                time.perf_counter() - request_started_at,
+            )
+
+        batch_results_by_index: dict[int, dict[str, Any]] = {}
+        batch_timings: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=batch_concurrency) as executor:
+            futures = {
+                executor.submit(analyze_batch, batch_index, batch): batch_index
+                for batch_index, batch in enumerate(discovery_batches, start=1)
+            }
+            for future in as_completed(futures):
+                batch_index = futures[future]
+                try:
+                    result_index, batch_result, elapsed = future.result()
+                    batch_results_by_index[result_index] = batch_result
+                    batch_timings.append({
+                        "index": result_index,
+                        "elapsed_seconds": round(elapsed, 3),
+                    })
+                except Exception as exc:
+                    diagnostics.setdefault("discovery_batch_errors", []).append({
+                        "index": batch_index,
+                        "error": str(exc)[:240],
+                    })
+        batch_results = [
+            batch_results_by_index[index]
+            for index in sorted(batch_results_by_index)
+        ]
+        diagnostics.update({
+            "discovery_batch_concurrency": batch_concurrency,
+            "discovery_batch_elapsed_seconds": round(
+                time.perf_counter() - batch_started_at,
+                3,
+            ),
+            "discovery_batch_timings": sorted(
+                batch_timings,
+                key=lambda item: int(item["index"]),
+            ),
+        })
+        if not batch_results:
+            raise RuntimeError("全部弹幕分析批次均失败")
+        generated_description = "\n".join(
+            str(result.get("description") or "").strip()
+            for result in batch_results
+            if str(result.get("description") or "").strip()
+        )
         generated_description = strip_live_stats_from_description(
             generated_description,
             str((grounding_context or {}).get("live_stats") or ""),
@@ -3802,24 +4089,33 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
             count=1,
         ).strip()
         generated_description = strip_ai_timeline_lines(generated_description)
-        raw_timeline = (
-            list((result or {}).get("timeline") or [])
-            if isinstance((result or {}).get("timeline"), list)
-            else []
-        )
+        raw_timeline = [
+            item
+            for result in batch_results
+            if isinstance(result.get("timeline"), list)
+            for item in result.get("timeline", [])
+        ]
         timeline_text = render_grounded_danmaku_timeline(
             raw_timeline,
             selected,
             comments,
             delay_seconds=reaction_delay,
             duration_seconds=timeline_duration_seconds,
-            maximum_points=timeline_maximum,
+            maximum_points=None,
             anchor_diagnostics=diagnostics,
         )
         verified_count = len(timeline_lines(timeline_text))
         if verified_count < timeline_minimum and len(selected) >= timeline_minimum:
             diagnostics["timeline_retry_attempted"] = True
             retry_payload = dict(payload)
+            retry_selected = select_summary_comments(selected, 800)
+            retry_payload["sampled_comment_evidence"] = [
+                {
+                    "timestamp_seconds": max(0, int(float(comment.time))),
+                    "text": str(comment.text),
+                }
+                for comment in retry_selected
+            ]
             retry_payload.update({
                 "verified_timeline": timeline_lines(timeline_text),
                 "timeline_shortfall": timeline_minimum - verified_count,
@@ -3873,7 +4169,7 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                     comments,
                     delay_seconds=reaction_delay,
                     duration_seconds=timeline_duration_seconds,
-                    maximum_points=timeline_maximum,
+                    maximum_points=None,
                     anchor_diagnostics=diagnostics,
                 )
                 regenerated_count = len(timeline_lines(regenerated_timeline_text))
@@ -3888,6 +4184,71 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
             except Exception as exc:
                 diagnostics["timeline_retry_error"] = str(exc)[:240]
                 print(f"WARN 弹幕简介重新生成失败，保留首轮结果: {exc}", file=sys.stderr)
+        verified_candidates = timeline_lines(timeline_text)
+        if len(verified_candidates) > timeline_maximum:
+            selection_payload = {
+                "verified_candidates": [
+                    {"index": index, "timeline": line}
+                    for index, line in enumerate(verified_candidates)
+                ],
+                "target_count": {
+                    "minimum": timeline_minimum,
+                    "maximum": timeline_maximum,
+                },
+                "selection_policy": (
+                    "选择最有信息量、最具体且彼此不同的事件；覆盖开头、中段和结尾；"
+                    "不得改写候选内容，只返回索引。"
+                ),
+            }
+            selection_prompt = """
+你是直播录播简介的全局编辑。输入只包含已经通过完整 XML 校验的候选时间点。
+从中选择最值得进入最终简介的事件，优先保留具体动作、结果、转折、重要互动和节目效果，
+删除重复、空泛或信息量低的候选，并覆盖录播开头、中段和结尾。
+不得改写、合并或补充任何候选事实，只返回 selected_indexes JSON 数组。
+""".strip()
+            selected_indexes: list[int] = []
+            try:
+                selection_result = _request_json_object(
+                    client=ai_client,
+                    model_name=model_name,
+                    system_prompt=selection_prompt,
+                    payload=selection_payload,
+                    max_tokens=300,
+                    temperature=0.1,
+                    thinking_enabled=thinking_enabled,
+                    logger_obj=None,
+                    scene_name="recording_danmaku_timeline_select",
+                )
+                raw_indexes = (
+                    selection_result.get("selected_indexes", [])
+                    if isinstance(selection_result, dict)
+                    else []
+                )
+                if isinstance(raw_indexes, list):
+                    selected_indexes = sorted({
+                        int(index)
+                        for index in raw_indexes
+                        if str(index).strip().lstrip("-").isdigit()
+                        and 0 <= int(index) < len(verified_candidates)
+                    })
+                if not timeline_minimum <= len(selected_indexes) <= timeline_maximum:
+                    selected_indexes = []
+            except Exception as exc:
+                diagnostics["timeline_global_selection_error"] = str(exc)[:240]
+            if selected_indexes:
+                diagnostics["timeline_global_selection_source"] = "ai_verified_indexes"
+            else:
+                selected_indexes = sorted({
+                    round(index * (len(verified_candidates) - 1) / (timeline_maximum - 1))
+                    for index in range(timeline_maximum)
+                })
+                diagnostics["timeline_global_selection_source"] = "even_fallback"
+            verified_candidates = [
+                verified_candidates[index] for index in selected_indexes
+            ]
+            timeline_text = "重要时间点\n" + "\n".join(verified_candidates)
+        diagnostics["timeline_preselection_verified_count"] = verified_count
+        verified_count = len(verified_candidates)
         diagnostics.update({
             "timeline_candidate_count": len(raw_timeline),
             "timeline_verified_count": verified_count,
@@ -3975,6 +4336,34 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                 "title_topic_original": original_title_topic,
                 "title_topic_replacement_source": "verified_timeline",
             })
+        attributed_title_topic = contextualize_streamer_title_topic(
+            title_topic,
+            str(payload["streamer_identity"].get("public_name") or ""),
+            participation_mode,
+        )
+        if attributed_title_topic != title_topic:
+            diagnostics.update({
+                "title_topic_streamer_context_added": True,
+                "title_topic_before_streamer_context": title_topic,
+                "title_topic_participation_mode": participation_mode,
+            })
+            title_topic = attributed_title_topic
+        if not title_person_hero_relations_supported(title_topic, final_description):
+            diagnostics.update({
+                "title_topic_person_hero_relation_rejected": True,
+                "title_topic_before_relation_filter": title_topic,
+            })
+            fallback_topic = recording_title_topic_from_timeline("", final_description)
+            title_topic = contextualize_streamer_title_topic(
+                fallback_topic,
+                str(payload["streamer_identity"].get("public_name") or ""),
+                participation_mode,
+            )
+            if not title_person_hero_relations_supported(
+                title_topic,
+                final_description,
+            ):
+                title_topic = ""
         final_verified_count = len(timeline_lines(final_description))
         diagnostics.update({
             "timeline_verified_count": final_verified_count,
@@ -4275,8 +4664,11 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             except Exception as exc:
                 store.stage(key, "xml_identity", "warning", {"reason": "主播英雄识别失败，但不阻断投稿", "outcome": "failed_non_blocking"}, error=str(exc))
 
+        locked_gameplay_verified = streamer_gameplay_is_verified(locked_game_context)
+        if stats_text and not locked_gameplay_verified:
+            _, stats_text = split_live_stats_sections(stats_text)
         verified_live_context: dict[str, Any] = {"live_stats": stats_text}
-        if locked_game_context:
+        if locked_gameplay_verified:
             verified_live_context["game"] = {
                 key_name: locked_game_context.get(key_name)
                 for key_name in ("hero", "items", "neutral", "scepter", "shard", "kills", "deaths", "assists", "kda", "identity_source")
@@ -4425,7 +4817,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 raise RuntimeError(review_error)
 
         metadata_values_for_evidence = recording_metadata_values(video, cfg)
-        if not locked_game_context and recording_cover_has_dota2_context(
+        if not locked_gameplay_verified and recording_cover_has_dota2_context(
             metadata_values_for_evidence["streamer"],
             title,
             description,
@@ -4442,8 +4834,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 )
             )
             ai_topic = filtered_topic
-            if filtered_description:
-                description = filtered_description
+            description = filtered_description
             tags = filtered_tags
             if ai_topic != original_ai_topic:
                 title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
@@ -4755,7 +5146,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             print("PAUSED AI 投稿信息已生成，等待人工确认后再生成封面")
             return True
 
-        cover_game_context = locked_game_context
+        cover_game_context = locked_game_context if locked_gameplay_verified else None
         if cover_game_context and not recording_cover_hero_matches_title(
             str(cover_game_context.get("hero") or ""),
             f"{title}\n{description_body}",

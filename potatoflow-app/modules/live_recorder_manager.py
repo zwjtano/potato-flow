@@ -3873,7 +3873,10 @@ class LiveRecorderManager:
             )
             identity_details = identity_stage.get("details") if isinstance(identity_stage, dict) else {}
             identity_details = identity_details if isinstance(identity_details, dict) else {}
-            streamer_gameplay_verified = bool(identity_details.get("streamer_hero"))
+            streamer_gameplay_verified = bridge.streamer_gameplay_is_verified({
+                "hero": identity_details.get("streamer_hero"),
+                "identity_source": identity_details.get("identity_source"),
+            })
             streamer_participation = {
                 "gameplay_verified": streamer_gameplay_verified,
                 "mode": bridge.infer_streamer_participation_mode(
@@ -3948,6 +3951,10 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         # Historical tasks may no longer have their statistics
                         # snapshot. Timeline regeneration can still proceed.
                         regenerated_live_stats = ""
+                if regenerated_live_stats and not streamer_gameplay_verified:
+                    _, regenerated_live_stats = bridge.split_live_stats_sections(
+                        regenerated_live_stats
+                    )
                 identity_stage = next(
                     (stage for stage in job.get("stages", []) if stage.get("key") == "xml_identity"),
                     {},
@@ -3977,7 +3984,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     )
                     if identity_details.get(source_key) not in (None, "", [])
                 }
-                if game_context:
+                if bridge.streamer_gameplay_is_verified(game_context):
                     grounding_context["game"] = game_context
                 result_details = job.get("result")
                 result_details = result_details if isinstance(result_details, dict) else {}
@@ -4117,6 +4124,20 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             if "title" in selected:
                 if not title_topic:
                     raise RecorderConfigError("AI 没有返回可用的标题主题")
+                title_topic = bridge.contextualize_streamer_title_topic(
+                    title_topic,
+                    bridge.normalize_dota2_streamer_name(
+                        str(context["streamer"] or "")
+                    ),
+                    str(streamer_participation.get("mode") or "unknown"),
+                )
+                if not bridge.title_person_hero_relations_supported(
+                    title_topic,
+                    current_description,
+                ):
+                    raise RecorderConfigError(
+                        "AI 标题中的人物与英雄关系未在已核验简介中出现，已保留原标题"
+                    )
                 title, _, _ = bridge.render_metadata(
                     video_path,
                     bridge_config,

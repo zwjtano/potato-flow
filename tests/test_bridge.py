@@ -614,6 +614,103 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(description, f"正文从这里开始。\n{stats}")
         self.assertNotIn("直播录播：YYF。", description)
 
+    def test_full_batch_summary_sends_every_effective_comment(self):
+        comments = [
+            Mock(time=float(index), text=f"完整弹幕{index}")
+            for index in range(405)
+        ]
+        package = types.ModuleType("modules")
+        package.__path__ = []
+        enhancer = types.ModuleType("modules.ai_enhancer")
+        config_manager = types.ModuleType("modules.config_manager")
+        enhancer.get_openai_client = lambda _cfg: object()
+        batch_payloads = []
+        concurrency_lock = threading.Lock()
+        release_batches = threading.Event()
+        active_batches = 0
+        maximum_active_batches = 0
+
+        def request(**kwargs):
+            nonlocal active_batches, maximum_active_batches
+            if kwargs["scene_name"] == "recording_danmaku_summary_batch":
+                with concurrency_lock:
+                    active_batches += 1
+                    maximum_active_batches = max(maximum_active_batches, active_batches)
+                    if maximum_active_batches >= 3:
+                        release_batches.set()
+                release_batches.wait(1)
+                payload = kwargs["payload"]
+                batch_payloads.append(payload)
+                evidence = payload["sampled_comment_evidence"]
+                result = {
+                    "description": "批次简介",
+                    "timeline": [
+                        {
+                            "event": f"批次事件{item['text']}",
+                            "evidence_texts": [item["text"]],
+                            "evidence_keywords": [item["text"]],
+                        }
+                        for item in evidence[:3]
+                    ],
+                }
+                with concurrency_lock:
+                    active_batches -= 1
+                return result
+            if kwargs["scene_name"] == "recording_danmaku_timeline_select":
+                self.assertEqual(
+                    len(kwargs["payload"]["verified_candidates"]),
+                    15,
+                )
+                return {"selected_indexes": list(range(10))}
+            self.assertEqual(
+                kwargs["scene_name"],
+                "recording_danmaku_title_from_description",
+            )
+            return {"title_topic": "全量分批标题"}
+
+        enhancer._request_json_object = request
+        config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
+
+        with patch.dict(sys.modules, {
+            "modules": package,
+            "modules.ai_enhancer": enhancer,
+            "modules.config_manager": config_manager,
+        }):
+            bridge.generate_danmaku_metadata_with_ai(
+                comments,
+                "",
+                {
+                    "_config_dir": str(Path(bridge.__file__).resolve().parent),
+                    "ai_danmaku_summary_enabled": True,
+                    "ai_danmaku_full_batch_enabled": True,
+                    "ai_danmaku_batch_comments": 100,
+                    "ai_danmaku_reaction_delay_seconds": 0,
+                },
+            )
+
+        self.assertEqual(len(batch_payloads), 5)
+        self.assertEqual(maximum_active_batches, 3)
+        all_evidence = [
+            item["text"]
+            for payload in sorted(
+                batch_payloads,
+                key=lambda value: value["batch_context"]["index"],
+            )
+            for item in payload["sampled_comment_evidence"]
+        ]
+        self.assertEqual(all_evidence, [comment.text for comment in comments])
+        self.assertEqual(
+            [
+                payload["batch_context"]["comment_count"]
+                for payload in sorted(
+                    batch_payloads,
+                    key=lambda value: value["batch_context"]["index"],
+                )
+            ],
+            [100, 100, 100, 100, 5],
+        )
+        self.assertTrue(all(not payload["sampled_comments"] for payload in batch_payloads))
+
     def test_recording_intro_with_internal_exclamation_is_removed_as_one_unit(self):
         self.assertEqual(
             bridge.strip_recording_intro(
@@ -995,6 +1092,117 @@ class BridgeTests(unittest.TestCase):
                 ai_topic="中韩流行歌单·点歌闲聊",
             )
         self.assertEqual(title, "妮可罗宾｜中韩流行歌单·点歌闲聊｜07-23 09:45")
+
+    def test_third_party_observer_topic_naturally_attributes_streamer(self):
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "老蔡三角区跳吼，马甲首夺高导冠军", "YYF", "spectating"
+            ),
+            "YYF观战老蔡三角区跳吼，马甲首夺高导冠军",
+        )
+
+    def test_unknown_third_party_topic_uses_neutral_room_attribution(self):
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "老蔡三角区跳吼，马甲首夺高导冠军", "YYF", "unknown"
+            ),
+            "YYF直播间热议老蔡三角区跳吼，马甲首夺高导冠军",
+        )
+
+    def test_existing_streamer_attribution_is_not_duplicated(self):
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "YYF观战老蔡三角区跳吼", "YYF", "spectating"
+            ),
+            "YYF观战老蔡三角区跳吼",
+        )
+
+    def test_mechanical_streamer_prefix_is_rewritten_with_relation(self):
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "YYF｜老蔡三角区跳吼", "YYF", "spectating"
+            ),
+            "YYF观战老蔡三角区跳吼",
+        )
+
+    def test_observer_cover_keeps_streamer_as_viewpoint_not_event_actor(self):
+        role, instruction = bridge.recording_cover_streamer_role_instruction(
+            "YYF",
+            "YYF观战老蔡三角区跳吼，马甲首夺高导冠军",
+        )
+        self.assertEqual(role, "spectating")
+        self.assertIn("当前主播头像为主视觉入口", instruction)
+        self.assertIn("禁止把第三方选手的操作", instruction)
+
+    def test_neutral_room_cover_does_not_claim_streamer_participation(self):
+        role, instruction = bridge.recording_cover_streamer_role_instruction(
+            "YYF",
+            "YYF直播间热议老蔡三角区跳吼",
+        )
+        self.assertEqual(role, "room_discussion")
+        self.assertIn("没有证明其参赛或观战", instruction)
+
+    def test_danmaku_dominant_hero_does_not_prove_streamer_gameplay(self):
+        self.assertFalse(bridge.streamer_gameplay_is_verified({
+            "hero": "食人魔魔法师",
+            "identity_source": "xml_dominant_hero_only",
+        }))
+        self.assertTrue(bridge.streamer_gameplay_is_verified({
+            "hero": "食人魔魔法师",
+            "identity_source": "douyu_gsi_streamer_anchor",
+        }))
+
+    def test_repeated_explicit_guest_hero_relation_is_kept(self):
+        comments = [
+            Mock(time=10.0, text="南枫这末日"),
+            Mock(time=11.0, text="这末日"),
+            Mock(time=12.0, text="南枫"),
+        ]
+        timeline = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "南枫的末日使者成为场上焦点",
+                "evidence_texts": [comment.text for comment in comments],
+                "evidence_keywords": ["南枫", "末日"],
+            }],
+            comments,
+            comments,
+            delay_seconds=0,
+        )
+        self.assertIn("00:10 南枫的末日使者成为场上焦点", timeline)
+
+    def test_conflicting_nearby_hero_does_not_bind_to_guest(self):
+        comments = [
+            Mock(time=10.0, text="谢彬才是DP"),
+            Mock(time=11.0, text="蓝猫"),
+            Mock(time=12.0, text="蓝猫"),
+        ]
+        diagnostics = {}
+        timeline = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "谢彬的蓝猫成为场上焦点",
+                "evidence_texts": [comment.text for comment in comments],
+                "evidence_keywords": ["谢彬", "蓝猫"],
+            }],
+            comments,
+            comments,
+            delay_seconds=0,
+            anchor_diagnostics=diagnostics,
+        )
+        self.assertEqual(timeline, "")
+        self.assertEqual(
+            diagnostics["timeline_rejection_reasons"]["person_hero_relation_not_supported"],
+            1,
+        )
+
+    def test_title_guest_hero_relation_must_exist_in_verified_description(self):
+        self.assertTrue(bridge.title_person_hero_relations_supported(
+            "YYF观战南枫的末日使者",
+            "03:20 南枫的末日使者成为团战焦点",
+        ))
+        self.assertFalse(bridge.title_person_hero_relations_supported(
+            "YYF观战谢彬的蓝猫",
+            "03:20 谢彬的死亡先知成为团战焦点",
+        ))
 
     def test_default_recording_title_falls_back_to_live_title(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -2940,7 +3148,7 @@ class BridgeTests(unittest.TestCase):
             ANY,
         )
 
-    def test_recording_cover_uses_danmaku_hero_without_inventing_equipment(self):
+    def test_recording_cover_rejects_danmaku_only_streamer_hero(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -3010,22 +3218,19 @@ class BridgeTests(unittest.TestCase):
                 )
 
         prompt = image_edit.call_args.kwargs["prompt"]
-        self.assertEqual(details["ai_cover_tooltip_hero"], "巫医")
-        self.assertEqual(details["ai_cover_tooltip_items"], [])
-        self.assertEqual(details["ai_cover_dota2_source"], "danmaku_hero")
-        self.assertIn("本证据只确认英雄，不确认任何装备", prompt)
-        self.assertIn("画面中的主播游戏角色只能是 巫医", prompt)
-        self.assertIn("不得根据标题、简介或常识补画其他具体英雄、装备", prompt)
-        self.assertNotIn("主播本局最终六格主装备", prompt)
-        edit_images = image_edit.call_args.kwargs["image"]
+        self.assertNotIn("ai_cover_tooltip_hero", details)
+        self.assertEqual(details["ai_cover_dota2_source"], "locked_no_match")
         self.assertEqual(
-            [Path(handle.name) for handle in edit_images],
-            [character_base, hero_reference],
+            details["ai_cover_unverified_game_context_rejected"],
+            {"hero": "巫医", "identity_source": "xml_dominant_hero_only"},
         )
-        self.assertEqual(len(details["ai_cover_reference_roles"]), 2)
+        self.assertIn("没有可靠匹配到主播同一场对局", prompt)
+        self.assertNotIn("主播本局最终六格主装备", prompt)
+        edit_image = image_edit.call_args.kwargs["image"]
+        self.assertEqual(Path(edit_image.name), character_base)
+        self.assertEqual(len(details["ai_cover_reference_roles"]), 1)
         self.assertIn("唯一身份来源", details["ai_cover_reference_roles"][0])
-        self.assertIn("不得作为当前主播", details["ai_cover_reference_roles"][1])
-        self.assertIn("Image 2: Valve 官方 Dota 2 英雄 巫医 参考", prompt)
+        self.assertNotIn("Image 2: Valve 官方 Dota 2 英雄 巫医 参考", prompt)
 
     def test_dota2_item_icon_sheet_is_sent_to_image_model(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
