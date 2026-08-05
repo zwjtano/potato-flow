@@ -90,6 +90,16 @@ class RecordingFilesTests(unittest.TestCase):
         )
         self.assertIn("fetch('/live-recording/files/batch-delete'", handler)
 
+    def test_each_file_row_opens_its_containing_folder_after_download(self):
+        source = (APP_ROOT / "templates" / "live_recording.html").read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(source.count('data-action="open-file-folder"'), 3)
+        self.assertIn("body: JSON.stringify(fileId ? {file_id: fileId} : {})", source)
+        self.assertLess(
+            source.index('title="下载" aria-label="下载文件 {{ file.name }}"'),
+            source.index('data-action="open-file-folder" data-id="{{ file.id }}"'),
+        )
+
     def test_delete_rejects_traversal_and_removes_an_inactive_file(self):
         video = self.recordings / "finished.mp4"
         video.write_bytes(b"safe")

@@ -20,6 +20,22 @@ import bridge
 
 
 class BridgeTests(unittest.TestCase):
+    def test_real_world_claim_from_danmaku_keeps_source_attribution(self):
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim(
+                "国民大舅哥被动宣布新人归熊掌，退货没成功"
+            ),
+            "弹幕称国民大舅哥被动宣布新人归熊掌，退货没成功"[:28],
+        )
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim("弹幕称新人已经转入熊掌"),
+            "弹幕称新人已经转入熊掌",
+        )
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim("走到河边，抽烟2.0刷屏"),
+            "走到河边，抽烟2.0刷屏",
+        )
+
     def test_app_root_accepts_legacy_config_key_and_directory(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -56,6 +72,62 @@ class BridgeTests(unittest.TestCase):
             first.join(2)
             second.join(2)
             self.assertTrue(second_entered.is_set())
+
+    def test_reusable_burned_video_requires_video_stream_and_matching_duration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "recording.flv"
+            burned = root / "recording.danmaku.mp4"
+            source.write_bytes(b"source")
+            burned.write_bytes(b"burned")
+            probe = types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({
+                    "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+                    "format": {"duration": "600.5"},
+                }),
+            )
+
+            with patch.object(bridge.subprocess, "run", return_value=probe), patch.object(
+                bridge,
+                "video_duration_seconds",
+                return_value=600.0,
+            ):
+                valid, details = bridge.reusable_burned_video(burned, source)
+
+            self.assertTrue(valid)
+            self.assertTrue(details["burned_video_reuse_validated"])
+            self.assertEqual(details["burned_video_duration_seconds"], 600.5)
+
+    def test_retry_moves_legacy_burn_beside_recording(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            video.write_bytes(b"source")
+            legacy = root / "state" / "artifacts" / "old.danmaku.mp4"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_bytes(b"burned")
+            prior_stage = {
+                "status": "completed",
+                "details": {"burned_video_path": str(legacy)},
+            }
+
+            def validate(candidate, *_args):
+                exists = candidate.is_file()
+                return exists, {"burned_video_reuse_validated": exists}
+
+            with patch.object(bridge, "reusable_burned_video", side_effect=validate):
+                reused, details = bridge.reusable_burned_video_for_retry(
+                    video,
+                    prior_stage,
+                )
+
+            expected = root / "recording.danmaku.mp4"
+            self.assertEqual(reused, expected.resolve())
+            self.assertTrue(expected.is_file())
+            self.assertFalse(legacy.exists())
+            self.assertTrue(details["reused_on_retry"])
+            self.assertEqual(details["burned_video_location"], "recording_directory")
 
     def test_ai_metadata_queue_serializes_threads(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -2242,6 +2314,117 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(store.stage_state(key, "ai")["details"]["reused_on_retry"])
             self.assertTrue(store.stage_state(key, "cover_16x9")["details"]["reused_on_retry"])
             self.assertEqual(store.stage_state(key, "cover_4x3")["status"], "warning")
+
+    def test_failed_upload_retry_reuses_burn_and_uploads_recording_sidecar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.flv"
+            xml = root / "clip.xml"
+            cookie = root / "cookie.json"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
+            cookie.write_text("[]", encoding="utf-8")
+            cover.write_bytes(b"cover")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": True,
+                "danmaku_burn_in": True,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video, xml)
+            legacy_burn = root / "artifacts" / key[:16] / "clip.danmaku.mp4"
+            legacy_burn.parent.mkdir(parents=True)
+            legacy_burn.write_bytes(b"completed burn")
+            store.claim(key, video, "bilibili")
+            store.stage(key, "burn", "completed", {
+                "burned_video_path": str(legacy_burn),
+                "burn_in": True,
+            })
+            store.stage(key, "ai", "completed", {
+                "title": "主播完成实际挑战",
+                "description": "已生成正文",
+                "description_body": "已生成正文",
+                "title_topic": "主播完成实际挑战",
+                "final_tags": ["直播"],
+                "selected_partition_id": "171",
+            })
+            store.stage(key, "cover_16x9", "completed", {
+                "ai_cover_generated": True,
+                "ai_cover_path": str(cover),
+                "cover_used_for_upload": str(cover),
+            })
+            store.finish(key, "failed", {"cover_path": str(cover)}, "upload failed")
+            uploads = []
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **kwargs):
+                    uploads.append(kwargs)
+                    return True, {"bvid": "BV1burn", "url": "https://example.com/BV1burn"}
+
+            def validate(candidate, *_args):
+                exists = candidate.is_file()
+                return exists, {"burned_video_reuse_validated": exists}
+
+            with patch.object(
+                bridge,
+                "reusable_burned_video",
+                side_effect=validate,
+            ), patch.object(
+                bridge,
+                "burn_ass",
+                side_effect=AssertionError("valid completed burn must be reused"),
+            ), patch.object(
+                bridge,
+                "generate_danmaku_metadata_with_ai",
+                side_effect=AssertionError("retry must reuse AI summary"),
+            ), patch.object(
+                bridge,
+                "enhance_recording_metadata",
+                side_effect=AssertionError("retry must reuse AI metadata"),
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                side_effect=AssertionError("retry must reuse AI cover"),
+            ), patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1920, 1080),
+            ), patch.object(
+                bridge,
+                "import_app",
+                return_value=(FakeUploader, None),
+            ):
+                self.assertTrue(
+                    bridge.upload_one(video, cfg, store, retry=True, danmaku_xml=xml)
+                )
+
+            expected = root / "clip.danmaku.mp4"
+            self.assertEqual(Path(uploads[0]["video_file_path"]), expected.resolve())
+            self.assertTrue(expected.is_file())
+            self.assertFalse(legacy_burn.exists())
+            burn_details = store.stage_state(key, "burn")["details"]
+            self.assertTrue(burn_details["reused_on_retry"])
+            self.assertEqual(burn_details["burned_video_location"], "recording_directory")
+            with store.connect() as db:
+                exclusion = db.execute(
+                    "SELECT reason FROM recording_exclusions WHERE video_path=?",
+                    (str(expected.resolve()),),
+                ).fetchone()
+            self.assertEqual(exclusion["reason"], "generated_burn")
 
     def test_retry_detaches_unsubmitted_first_part_from_stale_session(self):
         with tempfile.TemporaryDirectory() as temp:

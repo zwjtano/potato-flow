@@ -24,6 +24,31 @@ bilibili_uploader = importlib.import_module("modules.bilibili_uploader")
 
 
 class SubmissionEngineAdapterTests(unittest.TestCase):
+    def test_cookie_temp_file_does_not_require_fchmod_on_windows(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            submission_engine,
+            "get_app_subdir",
+            return_value=temp,
+        ), patch.object(
+            submission_engine,
+            "_cookie_payload",
+            return_value={"cookie_info": {"cookies": []}},
+        ), patch.object(
+            submission_engine.os,
+            "fchmod",
+            None,
+            create=True,
+        ):
+            generated = Path(submission_engine._write_cookie_file("unused.json"))
+            try:
+                self.assertTrue(generated.is_file())
+                self.assertEqual(
+                    json.loads(generated.read_text(encoding="utf-8")),
+                    {"cookie_info": {"cookies": []}},
+                )
+            finally:
+                generated.unlink(missing_ok=True)
+
     def test_recorder_binary_detects_windows_release_executable(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "recorder-core" / "target" / "release" / "biliup.exe"
