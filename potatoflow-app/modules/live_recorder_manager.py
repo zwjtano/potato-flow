@@ -3867,6 +3867,26 @@ class LiveRecorderManager:
                 "part_description": ai_details.get("part_description") or "",
                 "live_title": values.get("live_title") or "",
             }
+            identity_stage = next(
+                (stage for stage in job.get("stages", []) if stage.get("key") == "xml_identity"),
+                {},
+            )
+            identity_details = identity_stage.get("details") if isinstance(identity_stage, dict) else {}
+            identity_details = identity_details if isinstance(identity_details, dict) else {}
+            streamer_gameplay_verified = bool(identity_details.get("streamer_hero"))
+            streamer_participation = {
+                "gameplay_verified": streamer_gameplay_verified,
+                "mode": bridge.infer_streamer_participation_mode(
+                    current_description,
+                    str(context["streamer"] or ""),
+                    gameplay_verified=streamer_gameplay_verified,
+                ),
+                "relationship_policy": (
+                    "structured_owner_identity_and_explicit_guest_context"
+                    if streamer_gameplay_verified
+                    else "explicit_guest_context_only"
+                ),
+            }
             regenerated_live_stats = ""
             append_regenerated_live_stats = bool(
                 bridge_config.get("douyu_stats_append_description", True)
@@ -3885,6 +3905,10 @@ class LiveRecorderManager:
 title_topic 是自然、有信息量的中文核心主题，不含主播名、日期、时间和“直播回放”，最多18个中文字符。
 重新生成标题时必须选择与 current_title 实质不同的事件焦点或表达，不得原样返回、仅调整标点，
 也不得只增删主播名；如果 payload 含 rejected_title_topic，严禁再次返回该主题或同义改写。
+必须遵守 streamer_participation：playing 才能把结构化身份记录中的英雄与当前主播绑定；spectating
+只能把当前主播写成观战、观赛、解说或点评；unknown 不得声称当前主播参赛或观战。spectating 和
+unknown 都不得把当前主播写成操刀、使用或操作任何英雄。其他选手与英雄只有在 current_description
+存在多条连续、明确且不冲突的上下文证据时才能绑定；姓名和英雄仅仅同时出现不能证明关系。
 description 是可直接用于B站投稿的完整中文简介，保留有价值的事件脉络和观众反应，不出现文件名、任务编号或内部路径，不超过1800字。
 本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
@@ -3988,6 +4012,15 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 
                 def request_title(rejected_topic: str = "") -> dict[str, Any]:
                     payload = dict(context)
+                    payload["streamer_participation"] = streamer_participation
+                    payload["verified_streamer_game"] = {
+                        key: identity_details.get(source_key)
+                        for key, source_key in (
+                            ("hero", "streamer_hero"),
+                            ("identity_source", "identity_source"),
+                        )
+                        if identity_details.get(source_key) not in (None, "", [])
+                    }
                     payload["must_differ_from_current_title"] = True
                     if rejected_topic:
                         payload["rejected_title_topic"] = rejected_topic
