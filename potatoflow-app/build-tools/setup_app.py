@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 
@@ -23,6 +24,8 @@ INTERNAL_BRIDGE_FLAG = "--potatoflow-internal-bridge"
 SERVER_ONLY_FLAG = "--server-only"
 CHECK_DESKTOP_ASSETS_FLAG = "--check-desktop-assets"
 ACTIVATION_PORT = 45160
+LATEST_RELEASE_API = "https://api.github.com/repos/zwjtano/potato-flow/releases/latest"
+RELEASES_URL = "https://github.com/zwjtano/potato-flow/releases/latest"
 
 
 def assign_kill_on_close_job(process: subprocess.Popen) -> object | None:
@@ -136,12 +139,51 @@ def load_tray_icon():
     return icon_image
 
 
-def _http_json(url: str, *, token: str = "", method: str = "GET", timeout: float = 3) -> dict:
+def _http_json(
+    url: str,
+    *,
+    token: str = "",
+    method: str = "GET",
+    timeout: float = 3,
+    headers: dict[str, str] | None = None,
+) -> dict:
     request = urllib.request.Request(url, method=method)
     if token:
         request.add_header("X-PotatoFlow-Desktop-Token", token)
+    for key, value in (headers or {}).items():
+        request.add_header(key, value)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _version_key(value: str) -> tuple[int, ...]:
+    normalized = str(value or "").strip().lower().lstrip("v")
+    parts = normalized.split(".")
+    if not parts or any(not part.isdigit() for part in parts):
+        return ()
+    return tuple(int(part) for part in parts)
+
+
+def _latest_release(current_version: str) -> dict[str, str] | None:
+    payload = _http_json(
+        LATEST_RELEASE_API,
+        timeout=8,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"PotatoFlow/{current_version}",
+        },
+    )
+    latest_version = str(payload.get("tag_name") or "").strip().lstrip("v")
+    if (
+        not _version_key(latest_version)
+        or _version_key(latest_version) <= _version_key(current_version)
+    ):
+        return None
+    return {
+        "version": latest_version,
+        "url": str(payload.get("html_url") or RELEASES_URL),
+        "name": str(payload.get("name") or f"PotatoFlow v{latest_version}"),
+    }
 
 
 def _select_server_port(requested: str | None = None) -> int:
@@ -194,6 +236,36 @@ def _acquire_single_instance() -> object | None:
     return handle
 
 
+def _confirm_recording_exit(window) -> bool:
+    """Ask outside WebView's UI thread so a tray callback cannot deadlock it."""
+    if os.name == "nt":
+        import ctypes
+
+        # MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND
+        return ctypes.windll.user32.MessageBoxW(
+            None,
+            "退出 PotatoFlow 会停止当前录制。是否确定退出？",
+            "正在录制",
+            0x00000004 | 0x00000030 | 0x00010000,
+        ) == 6
+    return bool(window.create_confirmation_dialog(
+        "正在录制",
+        "退出 PotatoFlow 会停止当前录制。是否确定退出？",
+    ))
+
+
+def _show_update_message(window, title: str, message: str, *, question: bool) -> bool:
+    if os.name == "nt":
+        import ctypes
+
+        flags = (0x00000004 if question else 0x00000000) | 0x00000040 | 0x00010000
+        result = ctypes.windll.user32.MessageBoxW(None, message, title, flags)
+        return result == 6 if question else True
+    if question:
+        return bool(window.create_confirmation_dialog(title, message))
+    return True
+
+
 def run_desktop(data_root: Path) -> int:
     instance = _acquire_single_instance()
     if instance is None:
@@ -229,7 +301,7 @@ def run_desktop(data_root: Path) -> int:
         "PotatoFlow", html=initial_html, width=1440, height=900,
         min_size=(1180, 720), confirm_close=False,
     )
-    state = {"exiting": False}
+    state = {"exiting": False, "exit_requested": False, "force_exit_timer": None}
 
     def show_window(*_args) -> None:
         try:
@@ -270,30 +342,98 @@ def run_desktop(data_root: Path) -> int:
     icon_image = load_tray_icon()
     tray: pystray.Icon
 
+    def check_updates(*_args, manual: bool = True) -> None:
+        def update_worker() -> None:
+            try:
+                from version import __version__
+
+                release = _latest_release(__version__)
+                if release:
+                    open_page = _show_update_message(
+                        window,
+                        "PotatoFlow 发现新版本",
+                        f"发现 PotatoFlow v{release['version']}。\n\n是否打开下载页？",
+                        question=True,
+                    )
+                    if open_page:
+                        webbrowser.open(release["url"])
+                elif manual:
+                    _show_update_message(
+                        window,
+                        "PotatoFlow 更新",
+                        f"当前已是最新版本 v{__version__}。",
+                        question=False,
+                    )
+            except Exception as exc:
+                if manual:
+                    _show_update_message(
+                        window,
+                        "PotatoFlow 更新",
+                        f"检查更新失败：{exc}",
+                        question=False,
+                    )
+
+        threading.Thread(
+            target=update_worker,
+            daemon=True,
+            name="desktop-update-check",
+        ).start()
+
     def shutdown(*_args) -> None:
-        if state["exiting"]:
+        if state["exiting"] or state["exit_requested"]:
             return
-        try:
-            status = _http_json(f"{url}/api/desktop/status", token=token)
-        except Exception:
-            status = {"recording": False}
-        if status.get("recording"):
-            answer = window.create_confirmation_dialog(
-                "正在录制",
-                "退出 PotatoFlow 会停止当前录制。是否确定退出？",
-            )
-            if not answer:
-                return
-        state["exiting"] = True
-        try:
-            _http_json(f"{url}/api/desktop/shutdown", token=token, method="POST", timeout=5)
-        except Exception:
-            pass
-        try:
-            tray.stop()
-        except Exception:
-            pass
-        window.destroy()
+        state["exit_requested"] = True
+
+        def exit_worker() -> None:
+            try:
+                try:
+                    status = _http_json(f"{url}/api/desktop/status", token=token)
+                except Exception:
+                    status = {"recording": False}
+                if status.get("recording") and not _confirm_recording_exit(window):
+                    state["exit_requested"] = False
+                    return
+                state["exiting"] = True
+                # A final watchdog guarantees that a stuck WebView/runtime or
+                # recorder shutdown cannot leave the desktop process hanging.
+                force_exit_timer = threading.Timer(20, os._exit, args=(0,))
+                force_exit_timer.daemon = True
+                state["force_exit_timer"] = force_exit_timer
+                force_exit_timer.start()
+                try:
+                    _http_json(
+                        f"{url}/api/desktop/shutdown",
+                        token=token,
+                        method="POST",
+                        timeout=3,
+                    )
+                except Exception:
+                    pass
+                try:
+                    window.destroy()
+                finally:
+                    try:
+                        tray.stop()
+                    except Exception:
+                        pass
+            except Exception:
+                state["exiting"] = True
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+                try:
+                    window.destroy()
+                except Exception:
+                    pass
+
+        # pystray invokes menu handlers on its own platform thread. Returning
+        # immediately avoids blocking that message loop while WebView closes.
+        threading.Thread(
+            target=exit_worker,
+            daemon=True,
+            name="desktop-exit",
+        ).start()
 
     def on_closing() -> bool:
         if state["exiting"]:
@@ -308,6 +448,7 @@ def run_desktop(data_root: Path) -> int:
             pystray.MenuItem("打开 PotatoFlow", show_window, default=True),
             pystray.MenuItem(recording_label, None, enabled=False),
             pystray.MenuItem("打开录播目录", open_recordings),
+            pystray.MenuItem("检查更新", check_updates),
             pystray.MenuItem("退出", shutdown),
         ),
     )
@@ -316,11 +457,15 @@ def run_desktop(data_root: Path) -> int:
     def on_started() -> None:
         marker = data_root / "state" / "onboarding.json"
         window.load_url(f"{url}/onboarding" if not marker.exists() else url)
+        check_updates(manual=False)
 
     try:
         webview.start(on_started, gui="edgechromium", debug=False)
     finally:
         state["exiting"] = True
+        force_exit_timer = state.get("force_exit_timer")
+        if force_exit_timer is not None:
+            force_exit_timer.cancel()
         try:
             tray.stop()
         except Exception:

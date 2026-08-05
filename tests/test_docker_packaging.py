@@ -108,9 +108,14 @@ class DockerPackagingTests(unittest.TestCase):
     def test_one_click_docker_installer_uses_safe_domestic_defaults(self):
         installer = (ROOT / "ops" / "install-docker.sh").read_text(encoding="utf-8")
 
-        self.assertIn('CHINA_MIRROR="${POTATOFLOW_CHINA_MIRROR:-1}"', installer)
+        self.assertIn('MIRROR_MODE="${POTATOFLOW_CHINA_MIRROR:-auto}"', installer)
         self.assertIn('WEB_PORT="${POTATOFLOW_PORT:-5001}"', installer)
-        self.assertIn("docker.1ms.run/library/rust:bookworm", installer)
+        self.assertIn("detect_china_mirror", installer)
+        self.assertIn("www.cloudflare.com/cdn-cgi/trace", installer)
+        self.assertIn("m.daocloud.io/docker.io/library/rust:bookworm", installer)
+        self.assertIn("https://gh-proxy.com/https://github.com/denoland/deno", installer)
+        self.assertNotIn("docker.1ms.run", installer)
+        self.assertNotIn("ghfast.top", installer)
         self.assertIn("sparse+https://rsproxy.cn/index/", installer)
         self.assertIn("docker-compose-v2", installer)
         self.assertIn('needs_compose=1', installer)

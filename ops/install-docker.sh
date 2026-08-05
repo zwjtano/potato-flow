@@ -7,8 +7,47 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHINA_MIRROR="${POTATOFLOW_CHINA_MIRROR:-1}"
+MIRROR_MODE="${POTATOFLOW_CHINA_MIRROR:-auto}"
 WEB_PORT="${POTATOFLOW_PORT:-5001}"
+
+fetch_quiet() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 3 --max-time 6 "$1" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- --timeout=6 "$1" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
+detect_china_mirror() {
+  case "${MIRROR_MODE,,}" in
+    1|true|yes|cn|china) return 0 ;;
+    0|false|no|global|official) return 1 ;;
+    auto) ;;
+    *)
+      echo "POTATOFLOW_CHINA_MIRROR 仅支持 auto、1 或 0。" >&2
+      exit 2
+      ;;
+  esac
+
+  local trace country
+  trace="$(fetch_quiet "https://www.cloudflare.com/cdn-cgi/trace" || true)"
+  country="$(printf '%s\n' "${trace}" | sed -n 's/^loc=//p' | head -n 1)"
+  if [[ "${country}" == "CN" ]]; then
+    return 0
+  fi
+  if [[ "${country}" =~ ^[A-Z]{2}$ ]]; then
+    return 1
+  fi
+
+  # 定位接口不可用时，以官方依赖源的连通性作为兜底判断。
+  if fetch_quiet "https://registry-1.docker.io/v2/" >/dev/null \
+    && fetch_quiet "https://pypi.org/simple/" >/dev/null; then
+    return 1
+  fi
+  return 0
+}
 
 run_root() {
   if [[ "${EUID}" -eq 0 ]]; then
@@ -91,17 +130,19 @@ cd "${ROOT}"
 mkdir -p docker-data/recordings
 
 build_args=()
-if [[ "${CHINA_MIRROR}" == "1" ]]; then
+if detect_china_mirror; then
   build_args+=(
-    --build-arg "RUST_IMAGE=docker.1ms.run/library/rust:bookworm"
-    --build-arg "PYTHON_IMAGE=docker.1ms.run/library/python:3.11-slim-bookworm"
-    --build-arg "DEBIAN_MIRROR=https://mirrors.aliyun.com/debian"
-    --build-arg "PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple"
-    --build-arg "PYTORCH_INDEX_URL=https://mirrors.aliyun.com/pytorch-wheels/cpu"
-    --build-arg "CARGO_MIRROR_URL=sparse+https://rsproxy.cn/index/"
-    --build-arg "DENO_DOWNLOAD_BASE=https://ghfast.top/https://github.com/denoland/deno/releases/download"
+    --build-arg "RUST_IMAGE=${POTATOFLOW_RUST_IMAGE:-m.daocloud.io/docker.io/library/rust:bookworm}"
+    --build-arg "PYTHON_IMAGE=${POTATOFLOW_PYTHON_IMAGE:-m.daocloud.io/docker.io/library/python:3.11-slim-bookworm}"
+    --build-arg "DEBIAN_MIRROR=${POTATOFLOW_DEBIAN_MIRROR:-https://mirrors.aliyun.com/debian}"
+    --build-arg "PYPI_INDEX_URL=${POTATOFLOW_PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
+    --build-arg "PYTORCH_INDEX_URL=${POTATOFLOW_PYTORCH_INDEX_URL:-https://mirrors.aliyun.com/pytorch-wheels/cpu}"
+    --build-arg "CARGO_MIRROR_URL=${POTATOFLOW_CARGO_MIRROR_URL:-sparse+https://rsproxy.cn/index/}"
+    --build-arg "DENO_DOWNLOAD_BASE=${POTATOFLOW_DENO_DOWNLOAD_BASE:-https://gh-proxy.com/https://github.com/denoland/deno/releases/download}"
   )
-  echo "[PotatoFlow] 已启用国内 Docker、Debian、PyPI、PyTorch、Cargo 与 GitHub 下载源。"
+  echo "[PotatoFlow] 检测为国内网络，已启用国内 Docker、Debian、PyPI、PyTorch、Cargo 与 GitHub 下载源。"
+else
+  echo "[PotatoFlow] 检测为海外网络，使用各项目官方源。"
 fi
 
 echo "[PotatoFlow] 正在构建生产镜像…"

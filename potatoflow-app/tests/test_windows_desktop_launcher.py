@@ -67,6 +67,67 @@ def test_health_wait_accepts_matching_desktop_instance():
         )
 
 
+def test_recording_exit_confirmation_uses_window_fallback_off_windows():
+    launcher = _load_launcher()
+    window = mock.Mock()
+    window.create_confirmation_dialog.return_value = True
+
+    with mock.patch.object(launcher.os, "name", "posix"):
+        assert launcher._confirm_recording_exit(window) is True
+
+    window.create_confirmation_dialog.assert_called_once_with(
+        "正在录制",
+        "退出 PotatoFlow 会停止当前录制。是否确定退出？",
+    )
+
+
+def test_latest_release_detects_only_strictly_newer_versions():
+    launcher = _load_launcher()
+    with mock.patch.object(
+        launcher,
+        "_http_json",
+        return_value={
+            "tag_name": "v1.6.42",
+            "html_url": "https://example.com/v1.6.42",
+            "name": "PotatoFlow v1.6.42",
+        },
+    ) as request:
+        release = launcher._latest_release("1.6.41")
+
+    assert release == {
+        "version": "1.6.42",
+        "url": "https://example.com/v1.6.42",
+        "name": "PotatoFlow v1.6.42",
+    }
+    assert request.call_args.kwargs["headers"]["User-Agent"] == "PotatoFlow/1.6.41"
+
+    with mock.patch.object(
+        launcher,
+        "_http_json",
+        return_value={"tag_name": "v1.6.41"},
+    ):
+        assert launcher._latest_release("1.6.41") is None
+
+
+def test_version_key_rejects_non_release_tags():
+    launcher = _load_launcher()
+
+    assert launcher._version_key("v1.6.41") == (1, 6, 41)
+    assert launcher._version_key("nightly") == ()
+
+
+def test_tray_exit_runs_off_the_pystray_callback_thread():
+    source = (
+        Path(__file__).resolve().parents[1] / "build-tools" / "setup_app.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'name="desktop-exit"' in source
+    assert "threading.Timer(20, os._exit" in source
+    assert 'pystray.MenuItem("检查更新", check_updates)' in source
+    assert "check_updates(manual=False)" in source
+    assert source.index('name="desktop-exit"') < source.index("webview.start(")
+
+
 def test_installer_stops_processes_and_never_deletes_documents_root():
     generator = (
         Path(__file__).resolve().parents[1] / "build-tools" / "build_exe.py"
