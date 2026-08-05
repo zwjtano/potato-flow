@@ -625,6 +625,8 @@ class BridgeTests(unittest.TestCase):
         config_manager = types.ModuleType("modules.config_manager")
         enhancer.get_openai_client = lambda _cfg: object()
         batch_payloads = []
+        batch_prompts = []
+        selection_prompts = []
         concurrency_lock = threading.Lock()
         release_batches = threading.Event()
         active_batches = 0
@@ -633,6 +635,7 @@ class BridgeTests(unittest.TestCase):
         def request(**kwargs):
             nonlocal active_batches, maximum_active_batches
             if kwargs["scene_name"] == "recording_danmaku_summary_batch":
+                batch_prompts.append(kwargs["system_prompt"])
                 with concurrency_lock:
                     active_batches += 1
                     maximum_active_batches = max(maximum_active_batches, active_batches)
@@ -657,6 +660,7 @@ class BridgeTests(unittest.TestCase):
                     active_batches -= 1
                 return result
             if kwargs["scene_name"] == "recording_danmaku_timeline_select":
+                selection_prompts.append(kwargs["system_prompt"])
                 self.assertEqual(
                     len(kwargs["payload"]["verified_candidates"]),
                     15,
@@ -710,6 +714,21 @@ class BridgeTests(unittest.TestCase):
             [100, 100, 100, 100, 5],
         )
         self.assertTrue(all(not payload["sampled_comments"] for payload in batch_payloads))
+        self.assertTrue(batch_prompts)
+        self.assertTrue(all("谁对阵谁" in prompt for prompt in batch_prompts))
+        self.assertTrue(all("谢彬一方/眼子一方" in prompt for prompt in batch_prompts))
+        self.assertTrue(all("人物+英雄+具体事件" in prompt for prompt in batch_prompts))
+        self.assertTrue(all("应当完成人物—英雄归因" in prompt for prompt in batch_prompts))
+        self.assertTrue(all("只适用于能确认为比赛或游戏对局" in prompt for prompt in batch_prompts))
+        self.assertTrue(all("禁止强行补英雄、对阵或胜负" in prompt for prompt in batch_prompts))
+        self.assertTrue(all("不要为了规避风险而回避明显结论" in prompt for prompt in batch_prompts))
+        self.assertTrue(all("应当直接下结论" in prompt for prompt in batch_prompts))
+        self.assertEqual(len(selection_prompts), 1)
+        self.assertIn("谁和谁在比赛", selection_prompts[0])
+        self.assertIn("英雄归属和最终胜负", selection_prompts[0])
+        self.assertIn("不得为了“安全”只选更空泛的讨论句", selection_prompts[0])
+        self.assertIn("人物+英雄+事件", selection_prompts[0])
+        self.assertIn("沉默没开大", selection_prompts[0])
 
     def test_recording_intro_with_internal_exclamation_is_removed_as_one_unit(self):
         self.assertEqual(
@@ -1009,12 +1028,12 @@ class BridgeTests(unittest.TestCase):
 
     def test_default_recording_description_requests_clickable_timeline(self):
         prompt = bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
-        self.assertIn("内容充实", prompt)
+        self.assertIn("时间点式中文简介", prompt)
         self.assertIn("完整 XML", prompt)
         self.assertIn("不要在简介正文中手写时间点", prompt)
         self.assertIn("不得编造时间或事件", prompt)
-        self.assertIn("按弹幕内容随直播时间的变化向前推进", prompt)
-        self.assertIn("不要为了突出标题而打乱实际顺序", prompt)
+        self.assertIn("候选事件必须按直播时间向前推进", prompt)
+        self.assertIn("不要为了突出标题打乱顺序", prompt)
         self.assertIn("赛后复盘", prompt)
         self.assertIn("重要时间点必须覆盖简介中的关键事件", prompt)
         self.assertIn("事件文案只做证据的最小忠实改写", prompt)
@@ -1203,6 +1222,90 @@ class BridgeTests(unittest.TestCase):
             "YYF观战谢彬的蓝猫",
             "03:20 谢彬的死亡先知成为团战焦点",
         ))
+
+    def test_competitive_result_rejects_inverted_winner(self):
+        comments = [
+            types.SimpleNamespace(time=60.0, text="南枫输了"),
+            types.SimpleNamespace(time=61.0, text="南枫输给对面"),
+        ]
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "南枫赢下比赛",
+                "evidence_texts": ["南枫输了", "南枫输给对面"],
+                "evidence_keywords": ["南枫", "输了"],
+            }],
+            comments,
+            comments,
+        )
+        self.assertEqual(rendered, "")
+
+    def test_competitive_result_accepts_explicit_person_binding(self):
+        comments = [
+            types.SimpleNamespace(time=60.0, text="南枫赢了"),
+            types.SimpleNamespace(time=61.0, text="南枫赢下这局"),
+        ]
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "南枫赢下比赛",
+                "evidence_texts": ["南枫赢了", "南枫赢下这局"],
+                "evidence_keywords": ["南枫", "赢了"],
+            }],
+            comments,
+            comments,
+        )
+        self.assertIn("南枫赢下比赛", rendered)
+
+    def test_title_competitive_result_must_match_verified_person_and_direction(self):
+        self.assertTrue(bridge.title_competitive_results_supported(
+            "YYF观战南枫夺冠",
+            "01:00 YYF观战南枫夺冠",
+        ))
+        self.assertFalse(bridge.title_competitive_results_supported(
+            "YYF观战南枫夺冠",
+            "01:00 YYF观战南枫被淘汰",
+        ))
+
+    def test_head_to_head_result_assigns_opposite_directions(self):
+        self.assertEqual(
+            {
+                (names[0], polarity)
+                for names, polarity in bridge._person_result_relations(
+                    "眼子淘汰谢彬，随后眼子夺冠"
+                )
+            },
+            {("Sylar", "win"), ("DD", "loss")},
+        )
+        self.assertEqual(
+            {
+                (names[0], polarity)
+                for names, polarity in bridge._person_result_relations(
+                    "谢彬输给眼子"
+                )
+            },
+            {("DD", "loss"), ("Sylar", "win")},
+        )
+
+    def test_competitive_result_recognizes_numbered_championship_phrasing(self):
+        self.assertEqual(
+            bridge._competitive_result_polarities("川神夺五冠"),
+            {"win"},
+        )
+        self.assertEqual(
+            bridge._competitive_result_polarities("恭喜老蔡5冠王诞生"),
+            {"win"},
+        )
+        self.assertTrue(bridge.title_competitive_results_supported(
+            "川神斧王追回经济夺五冠",
+            "42:56 比赛收尾后，川神拿到第五冠",
+        ))
+
+    def test_early_championship_prediction_is_not_treated_as_final_result(self):
+        self.assertEqual(
+            bridge._competitive_result_polarities(
+                "优势扩大后，弹幕提前预祝川神成为五冠王"
+            ),
+            set(),
+        )
 
     def test_default_recording_title_falls_back_to_live_title(self):
         with tempfile.TemporaryDirectory() as temp:
