@@ -53,6 +53,40 @@ def test_windows_recorder_workers_never_open_a_console():
     assert "start_new_session" not in kwargs
 
 
+def test_incompatible_recorder_migration_database_is_backed_up(tmp_path):
+    runtime = tmp_path / "recorder-engine"
+    database = runtime / "data" / "data.sqlite3"
+    database.parent.mkdir(parents=True)
+    database.write_bytes(b"old-index")
+    wal = Path(f"{database}-wal")
+    wal.write_bytes(b"old-wal")
+
+    with mock.patch.object(live_recorder_manager, "RECORDER_RUNTIME_DIR", runtime):
+        backup = live_recorder_manager._backup_incompatible_recorder_database(
+            "migration 1 was previously applied but has been modified"
+        )
+
+    assert backup is not None
+    assert backup.read_bytes() == b"old-index"
+    assert Path(f"{backup}-wal").read_bytes() == b"old-wal"
+    assert not database.exists()
+
+
+def test_other_recorder_failures_never_rotate_database(tmp_path):
+    runtime = tmp_path / "recorder-engine"
+    database = runtime / "data" / "data.sqlite3"
+    database.parent.mkdir(parents=True)
+    database.write_bytes(b"keep-me")
+
+    with mock.patch.object(live_recorder_manager, "RECORDER_RUNTIME_DIR", runtime):
+        backup = live_recorder_manager._backup_incompatible_recorder_database(
+            "network connection failed"
+        )
+
+    assert backup is None
+    assert database.read_bytes() == b"keep-me"
+
+
 def test_file_library_navigation_opens_the_file_manager():
     template_root = Path(__file__).resolve().parents[1] / "templates"
     base = (template_root / "base.html").read_text(encoding="utf-8")
