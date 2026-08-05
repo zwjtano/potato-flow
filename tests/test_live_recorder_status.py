@@ -836,7 +836,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
         self.assertEqual(set(defaults), {"title", "description", "cover"})
         self.assertIn("核心主题", defaults["title"])
-        self.assertIn("完整中文简介", defaults["description"])
+        self.assertIn("时间点式中文简介", defaults["description"])
         self.assertIn("DOTA2", defaults["cover"])
         self.assertIn("主语不必放在最前", defaults["title"])
         self.assertIn("完整 XML", defaults["description"])

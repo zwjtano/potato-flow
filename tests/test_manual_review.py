@@ -122,7 +122,7 @@ class ManualReviewTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        description_call = 'scene_name="recording_danmaku_summary"'
+        description_call = '"recording_danmaku_summary_batch"'
         title_call = 'scene_name="recording_danmaku_title_from_description"'
         self.assertLess(
             bridge_source.index(description_call),
