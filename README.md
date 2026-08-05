@@ -229,14 +229,15 @@ bash ops/test-all.sh
 
 ## Docker 一键安装（推荐）
 
-Linux 国内服务器直接执行：
+Linux 服务器直接执行：
 
 ```bash
-git clone https://ghfast.top/https://github.com/zwjtano/potato-flow.git && cd potato-flow && ./ops/install-docker.sh
+git clone https://github.com/zwjtano/potato-flow.git && cd potato-flow && ./ops/install-docker.sh
 ```
 
-脚本会自动检查并安装 Docker/Compose，使用国内 Docker、Debian、PyPI、PyTorch、Cargo
-和 GitHub 下载源，构建生产镜像、启动容器并等待健康检查。现有 `docker-data/` 会保留，
+脚本会自动检查并安装 Docker/Compose，并根据服务器出口位置选择下载源：国内服务器使用
+DaoCloud 容器镜像及国内 Debian、PyPI、PyTorch、Cargo、GitHub 下载源，海外服务器使用
+各项目官方源。脚本随后构建生产镜像、启动容器并等待健康检查。现有 `docker-data/` 会保留，
 重复执行可用于升级，不会清空配置、Cookie 或录播文件。
 
 自定义 Web 端口：
@@ -245,9 +246,10 @@ git clone https://ghfast.top/https://github.com/zwjtano/potato-flow.git && cd po
 POTATOFLOW_PORT=15017 ./ops/install-docker.sh
 ```
 
-境外服务器关闭国内源：
+自动判断不准确时可手动指定（`1` 强制国内源，`0` 强制官方源）：
 
 ```bash
+POTATOFLOW_CHINA_MIRROR=1 ./ops/install-docker.sh
 POTATOFLOW_CHINA_MIRROR=0 ./ops/install-docker.sh
 ```
 
