@@ -800,9 +800,12 @@ def burn_ass(
         return output
 
 
-def select_summary_comments(comments: list[DanmakuComment], limit: int = 400) -> list[DanmakuComment]:
-    """Deduplicate spam while retaining both chronology and concrete evidence."""
-    limit = max(1, min(2000, int(limit)))
+def deduplicate_summary_comments(
+    comments: list[DanmakuComment],
+    max_repeats: int = 2,
+) -> list[DanmakuComment]:
+    """Keep every distinct useful comment while bounding identical spam."""
+    max_repeats = max(1, min(10, int(max_repeats)))
     unique: list[DanmakuComment] = []
     seen: dict[str, int] = {}
     for item in comments:
@@ -811,8 +814,28 @@ def select_summary_comments(comments: list[DanmakuComment], limit: int = 400) ->
             continue
         count = seen.get(normalized, 0)
         seen[normalized] = count + 1
-        if count < 2:
+        if count < max_repeats:
             unique.append(item)
+    return unique
+
+
+def batch_summary_comments(
+    comments: list[DanmakuComment],
+    batch_size: int = 600,
+) -> list[list[DanmakuComment]]:
+    """Split all deduplicated comments into chronological model-sized batches."""
+    batch_size = max(100, min(1200, int(batch_size)))
+    unique = deduplicate_summary_comments(comments)
+    return [
+        unique[index:index + batch_size]
+        for index in range(0, len(unique), batch_size)
+    ]
+
+
+def select_summary_comments(comments: list[DanmakuComment], limit: int = 800) -> list[DanmakuComment]:
+    """Deduplicate spam while retaining both chronology and concrete evidence."""
+    limit = max(1, min(2000, int(limit)))
+    unique = deduplicate_summary_comments(comments)
     if len(unique) <= limit:
         return unique
 

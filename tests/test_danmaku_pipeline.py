@@ -16,6 +16,7 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 from danmaku_pipeline import (
+    batch_summary_comments,
     DanmakuComment,
     build_ass,
     burn_ass,
@@ -396,6 +397,27 @@ class DanmakuPipelineTests(unittest.TestCase):
         self.assertEqual(len(selected), 20)
         self.assertIn("20秒买活", [comment.text for comment in selected])
         self.assertEqual([comment.time for comment in selected], sorted(comment.time for comment in selected))
+
+    def test_full_batching_keeps_every_distinct_comment(self):
+        comments = [
+            DanmakuComment(time=float(index), mode=1, color=0, text=f"独特弹幕{index}")
+            for index in range(1305)
+        ]
+        comments.extend([
+            DanmakuComment(time=1400.0, mode=1, color=0, text="重复刷屏"),
+            DanmakuComment(time=1401.0, mode=1, color=0, text="重复刷屏"),
+            DanmakuComment(time=1402.0, mode=1, color=0, text="重复刷屏"),
+        ])
+
+        batches = batch_summary_comments(comments, 600)
+        flattened = [comment for batch in batches for comment in batch]
+
+        self.assertEqual([len(batch) for batch in batches], [600, 600, 107])
+        self.assertEqual(len(flattened), 1307)
+        self.assertEqual(
+            sum(comment.text == "重复刷屏" for comment in flattened),
+            2,
+        )
 
     def test_inspect_xml_reports_raw_valid_invalid_and_timeline_counts(self):
         path = self._write_xml(
