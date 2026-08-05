@@ -142,7 +142,7 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(details["unverified_hero_description_removed"])
         self.assertEqual(bridge._dota2_hero_identity_keys("原班人马重组"), set())
 
-    def test_verified_owner_timeline_preserves_hero_metadata_without_gsi(self):
+    def test_model_timeline_cannot_verify_owner_hero_without_gsi(self):
         timeline = (
             "43:17 弹幕嘲讽YYF虚空假面出装刮痧，与鲷哥的虚空形成对比"
         )
@@ -154,14 +154,11 @@ class BridgeTests(unittest.TestCase):
             verified_timeline=timeline,
         )
 
-        self.assertEqual(topic, "YYF虚空假面冰眼出装刮痧")
-        self.assertEqual(description, timeline)
-        self.assertEqual(tags, ["YYF", "虚空假面", "DOTA2"])
-        self.assertEqual(details["hero_evidence_source"], "verified_timeline")
-        self.assertEqual(
-            details["verified_timeline_hero_evidence"],
-            ["虚空假面（Faceless Void）"],
-        )
+        self.assertEqual(topic, "")
+        self.assertEqual(description, "")
+        self.assertEqual(tags, ["YYF", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "none")
+        self.assertEqual(details["verified_timeline_hero_evidence"], [])
 
     def test_other_streamer_timeline_does_not_validate_owner_hero_title(self):
         timeline = "43:17 查理斯虚空假面出装成型，YYF在旁观赛"
@@ -176,6 +173,30 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(topic, "")
         self.assertEqual(tags, ["YYF"])
         self.assertEqual(details["hero_evidence_source"], "none")
+
+    def test_participation_mode_requires_owner_specific_spectating_evidence(self):
+        self.assertEqual(
+            bridge.infer_streamer_participation_mode(
+                "39:48 YYF观赛主舞台决赛\n56:41 YYF全程陪伴吃瓜",
+                "YYF",
+            ),
+            "spectating",
+        )
+        self.assertEqual(
+            bridge.infer_streamer_participation_mode(
+                "39:48 谢彬观赛主舞台决赛\n56:41 蓝猫对阵DP",
+                "YYF",
+            ),
+            "unknown",
+        )
+        self.assertEqual(
+            bridge.infer_streamer_participation_mode(
+                "21:11 蓝猫对阵DP",
+                "YYF",
+                gameplay_verified=True,
+            ),
+            "playing",
+        )
 
     def test_live_stats_are_placed_after_archive_description(self):
         description = bridge.append_live_stats_to_description(
@@ -567,6 +588,13 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(bridge.timeline_lines(description)), 8)
         self.assertEqual(title_payloads[0]["final_description"], description)
         self.assertEqual(title_payloads[0]["verified_timeline"], bridge.timeline_lines(description))
+        self.assertEqual(
+            title_payloads[0]["streamer_participation"]["mode"],
+            "unknown",
+        )
+        self.assertFalse(
+            title_payloads[0]["streamer_participation"]["gameplay_verified"]
+        )
         self.assertEqual(
             [call["scene_name"] for call in calls],
             [
