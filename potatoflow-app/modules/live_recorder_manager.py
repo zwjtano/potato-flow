@@ -91,6 +91,23 @@ def _background_process_kwargs() -> dict[str, Any]:
             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         )
     }
+
+
+def _backup_incompatible_recorder_database(log_text: str) -> Path | None:
+    """Rotate only recorder-core's rebuildable index after a SQLx checksum panic."""
+    if "previously applied but has been modified" not in str(log_text or ""):
+        return None
+    database = RECORDER_RUNTIME_DIR / "data" / "data.sqlite3"
+    if not database.is_file():
+        return None
+    suffix = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    backup = database.with_name(f"{database.name}.migration-backup-{suffix}")
+    database.replace(backup)
+    for extension in ("-wal", "-shm"):
+        sidecar = Path(f"{database}{extension}")
+        if sidecar.exists():
+            sidecar.replace(Path(f"{backup}{extension}"))
+    return backup
 LEGACY_RECORDING_TITLE_TEMPLATES = {
     "",
     "{stem}",
@@ -2554,31 +2571,53 @@ class LiveRecorderManager:
             process_env = os.environ.copy()
             if FFMPEG_DIR.is_dir():
                 process_env["PATH"] = f"{FFMPEG_DIR}{os.pathsep}{process_env.get('PATH', '')}"
-            self._process = subprocess.Popen(
-                [
-                    str(binary),
-                    "recorder",
-                    "--config",
-                    str(RECORDER_CONFIG_PATH),
-                    "--status-file",
-                    str(STATUS_PATH),
-                ],
-                cwd=RECORDER_RUNTIME_DIR,
-                stdout=self._log_handle,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=process_env,
-                **_background_process_kwargs(),
-            )
+            command = [
+                str(binary),
+                "recorder",
+                "--config",
+                str(RECORDER_CONFIG_PATH),
+                "--status-file",
+                str(STATUS_PATH),
+            ]
+
+            def launch_worker() -> subprocess.Popen:
+                return subprocess.Popen(
+                    command,
+                    cwd=RECORDER_RUNTIME_DIR,
+                    stdout=self._log_handle,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=process_env,
+                    **_background_process_kwargs(),
+                )
+
+            log_start = self._log_handle.tell()
+            self._process = launch_worker()
             atomic_write_text(PID_PATH, str(self._process.pid))
             time.sleep(0.25)
             if self._process.poll() is not None:
                 exit_code = self._process.returncode
-                self._process = None
-                PID_PATH.unlink(missing_ok=True)
-                raise RecorderConfigError(
-                    f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 recorder-core"
-                )
+                self._log_handle.flush()
+                with LOG_PATH.open("r", encoding="utf-8", errors="replace") as log_reader:
+                    log_reader.seek(log_start)
+                    startup_log = log_reader.read()
+                backup = _backup_incompatible_recorder_database(startup_log)
+                if backup is not None:
+                    self._log_handle.write(
+                        f"\n[PotatoFlow] recorder 数据库迁移不兼容，已备份到 {backup}，自动重建。\n"
+                    )
+                    self._log_handle.flush()
+                    self._process = launch_worker()
+                    atomic_write_text(PID_PATH, str(self._process.pid))
+                    time.sleep(0.5)
+                    if self._process.poll() is not None:
+                        exit_code = self._process.returncode
+                if self._process.poll() is not None:
+                    self._process = None
+                    PID_PATH.unlink(missing_ok=True)
+                    raise RecorderConfigError(
+                        f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 recorder-core"
+                    )
             self._ensure_orphan_recovery_thread()
             self._ensure_upload_retry_thread()
             self._ensure_recording_notification_thread()
