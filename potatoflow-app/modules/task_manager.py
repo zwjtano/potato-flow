@@ -77,6 +77,18 @@ TASK_LEASE_HEARTBEAT_SECONDS = 20
 _TASK_LEASE_STORE = TaskLeaseStore(DB_PATH, lease_seconds=TASK_LEASE_SECONDS)
 
 
+def _background_subprocess_kwargs() -> dict[str, Any]:
+    """Keep long-running media tools out of the Windows desktop."""
+    if os.name != "nt":
+        return {"start_new_session": True}
+    return {
+        "creationflags": (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    }
+
+
 def _convert_vtt_text_to_srt_text(vtt_content: str) -> str:
     """将普通/YouTube 自动字幕 VTT 文本稳健转换为 SRT 文本。"""
     import re
@@ -6576,7 +6588,8 @@ class TaskProcessor:
                     text=True, 
                     cwd=temp_dir,  # 在临时目录执行
                     encoding='utf-8',
-                    errors='replace'  # 遇到无法解码的字符时用?替换
+                    errors='replace',  # 遇到无法解码的字符时用?替换
+                    **_background_subprocess_kwargs(),
                 )
                 
                 # 创建线程来读取输出，避免管道阻塞
@@ -6742,7 +6755,8 @@ class TaskProcessor:
                             text=True,
                             cwd=temp_dir,
                             encoding='utf-8',
-                            errors='replace'
+                            errors='replace',
+                            **_background_subprocess_kwargs(),
                         )
                         try:
                             fallback_start_time = time.time()

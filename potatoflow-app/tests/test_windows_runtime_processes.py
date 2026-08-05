@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modules import ffmpeg_manager
 from modules import live_recorder_manager
+from modules import task_manager
 
 
 def test_runtime_ffmpeg_environment_is_checked_before_download(tmp_path):
@@ -51,6 +52,19 @@ def test_windows_recorder_workers_never_open_a_console():
 
     assert kwargs == {"creationflags": expected}
     assert "start_new_session" not in kwargs
+
+
+def test_windows_subtitle_burn_never_opens_a_console():
+    expected = (
+        getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    )
+    with mock.patch.object(task_manager.os, "name", "nt"):
+        kwargs = task_manager._background_subprocess_kwargs()
+
+    assert kwargs == {"creationflags": expected}
+    source = Path(task_manager.__file__).read_text(encoding="utf-8")
+    assert source.count("**_background_subprocess_kwargs(),") == 2
 
 
 def test_incompatible_recorder_migration_database_is_backed_up(tmp_path):
