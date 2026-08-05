@@ -60,9 +60,10 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "主播关系补全后最多28个字符。"
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
-    "生成可直接用于哔哩哔哩投稿、内容充实的完整中文简介：用两至四段自然叙述，主要按弹幕内容随直播时间的"
-    "变化向前推进。从开场的话题或状态写起，再写中段出现的关键变化、互动或节目效果，最后交代后段的发展、结果或复盘。"
-    "不要为了突出标题而打乱实际顺序，也不要忽略弹幕话题的转换；只保留有明确证据的内容，用自然过渡串起整段直播。"
+    "生成可直接用于哔哩哔哩投稿的时间点式中文简介。最终正文只保留程序核验并格式化后的“时间 + 事件”行，"
+    "不添加开场白、总结段、栏目标题或营销套话。候选事件必须按直播时间向前推进：覆盖开场状态、中段关键变化、"
+    "互动或节目效果，以及后段发展、结果或复盘；不要为了突出标题打乱顺序，也不要忽略话题转换。"
+    "每条事件用一到两句完整中文说明“谁做了什么、发生了什么变化、弹幕为何集中反应”，但只写证据能支持的最小事实。"
     "叙述中要写清人物主语：包括当前直播间主播，以及弹幕内容确实提到的其他主播、选手或嘉宾。"
     "其他人物必须有可靠原文证据并能明确消歧；不得把弹幕用户名、模糊外号或同名对象写成视频人物。"
     "确实发生的赛后复盘、回看失误或自我调侃可以作为节目效果写入，但必须说明复盘了什么，不得将“赛后复盘”"
@@ -70,7 +71,7 @@ DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "不要在简介正文中手写时间点；程序会回到完整 XML 定位最早证据、补偿反应延迟并统一格式化。"
     "重要事件必须有可在完整 XML 定位的弹幕原文，或同一时间围绕事件关键词的集中刷屏；"
     "不要求多条引用全部逐字一致，但不得编造时间或事件。"
-    "重要时间点必须覆盖简介中的关键事件；若简介包含两个先后发生的独立转折，应分别收录。"
+    "重要时间点必须覆盖简介中的关键事件；若简介包含两个先后发生的独立转折，必须分别收录，不得拼成一条虚假因果链。"
     "事件文案只做证据的最小忠实改写，不得增加原文没有的人物、动作、数字、原因或结果；"
     "开场如果承接上一段残局，必须如实说明是“开场承接”，不得写成本段新发生的事件。"
     "只使用输入能够支持的事实，不虚构主播"
@@ -1167,6 +1168,120 @@ def title_person_hero_relations_supported(title: str, verified_description: str)
     return title_relations <= description_relations
 
 
+_COMPETITIVE_RESULT_TERMS: dict[str, tuple[str, ...]] = {
+    "win": (
+        "赢了", "赢下", "获胜", "取胜", "胜利", "战胜", "击败", "晋级",
+        "夺冠", "拿下冠军", "首夺", "翻盘成功", "完成翻盘", "逆转取胜",
+    ),
+    "loss": (
+        "输了", "输掉", "输给", "失利", "落败", "告负", "败北", "惨败",
+        "淘汰", "被淘汰", "被翻盘", "惨遭翻盘", "痛失好局",
+    ),
+}
+
+
+def _competitive_result_polarities(value: str) -> set[str]:
+    text = str(value or "").casefold()
+    polarities = {
+        polarity
+        for polarity, terms in _COMPETITIVE_RESULT_TERMS.items()
+        if any(term.casefold() in text for term in terms)
+    }
+    crown = r"(?:冠军|[一二三四五六七八九十\d]+冠王?)"
+    if re.search(
+        rf"(?:夺|拿到|拿下|获得|斩获|成为).{{0,4}}{crown}"
+        rf"|{crown}.{{0,3}}(?:诞生|到手|了)"
+        rf"|(?:恭喜|恭迎).{{0,10}}{crown}",
+        text,
+    ):
+        polarities.add("win")
+    if (
+        re.search(r"(?:提前预祝|预祝|预测|看好|感觉要|冠军相|有望)", text)
+        and not re.search(r"(?:最终|赛后|真.{0,2}冠|已经|成功|诞生|到手|确认)", text)
+    ):
+        polarities.discard("win")
+    return polarities
+
+
+def _person_result_relations(value: str) -> list[tuple[tuple[str, ...], str]]:
+    """Return known people explicitly assigned a competitive result."""
+    text = str(value or "")
+    if not _competitive_result_polarities(text):
+        return []
+    relations: list[tuple[tuple[str, ...], str]] = []
+    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
+        names = tuple(dict.fromkeys((canonical_name, *aliases)))
+        spans = [span for name in names for span in _text_name_match_spans(text, name)]
+        if not spans:
+            continue
+        person_polarities: set[str] = set()
+        for start, end in spans:
+            before = text[max(0, start - 12):start].rstrip(" ：:，,｜|")
+            after = text[end:end + 16].lstrip(" ：:，,｜|")
+            if re.match(
+                r"^(?:观战|观赛|旁观|OB|看比赛|看决赛|解说|点评)",
+                after,
+                re.IGNORECASE,
+            ):
+                continue
+            if re.match(
+                r"^(?:赢了|赢下|获胜|取胜|战胜|击败|淘汰|晋级|夺冠|"
+                r"拿下冠军|首夺|翻盘成功|完成翻盘|逆转取胜)",
+                after,
+            ) or re.search(r"(?:恭喜|恭迎|预祝)$", before):
+                person_polarities.add("win")
+            if re.match(
+                r"^(?:输了|输掉|输给|失利|落败|告负|败北|惨败|"
+                r"被淘汰|被击败|被战胜|被翻盘|惨遭翻盘|痛失好局)",
+                after,
+            ):
+                person_polarities.add("loss")
+            if re.search(r"(?:淘汰|击败|战胜)$", before):
+                person_polarities.add("loss")
+            if re.search(r"输给$", before):
+                person_polarities.add("win")
+        relations.extend((names, polarity) for polarity in person_polarities)
+    return relations
+
+
+def _competitive_result_supported(event: str, comments: list[Any]) -> bool:
+    """Require result direction and named winner/loser bindings in raw evidence."""
+    polarities = _competitive_result_polarities(event)
+    if not polarities:
+        return True
+    texts = [str(getattr(comment, "text", "") or "") for comment in comments]
+    if any(
+        not any(polarity in _competitive_result_polarities(text) for text in texts)
+        for polarity in polarities
+    ):
+        return False
+    for person_names, polarity in _person_result_relations(event):
+        if not any(
+            any(_text_mentions_name(text, name) for name in person_names)
+            and polarity in _competitive_result_polarities(text)
+            for text in texts
+        ):
+            return False
+    return True
+
+
+def title_competitive_results_supported(title: str, verified_description: str) -> bool:
+    """Allow title result claims only when the verified timeline has the same binding."""
+    if not _competitive_result_polarities(title) <= _competitive_result_polarities(
+        verified_description
+    ):
+        return False
+    title_relations = {
+        (names[0], polarity)
+        for names, polarity in _person_result_relations(title)
+    }
+    description_relations = {
+        (names[0], polarity)
+        for names, polarity in _person_result_relations(verified_description)
+    }
+    return title_relations <= description_relations
+
+
 def render_grounded_danmaku_timeline(
     timeline: Any,
     selected_comments: list[Any],
@@ -1316,6 +1431,9 @@ def render_grounded_danmaku_timeline(
         )
         if unsupported_relation:
             reject("person_hero_relation_not_supported")
+            continue
+        if not _competitive_result_supported(event, matching_comments):
+            reject("competitive_result_not_supported")
             continue
         earliest = min(matching_comments, key=lambda comment: float(comment.time))
         xml_anchor = max(0, int(float(earliest.time)))
@@ -2189,22 +2307,56 @@ def recording_cover_hero_matches_title(hero: str, title: str) -> bool:
     return hero_name in title_text
 
 
-def recording_cover_event_context(description: str) -> tuple[str, str]:
+def recording_cover_event_context(
+    description: str,
+    headline: str = "",
+) -> tuple[str, str]:
     """Return timestamp-free cover context, preferring verified timeline events."""
+    def relevant_events(events: list[str]) -> list[str]:
+        events = [event for event in events if event]
+        headline_key = _compact_alias(headline)
+        if not headline_key or len(headline_key) < 2:
+            return events
+        headline_pairs = {
+            headline_key[index:index + 2]
+            for index in range(len(headline_key) - 1)
+        }
+
+        def headline_overlap(event: str) -> int:
+            event_key = _compact_alias(event)
+            event_pairs = {
+                event_key[index:index + 2]
+                for index in range(max(0, len(event_key) - 1))
+            }
+            return len(headline_pairs & event_pairs)
+
+        ranked = sorted(
+            ((headline_overlap(event), index, event) for index, event in enumerate(events)),
+            key=lambda item: (-item[0], item[1]),
+        )
+        matched = [event for score, _, event in ranked if score > 0][:2]
+        return matched or events[:1]
+
     points = timeline_lines(description)
     if points:
         events = [
             re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", point).strip()
             for point in points
         ]
-        return "；".join(event for event in events if event)[:700], "verified_timeline"
+        events = relevant_events(events)
+        return "；".join(events)[:700], "verified_timeline"
     clean_lines = [
         line.strip()
         for line in str(description or "").splitlines()
         if line.strip()
         and not line.strip().startswith(("———", "🎮 ", "🎁 ", "💎 ", "💬 ", "👥 "))
     ]
-    return " ".join(clean_lines)[:700], "description"
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[。！？!?；;])", " ".join(clean_lines))
+        if sentence.strip()
+    ]
+    return " ".join(relevant_events(sentences))[:700], "description"
 
 
 def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
@@ -2808,7 +2960,10 @@ def generate_recording_cover_with_ai(
 
     ai_cfg = load_app_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
-    cover_event_context, cover_context_source = recording_cover_event_context(description)
+    cover_event_context, cover_context_source = recording_cover_event_context(
+        description,
+        title,
+    )
     cover_subject_name = recording_cover_subject_name(streamer, title)
     headline = recording_cover_headline(title, "", streamer)
     details: dict[str, Any] = {
@@ -3268,8 +3423,12 @@ def generate_recording_cover_with_ai(
 主播：{streamer or "主播"}
 封面主角称呼：{cover_subject_name or streamer or "主播"}
 与投稿标题共用的核心事件：{headline}
+已核验事件上下文（只用于理解人物角色、动作归属和构图，不得作为额外封面文字）：
+{cover_event_context or "仅使用投稿标题，不补充未核验事实"}
 
 只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+标题与已核验事件上下文冲突时，以已核验事件上下文的人物角色和动作归属为准；
+不得把观战对象、第三方选手的英雄、动作、胜负或荣誉转移给当前主播。
 核心文案必须清晰保留主角称呼“{cover_subject_name or streamer or "主播"}”，称呼可以放在开头或自然融入句子，
 但不得排成“主角｜主题”的固定栏目格式。
 {composition_instruction}
@@ -3595,6 +3754,12 @@ def infer_streamer_participation_mode(
     """Return playing, spectating, or unknown from independent evidence."""
     if gameplay_verified:
         return "playing"
+    public_name = normalize_dota2_streamer_name(streamer)
+    if any(
+        normalize_dota2_streamer_name(names[0]) == public_name
+        for names, _hero_key in _person_hero_relations(description)
+    ):
+        return "playing"
     observer_pattern = re.compile(
         r"(?:观战|观赛|旁观|OB|看比赛|看决赛|陪伴吃瓜|解说比赛)",
         re.IGNORECASE,
@@ -3901,7 +4066,7 @@ def generate_danmaku_metadata_with_ai(
                 "relationship_policy": (
                     "structured_game_identity_only"
                     if streamer_gameplay_verified
-                    else "no_person_hero_binding"
+                    else "repeated_explicit_xml_relation_only"
                 ),
             },
             "timeline_target_count": {
@@ -3927,12 +4092,14 @@ def generate_danmaku_metadata_with_ai(
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
 verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；英雄、装备和 KDA
 只能使用其中已经确认的数据，禁止从弹幕、标题或常识猜测，且不得把其他对局的数据混入本段。
-streamer_participation 是强制事实边界。当 mode=unknown 时，禁止声称当前主播正在参赛，也不能
-擅自写成观战；只能按证据使用“直播间讨论”“弹幕关注”等中性表述。当 mode=spectating 时，当前主播
+streamer_participation 是强制事实边界。当 mode=unknown 时，禁止声称当前主播正在参赛；只有弹幕
+明确出现当前主播观战、观赛、OB、解说或点评的证据时，才可据实写成观战，否则只能使用“直播间讨论”
+“弹幕关注”等中性表述。当 mode=spectating 时，当前主播
 只能被描述为观战、观赛、解说或点评。上述两种模式均禁止写成主播操刀、使用、选择、出装、击杀、
-阵亡或操作任何英雄。只有 verified_live_context.game 中存在结构化身份记录时，才允许把其中的 hero
-绑定给当前主播。观战中的其他选手与英雄，只有多条连续弹幕或明确上下文反复确认同一关系、且没有
-冲突证据时才可绑定，例如持续明确“南枫使用末日使者”时可写“南枫的末日使者”。人物名与英雄名
+阵亡或操作任何英雄。verified_live_context.game 中的结构化身份记录可直接绑定当前主播；结构化记录
+缺失时，只有多条连续弹幕明确以“你/主播别名 + 英雄”反复确认、至少一条原文同时出现可靠人名与英雄、
+且没有观战或冲突证据时，才允许绑定当前主播。观战中的其他选手与英雄也遵循同一严格规则，例如
+持续明确“南枫使用末日使者”时可写“南枫的末日使者”。人物名与英雄名
 仅仅同时出现、孤立单条弹幕或模型旧稿不能证明关系；证据不足时只能写中性比赛事实。
 verified_live_context.live_stats 只作为事实参考。description 严禁复制或输出“直播数据”区块、礼物、
 在线人数、英雄装备统计表；这些内容由投稿流程在最后一步独立渲染，并且只渲染一次。
@@ -3941,13 +4108,17 @@ streamer_identity 是当前直播间主播的可靠身份；description 提到�
 editorial_names 是同一主播可用的可靠标题名称，只能结合弹幕实际用法选择其一，不得将这些别名当成多个人。
 弹幕中确实提到的其他主播、选手或嘉宾可以写入，但必须有能明确指向该人物的原文证据；
 不得把弹幕用户名、模糊外号、英雄名或同名对象当成真实人物。涉及人物的句子必须写清“谁做了什么”。
-description 只返回弹幕总结正文，不要重复 base_description，也不要输出文件名、内部编号或录制时间。
-description 只写两至四段事件总结，主要依照 sampled_comment_evidence 从前到后的内容变化推进：
-先交代开场话题或状态，再写中段的事件发展、话题转换和观众反应，最后交代后段结果或复盘。
-不要为迎合 title_topic 把后半段事件提前，不要把不同时段的独立话题写成同一条因果链。
-description 中写到的每个关键事件、争议点和阶段性转折，都必须同时返回一条对应的 timeline；
-若该事件无法提供可核验的 evidence_texts/evidence_keywords，就从正文中删去，不得出现正文很长但时间点极少的脱节情况。
-不要包含“重要时间点”标题或任何手写时间。
+人物身份、人物与英雄的归属、最终胜负是三类独立事实：后两者证据不足时，不得连已有明确
+原文支持的选手姓名一起删掉。如果弹幕明确表明这是“谢彬对阵眼子”，就应保留该对阵关系；
+英雄归属无法确认时，可后续写“谢彬一方/眼子一方”或单独描述英雄对阵，不得擅自把英雄绑给选手。
+同时不要为了规避风险而回避明显结论：同一时间窗口内有多条连续、指向一致且无冲突的原文时，视为证据比较明显，
+应当明确写出参赛双方、对阵关系、已发生的关键局势或结果，不得总是降级成“弹幕讨论”“一方”“似乎”。
+英雄归属仍需要人名与英雄的重复明确绑定；最终胜负仍需要赛后确认性证据，不能用赛中预测代替。
+description 只作为本批次的简短候选摘要，不要重复 base_description，也不要输出文件名、内部编号、
+录制时间或“重要时间点”标题；最终投稿简介只会使用通过 XML 核验的 timeline 行。
+按 sampled_comment_evidence 从前到后分析，不能为迎合标题把后半段事件提前，也不能把不同时段的
+独立话题写成同一条因果链。description 提到的每个关键事实都必须有对应 timeline；没有可核验的
+evidence_texts/evidence_keywords 就删除该事实，禁止生成脱离时间点的长篇总结。
 timeline 只选择 sampled_comment_evidence 有直接证据或同一时间出现集中刷屏的事件。每项返回 event、evidence_texts
 和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
 evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
@@ -3957,11 +4128,28 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 游戏内容时，才额外考虑阵容选择、关键交锋、操作失误、局势转折和翻盘；不得把聊天、访谈、
 户外、才艺或其他直播强行描述成游戏对局。不要把同一事件拆成多条，也不要为了达到数量编造内容。
 长录播应尽量保持约每 7 至 8 分钟一个可点击看点，避免只保留结尾或少量孤立事件。
+对游戏对局，时间点的信息价值优先级为“人物+英雄+具体事件” > “人物+具体事件” > “英雄+具体事件” >
+只有弹幕反应。同一窗口中大量弹幕稳定地反复出现某人和某英雄，且至少一条原文将两者明确连接、
+不存在其他人物或英雄的冲突绑定时，应当完成人物—英雄归因，并写清该人物的英雄发生了什么；
+不得只因为证据来自弹幕就退化成“某英雄引发讨论”。
+上述“人物—英雄—事件—结果”结构只适用于能确认为比赛或游戏对局的内容；聊天、听歌、户外、才艺、访谈、
+查看旧节目等非比赛内容只按“人物—话题/事件—反应/结果”叙述，禁止强行补英雄、对阵或胜负。
+竞技比赛类内容还必须保持上下文可读性：当本批证据首次明确出现参赛双方、关键选手或队伍时，
+优先生成一条交代“谁对阵谁”的候选事件。后续事件中，原文能确认人物或所属一方时，优先使用
+人名或“某人一方”承接，不要退化成“多人”“一方”“场上一方”。只有证据本身确实无法识别人物时才可使用中性主语。
 重要事件涉及人物时，event 必须写明当前主播或被提及的其他人物“谁做了什么”；
 无法从证据确定人物时宁可写“主播”或省略该事件，不得猜测姓名。
 每条 event 必须是 evidence_texts 的最小忠实改写：主语、对象、动作、数字、原因、结果和“首波”
 “翻盘”“阵亡”等阶段性判断都必须由原文直接说明或由同一 30 秒窗口的多条证据共同支持；
 不得仅因附近讨论了相关英雄、装备或选人，就向 event 补入原文没有的动作与结果。
+胜负与荣誉属于最高风险事实：“谁赢、谁输、谁淘汰谁、谁晋级、谁夺冠、谁翻盘或被翻盘”必须有
+同一证据窗口内人物与结果方向的明确原文绑定。只看到“牛”“可惜”“结束了”“冠军”身份梗，或只知道
+一方领先/落后，都不能推断最终胜负；证据冲突时删除胜负结论，宁可写中性过程也绝不能写反。
+“提前预祝”“感觉要赢”“冠军相”等可以作为当时观众对局势的预测保留，但 event 必须明确写成
+“弹幕提前预祝/预测/看好”，不得省略预测语气或改写成已经获胜；后续只有出现赛后确认性证据，
+才能另写一条最终胜负或夺冠结果。
+当赛后同一时间窗口有多条一致的“获胜/落败/淘汰/晋级/夺冠”表述，且人物和结果方向清楚、没有相反证据时，
+应当直接下结论，不得因为过度保守改写成“弹幕开始讨论冠军”。
 一条像总结稿的超长弹幕不能独自支撑包含多个先后环节的复合 event；应拆分并寻找相邻佐证，
 找不到就只保留该原文能直接支持的最小事实。
 不要返回时间戳；程序会使用 evidence_keywords 回到完整 XML 查找第一条匹配弹幕。
@@ -4195,15 +4383,17 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                     "minimum": timeline_minimum,
                     "maximum": timeline_maximum,
                 },
-                "selection_policy": (
-                    "选择最有信息量、最具体且彼此不同的事件；覆盖开头、中段和结尾；"
-                    "不得改写候选内容，只返回索引。"
-                ),
             }
             selection_prompt = """
 你是直播录播简介的全局编辑。输入只包含已经通过完整 XML 校验的候选时间点。
 从中选择最值得进入最终简介的事件，优先保留具体动作、结果、转折、重要互动和节目效果，
 删除重复、空泛或信息量低的候选，并覆盖录播开头、中段和结尾。
+游戏对局中，优先级为“人物+英雄+事件” > “人物+事件” > “英雄+事件” > “只有弹幕反应”。
+通过密集且无冲突弹幕已完成人物—英雄归因的候选，信息量高于只写“沉默没开大”等无主体句子，应优先保留。
+如果是竞技比赛，最终简介必须让读者知道“谁和谁在比赛”：候选中存在有证据的参赛双方或
+关键选手信息时，必须至少保留一条交代对阵关系的事件，并优先保留用已确认人名而非“多人”“一方”
+等泛称说清关键事件的候选。英雄归属和最终胜负仍必须各自有独立明确证据，不得为了补齐人名而猜测。
+若候选中已有多条一致证据支持的明确结论，应优先保留该结论，不得为了“安全”只选更空泛的讨论句。
 不得改写、合并或补充任何候选事实，只返回 selected_indexes JSON 数组。
 """.strip()
             selected_indexes: list[int] = []
@@ -4296,6 +4486,8 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
 无冲突上下文确认的关系；若只知道两个英雄出现在对局中，只能写“英雄甲对阵英雄乙”，不得猜成
 “主播操刀英雄甲”或“某人使用英雄乙”。
 标题必须选择简介中最有看点的一个具体事件；核心动作、人物和结果必须能在简介或已核验时间点中找到。
+标题中的胜负、晋级、淘汰、夺冠、翻盘或被翻盘关系必须与 final_description 的人物和方向完全一致；
+不得把观战者写成获胜者，也不得因领先、欢呼、嘲讽或“五冠王”等身份梗推断本场结果。
 当前主播有可靠名称时，从 streamer_identity.editorial_names 中选择符合简介用法的名称并自然融入句子，
 位置不限；禁止“主播名｜事件”“主播名：事件”等标签格式，不含日期、时间和“直播回放”。
 {title_prompt}
@@ -4364,6 +4556,12 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                 final_description,
             ):
                 title_topic = ""
+        if not title_competitive_results_supported(title_topic, final_description):
+            diagnostics.update({
+                "title_topic_competitive_result_rejected": True,
+                "title_topic_before_result_filter": title_topic,
+            })
+            title_topic = ""
         final_verified_count = len(timeline_lines(final_description))
         diagnostics.update({
             "timeline_verified_count": final_verified_count,
