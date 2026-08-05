@@ -3541,8 +3541,30 @@ def enhance_recording_metadata(
     partition_id = str(fallback_partition_id or "").strip()
     selection: dict[str, Any] = {}
     if recommend_partition_enabled:
-        zone_data = get_zone_list_sub()
-        if zone_data:
+        fixed_partition_id = str(
+            openai_config.get("FIXED_PARTITION_ID_BILIBILI") or ""
+        ).strip()
+        dota2_default = bool(
+            not fixed_partition_id
+            and recording_cover_has_dota2_context(
+                "",
+                title,
+                description,
+                *final_tags,
+            )
+        )
+        if dota2_default:
+            selection = {
+                "id": "171",
+                "source": "dota2_default",
+                "confidence": 1.0,
+                "reason_summary": "Dota 2 内容默认使用电子竞技分区",
+                "alternatives": [],
+            }
+            partition_id = "171"
+        else:
+            zone_data = get_zone_list_sub()
+        if not dota2_default and zone_data:
             selection = recommend_bilibili_partition(
                 title,
                 description,
@@ -4303,6 +4325,28 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     and _compact_alias(ai_topic) == _compact_alias(fallback_title_topic)
                 )
             )
+
+            # Partition selection is independent from title approval. Run it
+            # before the manual-review gate so a failed/vague AI title does
+            # not force the reviewer to choose an otherwise recommendable
+            # partition by hand.
+            if not dry_run and not existing_submission:
+                store.stage(key, "ai", "running", ai_details)
+                try:
+                    tags, partition, metadata_automation = enhance_recording_metadata(
+                        title,
+                        description,
+                        tags,
+                        original_cover,
+                        partition,
+                        cfg,
+                    )
+                    ai_details.update(metadata_automation)
+                except Exception as exc:
+                    metadata_automation = {"metadata_automation_error": str(exc)}
+                    ai_details.update(metadata_automation)
+                    print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
+
             if (
                 not dry_run
                 and not existing_submission
@@ -4324,23 +4368,6 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 })
                 store.stage(key, "ai", "failed", ai_details, error=review_error)
                 raise RuntimeError(review_error)
-
-            if not dry_run and not existing_submission:
-                store.stage(key, "ai", "running", ai_details)
-                try:
-                    tags, partition, metadata_automation = enhance_recording_metadata(
-                        title,
-                        description,
-                        tags,
-                        original_cover,
-                        partition,
-                        cfg,
-                    )
-                    ai_details.update(metadata_automation)
-                except Exception as exc:
-                    metadata_automation = {"metadata_automation_error": str(exc)}
-                    ai_details.update(metadata_automation)
-                    print(f"WARN 录播 AI 标签或分区推荐失败，使用原配置: {exc}", file=sys.stderr)
 
         metadata_values_for_evidence = recording_metadata_values(video, cfg)
         if not locked_game_context and recording_cover_has_dota2_context(
