@@ -46,6 +46,7 @@ from dota2_heroes import build_dota2_hero_reference
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
+_AI_METADATA_THREAD_LOCK = threading.Lock()
 _IMAGE_GENERATION_THREAD_LOCK = threading.Lock()
 DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
@@ -2938,6 +2939,44 @@ def image_generation_queue(cfg: dict[str, Any]):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def ai_metadata_queue(cfg: dict[str, Any]):
+    """Serialize AI description/title tasks across threads and processes."""
+    state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)
+    lock_path = state_path.parent / "ai-metadata.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    wait_started = time.monotonic()
+    with _AI_METADATA_THREAD_LOCK, lock_path.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            while True:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield time.monotonic() - wait_started
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -3974,7 +4013,7 @@ def enhance_recording_metadata(
     return final_tags, partition_id, details
 
 
-def generate_danmaku_metadata_with_ai(
+def _generate_danmaku_metadata_with_ai(
     comments,
     base_description: str,
     cfg: dict[str, Any],
@@ -4580,6 +4619,36 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
         return base_description, ""
 
 
+def generate_danmaku_metadata_with_ai(
+    comments,
+    base_description: str,
+    cfg: dict[str, Any],
+    grounding_context: dict[str, Any] | None = None,
+    timeline_duration_seconds: float | None = None,
+    timeline_diagnostics: dict[str, Any] | None = None,
+    queue_entered_callback: Callable[[float], None] | None = None,
+) -> tuple[str, str]:
+    """Queue one task, then generate its AI description and title together."""
+    if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
+        return base_description, ""
+    with ai_metadata_queue(cfg) as queue_wait_seconds:
+        if timeline_diagnostics is not None:
+            timeline_diagnostics["ai_metadata_queue_wait_seconds"] = round(
+                queue_wait_seconds,
+                3,
+            )
+        if queue_entered_callback is not None:
+            queue_entered_callback(queue_wait_seconds)
+        return _generate_danmaku_metadata_with_ai(
+            comments,
+            base_description,
+            cfg,
+            grounding_context,
+            timeline_duration_seconds,
+            timeline_diagnostics,
+        )
+
+
 def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                dry_run: bool = False, retry: bool = False,
                danmaku_xml: Path | None = None,
@@ -4933,7 +5002,18 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         else:
             timeline_details: dict[str, Any] = {}
             if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
-                store.stage(key, "ai", "running", {"comment_count": len(comments)})
+                queued_ai_details = {"comment_count": len(comments)}
+                store.stage(key, "ai", "queued", queued_ai_details)
+
+                def mark_ai_metadata_running(queue_wait_seconds: float) -> None:
+                    store.stage(key, "ai", "running", {
+                        **queued_ai_details,
+                        "ai_metadata_queue_wait_seconds": round(
+                            queue_wait_seconds,
+                            3,
+                        ),
+                    })
+
                 description, ai_topic = generate_danmaku_metadata_with_ai(
                     comments,
                     description,
@@ -4941,6 +5021,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     verified_live_context,
                     recording_duration_seconds,
                     timeline_details,
+                    mark_ai_metadata_running,
                 )
                 title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
                 ai_details.update({

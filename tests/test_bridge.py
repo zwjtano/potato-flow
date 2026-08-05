@@ -57,6 +57,65 @@ class BridgeTests(unittest.TestCase):
             second.join(2)
             self.assertTrue(second_entered.is_set())
 
+    def test_ai_metadata_queue_serializes_threads(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cfg = {"state_db": str(Path(temp) / "state.sqlite3")}
+            first_entered = threading.Event()
+            second_entered = threading.Event()
+            release_first = threading.Event()
+
+            def first_worker():
+                with bridge.ai_metadata_queue(cfg):
+                    first_entered.set()
+                    release_first.wait(2)
+
+            def second_worker():
+                first_entered.wait(2)
+                with bridge.ai_metadata_queue(cfg):
+                    second_entered.set()
+
+            first = threading.Thread(target=first_worker)
+            second = threading.Thread(target=second_worker)
+            first.start()
+            self.assertTrue(first_entered.wait(1))
+            second.start()
+            self.assertFalse(second_entered.wait(0.1))
+            release_first.set()
+            first.join(2)
+            second.join(2)
+            self.assertTrue(second_entered.is_set())
+
+    def test_ai_metadata_generation_records_queue_wait_and_callback(self):
+        diagnostics = {}
+        entered_waits = []
+        comments = [types.SimpleNamespace(time=1.0, text="测试弹幕")]
+        cfg = {
+            "state_db": "/tmp/test-ai-metadata-queue/state.sqlite3",
+            "ai_danmaku_summary_enabled": True,
+        }
+
+        with patch.object(
+            bridge,
+            "ai_metadata_queue",
+            return_value=bridge.contextmanager(lambda: iter([1.23456]))(),
+        ), patch.object(
+            bridge,
+            "_generate_danmaku_metadata_with_ai",
+            return_value=("生成简介", "生成标题"),
+        ) as generate:
+            result = bridge.generate_danmaku_metadata_with_ai(
+                comments,
+                "原简介",
+                cfg,
+                timeline_diagnostics=diagnostics,
+                queue_entered_callback=entered_waits.append,
+            )
+
+        self.assertEqual(result, ("生成简介", "生成标题"))
+        self.assertEqual(diagnostics["ai_metadata_queue_wait_seconds"], 1.235)
+        self.assertEqual(entered_waits, [1.23456])
+        generate.assert_called_once()
+
     def test_title_prompt_rejects_vague_marketing_conclusions(self):
         prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
 
