@@ -186,6 +186,8 @@ class ManualReviewTests(unittest.TestCase):
             "recording-detail-stage-status ${escapeRecordingDetail(status)}",
             tasks_template,
         )
+        self.assertIn("等待 AI 简介/标题队列", tasks_template)
+        self.assertIn("ai_metadata_queue_wait_seconds", tasks_template)
 
 
 if __name__ == "__main__":

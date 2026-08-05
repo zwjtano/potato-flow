@@ -1582,7 +1582,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
     }
     const recordingStageStatusNames = {
         pending: '等待中',
-        queued: '等待投稿队列',
+        queued: '等待队列',
         running: '正在处理',
         paused: '已暂停',
         completed: '已完成',
@@ -1620,6 +1620,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
         source_video_path: '烧录源视频',
         tag_generation_enabled: 'AI 标签生成',
         comment_count: '分析弹幕',
+        ai_metadata_queue_wait_seconds: 'AI 简介/标题排队等待（秒）',
         timeline_target_min: '时间点最低目标',
         timeline_target_max: '时间点建议上限',
         timeline_candidate_count: 'AI 候选时间点',
@@ -2051,7 +2052,11 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-skip {
                 ? '无匹配数据'
                 : details.danmaku_integrity === 'suspected_incomplete'
                     ? 'XML 疑似不完整'
-                    : (recordingStageStatusNames[status] || status);
+                    : status === 'queued' && key === 'ai'
+                        ? '等待 AI 简介/标题队列'
+                        : status === 'queued' && key === 'upload'
+                            ? '等待投稿队列'
+                            : (recordingStageStatusNames[status] || status);
             return `<details class="recording-detail-stage ${escapeRecordingDetail(status)}" data-stage-key="${escapeRecordingDetail(key)}" ${open ? 'open' : ''}>
                 <summary>
                     <span class="recording-detail-stage-icon"><i class="bi ${escapeRecordingDetail(meta.icon)}"></i></span>
