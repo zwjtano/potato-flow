@@ -67,6 +67,14 @@ def test_windows_subtitle_burn_never_opens_a_console():
     assert source.count("**_background_subprocess_kwargs(),") == 2
 
 
+def test_windows_ffmpeg_probes_never_open_a_console():
+    expected = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    with mock.patch.object(ffmpeg_manager.os, "name", "nt"):
+        assert ffmpeg_manager._hidden_subprocess_kwargs() == {
+            "creationflags": expected,
+        }
+
+
 def test_incompatible_recorder_migration_database_is_backed_up(tmp_path):
     runtime = tmp_path / "recorder-engine"
     database = runtime / "data" / "data.sqlite3"

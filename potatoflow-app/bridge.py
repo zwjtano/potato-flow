@@ -46,32 +46,55 @@ from dota2_heroes import build_dota2_hero_reference
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
-_AI_METADATA_THREAD_LOCK = threading.Lock()
 _IMAGE_GENERATION_THREAD_LOCK = threading.Lock()
+
+
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    """Prevent FFmpeg/ffprobe helper consoles in the Windows desktop build."""
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
 DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
 DEFAULT_RECORDING_TITLE_AI_PROMPT = (
-    "根据本段直播的实际内容和弹幕反应，从有精确弹幕证据的重要事件中提炼一个自然、"
-    "有信息量的完整核心主题标题。将当前主播或本段主角的可靠名称自然融入句子，主语不必放在最前；"
-    "不得使用“主播名｜事件”这种姓名标签加竖线的机械格式。突出关键对局、英雄、事件或节目效果，"
+    "根据本段直播的实际内容和弹幕反应，从有精确证据的重要事件中提炼一个自然、"
+    "有信息量、语义完整的标题。默认选择一个最强事件；若最终简介中确有两个同等重要、彼此独立且都值得展示的事件，"
+    "允许在28字内写入两个，并按重要性排序、使用中文分号“；”明确分隔。不得加入第三个事件，不得堆砌无关关键词。"
+    "标题优先写清具体人物、动作、变化、反差或结果；主播确实参与、观战、评价或本身是话题对象时，"
+    "才将其标题首选名自然融入句子，不能为统一格式强塞主播名。"
+    "不得使用“主播名｜事件”或“主播名：事件”这种标签格式。突出关键对局、英雄、事件或节目效果，"
     "不使用夸张的虚假结论；标题中的核心事件必须同时进入重要时间点。"
     "禁止用“引发热议”“引起争议”“出装引争议”“被吐槽”“被喷”“被赞完美适配”"
     "“争议话题”“直播精彩内容”等空泛、营销式评价代替具体事件；"
-    "必须直接写清具体动作、选择、结果或节目效果。不要包含日期、时间和“直播回放”，"
-    "主播关系补全后最多28个字符。"
+    "必须直接写清具体动作、选择、结果或节目效果。游戏内容应让读者自然看出游戏语境："
+    "DOTA2 默认通过英雄、装备、模式、比赛或选手体现，不机械写“DOTA2”；其他游戏只有可靠识别且"
+    "不写名称就难以理解事件时，才自然带上游戏名，无法可靠识别时不得猜测。"
+    "不要包含日期、时间和“直播回放”，完整标题最多28个字符；超长时重新改写，绝不能直接截断半句话。"
+    "选题优先级依次为：明确结果或反差、关键操作或决定、阶段性转折、可复述的节目效果、信息明确的重要讨论。"
+    "不要仅因弹幕数量多就选择缺少具体事件的情绪词；不要把简介中两个相隔较远的时间点拼成一句；"
+    "不要用直播间默认标题补充简介没有的游戏、人物或结论。若多个事件强度接近，选择人物动作和结果最完整、"
+    "证据最集中、读者脱离上下文也能理解的一项。现实人物状态、签约、收入、婚恋、疾病、违法等高风险内容"
+    "只有简介保留明确来源限定时才能入题，标题也必须保留“弹幕称、观众讨论、直播间调侃”等限定。"
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
-    "生成可直接用于哔哩哔哩投稿的时间点式中文简介。最终正文只保留程序核验并格式化后的“时间 + 事件”行，"
-    "不添加开场白、总结段、栏目标题或营销套话。候选事件必须按直播时间向前推进：覆盖开场状态、中段关键变化、"
-    "互动或节目效果，以及后段发展、结果或复盘；不要为了突出标题打乱顺序，也不要忽略话题转换。"
-    "每条事件用一到两句完整中文说明“谁做了什么、发生了什么变化、弹幕为何集中反应”，但只写证据能支持的最小事实。"
+    "生成尽可能完整、可直接用于哔哩哔哩投稿的时间点式中文简介。最终正文只保留程序核验并格式化后的"
+    "“时间 + 事件”行，不添加开场白、总结段、栏目标题或营销套话。详细是指覆盖更多有独立信息增量的可靠看点，"
+    "不是把单条写得冗长，也不是为了达到数量重复同一事件或收录普通闲聊。候选事件必须按直播时间向前推进："
+    "覆盖开场状态、中段关键变化、重要互动或节目效果，以及后段发展、结果或复盘；不要为了突出标题打乱顺序，"
+    "也不要忽略真正发生的话题、游戏、节目环节或参与人物转换。"
+    "每条事件使用一到两句完整中文，优先写成“明确人物或对象 + 具体动作/选择 + 变化、结果或观众反应”；"
+    "只写证据能支持的最小完整事实，但在证据同时支持时应保留有助理解的英雄、装备、模式、对阵、阶段、数字和结果。"
     "叙述中要写清人物主语：包括当前直播间主播，以及弹幕内容确实提到的其他主播、选手或嘉宾。"
     "其他人物必须有可靠原文证据并能明确消歧；不得把弹幕用户名、模糊外号或同名对象写成视频人物。"
     "确实发生的赛后复盘、回看失误或自我调侃可以作为节目效果写入，但必须说明复盘了什么，不得将“赛后复盘”"
-    "当成空泛栏目词。避免“直播精彩内容、引发热议、争议话题”等不说具体事件的句子。"
+    "当成空泛栏目词。避免“直播精彩内容、引发热议、争议话题、气氛热烈、节目效果拉满”等不说具体事件的句子。"
     "不要在简介正文中手写时间点；程序会回到完整 XML 定位最早证据、补偿反应延迟并统一格式化。"
     "重要事件必须有可在完整 XML 定位的弹幕原文，或同一时间围绕事件关键词的集中刷屏；"
     "不要求多条引用全部逐字一致，但不得编造时间或事件。"
+    "仅由弹幕支持的评价、传闻和现实状态必须明确写成“弹幕认为、弹幕称、观众讨论或直播间调侃”；"
+    "可靠上下文已经直接确认的画面事件、结构化游戏事实和明确结果则直接陈述，不要一律退化成“弹幕讨论”。"
+    "无法确认人物时使用“队伍、本局、画面中的角色”等中性主语；不能把队友、对手、观战对象或第三方选手的动作"
+    "写到当前主播身上。无法可靠识别的游戏名、英雄、装备、Role 编号、内部 ID、未知占位符和解析失败数据不得输出。"
     "重要时间点必须覆盖简介中的关键事件；若简介包含两个先后发生的独立转折，必须分别收录，不得拼成一条虚假因果链。"
     "事件文案只做证据的最小忠实改写，不得增加原文没有的人物、动作、数字、原因或结果；"
     "开场如果承接上一段残局，必须如实说明是“开场承接”，不得写成本段新发生的事件。"
@@ -83,15 +106,21 @@ DOTA2_METADATA_DISAMBIGUATION = (
     "电炎绝手（Snapfire），不得理解为普通老年女性。"
 )
 DEFAULT_RECORDING_COVER_AI_PROMPT = (
-    "围绕本段标题的核心事件构图，封面核心文案必须自然包含主角名，不使用“主角名｜事件”"
-    "这种机械标签。主体醒目、对比清楚、适合手机缩略图；当前主播必须使用已上传的封面人物底稿，"
+    "封面只围绕最终标题中排序第一的最重要事件构图，即使标题用分号写了第二个事件也不得画入封面。"
+    "保持单一场景、单一叙事焦点，不使用双场景、三场景、分屏或事件拼贴。标题已经包含当前主播时，"
+    "封面核心文案才自然保留标题中的主角名；标题没有当前主播时不得强塞名字，不使用“主角名｜事件”"
+    "这种机械标签。标题文字逐字保持一致，不添加副标题、日期、宣传语或栏目名。主体醒目、对比清楚、"
+    "适合手机缩略图，中文优先使用一至两行大字并确保完整可读；当前主播必须使用已上传的封面人物底稿，"
     "所有主播别名都指向底稿中的同一人，不得根据昵称猜测长相、另画陌生人或按字面生成动植物。"
     "只有最终投稿标题明确出现、且获得唯一匹配头像的其他主播，才可作为次要人物；"
     "简介、时间线或弹幕中顺带提及的人物一律不得出镜，不得替换主角或混合人脸。"
-    "DOTA2 英雄和技能必须符合游戏原设；"
+    "参考图只用于人物身份，不得复制其中的文字、水印、直播界面和无关背景。DOTA2 英雄和技能必须符合游戏原设；"
     "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备，"
     "禁止自绘或仿冒装备图标。"
-    "画面不要出现日期、时间、房间号、平台界面、二维码或水印。"
+    "游戏名、英雄、装备、人物动作、比赛结果和情绪方向只能来自最终标题与已核验事件上下文；"
+    "讨论或观战内容缺少可靠游戏画面时使用人物反应和抽象氛围，不得补画具体英雄或胜负。"
+    "画面不要出现日期、时间、房间号、平台界面、二维码或水印。16:9 与 4:3 必须独立构图，"
+    "不得把一个画幅直接裁切或拉伸成另一个画幅。"
 )
 APP_ROOT = Path(__file__).resolve().parent
 WORKSPACE_ROOT = APP_ROOT.parent
@@ -386,6 +415,36 @@ def normalize_dota2_streamer_name(streamer: str) -> str:
         if any(normalized == _compact_alias(alias) for alias in aliases):
             return canonical_name
     return original
+
+
+def preferred_recording_title_name(streamer: str, *verified_content: str) -> str:
+    """Choose YYF's editorial nickname only from owner-specific verified context."""
+    normalized = normalize_dota2_streamer_name(streamer)
+    if normalized == "DD":
+        return "奶哥"
+    if normalized != "YYF":
+        return normalized
+    poor_play = re.compile(
+        r"(?:暴毙|白给|送了|送掉|阵亡|连续失误|操作失误|空大|刮痧|卡关|"
+        r"(?:零|0)输出|打不过|没打过|乱拿|乱选|没选职业|没有破盾)",
+        re.IGNORECASE,
+    )
+    yyf_alias = re.compile(r"(?:YYF|yyfyyf|枫哥|月夜枫|胖头|胖头鱼|姜岑)", re.I)
+    for value in verified_content:
+        for line in str(value or "").splitlines():
+            owner_match = yyf_alias.search(line)
+            poor_match = poor_play.search(line)
+            if not owner_match or not poor_match:
+                continue
+            relation_span = line[
+                min(owner_match.start(), poor_match.start()):
+                max(owner_match.end(), poor_match.end())
+            ]
+            if len(relation_span) <= 40 and not re.search(
+                r"(?:观战|观赛|旁观|OB|解说|点评)", relation_span, re.I
+            ):
+                return "胖头"
+    return "枫哥"
 
 
 def recording_cover_subject_name(streamer: str, *content: str) -> str:
@@ -902,6 +961,7 @@ def reusable_burned_video(
             capture_output=True,
             text=True,
             timeout=60,
+            **_hidden_subprocess_kwargs(),
         )
         payload = json.loads(completed.stdout or "{}")
     except (OSError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
@@ -1029,11 +1089,13 @@ def strip_ai_timeline_lines(description: str) -> str:
 
 
 def timeline_target_range(duration_seconds: float | None) -> tuple[int, int]:
-    """Return a useful highlight target scaled to the recording duration."""
+    """Return a flexible highlight range that expands with evidence density."""
     if duration_seconds is None or float(duration_seconds) <= 0:
-        return 6, 10
-    minimum = max(3, min(12, int((float(duration_seconds) + 449) // 450)))
-    return minimum, min(16, minimum + 4)
+        return 4, 10
+    duration = float(duration_seconds)
+    minimum = max(3, min(8, int((duration + 899) // 900) + 2))
+    maximum = max(minimum + 3, int((duration + 449) // 450) + 4)
+    return minimum, min(16, maximum)
 
 
 _TIMELINE_HEADING = "重要时间点"
@@ -2371,7 +2433,13 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
             "-ss", str(seek_seconds), "-i", str(video),
             "-frames:v", "1", "-q:v", "2", str(cover),
         ]
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            **_hidden_subprocess_kwargs(),
+        )
         if completed.returncode == 0 and cover.is_file() and cover.stat().st_size > 0:
             return cover
         message = completed.stderr.strip()[-500:]
@@ -2412,11 +2480,17 @@ def recording_cover_headline(
     candidate = re.sub(r"(?:今天|今日|今晚|昨天|明天|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜)", "", candidate)
     candidate = re.sub(r"[\r\n｜|]+", " ", candidate)
     candidate = re.sub(r"\s{2,}", " ", candidate).strip(" -_｜|·")
+    candidate = candidate.split("；", 1)[0].strip()
     candidate = candidate or "直播精彩内容"
     subject_name = recording_cover_subject_name(streamer, title, ai_topic)
-    headline = candidate[:24]
-    if subject_name and not topic_mentions_streamer(headline, streamer):
-        headline = f"{subject_name}{candidate}"[:24]
+    headline = candidate
+    if (
+        ai_topic
+        and subject_name
+        and topic_mentions_streamer(title, streamer)
+        and not topic_mentions_streamer(headline, streamer)
+    ):
+        headline = f"{subject_name}{candidate}"
     return headline
 
 
@@ -2465,7 +2539,7 @@ def recording_cover_event_context(
             ((headline_overlap(event), index, event) for index, event in enumerate(events)),
             key=lambda item: (-item[0], item[1]),
         )
-        matched = [event for score, _, event in ranked if score > 0][:2]
+        matched = [event for score, _, event in ranked if score > 0][:1]
         return matched or events[:1]
 
     points = timeline_lines(description)
@@ -3071,40 +3145,105 @@ def image_generation_queue(cfg: dict[str, Any]):
 
 @contextmanager
 def ai_metadata_queue(cfg: dict[str, Any]):
-    """Serialize AI description/title tasks across threads and processes."""
+    """Finish one recording's AI description/title flow before the next."""
     state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)
-    lock_path = state_path.parent / "ai-metadata.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    concurrency = 1
+    lock_dir = state_path.parent
+    lock_dir.mkdir(parents=True, exist_ok=True)
     wait_started = time.monotonic()
-    with _AI_METADATA_THREAD_LOCK, lock_path.open("a+b") as handle:
-        if os.name == "nt":
-            import msvcrt
+    handle = None
+    while handle is None:
+        for slot in range(concurrency):
+            candidate = (lock_dir / f"ai-metadata-{slot}.lock").open("a+b")
+            try:
+                if os.name == "nt":
+                    import msvcrt
 
-            handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
-                handle.write(b"\0")
-                handle.flush()
-            while True:
-                try:
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError:
-                    time.sleep(0.1)
-        else:
-            import fcntl
+                    candidate.seek(0, os.SEEK_END)
+                    if candidate.tell() == 0:
+                        candidate.write(b"\0")
+                        candidate.flush()
+                    candidate.seek(0)
+                    msvcrt.locking(candidate.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
 
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield time.monotonic() - wait_started
-        finally:
+                    fcntl.flock(candidate.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                handle = candidate
+                break
+            except OSError:
+                candidate.close()
+        if handle is None:
+            time.sleep(0.1)
+    try:
+        yield time.monotonic() - wait_started
+    finally:
+        if handle is not None:
             if os.name == "nt":
+                import msvcrt
+
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
             else:
                 import fcntl
 
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
+
+@contextmanager
+def ai_metadata_request_slot(cfg: dict[str, Any]):
+    """Share a hard request-concurrency cap across all metadata tasks."""
+    state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)
+    concurrency = max(
+        1,
+        min(8, int(cfg.get("ai_metadata_request_concurrency", 3) or 3)),
+    )
+    lock_dir = state_path.parent
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    handle = None
+    while handle is None:
+        for slot in range(concurrency):
+            candidate = (lock_dir / f"ai-metadata-request-{slot}.lock").open("a+b")
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    candidate.seek(0, os.SEEK_END)
+                    if candidate.tell() == 0:
+                        candidate.write(b"\0")
+                        candidate.flush()
+                    candidate.seek(0)
+                    msvcrt.locking(candidate.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(candidate.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                handle = candidate
+                break
+            except OSError:
+                candidate.close()
+        if handle is None:
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def generate_recording_cover_with_ai(
@@ -3134,7 +3273,7 @@ def generate_recording_cover_with_ai(
         title,
     )
     cover_subject_name = recording_cover_subject_name(streamer, title)
-    headline = recording_cover_headline(title, "", streamer)
+    headline = recording_cover_headline(title, ai_topic, streamer)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
         "ai_cover_headline": headline,
@@ -3587,6 +3726,17 @@ def generate_recording_cover_with_ai(
     else:
         composition_instruction = "请针对目标画幅独立构图，主体和标题均保持完整。"
         cover_variant = aspect_label.replace(":", "x")
+    if topic_mentions_streamer(headline, streamer):
+        headline_identity_instruction = (
+            f"核心文案必须完整保留主角称呼“{cover_subject_name or streamer or '主播'}”，"
+            "称呼自然融入事件句，不得排成“主角｜主题”的固定栏目格式。"
+        )
+    else:
+        headline_identity_instruction = (
+            "最终标题没有把当前主播写入核心事件，因此封面文字也不得为了统一格式强塞主播名；"
+            "只准确呈现标题已有的人物和事件。当前主播只有在已核验上下文明示其观战、评价或参与时，"
+            "才能作为画面中的反应者或参与者。"
+        )
     prompt = f"""
 为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -3598,8 +3748,14 @@ def generate_recording_cover_with_ai(
 只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 标题与已核验事件上下文冲突时，以已核验事件上下文的人物角色和动作归属为准；
 不得把观战对象、第三方选手的英雄、动作、胜负或荣誉转移给当前主播。
-核心文案必须清晰保留主角称呼“{cover_subject_name or streamer or "主播"}”，称呼可以放在开头或自然融入句子，
-但不得排成“主角｜主题”的固定栏目格式。
+{headline_identity_instruction}
+封面只表现最终标题中排序第一的最重要事件。即使投稿标题用中文分号写了第二个事件，封面也不得画入第二事件；
+保持单一场景和单一叙事焦点，不使用双场景、三场景、分屏、九宫格或多事件拼贴。
+标题文字必须逐字使用“{headline}”，不得自行改写、重复、添加副标题、日期、栏目名、引号或宣传语；
+优先使用一至两行的大号中文排版，保证笔画完整、无遮挡、无乱码，不把一个词拆到难以阅读的位置。
+参考图只负责锁定人物身份，不得复制参考图中的旧文字、水印、平台边框、直播界面或无关背景。
+如果标题描述的是讨论、调侃或观战而没有可确认的具体游戏画面，应使用人物表情、视线和抽象氛围表现，
+不得擅自补画某个英雄、装备、比赛结果或现实场景。画面动作、情绪和胜负方向必须与已核验上下文一致。
 {composition_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
@@ -3695,7 +3851,13 @@ def generate_recording_cover_with_ai(
         ),
         "-frames:v", "1", "-q:v", "2", str(cover),
     ]
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        **_hidden_subprocess_kwargs(),
+    )
     if output_path is not None:
         source.unlink(missing_ok=True)
         try:
@@ -3884,7 +4046,7 @@ def recording_metadata_values(
         "name": video.name,
         "suffix": video.suffix.lstrip("."),
         "streamer": streamer or "主播",
-        "ai_topic": topic[:28],
+        "ai_topic": topic,
         "date": recorded_at.strftime("%m-%d %H:%M"),
         "live_title": live_title,
         "recording_intro": (
@@ -3936,6 +4098,15 @@ def infer_streamer_participation_mode(
     for line in timeline_lines(description):
         if observer_pattern.search(line) and topic_mentions_streamer(line, streamer):
             return "spectating"
+    gameplay_pattern = re.compile(
+        r"(?:游玩|试玩|操作|操刀|选择(?:职业|角色|套装|[^，。]{0,8}装备)|"
+        r"出装|购买[^，。]{0,8}装备|面对BOSS|"
+        r"战力(?:达到|冲上|升到)|打BOSS|推图|卡关)",
+        re.IGNORECASE,
+    )
+    for line in timeline_lines(description):
+        if gameplay_pattern.search(line) and topic_mentions_streamer(line, streamer):
+            return "playing"
     return "unknown"
 
 
@@ -3954,11 +4125,11 @@ def contextualize_streamer_title_topic(
     streamer: str,
     participation_mode: str,
 ) -> str:
-    """Relate a third-party event to the room owner without implying play."""
+    """Add only a verified observer relation; unknown ownership stays event-led."""
     clean_topic = re.sub(r"^[\s｜|:：·-]+|[\s｜|]+$", "", str(topic or "")).strip()
     clean_streamer = str(streamer or "").strip()
     if not clean_topic or not clean_streamer or clean_streamer == "主播":
-        return clean_topic[:28]
+        return clean_topic
     streamer_key = _compact_alias(clean_streamer)
     candidates = {clean_streamer, normalize_dota2_streamer_name(clean_streamer)}
     for canonical_name, aliases in _all_dota2_streamer_alias_groups():
@@ -3974,7 +4145,7 @@ def contextualize_streamer_title_topic(
         "",
     )
     if topic_mentions_streamer(clean_topic, clean_streamer) and not leading_name:
-        return clean_topic[:28]
+        return clean_topic
     if leading_name:
         remainder = re.sub(
             r"^[\s｜|:：·-]+",
@@ -3984,18 +4155,22 @@ def contextualize_streamer_title_topic(
         safe_relation = (
             re.match(r"^(?:观战|观赛|旁观|OB|看比赛|看决赛|解说|点评)", remainder, re.I)
             if participation_mode == "spectating"
-            else re.match(r"^(?:直播间(?:热议|讨论|关注)|热议|讨论)", remainder, re.I)
+            else None
         )
         if safe_relation:
-            return clean_topic[:28]
+            return clean_topic
+        if participation_mode == "playing" and not re.match(
+            r"^(?:直播间(?:热议|讨论|关注|调侃)|热议|讨论|关注|调侃)[：:，,]?",
+            remainder,
+            re.I,
+        ):
+            return clean_topic
         clean_topic = remainder or clean_topic
     if participation_mode == "spectating":
         prefix = f"{clean_streamer}观战"
-    elif participation_mode == "unknown":
-        prefix = f"{clean_streamer}直播间热议"
     else:
-        return clean_topic[:28]
-    return f"{prefix}{clean_topic}"[:28].strip()
+        return clean_topic
+    return f"{prefix}{clean_topic}".strip()
 
 
 def render_metadata(
@@ -4004,7 +4179,13 @@ def render_metadata(
     ai_topic: str = "",
 ) -> tuple[str, str, list[str]]:
     values = recording_metadata_values(video, cfg, ai_topic)
-    title = str(cfg.get("title_template") or DEFAULT_TITLE_TEMPLATE).format_map(values).strip()
+    title_template = str(cfg.get("title_template") or DEFAULT_TITLE_TEMPLATE)
+    if ai_topic.strip() and title_template == DEFAULT_TITLE_TEMPLATE:
+        # A verified AI topic is already a complete natural event sentence.
+        # Do not put the room owner back in front as a mechanical label.
+        title = f"{values['ai_topic']}｜{values['date']}".strip()
+    else:
+        title = title_template.format_map(values).strip()
     if topic_mentions_streamer(values["ai_topic"], values["streamer"]):
         redundant_prefix = f"{values['streamer']}｜"
         if title.startswith(redundant_prefix):
@@ -4216,6 +4397,12 @@ def _generate_danmaku_metadata_with_ai(
                 "public_name": normalize_dota2_streamer_name(
                     str(cfg.get("streamer_name") or "").strip()
                 ),
+                "preferred_description_name": preferred_recording_title_name(
+                    str(cfg.get("streamer_name") or "").strip()
+                ),
+                "preferred_title_name": preferred_recording_title_name(
+                    str(cfg.get("streamer_name") or "").strip()
+                ),
                 "editorial_names": list(dict.fromkeys(
                     alias
                     for canonical_name, aliases in _all_dota2_streamer_alias_groups()
@@ -4273,8 +4460,11 @@ streamer_participation 是强制事实边界。当 mode=unknown 时，禁止声�
 verified_live_context.live_stats 只作为事实参考。description 严禁复制或输出“直播数据”区块、礼物、
 在线人数、英雄装备统计表；这些内容由投稿流程在最后一步独立渲染，并且只渲染一次。
 不要引用用户名、UID、广告或重复刷屏。base_description 是已清理好的主播和直播标题前缀。
-streamer_identity 是当前直播间主播的可靠身份；description 提到当前主播时优先使用 public_name。
-editorial_names 是同一主播可用的可靠标题名称，只能结合弹幕实际用法选择其一，不得将这些别名当成多个人。
+streamer_identity 是当前直播间主播的可靠身份；description 提到当前主播时优先使用
+preferred_description_name（例如谢彬/谢彬DD统一写“奶哥”，YYF默认写“枫哥”），不要在同一份简介中无意义地
+交替使用房间名、实名和多个外号。editorial_names 是同一主播可用的可靠名称，只能用于身份消歧，
+不得将这些别名当成多个人。昵称只改变公开文案，不改变人物身份和动作归属；不能因为昵称带有贬义或玩梗含义，
+就自行补充失误、情绪或结果。
 弹幕中确实提到的其他主播、选手或嘉宾可以写入，但必须有能明确指向该人物的原文证据；
 不得把弹幕用户名、模糊外号、英雄名或同名对象当成真实人物。涉及人物的句子必须写清“谁做了什么”。
 人物身份、人物与英雄的归属、最终胜负是三类独立事实：后两者证据不足时，不得连已有明确
@@ -4296,11 +4486,15 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 “宣布了”，event 也必须明确写成“弹幕称”“观众讨论”或“直播间刷屏调侃”，不得改写成“页面显示”或
 无来源限定的事实结论。只有 verified_live_context 中明确提供的结构化事实才可直接陈述。
 如果证据充足，timeline 应覆盖录播开头、中段和结尾，并返回 {timeline_minimum} 至
-{timeline_maximum} 个彼此不同的关键看点。适用于所有直播类型：优先选择内容推进、关键决定、
+{timeline_maximum} 个彼此不同的关键看点。这个区间是覆盖目标而不是凑数命令：看点密集、事件彼此独立且证据充分时，
+尽量接近上限；内容平淡、重复或证据不足时允许低于下限，绝不能用普通问候、无变化的持续过程、重复弹幕、
+“继续游戏/继续聊天”等无信息条目补齐数量。适用于所有直播类型：优先选择内容推进、关键决定、
 意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
 游戏内容时，才额外考虑阵容选择、关键交锋、操作失误、局势转折和翻盘；不得把聊天、访谈、
 户外、才艺或其他直播强行描述成游戏对局。不要把同一事件拆成多条，也不要为了达到数量编造内容。
-长录播应尽量保持约每 7 至 8 分钟一个可点击看点，避免只保留结尾或少量孤立事件。
+时间分布只用于防止漏掉整段内容，不能机械地每隔固定分钟生成一条；连续十几分钟没有新事件可以留空，
+短时间内出现多个彼此独立且有完整证据的看点则可以分别保留。相邻候选如果主语、动作、对象和结果基本相同，
+应合并成一条；只有出现新阶段、新决定、明确转折或最终结果，才可拆成新的时间点。
 对游戏对局，时间点的信息价值优先级为“人物+英雄+具体事件” > “人物+具体事件” > “英雄+具体事件” >
 只有弹幕反应。同一窗口中大量弹幕稳定地反复出现某人和某英雄，且至少一条原文将两者明确连接、
 不存在其他人物或英雄的冲突绑定时，应当完成人物—英雄归因，并写清该人物的英雄发生了什么；
@@ -4343,6 +4537,10 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
         ai_client = get_openai_client(ai_cfg)
         model_name = str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini"))
         thinking_enabled = bool(ai_cfg.get("OPENAI_THINKING_ENABLED", False))
+        metadata_request_cap = max(
+            1,
+            min(8, int(cfg.get("ai_metadata_request_concurrency", 3) or 3)),
+        )
         batch_concurrency = max(
             1,
             min(
@@ -4375,21 +4573,22 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
                 "minimum": 1,
                 "maximum": 3,
             }
-            batch_result = _request_json_object(
-                client=ai_client,
-                model_name=model_name,
-                system_prompt=system_prompt,
-                payload=batch_payload,
-                max_tokens=1200,
-                temperature=0.2,
-                thinking_enabled=thinking_enabled,
-                logger_obj=None,
-                scene_name=(
-                    "recording_danmaku_summary"
-                    if len(discovery_batches) == 1
-                    else "recording_danmaku_summary_batch"
-                ),
-            )
+            with ai_metadata_request_slot(cfg):
+                batch_result = _request_json_object(
+                    client=ai_client,
+                    model_name=model_name,
+                    system_prompt=system_prompt,
+                    payload=batch_payload,
+                    max_tokens=1200,
+                    temperature=0.2,
+                    thinking_enabled=thinking_enabled,
+                    logger_obj=None,
+                    scene_name=(
+                        "recording_danmaku_summary"
+                        if len(discovery_batches) == 1
+                        else "recording_danmaku_summary_batch"
+                    ),
+                )
             return (
                 batch_index,
                 batch_result if isinstance(batch_result, dict) else {},
@@ -4423,6 +4622,10 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
         ]
         diagnostics.update({
             "discovery_batch_concurrency": batch_concurrency,
+            "metadata_task_concurrency": max(
+                1, min(1, int(cfg.get("ai_metadata_concurrency", 1) or 1))
+            ),
+            "metadata_request_concurrency_cap": metadata_request_cap,
             "discovery_batch_elapsed_seconds": round(
                 time.perf_counter() - batch_started_at,
                 3,
@@ -4486,23 +4689,29 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
 你正在重新生成一份时间点不完整的直播录播简介。首稿目标至少 {timeline_minimum} 条重要时间点，
 程序只核验通过 {verified_count} 条。必须重新生成完整 description 和完整 timeline，不是只补几条时间点；
 description 中的每个关键事件都要在 timeline 中有对应证据，timeline 尽量覆盖开头、中段和结尾，
-不得复述同一事件凑数。每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，
+不得复述同一事件凑数。目标数量只是帮助检查遗漏：若输入确有更多独立且可靠的看点，应尽量详细收录；
+若证据不足则允许少于目标，禁止使用问候、持续过程、普通闲聊或“继续游戏/继续聊天”补齐。
+每条必须写清可确认的主语、具体动作或讨论对象，以及变化、结果或观众反应；无法确认人物时使用中性主语，
+不得猜测主播、英雄、装备、游戏名或胜负。仅由弹幕支持的评价、传闻和现实状态必须保留来源限定。
+相邻候选如果是同一人物、同一动作和同一结果的延续，应合并；只有新阶段、新决定、转折或结果才能拆开。
+每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，
 并提供足以支持 event 的 evidence_keywords；同一 60 秒内至少 3 条相关刷屏也可以作为证据。
 证据不足就删掉正文中的对应事件，绝不能编造。不要返回时间戳。
 返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
 """.strip()
             try:
-                retry_result = _request_json_object(
-                    client=ai_client,
-                    model_name=model_name,
-                    system_prompt=retry_prompt,
-                    payload=retry_payload,
-                    max_tokens=1400,
-                    temperature=0.1,
-                    thinking_enabled=thinking_enabled,
-                    logger_obj=None,
-                    scene_name="recording_danmaku_description_regenerate",
-                )
+                with ai_metadata_request_slot(cfg):
+                    retry_result = _request_json_object(
+                        client=ai_client,
+                        model_name=model_name,
+                        system_prompt=retry_prompt,
+                        payload=retry_payload,
+                        max_tokens=1400,
+                        temperature=0.1,
+                        thinking_enabled=thinking_enabled,
+                        logger_obj=None,
+                        scene_name="recording_danmaku_description_regenerate",
+                    )
                 regenerated_description = str(
                     (retry_result or {}).get("description", "")
                 ).strip()
@@ -4561,6 +4770,8 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
 你是直播录播简介的全局编辑。输入只包含已经通过完整 XML 校验的候选时间点。
 从中选择最值得进入最终简介的事件，优先保留具体动作、结果、转折、重要互动和节目效果，
 删除重复、空泛或信息量低的候选，并覆盖录播开头、中段和结尾。
+最终简介以“尽可能详细但不重复”为目标：只要候选具有独立的信息增量、证据可靠且不是同一事件的换句话说，
+就应尽量保留，不能为了让简介短而只选少数几个；候选超过上限时才淘汰相对较弱的项目。
 游戏对局中，优先级为“人物+英雄+事件” > “人物+事件” > “英雄+事件” > “只有弹幕反应”。
 通过密集且无冲突弹幕已完成人物—英雄归因的候选，信息量高于只写“沉默没开大”等无主体句子，应优先保留。
 如果是竞技比赛，最终简介必须让读者知道“谁和谁在比赛”：候选中存在有证据的参赛双方或
@@ -4571,17 +4782,18 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
 """.strip()
             selected_indexes: list[int] = []
             try:
-                selection_result = _request_json_object(
-                    client=ai_client,
-                    model_name=model_name,
-                    system_prompt=selection_prompt,
-                    payload=selection_payload,
-                    max_tokens=300,
-                    temperature=0.1,
-                    thinking_enabled=thinking_enabled,
-                    logger_obj=None,
-                    scene_name="recording_danmaku_timeline_select",
-                )
+                with ai_metadata_request_slot(cfg):
+                    selection_result = _request_json_object(
+                        client=ai_client,
+                        model_name=model_name,
+                        system_prompt=selection_prompt,
+                        payload=selection_payload,
+                        max_tokens=300,
+                        temperature=0.1,
+                        thinking_enabled=thinking_enabled,
+                        logger_obj=None,
+                        scene_name="recording_danmaku_timeline_select",
+                    )
                 raw_indexes = (
                     selection_result.get("selected_indexes", [])
                     if isinstance(selection_result, dict)
@@ -4643,6 +4855,12 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
             gameplay_verified=streamer_gameplay_verified,
         )
         payload["streamer_participation"]["mode"] = participation_mode
+        payload["streamer_identity"]["preferred_title_name"] = (
+            preferred_recording_title_name(
+                str(payload["streamer_identity"].get("public_name") or ""),
+                final_description,
+            )
+        )
         title_payload = {
             "streamer_identity": payload["streamer_identity"],
             "streamer_participation": payload["streamer_participation"],
@@ -4653,38 +4871,57 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
         title_system_prompt = f"""
 你是哔哩哔哩直播录播标题编辑。简介已经生成并通过时间点校验，现在只能根据 final_description
 和 verified_timeline 拟定标题，不得使用首稿、直播间默认标题或输入外的信息。
-必须遵守 streamer_participation：mode=spectating 时，标题必须把当前主播写成观战、观赛、解说或
-点评者；mode=unknown 时不得声称主播参赛或观战，应使用“直播间讨论”等中性主语。这两种模式都
-禁止写成当前主播正在操刀任何英雄。其他选手与英雄仅可沿用 final_description 中由多条连续、明确且
+必须遵守 streamer_participation：mode=spectating 时，只有标题核心事件确实来自主播的观看、解说或
+点评视角，才把当前主播写成观战、观赛、解说或点评者；mode=unknown 时不得声称主播参赛或观战，
+应直接描述已核验的具体事件、其他明确人物、英雄或比赛，不得补“主播直播间热议/讨论/调侃”等模板前缀。
+这两种模式都禁止写成当前主播正在操刀任何英雄。其他选手与英雄仅可沿用 final_description 中由多条连续、明确且
 无冲突上下文确认的关系；若只知道两个英雄出现在对局中，只能写“英雄甲对阵英雄乙”，不得猜成
 “主播操刀英雄甲”或“某人使用英雄乙”。
-标题必须选择简介中最有看点的一个具体事件；核心动作、人物和结果必须能在简介或已核验时间点中找到。
+标题默认选择简介中最有看点的一个具体事件；若有两个同等重要、彼此独立且都值得展示的事件，允许同时入题，
+但必须把更重要的事件放在前面，并用中文分号“；”分隔。最多两个事件，不能加入第三个；每个事件的核心动作、
+人物和结果都必须分别能在简介或已核验时间点中找到，不能合并成不存在的因果关系。
+选择时依次比较：明确结果或强反差、关键操作或决定、阶段性转折、可复述的节目效果、信息明确的重要讨论。
+弹幕很多但没有具体动作、对象或结果，不等于标题价值高。多个候选强度接近时，优先选择证据最集中、人物关系最清楚、
+脱离直播上下文仍能读懂的事件；只有两个事件都足够重要且在28字内仍能分别完整表达时才同时保留，不能压缩成关键词拼盘。
 标题中的胜负、晋级、淘汰、夺冠、翻盘或被翻盘关系必须与 final_description 的人物和方向完全一致；
 不得把观战者写成获胜者，也不得因领先、欢呼、嘲讽或“五冠王”等身份梗推断本场结果。
 签约、加入或转入某组织、官宣、解约、开除、婚恋、疾病、违法、收入等现实身份与状态，如果仅由弹幕支持，
 标题必须保留“弹幕称”“观众讨论”或“直播间调侃”等来源限定，绝不能写成已经核实的事实。
-当前主播有可靠名称时，从 streamer_identity.editorial_names 中选择符合简介用法的名称并自然融入句子，
-位置不限；禁止“主播名｜事件”“主播名：事件”等标签格式，不含日期、时间和“直播回放”。
+当前主播确实是标题事件的参与者、观战者、评价者或话题对象时，优先使用
+streamer_identity.preferred_title_name，并自然融入句子；否则不强制出现主播名。
+游戏内容要让读者自然理解游戏语境：DOTA2 默认通过英雄、装备、模式、比赛或选手体现，不机械写游戏名；
+其他游戏只有可靠识别且有助理解时才自然写入，无法确认游戏名时不得猜测。
+标题要像自然中文事件句，而不是搜索关键词堆叠、摘要栏目名或营销结论；避免连续堆放人名、英雄名和情绪词。
+不得出现未知、Role 编号、内部 ID、文件名、任务号、模型诊断词或直播间默认标题中的无证据信息。
+禁止“主播名｜事件”“主播名：事件”格式，不含日期、时间和“直播回放”。标题必须是最多28个字符的完整句子；
+双事件标题也必须在28字内分别表达完整，超长时优先删除较弱事件或重新改写，禁止截断半句话。
 {title_prompt}
 返回 JSON 对象：{{"title_topic":"..."}}。
 """.strip()
         try:
-            title_result = _request_json_object(
-                client=ai_client,
-                model_name=model_name,
-                system_prompt=title_system_prompt,
-                payload=title_payload,
-                max_tokens=300,
-                temperature=0.25,
-                thinking_enabled=thinking_enabled,
-                logger_obj=None,
-                scene_name="recording_danmaku_title_from_description",
-            )
+            with ai_metadata_request_slot(cfg):
+                title_result = _request_json_object(
+                    client=ai_client,
+                    model_name=model_name,
+                    system_prompt=title_system_prompt,
+                    payload=title_payload,
+                    max_tokens=300,
+                    temperature=0.25,
+                    thinking_enabled=thinking_enabled,
+                    logger_obj=None,
+                    scene_name="recording_danmaku_title_from_description",
+                )
             title_topic = re.sub(
                 r"[\r\n｜|]+",
                 " ",
                 str((title_result or {}).get("title_topic", "")).strip(),
-            )[:28].strip()
+            ).strip()
+            if len(title_topic) > 28:
+                diagnostics.update({
+                    "title_topic_over_limit": True,
+                    "title_topic_over_limit_original": title_topic,
+                })
+                title_topic = ""
             diagnostics["title_topic_source"] = "final_description"
         except Exception as exc:
             diagnostics["title_generation_error"] = str(exc)[:240]
@@ -4705,9 +4942,19 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
             })
         attributed_title_topic = contextualize_streamer_title_topic(
             title_topic,
-            str(payload["streamer_identity"].get("public_name") or ""),
+            str(
+                payload["streamer_identity"].get("preferred_title_name")
+                or payload["streamer_identity"].get("public_name")
+                or ""
+            ),
             participation_mode,
         )
+        if len(attributed_title_topic) > 28:
+            diagnostics.update({
+                "title_topic_context_over_limit": True,
+                "title_topic_context_over_limit_original": attributed_title_topic,
+            })
+            attributed_title_topic = title_topic
         if attributed_title_topic != title_topic:
             diagnostics.update({
                 "title_topic_streamer_context_added": True,
@@ -6221,6 +6468,7 @@ def remux_record_only_flv_with_cover(
             capture_output=True,
             text=True,
             timeout=float(cfg.get("record_only_remux_timeout_seconds", 3600)),
+            **_hidden_subprocess_kwargs(),
         )
         if completed.returncode != 0 or not temporary.is_file() or temporary.stat().st_size <= 0:
             detail = (completed.stderr or completed.stdout or "FFmpeg 未生成 MP4").strip()
@@ -6253,6 +6501,7 @@ def remux_record_only_flv_with_cover(
             capture_output=True,
             text=True,
             timeout=60,
+            **_hidden_subprocess_kwargs(),
         )
         try:
             streams = json.loads(probe.stdout or "{}").get("streams", [])
@@ -6338,6 +6587,7 @@ def video_duration_seconds(path: Path, ffprobe: str = "ffprobe") -> float | None
             text=True,
             timeout=30,
             check=False,
+            **_hidden_subprocess_kwargs(),
         )
         if completed.returncode != 0:
             return None
