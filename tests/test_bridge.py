@@ -493,6 +493,19 @@ class BridgeTests(unittest.TestCase):
             [],
         )
 
+    def test_gsi_equipment_prompt_separates_six_slots_neutral_and_upgrades(self):
+        prompt = bridge.dota2_gsi_equipment_prompt_instruction(
+            ["紫怨", "魔瓶", "灵魂之戒", "巫师之刃", "散慧对剑", "动力鞋"],
+            "锯齿短刀",
+            ["A杖", "魔晶"],
+        )
+
+        self.assertIn("最终主装备栏快照（最多六格）", prompt)
+        self.assertIn("中立物品：锯齿短刀；中立物品不占主装备六格", prompt)
+        self.assertIn("额外升级状态：A杖, 魔晶", prompt)
+        self.assertIn("不得重复算作第七件主装备", prompt)
+        self.assertNotIn("不得额外添加第七件装备", prompt)
+
     def test_real_multigame_title_requires_streamer_heroes_even_with_opponent_mention(self):
         timeline = [
             "06:15 第一局末段基地被摧毁，弹幕随后出现下一把，并继续讨论帕克买活后阵亡",
