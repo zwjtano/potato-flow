@@ -71,6 +71,20 @@ class BridgeTests(unittest.TestCase):
             "观众讨论新队伍阵容。随后进入下一局。",
         )
 
+    def test_danmaku_only_real_world_harm_claims_are_removed(self):
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim(
+                "弹幕称暖妹出拳后苏西嘴唇出血"
+            ),
+            "",
+        )
+        self.assertEqual(
+            bridge.remove_negative_rumor_text(
+                "暖妹放话1V10招募对手。拳击挑战中苏西被打哭。直播间齐喊暂停。"
+            ),
+            "暖妹放话1V10招募对手。直播间齐喊暂停。",
+        )
+
     def test_app_root_accepts_legacy_config_key_and_directory(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
