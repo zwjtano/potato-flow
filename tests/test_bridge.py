@@ -129,33 +129,59 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(details["reused_on_retry"])
             self.assertEqual(details["burned_video_location"], "recording_directory")
 
-    def test_ai_metadata_queue_serializes_threads(self):
+    def test_ai_metadata_queue_finishes_one_task_before_the_next(self):
         with tempfile.TemporaryDirectory() as temp:
             cfg = {"state_db": str(Path(temp) / "state.sqlite3")}
-            first_entered = threading.Event()
-            second_entered = threading.Event()
-            release_first = threading.Event()
+            entered = [threading.Event() for _ in range(2)]
+            release = threading.Event()
 
-            def first_worker():
+            def worker(index):
                 with bridge.ai_metadata_queue(cfg):
-                    first_entered.set()
-                    release_first.wait(2)
+                    entered[index].set()
+                    release.wait(2)
 
-            def second_worker():
-                first_entered.wait(2)
-                with bridge.ai_metadata_queue(cfg):
-                    second_entered.set()
+            threads = [threading.Thread(target=worker, args=(index,)) for index in range(2)]
+            threads[0].start()
+            self.assertTrue(entered[0].wait(1))
+            threads[1].start()
+            self.assertFalse(entered[1].wait(0.15))
+            release.set()
+            for thread in threads:
+                thread.join(2)
+            self.assertTrue(entered[1].is_set())
 
-            first = threading.Thread(target=first_worker)
-            second = threading.Thread(target=second_worker)
-            first.start()
-            self.assertTrue(first_entered.wait(1))
-            second.start()
-            self.assertFalse(second_entered.wait(0.1))
-            release_first.set()
-            first.join(2)
-            second.join(2)
-            self.assertTrue(second_entered.is_set())
+    def test_windows_bridge_media_helpers_never_open_a_console(self):
+        expected = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        with patch.object(bridge.os, "name", "nt"):
+            self.assertEqual(
+                bridge._hidden_subprocess_kwargs(),
+                {"creationflags": expected},
+            )
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+        self.assertEqual(source.count("subprocess.run("), 6)
+        self.assertEqual(source.count("**_hidden_subprocess_kwargs(),"), 6)
+
+    def test_ai_metadata_request_slots_allow_three_and_queue_the_fourth(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cfg = {"state_db": str(Path(temp) / "state.sqlite3")}
+            entered = [threading.Event() for _ in range(4)]
+            release = threading.Event()
+
+            def worker(index):
+                with bridge.ai_metadata_request_slot(cfg):
+                    entered[index].set()
+                    release.wait(2)
+
+            threads = [threading.Thread(target=worker, args=(index,)) for index in range(4)]
+            for thread in threads[:3]:
+                thread.start()
+            self.assertTrue(all(event.wait(1) for event in entered[:3]))
+            threads[3].start()
+            self.assertFalse(entered[3].wait(0.15))
+            release.set()
+            for thread in threads:
+                thread.join(2)
+            self.assertTrue(entered[3].is_set())
 
     def test_ai_metadata_generation_records_queue_wait_and_callback(self):
         diagnostics = {}
@@ -197,9 +223,23 @@ class BridgeTests(unittest.TestCase):
     def test_default_title_prompt_integrates_subject_without_label_prefix(self):
         prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
 
-        self.assertIn("主语不必放在最前", prompt)
+        self.assertIn("不能为统一格式强塞主播名", prompt)
         self.assertIn("主播名｜事件", prompt)
         self.assertIn("必须同时进入重要时间点", prompt)
+        self.assertIn("绝不能直接截断半句话", prompt)
+        self.assertIn("选题优先级依次为", prompt)
+        self.assertIn("读者脱离上下文也能理解的一项", prompt)
+        self.assertIn("中文分号", prompt)
+        self.assertIn("不得加入第三个事件", prompt)
+
+    def test_default_description_prompt_requests_detail_without_padding(self):
+        prompt = bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT
+
+        self.assertIn("尽可能完整", prompt)
+        self.assertIn("独立信息增量", prompt)
+        self.assertIn("不是为了达到数量", prompt)
+        self.assertIn("Role 编号", prompt)
+        self.assertIn("不要一律退化成", prompt)
 
     def test_upload_pipeline_persists_duration_before_optional_ass_stage(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
@@ -212,7 +252,11 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("Valve 官方装备图标参考", prompt)
         self.assertIn("缺少官方参考时不得表现具体装备", prompt)
         self.assertIn("禁止自绘或仿冒装备图标", prompt)
-        self.assertIn("封面核心文案必须自然包含主角名", prompt)
+        self.assertIn("标题已经包含当前主播时", prompt)
+        self.assertIn("标题没有当前主播时不得强塞名字", prompt)
+        self.assertIn("排序第一", prompt)
+        self.assertIn("不得画入封面", prompt)
+        self.assertIn("16:9 与 4:3 必须独立构图", prompt)
         self.assertIn("封面人物底稿", prompt)
         self.assertIn("不得替换主角或混合人脸", prompt)
         self.assertIn("只有最终投稿标题明确出现", prompt)
@@ -651,7 +695,7 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(diagnostics["timeline_retry_attempted"])
         self.assertFalse(diagnostics["timeline_target_met"])
         self.assertEqual(diagnostics["timeline_evidence_status"], "insufficient")
-        self.assertEqual(diagnostics["timeline_shortfall"], 7)
+        self.assertEqual(diagnostics["timeline_shortfall"], 5)
         self.assertEqual(
             diagnostics["timeline_anchor_policy"],
             "same_time_screen_spam_or_exact_xml",
@@ -1074,10 +1118,10 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(diagnostics["timeline_relaxed_screen_spam_count"], 1)
 
     def test_timeline_target_scales_with_recording_duration(self):
-        self.assertEqual(bridge.timeline_target_range(None), (6, 10))
+        self.assertEqual(bridge.timeline_target_range(None), (4, 10))
         self.assertEqual(bridge.timeline_target_range(1800), (4, 8))
-        self.assertEqual(bridge.timeline_target_range(3600), (8, 12))
-        self.assertEqual(bridge.timeline_target_range(7200), (12, 16))
+        self.assertEqual(bridge.timeline_target_range(3600), (6, 12))
+        self.assertEqual(bridge.timeline_target_range(7200), (8, 16))
 
     def test_grounded_timeline_rejects_unverifiable_evidence(self):
         sampled = [types.SimpleNamespace(time=1268.0, text="BP顺位受到质疑")]
@@ -1241,7 +1285,7 @@ class BridgeTests(unittest.TestCase):
                 },
                 ai_topic="中韩流行歌单·点歌闲聊",
             )
-        self.assertEqual(title, "妮可罗宾｜中韩流行歌单·点歌闲聊｜07-23 09:45")
+        self.assertEqual(title, "中韩流行歌单·点歌闲聊｜07-23 09:45")
 
     def test_third_party_observer_topic_naturally_attributes_streamer(self):
         self.assertEqual(
@@ -1251,12 +1295,52 @@ class BridgeTests(unittest.TestCase):
             "YYF观战老蔡三角区跳吼，马甲首夺高导冠军",
         )
 
-    def test_unknown_third_party_topic_uses_neutral_room_attribution(self):
+    def test_unknown_third_party_topic_stays_event_led(self):
         self.assertEqual(
             bridge.contextualize_streamer_title_topic(
                 "老蔡三角区跳吼，马甲首夺高导冠军", "YYF", "unknown"
             ),
-            "YYF直播间热议老蔡三角区跳吼，马甲首夺高导冠军",
+            "老蔡三角区跳吼，马甲首夺高导冠军",
+        )
+
+    def test_yyf_title_name_uses_fengge_by_default_and_pangtou_for_verified_poor_play(self):
+        self.assertEqual(bridge.preferred_recording_title_name("yyfyyf"), "枫哥")
+        self.assertEqual(
+            bridge.preferred_recording_title_name(
+                "YYF",
+                "35:17 YYF面对BOSS时千亿战力仍在刮痧，随后卡关。",
+            ),
+            "胖头",
+        )
+        self.assertEqual(
+            bridge.preferred_recording_title_name(
+                "YYF",
+                "35:17 YYF观战老蔡暴毙，随后点评团战处理。",
+            ),
+            "枫哥",
+        )
+
+    def test_xiebin_title_name_prefers_naige(self):
+        self.assertEqual(bridge.preferred_recording_title_name("谢彬DD"), "奶哥")
+        self.assertEqual(bridge.preferred_recording_title_name("谢彬"), "奶哥")
+
+    def test_non_dota_verified_gameplay_can_identify_the_room_owner(self):
+        description = "35:17 YYF面对BOSS时千亿战力仍在刮痧，随后卡关。"
+        self.assertEqual(
+            bridge.infer_streamer_participation_mode(description, "yyfyyf"),
+            "playing",
+        )
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "胖头战力冲上千亿，打BOSS仍刮痧卡关", "胖头", "playing"
+            ),
+            "胖头战力冲上千亿，打BOSS仍刮痧卡关",
+        )
+        self.assertEqual(
+            bridge.infer_streamer_participation_mode(
+                "12:30 YYF选择核心装备后完成翻盘。", "YYF"
+            ),
+            "playing",
         )
 
     def test_existing_streamer_attribution_is_not_duplicated(self):
@@ -1497,11 +1581,26 @@ class BridgeTests(unittest.TestCase):
                 ai_topic="凤凰翻盘",
             )
 
-        self.assertEqual(title, "果小果｜凤凰翻盘｜07-24 13:00")
+        self.assertEqual(title, "凤凰翻盘｜07-24 13:00")
         self.assertEqual(
             bridge.recording_part_title(video, 1, "凤凰翻盘"),
             "13:00 凤凰翻盘",
         )
+
+    def test_default_title_does_not_force_room_owner_onto_verified_third_party_event(self):
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "yyfyyf_陪伴每一天_2026-08-06_15-25.flv"
+            video.write_bytes(b"video")
+            title, _, _ = bridge.render_metadata(
+                video,
+                {
+                    "title_template": bridge.DEFAULT_TITLE_TEMPLATE,
+                    "streamer_name": "yyfyyf",
+                },
+                ai_topic="老蔡三角区跳吼，马甲随后夺冠",
+            )
+
+        self.assertEqual(title, "老蔡三角区跳吼，马甲随后夺冠｜08-06 15:25")
 
     def test_default_description_hides_internal_room_marker_and_recording_time(self):
         video = Path(
@@ -3009,6 +3108,32 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(headline, "老菜被骗换后迟迟买活")
         self.assertNotIn("｜", headline)
 
+    def test_cover_headline_keeps_complete_verified_event_without_forcing_owner(self):
+        headline = bridge.recording_cover_headline(
+            "老蔡三角区跳吼，马甲随后夺冠｜08-06 15:25",
+            "",
+            "yyfyyf",
+        )
+        self.assertEqual(headline, "老蔡三角区跳吼，马甲随后夺冠")
+        self.assertNotIn("枫哥", headline)
+
+    def test_cover_headline_is_not_cut_mid_sentence(self):
+        event = "奶哥带队连续避开范围伤害，最终完成高难关卡挑战"
+        self.assertEqual(
+            bridge.recording_cover_headline(f"{event}｜08-06 14:00", "", "谢彬DD"),
+            event,
+        )
+
+    def test_cover_uses_only_first_event_from_multi_event_title(self):
+        self.assertEqual(
+            bridge.recording_cover_headline(
+                "奶哥蓝猫残局收割；队伍高难关卡翻车｜08-06 14:00",
+                "",
+                "谢彬DD",
+            ),
+            "奶哥蓝猫残局收割",
+        )
+
     def test_cover_subject_identity_locks_aliases_to_character_base(self):
         yyf_instruction = bridge.recording_cover_subject_identity_instruction(
             "YYF",
@@ -4243,7 +4368,7 @@ class BridgeTests(unittest.TestCase):
 
             self.assertEqual(
                 uploaded[0]["title"],
-                "YYF｜谢彬在BP阶段吃下大量ban位｜08-01 23:07",
+                "谢彬在BP阶段吃下大量ban位｜08-01 23:07",
             )
             ai_stage = store.stage_state(key, "ai")
             self.assertTrue(

@@ -29,6 +29,12 @@ log = logging.getLogger(__name__)
 
 
 _BINARY_CACHE: dict[str, Optional[str]] = {"ffmpeg": None, "ffprobe": None}
+
+
+def _hidden_subprocess_kwargs() -> dict:
+    if os.name != 'nt':
+        return {}
+    return {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)}
 _META_CACHE: dict[str, Optional[str]] = {"source": None, "platform": None}
 
 
@@ -337,7 +343,8 @@ def is_ffmpeg_usable(path: Optional[str], logger: Optional[logging.Logger] = Non
             text=True,
             timeout=5,
             encoding='utf-8',
-            errors='replace'
+            errors='replace',
+            **_hidden_subprocess_kwargs(),
         )
         if result.returncode == 0:
             return True
