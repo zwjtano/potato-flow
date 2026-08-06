@@ -4189,8 +4189,31 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     "cover_text": str(timeline_diagnostics.get("cover_text") or ""),
                     "description": generated_description,
                 }
-            elif "title" in selected:
+            if "title" in selected:
+                if "description" in selected:
+                    current_description = str(
+                        generated.get("description") or current_description
+                    ).strip()
+                    context["current_description"] = current_description
+                    context["verified_timeline"] = bridge.timeline_lines(
+                        current_description
+                    )
                 client = get_openai_client(app_config)
+
+                validation_segments = list(identity_game_segments)
+                if not validation_segments and single_game_verified:
+                    try:
+                        validation_end = max(
+                            float(video_duration_seconds or 0),
+                            24 * 60 * 60,
+                        )
+                    except (TypeError, ValueError):
+                        validation_end = 24 * 60 * 60
+                    validation_segments = [{
+                        **single_game_context,
+                        "start_seconds": 0,
+                        "end_seconds": validation_end,
+                    }]
 
                 def request_title(
                     rejected_topic: str = "",
@@ -4324,20 +4347,6 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         rejected_topic = candidate_topic
                         rejection_reason = "长录播标题没有跨阶段时间点支撑"
                         continue
-                    validation_segments = list(identity_game_segments)
-                    if not validation_segments and single_game_verified:
-                        try:
-                            validation_end = max(
-                                float(video_duration_seconds or 0),
-                                24 * 60 * 60,
-                            )
-                        except (TypeError, ValueError):
-                            validation_end = 24 * 60 * 60
-                        validation_segments = [{
-                            **single_game_context,
-                            "start_seconds": 0,
-                            "end_seconds": validation_end,
-                        }]
                     missing_gsi_heroes = (
                         bridge.recording_title_missing_selected_gsi_heroes(
                             candidate_topic,
@@ -4369,7 +4378,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         rejected_topic = candidate_topic
                         rejection_reason = "AI 连续返回与当前稿件相同的标题"
                         continue
-                    generated = candidate_result
+                    generated = {**generated, **candidate_result}
                     break
                 else:
                     raise RecorderConfigError(
@@ -4451,11 +4460,13 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     raise RecorderConfigError(
                         "标题使用被指、被曝或据称等模糊来源词，已保留原标题"
                     )
-                if not bridge.title_person_hero_relations_supported(
+                if not bridge.title_person_hero_relations_supported_with_gsi(
                     title_topic,
                     generated_description
                     if "description" in selected
                     else current_description,
+                    str(context["streamer"] or ""),
+                    validation_segments,
                 ):
                     raise RecorderConfigError(
                         "AI 标题中的人物与英雄关系未在已核验简介中出现，已保留原标题"

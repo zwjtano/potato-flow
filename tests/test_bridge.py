@@ -1711,6 +1711,31 @@ class BridgeTests(unittest.TestCase):
             "03:20 谢彬的死亡先知成为团战焦点",
         ))
 
+    def test_segmented_gsi_supports_streamer_hero_relations_across_games(self):
+        segments = [
+            {
+                "hero": "风暴之灵",
+                "identity_source": "gsi_explicit_hero_segment:http",
+            },
+            {
+                "hero": "玛西",
+                "identity_source": "gsi_explicit_hero_segment:http",
+            },
+        ]
+
+        self.assertTrue(bridge.title_person_hero_relations_supported_with_gsi(
+            "川神用风暴之灵守高；换玛西追击后空大",
+            "16:28 风暴之灵守高\n48:08 玛西追击后空大",
+            "叫我老陈就好了",
+            segments,
+        ))
+        self.assertFalse(bridge.title_person_hero_relations_supported_with_gsi(
+            "川神用风暴之灵守高；南枫用末日使者追击",
+            "16:28 风暴之灵守高\n48:08 末日使者追击",
+            "叫我老陈就好了",
+            segments,
+        ))
+
     def test_competitive_result_rejects_inverted_winner(self):
         comments = [
             types.SimpleNamespace(time=60.0, text="南枫输了"),
@@ -3349,6 +3374,7 @@ class BridgeTests(unittest.TestCase):
             "YYF宝可梦BP与虚空出装被吐槽",
             "川神主锤骷髅王被赞完美适配",
             "果小果巫妖操作被狂喷",
+            "风暴之灵所在一方的翻盘可能遭到弹幕反复质疑",
         ):
             with self.subTest(topic=topic):
                 self.assertTrue(bridge.recording_title_topic_is_vague(topic))

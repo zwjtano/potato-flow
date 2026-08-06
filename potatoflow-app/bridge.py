@@ -1135,6 +1135,7 @@ _TIMELINE_LINE_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?\s+\S.*$")
 _VAGUE_RECORDING_TITLE_RE = re.compile(
     r"(?:引发|引起|掀起|造成|导致|备受|引)(?:热议|争议)(?:不断)?$"
     r"|(?:被|遭)(?:弹幕)?(?:狂)?(?:吐槽|质疑|批评|喷|怒喷)$"
+    r"|(?:可能|疑似|似乎).{0,12}(?:被|遭).{0,8}(?:质疑|吐槽|批评|喷)"
     r"|(?:被赞|获赞)(?:完美)?(?:适配|契合)$"
     r"|(?:争议|热门)话题$"
     r"|^(?:直播精彩内容|精彩内容|精彩直播|直播录像)$"
@@ -1707,6 +1708,36 @@ def title_person_hero_relations_supported(title: str, verified_description: str)
         for names, hero_key in _person_hero_relations(verified_description)
     }
     return title_relations <= description_relations
+
+
+def title_person_hero_relations_supported_with_gsi(
+    title: str,
+    verified_description: str,
+    streamer: str,
+    game_segments: Any,
+) -> bool:
+    """Allow owner/hero bindings independently verified by segmented GSI."""
+    if title_person_hero_relations_supported(title, verified_description):
+        return True
+    if not isinstance(game_segments, list):
+        return False
+    public_streamer = normalize_dota2_streamer_name(streamer)
+    heroes = list(dict.fromkeys(
+        str(segment.get("hero") or "").strip()
+        for segment in game_segments
+        if isinstance(segment, dict)
+        and streamer_gameplay_is_verified(segment)
+        and str(segment.get("hero") or "").strip()
+    ))
+    if not public_streamer or not heroes:
+        return False
+    gsi_grounding = "\n".join(
+        f"{public_streamer}使用{hero}。" for hero in heroes
+    )
+    return title_person_hero_relations_supported(
+        title,
+        "\n".join(filter(None, (verified_description, gsi_grounding))),
+    )
 
 
 _COMPETITIVE_RESULT_TERMS: dict[str, tuple[str, ...]] = {
@@ -5808,7 +5839,25 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
                 "title_topic_participation_mode": participation_mode,
             })
             title_topic = attributed_title_topic
-        if not title_person_hero_relations_supported(title_topic, final_description):
+        title_gsi_segments = payload["verified_live_context"].get("game_segments")
+        if not isinstance(title_gsi_segments, list) or not title_gsi_segments:
+            title_single_game = payload["verified_live_context"].get("game")
+            title_gsi_segments = (
+                [title_single_game]
+                if streamer_gameplay_is_verified(title_single_game)
+                else []
+            )
+        title_streamer = str(
+            payload["streamer_identity"].get("preferred_title_name")
+            or payload["streamer_identity"].get("public_name")
+            or ""
+        )
+        if not title_person_hero_relations_supported_with_gsi(
+            title_topic,
+            final_description,
+            title_streamer,
+            title_gsi_segments,
+        ):
             diagnostics.update({
                 "title_topic_person_hero_relation_rejected": True,
                 "title_topic_before_relation_filter": title_topic,
@@ -5823,9 +5872,11 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
                 str(payload["streamer_identity"].get("public_name") or ""),
                 participation_mode,
             )
-            if not title_person_hero_relations_supported(
+            if not title_person_hero_relations_supported_with_gsi(
                 title_topic,
                 final_description,
+                title_streamer,
+                title_gsi_segments,
             ):
                 title_topic = ""
         if not title_competitive_results_supported(title_topic, final_description):

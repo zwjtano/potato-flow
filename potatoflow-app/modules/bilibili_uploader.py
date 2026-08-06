@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import traceback
 from collections import deque
@@ -298,7 +299,15 @@ class BilibiliUploader:
         if self.logger:
             self.logger.info(message)
         else:
-            print(message)
+            try:
+                print(message)
+            except UnicodeEncodeError:
+                encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+                safe_message = str(message).encode(
+                    encoding,
+                    errors="backslashreplace",
+                ).decode(encoding, errors="replace")
+                print(safe_message)
 
     def add_to_collection(
         self,

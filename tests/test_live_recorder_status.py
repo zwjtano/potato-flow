@@ -268,7 +268,12 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 ],
             }
             ai_enhancer = mock.Mock()
-            ai_enhancer._request_json_object = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock(return_value={
+                "title_topic": "川神用玛西黑皇杖接团后完成反打",
+                "cover_text": "玛西黑皇杖接团",
+                "coverage_mode": "sparse",
+                "selected_timeline_indexes": [0],
+            })
             ai_enhancer.generate_video_tags = mock.Mock()
             ai_enhancer.get_openai_client = mock.Mock()
 
@@ -313,6 +318,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
         grounding = generate_text.call_args.args[3]
         self.assertEqual(grounding["game_segments"], segments)
         self.assertIn("玛西", result["title"])
+        self.assertNotEqual(result["title"], job["title"])
+        title_payload = ai_enhancer._request_json_object.call_args.kwargs["payload"]
+        self.assertEqual(title_payload["current_description"], generated_description)
+        self.assertEqual(title_payload["verified_live_context"]["game_segments"], segments)
         self.assertEqual(generate_image.call_count, 2)
         for call in generate_image.call_args_list:
             self.assertEqual(call.kwargs["game_context"]["hero"], "玛西")
