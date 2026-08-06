@@ -3062,6 +3062,49 @@ def recording_cover_hero_matches_title(hero: str, title: str) -> bool:
     return hero_name in title_text
 
 
+def dota2_gsi_equipment_prompt_instruction(
+    main_items: list[str],
+    neutral_item: str = "",
+    upgrade_states: list[str] | None = None,
+) -> str:
+    """Describe GSI equipment without conflating slots and extra states."""
+    main = [str(item).strip() for item in main_items[:6] if str(item).strip()]
+    neutral = str(neutral_item or "").strip()
+    upgrades = [
+        str(item).strip()
+        for item in (upgrade_states or [])
+        if str(item).strip()
+    ]
+    if not main and not neutral and not upgrades:
+        return ""
+    sections: list[str] = []
+    if main:
+        sections.append(
+            "主播本局最终主装备栏快照（最多六格）："
+            + ", ".join(main)
+            + "。"
+        )
+    else:
+        sections.append("本段没有可靠的最终主装备栏快照。")
+    if neutral:
+        sections.append(f"主播本局中立物品：{neutral}；中立物品不占主装备六格。")
+    if upgrades:
+        sections.append(
+            "主播本局额外升级状态："
+            + ", ".join(upgrades)
+            + "；这些状态不得重复算作第七件主装备。"
+        )
+    sections.append(
+        "只能表现上述已确认的装备与状态，不得增加名单外装备。"
+        "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
+        "图像模型生成阶段禁止自行生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
+        "系统会在成图后于右下角添加最多两枚 Valve 官方小型装备标识，"
+        "因此右下角必须保留干净安全区，模型不得在该区域仿画任何装备图标；"
+        "装备只可作为角色造型与场景语义参考，不得绘制仿冒的装备图标。"
+    )
+    return "".join(sections)
+
+
 def recording_cover_event_context(
     description: str,
     headline: str = "",
@@ -4079,6 +4122,9 @@ def generate_recording_cover_with_ai(
     # Prefer Douyu's explicit streamer-view hero and its final in-recording
     # equipment snapshot. XML identity is retained only for legacy snapshots.
     tooltip_hero = ""
+    tooltip_main_items: list[str] = []
+    tooltip_neutral_item = ""
+    tooltip_upgrade_states: list[str] = []
     tooltip_items: list[str] = []
     tooltip_kda_instruction = ""
     tooltip_context_enabled = bool(cfg.get("douyu_stats_enabled", True)) and bool(
@@ -4110,15 +4156,18 @@ def generate_recording_cover_with_ai(
                 anchor = None
             if anchor:
                 tooltip_hero = str(anchor.get("hero") or "")
-                tooltip_items = [
+                tooltip_main_items = [
                     str(item) for item in anchor.get("items", [])[:6] if str(item)
                 ]
+                tooltip_items = list(tooltip_main_items)
                 if anchor.get("neutral"):
-                    tooltip_items.append(str(anchor["neutral"]))
+                    tooltip_neutral_item = str(anchor["neutral"])
+                    tooltip_items.append(tooltip_neutral_item)
                 if anchor.get("scepter"):
-                    tooltip_items.append("A杖")
+                    tooltip_upgrade_states.append("A杖")
                 if anchor.get("shard"):
-                    tooltip_items.append("魔晶")
+                    tooltip_upgrade_states.append("魔晶")
+                tooltip_items.extend(tooltip_upgrade_states)
                 if all(key in anchor for key in ("kills", "deaths", "assists")):
                     tooltip_kda_instruction = (
                         f"主播本局最终 K/D/A 为 {anchor['kills']}/{anchor['deaths']}/"
@@ -4137,19 +4186,11 @@ def generate_recording_cover_with_ai(
             details["ai_cover_tooltip_error"] = str(exc)
 
     if tooltip_hero or tooltip_items:
-        if tooltip_items:
-            dota2_item_instruction = (
-                f"主播本局最终六格主装备（最后一次有效阵容快照）："
-                f"{', '.join(tooltip_items)}。"
-                "只能表现这份列表中的主装备，数量不得超过列表数量；不得额外添加第七件装备。"
-                "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
-                "图像模型生成阶段禁止自行生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
-                "系统会在成图后于右下角添加最多两枚 Valve 官方小型装备标识，"
-                "因此右下角必须保留干净安全区，模型不得在该区域仿画任何装备图标；"
-                "装备只可作为角色造型与场景语义参考，不得绘制仿冒的装备图标。"
-            )
-        else:
-            dota2_item_instruction = ""
+        dota2_item_instruction = dota2_gsi_equipment_prompt_instruction(
+            tooltip_main_items,
+            tooltip_neutral_item,
+            tooltip_upgrade_states,
+        )
         if tooltip_hero:
             identity_source = str(details.get("ai_cover_identity_source") or "")
             hero_only_from_danmaku = identity_source in {
@@ -4176,6 +4217,9 @@ def generate_recording_cover_with_ai(
             )
         details["ai_cover_tooltip_hero"] = tooltip_hero
         details["ai_cover_tooltip_items"] = tooltip_items
+        details["ai_cover_tooltip_main_items"] = tooltip_main_items
+        details["ai_cover_tooltip_neutral_item"] = tooltip_neutral_item
+        details["ai_cover_tooltip_upgrade_states"] = tooltip_upgrade_states
         details["ai_cover_dota2_source"] = (
             "danmaku_hero"
             if str(details.get("ai_cover_identity_source") or "") in {
