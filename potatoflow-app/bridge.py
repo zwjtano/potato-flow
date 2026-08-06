@@ -3106,6 +3106,20 @@ def dota2_gsi_equipment_prompt_instruction(
     return "".join(sections)
 
 
+def require_dota2_item_reference(
+    reference_path: Path | None,
+    errors: list[str] | None = None,
+) -> Path:
+    """Prevent a known-equipment cover from silently losing all item visuals."""
+    if reference_path is not None:
+        return reference_path
+    detail = "；".join(str(error) for error in (errors or []) if str(error).strip())
+    raise RuntimeError(
+        "Dota 2 官方装备参考不可用，已停止生成以避免发布缺少装备的封面"
+        + (f"：{detail}" if detail else "")
+    )
+
+
 def recording_cover_event_context(
     description: str,
     headline: str = "",
@@ -4304,8 +4318,9 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_item_reference_path"] = str(item_reference_path)
         else:
             details["ai_cover_dota2_item_reference_used"] = False
-            dota2_item_instruction = (
-                "本局装备的官方图标参考不可用。为避免画错装备，禁止展示任何具体装备图标。"
+            require_dota2_item_reference(
+                item_reference_path,
+                item_reference_errors,
             )
     if tooltip_hero:
         hero_reference_path, official_hero, hero_reference_error = (
