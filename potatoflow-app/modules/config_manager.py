@@ -184,7 +184,7 @@ DEFAULT_CONFIG = {
     "DANMAKU_DURATION_SECONDS": 10.0,
     "DANMAKU_FONT_SIZE": 42,
     "DANMAKU_OPACITY": 0.92,
-    "DANMAKU_ENCODER": "cpu",  # auto/cpu/nvidia/intel/amd
+    "DANMAKU_ENCODER": "auto",  # auto/cpu/nvidia/intel/amd
     "DANMAKU_ENCODE_PRESET": "medium",
     "DANMAKU_ENCODE_QUALITY": 20,
     # Windows 桌面壳专用；非桌面启动时不改变原有绑定。
@@ -347,6 +347,12 @@ def load_config():
                     config['VIDEO_ENCODER'] = 'auto'
                     encoder_changed = True
 
+                danmaku_encoder_value = str(config.get('DANMAKU_ENCODER', 'auto') or 'auto').lower().strip()
+                danmaku_encoder_changed = False
+                if danmaku_encoder_value == 'nvidia' or danmaku_encoder_value not in valid_encoders:
+                    config['DANMAKU_ENCODER'] = 'auto'
+                    danmaku_encoder_changed = True
+
                 upload_target_before = config.get('UPLOAD_TARGET_DEFAULT')
                 # PotatoFlow 的投稿出口固定为 bilibili；
                 # YouTube 下载/监控功能不受影响。
@@ -393,6 +399,7 @@ def load_config():
                 if (
                     missing_keys
                     or encoder_changed
+                    or danmaku_encoder_changed
                     or upload_target_changed
                     or quality_mode_changed
                     or quality_height_changed
