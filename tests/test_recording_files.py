@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -203,7 +204,7 @@ class RecordingFilesTests(unittest.TestCase):
 
     def _create_pipeline_job(self, fingerprint: str, video: Path, status: str = "failed"):
         state_path = self.root / ".bridge" / "state.sqlite3"
-        with sqlite3.connect(state_path) as db:
+        with closing(sqlite3.connect(state_path)) as db, db:
             db.execute(
                 """CREATE TABLE uploads (
                     fingerprint TEXT PRIMARY KEY,
@@ -237,7 +238,7 @@ class RecordingFilesTests(unittest.TestCase):
 
         self.assertEqual(result["deleted_file_count"], 0)
         self.assertTrue(video.exists())
-        with sqlite3.connect(state_path) as db:
+        with closing(sqlite3.connect(state_path)) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 0)
 
     def test_delete_pipeline_job_removes_related_files_and_rejects_untracked_active_job(self):
@@ -252,7 +253,7 @@ class RecordingFilesTests(unittest.TestCase):
         ass.write_text("[Script Info]", encoding="utf-8")
         cover.write_bytes(b"cover")
         state_path = self._create_pipeline_job(fingerprint, video)
-        with sqlite3.connect(state_path) as db:
+        with closing(sqlite3.connect(state_path)) as db, db:
             db.execute(
                 "INSERT INTO upload_stages VALUES (?, ?)",
                 (fingerprint, json.dumps({"ass_path": str(ass)})),
@@ -273,7 +274,7 @@ class RecordingFilesTests(unittest.TestCase):
         active_fingerprint = "c" * 64
         active_video = self.recordings / "active.flv"
         active_video.write_bytes(b"active")
-        with sqlite3.connect(state_path) as db:
+        with closing(sqlite3.connect(state_path)) as db, db:
             db.execute(
                 "INSERT INTO uploads VALUES (?, ?, ?)",
                 (active_fingerprint, str(active_video), "processing"),
