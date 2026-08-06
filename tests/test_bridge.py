@@ -3658,10 +3658,16 @@ class BridgeTests(unittest.TestCase):
                 "蓝猫补出大电锤",
             )
         )
+        self.assertFalse(
+            bridge.recording_cover_has_dota2_context(
+                "yyfyyf",
+                "RPG圣物选择一路被催刷新，大柱子旁拿到宝石",
+            )
+        )
         self.assertTrue(
             bridge.recording_cover_has_dota2_context(
                 "yyfyyf",
-                "对局复盘",
+                "斧王十分钟经济六千，更新跳刀后开团",
             )
         )
 

@@ -3580,16 +3580,16 @@ _DOTA2_ITEM_CONTEXT_ALIASES = (
 
 def recording_cover_has_dota2_context(streamer: str, *content: str) -> bool:
     """Avoid treating ordinary words as Dota items on unrelated streams."""
-    normalized_streamer = normalize_dota2_streamer_name(streamer)
-    known_streamers = {
-        canonical_name
-        for canonical_name, _aliases in _all_dota2_streamer_alias_groups()
-    }
-    known_streamers.add("果小果")
-    if normalized_streamer in known_streamers:
-        return True
     combined = "\n".join(str(value or "") for value in content).casefold()
     if re.search(r"(?<![a-z0-9])dota\s*2?(?![a-z0-9])|刀塔", combined):
+        return True
+    # A streamer who usually plays Dota 2 can still switch to an unrelated
+    # RPG.  Room identity alone therefore cannot authorize item matching:
+    # generic words such as "刷新" and "宝石" otherwise become Refresh Orb
+    # and Gem of True Sight badges on a non-Dota cover.  Reliable GSI is
+    # handled before this fallback; without it, require an actual hero or a
+    # deliberately strong Dota item alias in the selected event text.
+    if _contains_unverified_dota2_hero(combined):
         return True
     return any(alias.casefold() in combined for alias in _DOTA2_ITEM_CONTEXT_ALIASES)
 
