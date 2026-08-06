@@ -4,6 +4,7 @@ import pathlib
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from unittest.mock import MagicMock, patch
 
 from modules import task_manager as tm
@@ -69,7 +70,7 @@ class ForceUploadMetadataTests(unittest.TestCase):
         self.assertEqual(task["display_id"], "YT-VIDEO-0728-001")
 
     def test_standard_task_display_ids_backfill_and_increment(self):
-        with sqlite3.connect(":memory:") as db:
+        with closing(sqlite3.connect(":memory:")) as db, db:
             db.execute(
                 """CREATE TABLE tasks (
                     id TEXT PRIMARY KEY,

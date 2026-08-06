@@ -9,6 +9,7 @@ import tempfile
 import threading
 import types
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
@@ -1955,7 +1956,7 @@ class BridgeTests(unittest.TestCase):
 
                 self.assertEqual(result, 0)
                 upload.assert_not_called()
-                with sqlite3.connect(state) as db:
+                with closing(sqlite3.connect(state)) as db, db:
                     self.assertEqual(
                         db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0],
                         0,
@@ -1986,7 +1987,7 @@ class BridgeTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             upload.assert_not_called()
-            with sqlite3.connect(state) as db:
+            with closing(sqlite3.connect(state)) as db, db:
                 self.assertEqual(
                     db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0],
                     0,
@@ -2098,7 +2099,7 @@ class BridgeTests(unittest.TestCase):
                 video.resolve().with_suffix(".mp4"),
             )
             self.assertEqual(remux.call_args.kwargs["original_flv"], video.resolve())
-            with sqlite3.connect(state) as db:
+            with closing(sqlite3.connect(state)) as db, db:
                 rows = db.execute(
                     "SELECT video_path, room_id, reason FROM recording_exclusions"
                 ).fetchall()
@@ -2177,7 +2178,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(remux.call_args.args[1], cover)
             self.assertEqual(remux.call_args.kwargs["output_path"], final_video.resolve())
             self.assertEqual(remux.call_args.kwargs["original_flv"], video.resolve())
-            with sqlite3.connect(state) as db:
+            with closing(sqlite3.connect(state)) as db, db:
                 burn_stage = db.execute(
                     "SELECT status, details_json FROM upload_stages WHERE stage='burn'"
                 ).fetchone()
@@ -2249,7 +2250,7 @@ class BridgeTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             remux.assert_not_called()
-            with sqlite3.connect(state) as db:
+            with closing(sqlite3.connect(state)) as db, db:
                 task = db.execute("SELECT platform, status, result_json FROM uploads").fetchone()
                 cover_stage = db.execute(
                     "SELECT status, details_json FROM upload_stages WHERE stage='cover'"
@@ -2258,7 +2259,7 @@ class BridgeTests(unittest.TestCase):
             self.assertIsNone(json.loads(task[2])["cover_path"])
             self.assertEqual(cover_stage[0], "skipped")
             self.assertIn("图片模型不可用", json.loads(cover_stage[1])["reason"])
-            with sqlite3.connect(state) as db:
+            with closing(sqlite3.connect(state)) as db, db:
                 remux_stage = db.execute(
                     "SELECT status FROM upload_stages WHERE stage='remux'"
                 ).fetchone()
@@ -2301,7 +2302,7 @@ class BridgeTests(unittest.TestCase):
                 ])
                 self.assertEqual(first, 0)
                 self.assertTrue(burned.is_file())
-                with sqlite3.connect(state) as db:
+                with closing(sqlite3.connect(state)) as db, db:
                     exclusions = db.execute(
                         "SELECT video_path FROM recording_exclusions ORDER BY video_path"
                     ).fetchall()
@@ -2310,7 +2311,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(burn.call_count, 1)
             self.assertEqual(generate_cover.call_count, 1)
             remux.assert_not_called()
-            with sqlite3.connect(state) as db:
+            with closing(sqlite3.connect(state)) as db, db:
                 task = db.execute(
                     "SELECT status, attempts FROM uploads"
                 ).fetchone()
@@ -4568,7 +4569,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertTrue(video.is_file())
             generate_cover.assert_not_called()
-            with sqlite3.connect(state) as db:
+            with closing(sqlite3.connect(state)) as db, db:
                 task = db.execute(
                     "SELECT platform, status, error FROM uploads"
                 ).fetchone()

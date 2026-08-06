@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -2046,7 +2047,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             state_path = root / "state.sqlite3"
             rooms = [dict(self.rooms[0], enabled=False)]
             rooms_path.write_text(json.dumps(rooms), encoding="utf-8")
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.execute(
                     """CREATE TABLE multipart_sessions (
                        session_key TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -2065,7 +2066,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ):
                 room = manager.set_room_recording("aaaaaa111111", True)
 
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 session = db.execute(
                     "SELECT status FROM multipart_sessions WHERE session_key=?",
                     ("aaaaaa111111",),
@@ -2118,7 +2119,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -2140,7 +2141,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             with mock.patch.object(manager, "_pipeline_state_path", return_value=state_path):
                 recovered = manager.recover_interrupted_pipeline_jobs()
 
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 upload = db.execute(
                     "SELECT status, error FROM uploads WHERE fingerprint='job-1'"
                 ).fetchone()
@@ -2159,7 +2160,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -2182,7 +2183,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             with mock.patch.object(manager, "_pipeline_state_path", return_value=state_path):
                 recovered = manager.recover_interrupted_pipeline_jobs()
 
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 upload = db.execute(
                     "SELECT status, error FROM uploads WHERE fingerprint='job-1'"
                 ).fetchone()
@@ -2622,7 +2623,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -2675,7 +2676,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 manager, "list_rooms", return_value=rooms
             ):
                 jobs = manager.pipeline_jobs()
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 persisted_display_id = db.execute(
                     "SELECT display_id FROM recording_display_ids WHERE fingerprint = ?",
                     ("fingerprint-123",),
@@ -2701,7 +2702,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -2735,7 +2736,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -2782,7 +2783,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
     def test_pipeline_display_ids_use_stable_daily_sequence(self):
         manager = LiveRecorderManager()
-        with sqlite3.connect(":memory:") as db:
+        with closing(sqlite3.connect(":memory:")) as db, db:
             db.row_factory = sqlite3.Row
             db.execute(
                 """CREATE TABLE uploads (
@@ -2958,7 +2959,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
             fingerprint = "a" * 64
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3013,7 +3014,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
             fingerprint = "b" * 64
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3068,7 +3069,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.sqlite3"
             first_id, second_id = "a" * 64, "b" * 64
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3124,7 +3125,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             state_path = Path(temp_dir) / "state.sqlite3"
             fingerprint = "c" * 64
             updated_at = "2026-07-28T06:00:00+00:00"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3187,7 +3188,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             state_path = Path(temp_dir) / "state.sqlite3"
             fingerprint = "9" * 64
             updated_at = "2026-08-06T06:00:00+00:00"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3222,7 +3223,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 with self.assertRaisesRegex(RecorderConfigError, "仍在运行"):
                     manager.pause_pipeline_job(fingerprint)
 
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 self.assertEqual(
                     db.execute(
                         "SELECT status FROM uploads WHERE fingerprint=?",
@@ -3244,7 +3245,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             state_path = Path(temp_dir) / "state.sqlite3"
             fingerprint = "d" * 64
             updated_at = "2026-07-28T06:00:00+00:00"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3292,7 +3293,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             state_path = Path(temp_dir) / "state.sqlite3"
             fingerprint = "e" * 64
             updated_at = "2026-07-28T06:00:00+00:00"
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3334,7 +3335,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             failed_at = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat(
                 timespec="seconds"
             )
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE uploads (
@@ -3473,7 +3474,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             old = time.time() - 600
             for path in (known, orphan, unknown):
                 os.utime(path, (old, old))
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.execute("CREATE TABLE uploads (video_path TEXT NOT NULL)")
                 db.execute("INSERT INTO uploads VALUES (?)", (str(known),))
 
@@ -3495,7 +3496,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             excluded.write_bytes(b"video")
             old = time.time() - 600
             os.utime(excluded, (old, old))
-            with sqlite3.connect(state_path) as db:
+            with closing(sqlite3.connect(state_path)) as db, db:
                 db.execute("CREATE TABLE uploads (video_path TEXT NOT NULL)")
                 db.execute(
                     """CREATE TABLE recording_exclusions (
