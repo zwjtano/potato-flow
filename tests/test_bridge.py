@@ -520,6 +520,19 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得重复算作第七件主装备", prompt)
         self.assertNotIn("不得额外添加第七件装备", prompt)
 
+    def test_known_dota2_items_do_not_silently_continue_without_references(self):
+        with self.assertRaisesRegex(RuntimeError, "已停止生成"):
+            bridge.require_dota2_item_reference(
+                None,
+                ["紫怨: download failed", "魔瓶: invalid image"],
+            )
+
+        reference = Path("/tmp/dota2-item-reference.png")
+        self.assertEqual(
+            bridge.require_dota2_item_reference(reference, []),
+            reference,
+        )
+
     def test_real_multigame_title_requires_streamer_heroes_even_with_opponent_mention(self):
         timeline = [
             "06:15 第一局末段基地被摧毁，弹幕随后出现下一把，并继续讨论帕克买活后阵亡",
