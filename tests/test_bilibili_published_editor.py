@@ -491,8 +491,11 @@ class PublishedMetadataEditorTests(unittest.TestCase):
                                 "sections": {"sections": [{"id": 8081933}]},
                             }]
                         }
-                    if self.url.endswith("/x/web-interface/view"):
-                        return {"title": "录播标题", "pages": [{"cid": 456}]}
+                    if self.url.endswith("/x/vupre/web/archive/view"):
+                        return {
+                            "archive": {"title": "录播标题"},
+                            "videos": [{"cid": 456}],
+                        }
                     return {}
 
                 return resolve()
@@ -553,7 +556,11 @@ class PublishedMetadataEditorTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertTrue(result["collection"]["added"])
-        add_to_collection.assert_called_once_with(uploaded, "7320255")
+        add_to_collection.assert_called_once_with(
+            uploaded,
+            "7320255",
+            title="标题",
+        )
 
 
 if __name__ == "__main__":

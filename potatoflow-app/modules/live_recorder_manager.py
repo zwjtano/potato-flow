@@ -93,6 +93,13 @@ def _background_process_kwargs() -> dict[str, Any]:
     }
 
 
+def _hidden_process_kwargs() -> dict[str, Any]:
+    """Hide short-lived helper commands in the Windows desktop build."""
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 def _backup_incompatible_recorder_database(log_text: str) -> Path | None:
     """Rotate only recorder-core's rebuildable index after a SQLx checksum panic."""
     if "previously applied but has been modified" not in str(log_text or ""):
@@ -161,6 +168,7 @@ RECORDING_STAGE_LABELS = {
     "cover": "生成录制文件封面",
     "cover_16x9": "生成 16:9 个人空间封面",
     "cover_4x3": "生成 4:3 首页推荐封面",
+    "collection": "加入 B站合集",
     "remux": "FLV 转 MP4",
     "verify": "验证内嵌封面",
     "cleanup": "清理原 FLV",
@@ -987,15 +995,31 @@ class LiveRecorderManager:
         except ModuleNotFoundError as exc:
             logger.warning("AI 投稿模块不完整，录制页暂时使用内置提示词摘要：%s", exc)
             return {
-                "title": "从有弹幕证据的核心事件生成标题，将主角名自然融入句子，不使用姓名加竖线的标签格式。",
-                "description": "按弹幕时间顺序生成完整中文简介，写清可靠人物与事件，并用完整 XML 证据定位覆盖标题的重要时间点。",
-                "cover": "使用封面人物底稿生成封面，核心文案包含主角名，不得猜脸或混脸；DOTA2 内容遵循游戏原设与官方参考。",
+                "title": "从有弹幕证据的核心事件生成完整标题；主播确实参与时才自然写名字，负面未经证实现实传言不得入题。",
+                "description": "按弹幕时间顺序生成完整中文简介，按5W1H写清有证据的人物、关系与事件，并用完整 XML 定位时间点。",
+                "cover": "使用人物底稿生成单场景封面，采用不超过24字的同事件短文案；标题未写主播时不得强塞名字，不得猜脸或混脸。",
             }
 
         return {
             "title": bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT,
             "description": bridge.DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT,
             "cover": bridge.DEFAULT_RECORDING_COVER_AI_PROMPT,
+        }
+
+    @classmethod
+    def effective_recording_prompt_defaults(
+        cls,
+        app_config: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """Return the global prompt when set, otherwise the built-in prompt."""
+        from .config_manager import RECORDING_AI_PROMPT_CONFIG_KEYS, load_config
+
+        config = app_config if app_config is not None else load_config()
+        builtins = cls.recording_prompt_defaults()
+        return {
+            prompt_name: str(config.get(config_key) or "").strip()
+            or builtins[prompt_name]
+            for prompt_name, config_key in RECORDING_AI_PROMPT_CONFIG_KEYS.items()
         }
 
     def save_room_prompts(
@@ -2451,9 +2475,13 @@ class LiveRecorderManager:
         if (FFMPEG_DIR / "ffprobe").is_file():
             config["ffprobe"] = str(FFMPEG_DIR / "ffprobe")
         from .bilibili_accounts import resolve_account, resolve_cookie_path
-        from .config_manager import load_config
+        from .config_manager import RECORDING_AI_PROMPT_CONFIG_KEYS, load_config
 
         app_config = load_config()
+        for prompt_name, config_key in RECORDING_AI_PROMPT_CONFIG_KEYS.items():
+            config[f"ai_{prompt_name}_prompt"] = str(
+                app_config.get(config_key) or ""
+            ).strip()
         config["danmaku_duration_seconds"] = float(
             app_config.get("DANMAKU_DURATION_SECONDS", 10) or 10
         )
@@ -2487,9 +2515,6 @@ class LiveRecorderManager:
                 "streamer_name": str(room["name"]),
                 "streamer_avatar_url": str(room.get("avatar_url") or ""),
                 "tags": [str(room["name"]), "直播录播"],
-                "ai_title_prompt": str(room.get("ai_title_prompt") or ""),
-                "ai_description_prompt": str(room.get("ai_description_prompt") or ""),
-                "ai_cover_prompt": str(room.get("ai_cover_prompt") or ""),
                 "ai_danmaku_reaction_delay_seconds": int(
                     room.get("ai_danmaku_reaction_delay_seconds", 8) or 0
                 ),
@@ -2502,6 +2527,13 @@ class LiveRecorderManager:
                     room.get("bilibili_collection_id") or ""
                 ),
             }
+            # Empty room values inherit the global setting. Only an actual room
+            # override belongs in the profile, otherwise effective_config()
+            # would replace the global prompt with an empty string.
+            for prompt_name in RECORDING_AI_PROMPT_CONFIG_KEYS:
+                room_prompt = str(room.get(f"ai_{prompt_name}_prompt") or "").strip()
+                if room_prompt:
+                    profile[f"ai_{prompt_name}_prompt"] = room_prompt
             if not bool(room.get("danmaku_settings_inherit", True)):
                 for key in (
                     "danmaku_duration_seconds", "danmaku_font_size", "danmaku_opacity",
@@ -2637,6 +2669,7 @@ class LiveRecorderManager:
                             subprocess.run(
                                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                                 capture_output=True, text=True, timeout=15, check=False,
+                                **_hidden_process_kwargs(),
                             )
                     else:
                         try:
@@ -2654,6 +2687,7 @@ class LiveRecorderManager:
                             subprocess.run(
                                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                                 capture_output=True, text=True, timeout=15, check=False,
+                                **_hidden_process_kwargs(),
                             )
                 else:
                     try:
@@ -2824,7 +2858,7 @@ class LiveRecorderManager:
         candidates = self._orphan_recording_candidates(minimum_age_seconds)
         if not candidates:
             return 0
-        log_path = APP_ROOT / "logs" / "orphan-recording-recovery.log"
+        log_path = DATA_ROOT / "logs" / "orphan-recording-recovery.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         recovered = 0
         with log_path.open("a", encoding="utf-8") as log_handle:
@@ -2844,6 +2878,7 @@ class LiveRecorderManager:
                     stdout=log_handle,
                     stderr=subprocess.STDOUT,
                     check=False,
+                    **_hidden_process_kwargs(),
                 )
                 if result.returncode == 0:
                     recovered += 1
@@ -2887,7 +2922,7 @@ class LiveRecorderManager:
         """Restart Bilibili upload failures once their five-minute delay expires."""
         retried = 0
         now = datetime.now(timezone.utc)
-        for job in self.pipeline_jobs(100):
+        for job in self.pipeline_jobs(None, statuses={"failed"}):
             if not job.get("auto_retry_scheduled"):
                 continue
             retry_at = self._state_datetime(job.get("auto_retry_at"))
@@ -2955,7 +2990,10 @@ class LiveRecorderManager:
 
     def _recording_locks(self) -> tuple[set[Path], list[str]]:
         processing_files: set[Path] = set()
-        for job in self.pipeline_jobs(100):
+        for job in self.pipeline_jobs(
+            None,
+            statuses={"processing", "video_uploaded"},
+        ):
             if job.get("status") in {"processing", "video_uploaded"}:
                 candidate_paths = [job.get("video_path")]
                 for stage in job.get("stages") or []:
@@ -3184,10 +3222,18 @@ class LiveRecorderManager:
         db.commit()
         return assigned
 
-    def pipeline_jobs(self, limit: int = 30, room_id: str | None = None) -> list[dict[str, Any]]:
+    def pipeline_jobs(
+        self,
+        limit: int | None = 30,
+        room_id: str | None = None,
+        *,
+        fingerprint: str | None = None,
+        statuses: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         state_path = self._pipeline_state_path()
         if not state_path.is_file():
             return []
+        rooms = self.list_rooms()
         room_markers = [
             {
                 "id": str(item.get("id") or ""),
@@ -3196,17 +3242,44 @@ class LiveRecorderManager:
                 "platform": str(item.get("platform") or ""),
                 "marker": _room_file_marker(item),
             }
-            for item in self.list_rooms()
+            for item in rooms
         ]
+        room_marker = None
+        if room_id:
+            room = next((item for item in rooms if item.get("id") == room_id), None)
+            if room:
+                room_marker = _room_file_marker(room)
         try:
             with sqlite3.connect(state_path, timeout=5) as db:
                 db.row_factory = sqlite3.Row
                 display_ids = self._ensure_pipeline_display_ids(db, room_markers)
+                filters = []
+                query_values: list[Any] = []
+                if fingerprint:
+                    filters.append("uploads.fingerprint=?")
+                    query_values.append(str(fingerprint))
+                clean_statuses = sorted({str(status) for status in (statuses or set()) if status})
+                if clean_statuses:
+                    status_placeholders = ",".join("?" for _ in clean_statuses)
+                    filters.append(f"uploads.status IN ({status_placeholders})")
+                    query_values.extend(clean_statuses)
+                if room_marker:
+                    marker_pattern = f"%{room_marker}%"
+                    filters.append(
+                        "(uploads.video_path LIKE ? OR uploads.result_json LIKE ?)"
+                    )
+                    query_values.extend((marker_pattern, marker_pattern))
+                where_sql = f" WHERE {' AND '.join(filters)}" if filters else ""
+                limit_sql = ""
+                if limit is not None:
+                    limit_sql = " LIMIT ?"
+                    query_values.append(max(1, min(int(limit), 500)))
                 uploads = db.execute(
-                    "SELECT * FROM uploads ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 500)),)
-                ).fetchall()
-                stage_rows = db.execute(
-                    "SELECT * FROM upload_stages ORDER BY updated_at"
+                    "SELECT uploads.* FROM uploads"
+                    + where_sql
+                    + " ORDER BY uploads.updated_at DESC"
+                    + limit_sql,
+                    query_values,
                 ).fetchall()
                 db.execute(
                     """CREATE TABLE IF NOT EXISTS recording_review_overrides (
@@ -3215,8 +3288,28 @@ class LiveRecorderManager:
                         updated_at TEXT NOT NULL
                     )"""
                 )
-                override_rows = db.execute(
-                    "SELECT fingerprint, metadata_json, updated_at FROM recording_review_overrides"
+                selected_ids = [str(row["fingerprint"]) for row in uploads]
+                if selected_ids:
+                    placeholders = ",".join("?" for _ in selected_ids)
+                    stage_rows = db.execute(
+                        f"""SELECT * FROM upload_stages
+                            WHERE fingerprint IN ({placeholders})
+                            ORDER BY updated_at""",
+                        selected_ids,
+                    ).fetchall()
+                    override_rows = db.execute(
+                        f"""SELECT fingerprint, metadata_json, updated_at
+                            FROM recording_review_overrides
+                            WHERE fingerprint IN ({placeholders})""",
+                        selected_ids,
+                    ).fetchall()
+                else:
+                    stage_rows = []
+                    override_rows = []
+                queued_upload_rows = db.execute(
+                    """SELECT fingerprint, updated_at FROM upload_stages
+                       WHERE stage='upload' AND status='queued'
+                       ORDER BY updated_at"""
                 ).fetchall()
         except sqlite3.Error:
             return []
@@ -3235,25 +3328,11 @@ class LiveRecorderManager:
                 "started_at": row["started_at"], "finished_at": row["finished_at"],
                 "updated_at": row["updated_at"],
             })
-        queued_upload_ids = [
-            row["fingerprint"]
-            for row in sorted(
-                (
-                    row for row in stage_rows
-                    if row["stage"] == "upload" and row["status"] == "queued"
-                ),
-                key=lambda row: str(row["updated_at"] or ""),
-            )
-        ]
+        queued_upload_ids = [row["fingerprint"] for row in queued_upload_rows]
         queued_upload_positions = {
             fingerprint: index
             for index, fingerprint in enumerate(queued_upload_ids, 1)
         }
-        room_marker = None
-        if room_id:
-            room = next((item for item in self.list_rooms() if item.get("id") == room_id), None)
-            if room:
-                room_marker = _room_file_marker(room)
         jobs = []
         allowed_cover_root = self._recording_file_roots()["artifacts"].resolve()
         allowed_recordings_root = self._recording_file_roots()["recordings"].resolve()
@@ -3263,7 +3342,7 @@ class LiveRecorderManager:
             ),
             "bilibili": (
                 "detect", "record", "ass", "burn", "live_stats", "xml_identity", "ai",
-                "cover", "cover_16x9", "cover_4x3", "upload", "cleanup",
+                "cover", "cover_16x9", "cover_4x3", "upload", "collection", "cleanup",
             ),
         }
         from .bilibili_accounts import resolve_account
@@ -3277,8 +3356,6 @@ class LiveRecorderManager:
                 or result.get("video_path")
                 or row["video_path"]
             )
-            if room_marker and room_marker not in Path(video_path).name:
-                continue
             matched_room = next(
                 (item for item in room_markers if item["marker"] and item["marker"] in Path(video_path).name),
                 None,
@@ -3497,7 +3574,7 @@ class LiveRecorderManager:
             auto_retry_scheduled = bool(
                 job_status == "failed"
                 and row["platform"] == "bilibili"
-                and failed_stage == "upload"
+                and failed_stage in {"upload", "collection"}
                 and automatic_retries_used < AUTO_UPLOAD_RETRY_MAX_RETRIES
             )
             retry_base = self._state_datetime(row["updated_at"])
@@ -3611,7 +3688,7 @@ class LiveRecorderManager:
                 "auto_retry_exhausted": bool(
                     job_status == "failed"
                     and row["platform"] == "bilibili"
-                    and failed_stage == "upload"
+                    and failed_stage in {"upload", "collection"}
                     and automatic_retries_used >= AUTO_UPLOAD_RETRY_MAX_RETRIES
                 ),
                 **capabilities,
@@ -3871,6 +3948,12 @@ class LiveRecorderManager:
             current_description = str(
                 review_preview.get("description") or job.get("description") or ""
             ).strip()
+            job_result = job.get("result")
+            job_result = job_result if isinstance(job_result, dict) else {}
+            video_duration_seconds = (
+                job_result.get("video_duration_seconds")
+                or job.get("duration_seconds")
+            )
             ai_stage = next(
                 (stage for stage in job.get("stages", []) if stage.get("key") == "ai"),
                 {},
@@ -3897,6 +3980,8 @@ class LiveRecorderManager:
                 "recorded_at": values.get("date") or "",
                 "current_title": current_title,
                 "current_description": current_description,
+                "video_duration_seconds": video_duration_seconds,
+                "verified_timeline": bridge.timeline_lines(current_description),
                 "previous_topic": (
                     review_preview.get("ai_title_topic")
                     or ai_details.get("title_topic")
@@ -3912,7 +3997,47 @@ class LiveRecorderManager:
             )
             identity_details = identity_stage.get("details") if isinstance(identity_stage, dict) else {}
             identity_details = identity_details if isinstance(identity_details, dict) else {}
-            streamer_gameplay_verified = bridge.streamer_gameplay_is_verified({
+            single_game_context = {
+                key: identity_details.get(source_key)
+                for key, source_key in (
+                    ("hero", "streamer_hero"),
+                    ("items", "streamer_items"),
+                    ("neutral", "streamer_neutral"),
+                    ("scepter", "streamer_scepter"),
+                    ("shard", "streamer_shard"),
+                    ("kills", "kills"),
+                    ("deaths", "deaths"),
+                    ("assists", "assists"),
+                    ("kda", "kda"),
+                    ("identity_source", "identity_source"),
+                )
+                if identity_details.get(source_key) not in (None, "", [])
+            }
+            identity_game_segments = [
+                dict(segment)
+                for segment in identity_details.get("game_segments", [])
+                if isinstance(segment, dict)
+                and bridge.streamer_gameplay_is_verified(segment)
+            ]
+            if not identity_game_segments and bool(
+                bridge_config.get("douyu_stats_enabled", True)
+            ):
+                try:
+                    from .douyu_stats_formatter import get_game_segments
+
+                    identity_game_segments = [
+                        dict(segment)
+                        for segment in get_game_segments(str(video_path.parent))
+                        if isinstance(segment, dict)
+                        and bridge.streamer_gameplay_is_verified(segment)
+                    ]
+                except Exception:
+                    identity_game_segments = []
+            streamer_gameplay_verified = bool(
+                bridge.streamer_gameplay_is_verified(single_game_context)
+                or identity_game_segments
+            )
+            single_game_verified = bridge.streamer_gameplay_is_verified({
                 "hero": identity_details.get("streamer_hero"),
                 "identity_source": identity_details.get("identity_source"),
             })
@@ -3944,7 +4069,27 @@ class LiveRecorderManager:
             system_prompt = f"""
 你是哔哩哔哩直播录播编辑。根据给出的现有稿件信息重新拟定核心标题和简介。
 只能使用输入中已经出现的事实、对局内容和观众反应，不得虚构主播说过的话、比赛结果或英雄。
-title_topic 是自然、有信息量的中文核心主题，不含主播名、日期、时间和“直播回放”，最多18个中文字符。
+title_topic 是自然、有信息量、语义完整的中文核心主题，不含日期、时间和“直播回放”。主播确实参与标题事件时，
+把主播名自然融入“谁做了什么”的事件句；只是房间归属或背景时不要写主播名，禁止“主播名｜事件”标签格式。
+完整信息优先，不追求越短越好；普通录播通常用18至42字，一小时长录播通常用28至44字保留人物、动作、
+对象、主线、转折和结果或反差；
+简介能用连续明确证据确认当前主播与其他人物一起玩、组队或对战时，标题优先写清“谁和谁做了什么”；只因
+两个人名同时出现，或其中一人只是观战、串门、被提及，不得猜测为一起玩。
+本录播以弹幕观看体验为重点，但标题不需要每条都出现“弹幕”或“观众”。先写完整事件；删除观众反应后仍不
+影响主线时优先不写。只有观众反应本身推动剧情、形成明显反差或成为核心笑点时，才采用“事件主线 + 具体弹幕
+反应”，写清弹幕在提醒什么、催什么、刷什么梗或调侃成什么；同一标题最多保留一处观众反应，禁止没有内容的
+“弹幕热议/讨论/关注”。较负面、未经证实、可能损害人物名誉的现实传言不得入题，也不得用“弹幕称”包装后保留；
+中性现实消息使用“观众讨论”，明显玩笑使用“直播间调侃”。现场游戏事实直接陈述。
+最多{bridge.RECORDING_TITLE_TOPIC_LIMIT}个字符，超长时必须重写，禁止截断半句话。
+video_duration_seconds 达到45分钟且 current_description 有至少6个时间点时，应概括贯穿全段的主线；
+没有单一主线就用分号连接两个不同阶段的最强独立看点，并返回至少两个跨阶段时间点；不得用十几个字的
+单一微小节点代表一小时录播。如果 payload 含 rejected_title_reason，必须针对该原因改写。
+拟题前先判断整段结构：连续挑战、对局或养成过程使用 main_arc，把起点、转折和结果串起来；只有观众反应
+确实推动事件或构成核心笑点时才纳入主线；
+节目、聊天或小游戏频繁切换时使用 two_highlights，选择两个跨阶段强看点；只有少量有效时间点时使用 sparse，
+不得为凑长度虚构内容，也不得先挑一句再反推整段主题。
+verified_timeline 按0开始编号；重新生成标题时必须返回 selected_timeline_indexes。长录播的主线标题也必须列出
+至少两个跨阶段的直接证据，不能只引用单个瞬间。
 重新生成标题时必须选择与 current_title 实质不同的事件焦点或表达，不得原样返回、仅调整标点，
 也不得只增删主播名；如果 payload 含 rejected_title_topic，严禁再次返回该主题或同义改写。
 必须遵守 streamer_participation：playing 才能把结构化身份记录中的英雄与当前主播绑定；spectating
@@ -3952,9 +4097,17 @@ title_topic 是自然、有信息量的中文核心主题，不含主播名、�
 unknown 都不得把当前主播写成操刀、使用或操作任何英雄。其他选手与英雄只有在 current_description
 存在多条连续、明确且不冲突的上下文证据时才能绑定；姓名和英雄仅仅同时出现不能证明关系。
 description 是可直接用于B站投稿的完整中文简介，保留有价值的事件脉络和观众反应，不出现文件名、任务编号或内部路径，不超过1800字。
+按5W1H检查每个关键事件：时间由 verified_timeline 提供；尽量交代谁、做了什么、哪一局/地图/阶段或场景、
+有证据的原因、过程转折和结果。地点不是必填现实地名，原因不得从常识或结果反推，缺少证据就省略。
+能确认一起玩、同队、对战、接力或观战关系时，description 必须写清“谁和谁以什么关系做了什么”；
+只因多个人名同时出现，不得猜成共同游玩。
 本直播间的标题要求：{title_prompt}
 本直播间的简介要求：{description_prompt}
-返回 JSON：{{"title_topic":"...","description":"..."}}。
+本直播间自定义要求只能补充题材重点、语气和风格，不能推翻证据边界、人物关系、标题长度、长录播覆盖、
+主播名使用、5W1H缺证省略和风险过滤规则。较负面的未经证实现实传言必须删除。
+同时返回 cover_text：只压缩标题中排序第一的核心事件，优先8至18字、最多24字，可比投稿标题短；不得新增事实、
+不得强塞主播名、不得删除中性消息的来源限定。无法安全压缩时返回空字符串。
+返回 JSON：{{"title_topic":"...","cover_text":"...","coverage_mode":"main_arc","selected_timeline_indexes":[0,4],"description":"..."}}。
 """.strip()
             generated: dict[str, Any] = {}
             timeline_diagnostics: dict[str, Any] = {}
@@ -3994,37 +4147,13 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     _, regenerated_live_stats = bridge.split_live_stats_sections(
                         regenerated_live_stats
                     )
-                identity_stage = next(
-                    (stage for stage in job.get("stages", []) if stage.get("key") == "xml_identity"),
-                    {},
-                )
-                identity_details = (
-                    identity_stage.get("details")
-                    if isinstance(identity_stage, dict)
-                    else {}
-                )
-                identity_details = identity_details if isinstance(identity_details, dict) else {}
                 grounding_context: dict[str, Any] = {
                     "live_stats": regenerated_live_stats,
                 }
-                game_context = {
-                    key: identity_details.get(source_key)
-                    for key, source_key in (
-                        ("hero", "streamer_hero"),
-                        ("items", "streamer_items"),
-                        ("neutral", "streamer_neutral"),
-                        ("scepter", "streamer_scepter"),
-                        ("shard", "streamer_shard"),
-                        ("kills", "kills"),
-                        ("deaths", "deaths"),
-                        ("assists", "assists"),
-                        ("kda", "kda"),
-                        ("identity_source", "identity_source"),
-                    )
-                    if identity_details.get(source_key) not in (None, "", [])
-                }
-                if bridge.streamer_gameplay_is_verified(game_context):
-                    grounding_context["game"] = game_context
+                if single_game_verified:
+                    grounding_context["game"] = single_game_context
+                if identity_game_segments:
+                    grounding_context["game_segments"] = identity_game_segments
                 result_details = job.get("result")
                 result_details = result_details if isinstance(result_details, dict) else {}
                 duration_seconds = (
@@ -4051,12 +4180,16 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     )
                 generated = {
                     "title_topic": grounded_title_topic,
+                    "cover_text": str(timeline_diagnostics.get("cover_text") or ""),
                     "description": generated_description,
                 }
             elif "title" in selected:
                 client = get_openai_client(app_config)
 
-                def request_title(rejected_topic: str = "") -> dict[str, Any]:
+                def request_title(
+                    rejected_topic: str = "",
+                    rejected_reason: str = "",
+                ) -> dict[str, Any]:
                     payload = dict(context)
                     payload["streamer_participation"] = streamer_participation
                     payload["verified_streamer_game"] = {
@@ -4067,9 +4200,18 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         )
                         if identity_details.get(source_key) not in (None, "", [])
                     }
+                    payload["verified_live_context"] = {}
+                    if single_game_verified:
+                        payload["verified_live_context"]["game"] = single_game_context
+                    if identity_game_segments:
+                        payload["verified_live_context"]["game_segments"] = (
+                            identity_game_segments
+                        )
                     payload["must_differ_from_current_title"] = True
                     if rejected_topic:
                         payload["rejected_title_topic"] = rejected_topic
+                    if rejected_reason:
+                        payload["rejected_title_reason"] = rejected_reason
                     generated_result = _request_json_object(
                         client=client,
                         model_name=str(
@@ -4115,14 +4257,118 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     "",
                     str(context["streamer"] or ""),
                 )
-                generated = request_title()
-                first_topic = str(generated.get("title_topic") or "").strip()
-                if first_topic and title_identity(first_topic) == title_identity(current_topic):
-                    generated = request_title(first_topic)
-                final_topic = str(generated.get("title_topic") or "").strip()
-                if final_topic and title_identity(final_topic) == title_identity(current_topic):
+                rejected_topic = ""
+                rejection_reason = ""
+                for _attempt in range(3):
+                    candidate_result = request_title(rejected_topic, rejection_reason)
+                    candidate_topic = bridge.normalize_recording_title_filler(
+                        str(candidate_result.get("title_topic") or "").strip()
+                    )
+                    candidate_topic = bridge.contextualize_streamer_title_topic(
+                        candidate_topic,
+                        bridge.normalize_dota2_streamer_name(
+                            str(context["streamer"] or "")
+                        ),
+                        str(streamer_participation.get("mode") or "unknown"),
+                    )
+                    negative_rumor = bridge.recording_text_contains_negative_rumor(
+                        candidate_topic
+                    )
+                    candidate_topic = bridge.qualify_danmaku_only_real_world_claim(
+                        candidate_topic
+                    )
+                    if not candidate_topic:
+                        rejected_topic = str(
+                            candidate_result.get("title_topic") or ""
+                        ).strip()
+                        rejection_reason = (
+                            "负面未经证实现实传言不得进入标题"
+                            if negative_rumor
+                            else "AI 没有返回可用的标题主题"
+                        )
+                        continue
+                    if len(candidate_topic) > bridge.RECORDING_TITLE_TOPIC_LIMIT:
+                        rejected_topic = candidate_topic
+                        rejection_reason = (
+                            f"AI 连续返回超过 {bridge.RECORDING_TITLE_TOPIC_LIMIT} 字的标题"
+                        )
+                        continue
+                    if bridge.recording_title_topic_is_vague(candidate_topic):
+                        rejected_topic = candidate_topic
+                        rejection_reason = "AI 标题只描述过程或使用空泛套话"
+                        continue
+                    if bridge.recording_title_uses_opaque_attribution(candidate_topic):
+                        rejected_topic = candidate_topic
+                        rejection_reason = "AI 标题使用了被指、被曝或据称等模糊来源词"
+                        continue
+                    if bridge.recording_title_topic_is_underfilled(
+                        candidate_topic,
+                        video_duration_seconds,
+                        len(bridge.timeline_lines(current_description)),
+                    ):
+                        rejected_topic = candidate_topic
+                        rejection_reason = "长录播标题只覆盖一个过短的微小节点"
+                        continue
+                    if not bridge.recording_title_timeline_coverage_is_sufficient(
+                        candidate_result.get("selected_timeline_indexes"),
+                        video_duration_seconds,
+                        len(bridge.timeline_lines(current_description)),
+                        bridge.timeline_lines(current_description),
+                    ):
+                        rejected_topic = candidate_topic
+                        rejection_reason = "长录播标题没有跨阶段时间点支撑"
+                        continue
+                    validation_segments = list(identity_game_segments)
+                    if not validation_segments and single_game_verified:
+                        try:
+                            validation_end = max(
+                                float(video_duration_seconds or 0),
+                                24 * 60 * 60,
+                            )
+                        except (TypeError, ValueError):
+                            validation_end = 24 * 60 * 60
+                        validation_segments = [{
+                            **single_game_context,
+                            "start_seconds": 0,
+                            "end_seconds": validation_end,
+                        }]
+                    missing_gsi_heroes = (
+                        bridge.recording_title_missing_selected_gsi_heroes(
+                            candidate_topic,
+                            candidate_result.get("selected_timeline_indexes"),
+                            bridge.timeline_lines(current_description),
+                            validation_segments,
+                        )
+                    )
+                    if missing_gsi_heroes:
+                        rejected_topic = candidate_topic
+                        rejection_reason = (
+                            "已选游戏事件遗漏对应的主播 GSI 英雄："
+                            + "、".join(missing_gsi_heroes)
+                        )
+                        continue
+                    if bridge.recording_title_missing_selected_gsi_streamer(
+                        candidate_topic,
+                        candidate_result.get("selected_timeline_indexes"),
+                        bridge.timeline_lines(current_description),
+                        validation_segments,
+                        bridge.normalize_dota2_streamer_name(
+                            str(context["streamer"] or "")
+                        ),
+                    ):
+                        rejected_topic = candidate_topic
+                        rejection_reason = "已选主播游戏事件遗漏已确认的人物主语"
+                        continue
+                    if title_identity(candidate_topic) == title_identity(current_topic):
+                        rejected_topic = candidate_topic
+                        rejection_reason = "AI 连续返回与当前稿件相同的标题"
+                        continue
+                    generated = candidate_result
+                    break
+                else:
                     raise RecorderConfigError(
-                        "AI 连续返回与当前稿件相同的标题，已保留原标题，请再次尝试"
+                        f"{rejection_reason or 'AI 没有返回可用的标题主题'}，"
+                        "已保留原标题，请再次尝试"
                     )
             title_topic = re.sub(
                 r"[\r\n｜|]+",
@@ -4133,7 +4379,15 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     or ai_details.get("title_topic")
                     or ""
                 ).strip(),
-            )[:28].strip()
+            ).strip()
+            if (
+                "title" in selected
+                and len(title_topic) > bridge.RECORDING_TITLE_TOPIC_LIMIT
+            ):
+                raise RecorderConfigError(
+                    f"AI 标题超过 {bridge.RECORDING_TITLE_TOPIC_LIMIT} 字，"
+                    "已保留原标题，请再次尝试"
+                )
             generated_description = str(generated.get("description") or "").strip()
             if (
                 "description" in selected
@@ -4170,9 +4424,32 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     ),
                     str(streamer_participation.get("mode") or "unknown"),
                 )
+                title_topic = bridge.qualify_danmaku_only_real_world_claim(
+                    title_topic
+                )
+                if not title_topic:
+                    if bridge.recording_text_contains_negative_rumor(
+                        str(generated.get("title_topic") or "")
+                    ):
+                        raise RecorderConfigError(
+                            "标题包含负面未经证实现实传言，已拒绝并保留原标题"
+                        )
+                    raise RecorderConfigError(
+                        "标题来源限定后无法在长度限制内完整表达，已保留原标题"
+                    )
+                if len(title_topic) > bridge.RECORDING_TITLE_TOPIC_LIMIT:
+                    raise RecorderConfigError(
+                        "补充人物关系后标题超过长度限制，已保留原标题，请再次尝试"
+                    )
+                if bridge.recording_title_uses_opaque_attribution(title_topic):
+                    raise RecorderConfigError(
+                        "标题使用被指、被曝或据称等模糊来源词，已保留原标题"
+                    )
                 if not bridge.title_person_hero_relations_supported(
                     title_topic,
-                    current_description,
+                    generated_description
+                    if "description" in selected
+                    else current_description,
                 ):
                     raise RecorderConfigError(
                         "AI 标题中的人物与英雄关系未在已核验简介中出现，已保留原标题"
@@ -4186,6 +4463,28 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 if not generated_description:
                     raise RecorderConfigError("AI 没有返回可用的简介")
                 description = generated_description
+
+            # Build cover copy only after the title has passed attribution,
+            # identity and length checks. This prevents a rejected or stale
+            # title draft from leaking into a regenerated cover.
+            cover_title_topic = (
+                title_topic
+                if "title" in selected
+                else bridge.recording_cover_headline(
+                    title,
+                    "",
+                    str(context["streamer"] or ""),
+                )
+            )
+            cover_text = bridge.recording_cover_display_text(
+                cover_title_topic,
+                str(
+                    (generated.get("cover_text") if "title" in selected else "")
+                    or review_preview.get("ai_cover_text")
+                    or ""
+                ),
+                str(context["streamer"] or ""),
+            )
 
             tags = list(job.get("tags") or [])
             if "tags" in selected:
@@ -4241,38 +4540,22 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     description,
                     cover_live_stats,
                 )
-                identity_stage = next(
-                    (stage for stage in job.get("stages", []) if stage.get("key") == "xml_identity"),
-                    {},
-                )
-                identity_details = (
-                    identity_stage.get("details")
-                    if isinstance(identity_stage, dict)
-                    else {}
-                )
-                identity_details = identity_details if isinstance(identity_details, dict) else {}
                 cover_game_context = None
-                identity_hero = str(identity_details.get("streamer_hero") or "").strip()
-                if bridge.recording_cover_hero_matches_title(
-                    identity_hero,
-                    f"{title}\n{cover_description}",
+                matching_segment_contexts = [
+                    segment
+                    for segment in identity_game_segments
+                    if bridge.recording_text_mentions_specific_dota2_hero(
+                        cover_topic,
+                        str(segment.get("hero") or ""),
+                    )
+                ]
+                if len(matching_segment_contexts) == 1:
+                    cover_game_context = dict(matching_segment_contexts[0])
+                elif single_game_verified and bridge.recording_cover_hero_matches_title(
+                    str(single_game_context.get("hero") or ""),
+                    cover_topic,
                 ):
-                    cover_game_context = {
-                        key: identity_details.get(source_key)
-                        for key, source_key in (
-                            ("hero", "streamer_hero"),
-                            ("items", "streamer_items"),
-                            ("neutral", "streamer_neutral"),
-                            ("scepter", "streamer_scepter"),
-                            ("shard", "streamer_shard"),
-                            ("kills", "kills"),
-                            ("deaths", "deaths"),
-                            ("assists", "assists"),
-                            ("kda", "kda"),
-                            ("identity_source", "identity_source"),
-                        )
-                        if identity_details.get(source_key) not in (None, "", [])
-                    }
+                    cover_game_context = single_game_context
                 artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
                 generation_id = uuid.uuid4().hex
                 generated_variants: list[str] = []
@@ -4306,6 +4589,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                                 output_path=staged_output,
                                 game_context=cover_game_context,
                                 game_context_locked=True,
+                                cover_text=cover_text,
                             )
                         )
                         cover_details[variant] = variant_details
@@ -4347,6 +4631,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 "ai_regenerated_fields": sorted(selected),
                 "ai_regenerated_at": now,
                 "ai_title_topic": title_topic or None,
+                "ai_cover_text": cover_text or None,
                 "ai_cover_details": cover_details or None,
                 "ai_cover_regeneration_errors": errors,
                 "timeline_diagnostics": (
@@ -4677,7 +4962,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         candidates: list[dict[str, Any]] = []
         seen: set[Path] = set()
         processing_files, active_markers = self._recording_locks()
-        for job in self.pipeline_jobs(500):
+        for job in self.pipeline_jobs(None):
             burn_stage = next(
                 (
                     stage for stage in (job.get("stages") or [])
@@ -4924,19 +5209,180 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         }
 
     def pipeline_job(self, fingerprint: str) -> dict[str, Any] | None:
-        return next((job for job in self.pipeline_jobs(100) if job["id"] == fingerprint), None)
+        jobs = self.pipeline_jobs(1, fingerprint=fingerprint)
+        return jobs[0] if jobs else None
 
     @staticmethod
     def _pipeline_process_cmdline(pid: int) -> str:
-        try:
-            return (
-                Path(f"/proc/{pid}/cmdline")
-                .read_bytes()
-                .replace(b"\0", b" ")
-                .decode("utf-8", errors="replace")
-            )
-        except OSError:
+        """Read one process command line on Linux, macOS, or Windows."""
+        if pid <= 1:
             return ""
+        proc_cmdline = Path(f"/proc/{pid}/cmdline")
+        if proc_cmdline.is_file():
+            try:
+                return (
+                    proc_cmdline.read_bytes()
+                    .replace(b"\0", b" ")
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
+            except OSError:
+                return ""
+        try:
+            if os.name == "nt":
+                powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+                if not powershell:
+                    return ""
+                command = (
+                    f"(Get-CimInstance Win32_Process -Filter \"ProcessId = {int(pid)}\")."
+                    "CommandLine"
+                )
+                result = subprocess.run(
+                    [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                    check=False,
+                    **_hidden_process_kwargs(),
+                )
+            else:
+                result = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "command="],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                    check=False,
+                    **_hidden_process_kwargs(),
+                )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return str(result.stdout or "").strip() if result.returncode == 0 else ""
+
+    @classmethod
+    def _pipeline_process_alive(cls, pid: int) -> bool:
+        if pid <= 1:
+            return False
+        if os.name == "nt":
+            try:
+                import ctypes
+
+                handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+                if handle:
+                    try:
+                        exit_code = ctypes.c_ulong()
+                        if ctypes.windll.kernel32.GetExitCodeProcess(
+                            handle,
+                            ctypes.byref(exit_code),
+                        ):
+                            return exit_code.value == 259  # STILL_ACTIVE
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(handle)
+            except (AttributeError, OSError):
+                pass
+            return bool(cls._pipeline_process_cmdline(pid))
+        proc_stat = Path(f"/proc/{pid}/stat")
+        if proc_stat.is_file():
+            try:
+                suffix = proc_stat.read_text(encoding="utf-8", errors="replace").rsplit(") ", 1)[1]
+                if suffix.startswith("Z"):
+                    return False
+            except (IndexError, OSError):
+                pass
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        if not Path("/proc").is_dir():
+            try:
+                result = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "stat="],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                    check=False,
+                    **_hidden_process_kwargs(),
+                )
+                if result.returncode != 0 or str(result.stdout or "").strip().startswith("Z"):
+                    return False
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return True
+
+    @classmethod
+    def _pipeline_bridge_processes(cls) -> list[tuple[int, str]]:
+        """List bridge workers for legacy tasks that did not persist a PID."""
+        proc_root = Path("/proc")
+        if proc_root.is_dir():
+            rows = []
+            try:
+                process_dirs = list(proc_root.iterdir())
+            except OSError:
+                process_dirs = []
+            for process_dir in process_dirs:
+                if not process_dir.name.isdigit():
+                    continue
+                pid = int(process_dir.name)
+                command = cls._pipeline_process_cmdline(pid)
+                if "bridge.py" in command:
+                    rows.append((pid, command))
+            return rows
+        try:
+            if os.name == "nt":
+                powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+                if not powershell:
+                    return []
+                script = (
+                    "@(Get-CimInstance Win32_Process | "
+                    "Where-Object { $_.CommandLine -like '*bridge.py*' } | "
+                    "Select-Object ProcessId,CommandLine) | ConvertTo-Json -Compress"
+                )
+                result = subprocess.run(
+                    [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=8,
+                    check=False,
+                    **_hidden_process_kwargs(),
+                )
+                if result.returncode != 0 or not str(result.stdout or "").strip():
+                    return []
+                payload = json.loads(str(result.stdout).lstrip("\ufeff"))
+                items = payload if isinstance(payload, list) else [payload]
+                return [
+                    (int(item.get("ProcessId") or 0), str(item.get("CommandLine") or ""))
+                    for item in items
+                    if isinstance(item, dict)
+                    and int(item.get("ProcessId") or 0) > 1
+                    and "bridge.py" in str(item.get("CommandLine") or "")
+                ]
+            result = subprocess.run(
+                ["ps", "-axo", "pid=,command="],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=8,
+                check=False,
+                **_hidden_process_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+            return []
+        rows = []
+        for line in str(result.stdout or "").splitlines():
+            pid_text, separator, command = line.strip().partition(" ")
+            if separator and pid_text.isdigit() and "bridge.py" in command:
+                rows.append((int(pid_text), command.strip()))
+        return rows
 
     def _pipeline_worker_pid(self, job: dict[str, Any]) -> int:
         """Resolve a bridge worker PID, including tasks created by older releases."""
@@ -4952,11 +5398,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         expected_path = str(job.get("video_path") or "")
         expected_name = Path(expected_path).name
 
-        def command_for(pid: int) -> str:
-            return self._pipeline_process_cmdline(pid)
-
-        def matches(pid: int, *, require_video: bool) -> bool:
-            cmdline = self._pipeline_process_cmdline(pid)
+        def matches(cmdline: str, *, require_video: bool) -> bool:
             return bool(
                 "bridge.py" in cmdline
                 and (
@@ -4972,23 +5414,20 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 pid = int(value or 0)
             except (TypeError, ValueError):
                 continue
-            if pid > 1 and matches(pid, require_video=False):
+            if pid <= 1:
+                continue
+            command = self._pipeline_process_cmdline(pid)
+            if matches(command, require_video=False):
                 return pid
+            if not command and self._pipeline_process_alive(pid):
+                raise RecorderConfigError(
+                    f"任务进程 {pid} 仍在运行，但无法核对命令行，已取消暂停"
+                )
 
-        proc_root = Path("/proc")
-        try:
-            process_dirs = list(proc_root.iterdir())
-        except OSError:
-            return 0
         bridge_pids: list[int] = []
-        for process_dir in process_dirs:
-            if not process_dir.name.isdigit():
-                continue
-            pid = int(process_dir.name)
-            if pid <= 1 or "bridge.py" not in command_for(pid):
-                continue
+        for pid, command in self._pipeline_bridge_processes():
             bridge_pids.append(pid)
-            if matches(pid, require_video=True):
+            if matches(command, require_video=True):
                 return pid
         # Older releases received the video path through stdin, so it is not
         # visible in /proc/<pid>/cmdline. A single live bridge process is still
@@ -4997,24 +5436,49 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 
     @staticmethod
     def _pipeline_descendant_pids(pid: int) -> list[int]:
-        """Return Linux child processes so legacy non-group workers stop cleanly."""
+        """Return POSIX child processes so legacy non-group workers stop cleanly."""
+        if os.name == "nt":
+            return []
         descendants: list[int] = []
         pending = [pid]
         seen = {pid}
+        parent_map: dict[int, list[int]] = {}
+        if not Path(f"/proc/{pid}").exists():
+            try:
+                result = subprocess.run(
+                    ["ps", "-axo", "pid=,ppid="],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                    check=False,
+                    **_hidden_process_kwargs(),
+                )
+                for line in str(result.stdout or "").splitlines():
+                    values = line.split()
+                    if len(values) == 2 and all(value.isdigit() for value in values):
+                        child, parent = map(int, values)
+                        parent_map.setdefault(parent, []).append(child)
+            except (OSError, subprocess.SubprocessError):
+                return []
         while pending:
             parent = pending.pop()
-            children_path = Path(f"/proc/{parent}/task/{parent}/children")
-            try:
-                children = [
-                    int(value)
-                    for value in children_path.read_text(
-                        encoding="utf-8",
-                        errors="ignore",
-                    ).split()
-                    if value.isdigit()
-                ]
-            except OSError:
-                children = []
+            if parent_map:
+                children = parent_map.get(parent, [])
+            else:
+                children_path = Path(f"/proc/{parent}/task/{parent}/children")
+                try:
+                    children = [
+                        int(value)
+                        for value in children_path.read_text(
+                            encoding="utf-8",
+                            errors="ignore",
+                        ).split()
+                        if value.isdigit()
+                    ]
+                except OSError:
+                    children = []
             for child in children:
                 if child <= 1 or child in seen:
                     continue
@@ -5027,6 +5491,29 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         pid = self._pipeline_worker_pid(job)
         if pid <= 1:
             return 0
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                    check=False,
+                    **_hidden_process_kwargs(),
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RecorderConfigError(f"无法停止任务进程：{exc}") from exc
+            if result.returncode != 0 and self._pipeline_process_alive(pid):
+                message = str(result.stderr or result.stdout or "taskkill 执行失败").strip()
+                raise RecorderConfigError(f"无法停止任务进程：{message}")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if not self._pipeline_process_alive(pid):
+                    return pid
+                time.sleep(0.05)
+            raise RecorderConfigError("任务进程仍在运行，已取消暂停")
         try:
             process_group = os.getpgid(pid)
         except ProcessLookupError:
@@ -5051,7 +5538,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            if not self._pipeline_process_cmdline(pid):
+            if not self._pipeline_process_alive(pid):
                 return pid
             time.sleep(0.05)
         try:
@@ -5068,7 +5555,12 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             pass
         except PermissionError as exc:
             raise RecorderConfigError(f"没有权限强制停止任务进程：{exc}") from exc
-        return pid
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if not self._pipeline_process_alive(pid):
+                return pid
+            time.sleep(0.05)
+        raise RecorderConfigError("任务进程仍在运行，已取消暂停")
 
     def pause_pipeline_job(self, fingerprint: str) -> bool:
         """Stop any active bridge stage and preserve every source artifact."""
@@ -5406,7 +5898,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
     def pipeline_log(self, fingerprint: str, lines: int = 200) -> str:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             return "任务编号无效。"
-        path = APP_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
+        path = DATA_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
         try:
             content = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except FileNotFoundError:

@@ -15,6 +15,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 from modules.live_recorder_manager import LiveRecorderManager, RecorderConfigError  # noqa: E402
 import modules.live_recorder_manager as recorder_module  # noqa: E402
+import bridge  # noqa: E402
 
 
 class LiveRecorderStatusTests(unittest.TestCase):
@@ -225,6 +226,98 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(generate.call_args.args[3]["game"]["hero"], "噬魂鬼")
         self.assertEqual(generate.call_args.args[4], 60.5)
 
+    def test_published_regeneration_preserves_segmented_gsi_for_text_and_cover(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "recording.flv"
+            xml = root / "recording.xml"
+            video.write_bytes(b"video")
+            xml.write_text("<i><d p=\"20,1,25,1\">团战</d></i>", encoding="utf-8")
+            segments = [
+                {
+                    "start_seconds": 0,
+                    "end_seconds": 1200,
+                    "hero": "风暴之灵",
+                    "items": ["紫怨", "魔瓶"],
+                    "identity_source": "gsi_explicit_hero_segment:http",
+                },
+                {
+                    "start_seconds": 1400,
+                    "end_seconds": 3500,
+                    "hero": "玛西",
+                    "items": ["黑皇杖", "漩涡"],
+                    "identity_source": "gsi_explicit_hero_segment:http",
+                },
+            ]
+            generated_description = "48:09 川神玛西使用黑皇杖接团"
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "原标题｜08-07 02:05",
+                "description": "48:09 玛西团战",
+                "tags": [],
+                "partition_id": "171",
+                "room_name": "叫我老陈就好了",
+                "result": {"video_duration_seconds": 3600},
+                "stages": [
+                    {"key": "ass", "details": {"danmaku_xml": str(xml)}},
+                    {"key": "xml_identity", "details": {"game_segments": segments}},
+                ],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock()
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock()
+
+            def generate_cover(**kwargs):
+                kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
+                kwargs["output_path"].write_bytes(b"cover")
+                return kwargs["output_path"], {"ok": True}
+
+            with mock.patch.dict(
+                sys.modules, {"modules.ai_enhancer": ai_enhancer}
+            ), mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager, "_store_pipeline_review_override"
+            ), mock.patch.object(
+                manager, "_recording_file_roots", return_value={"artifacts": root / "artifacts"}
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test", "OPENAI_IMAGE_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config", return_value={"douyu_stats_enabled": True}
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "叫我老陈就好了", "date": "08-07 02:05"},
+            ), mock.patch(
+                "bridge.parse_danmaku_xml",
+                return_value=[mock.Mock(time=2889.0, text="团战")],
+            ), mock.patch(
+                "bridge.generate_danmaku_metadata_with_ai",
+                return_value=(generated_description, "川神玛西使用黑皇杖接团"),
+            ) as generate_text, mock.patch(
+                "bridge.render_metadata",
+                side_effect=lambda _video, _cfg, ai_topic="": (
+                    f"{ai_topic}｜08-07 02:05", "", []
+                ),
+            ), mock.patch(
+                "bridge.generate_recording_cover_with_ai", side_effect=generate_cover
+            ) as generate_image:
+                result = manager.regenerate_published_metadata(
+                    "a" * 64,
+                    {"title", "description", "cover"},
+                )
+
+        grounding = generate_text.call_args.args[3]
+        self.assertEqual(grounding["game_segments"], segments)
+        self.assertIn("玛西", result["title"])
+        self.assertEqual(generate_image.call_count, 2)
+        for call in generate_image.call_args_list:
+            self.assertEqual(call.kwargs["game_context"]["hero"], "玛西")
+            self.assertEqual(call.kwargs["game_context"]["items"], ["黑皇杖", "漩涡"])
+            self.assertTrue(call.kwargs["game_context_locked"])
+
     def test_published_description_regeneration_recovers_historical_live_stats(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:
@@ -349,6 +442,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ai_enhancer = mock.Mock()
             ai_enhancer._request_json_object = mock.Mock(side_effect=[
                 {"title_topic": current_topic},
+                {"title_topic": "这是一个超过四十八个字符而且必须重新生成不能直接从中间截断的完整标题句子，还包含更多背景转折以及最终结果"},
                 {"title_topic": "30分钟豪言反噬遭一轮游"},
             ])
             ai_enhancer.generate_video_tags = mock.Mock()
@@ -379,23 +473,167 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ):
                 result = manager.regenerate_published_metadata("a" * 64, {"title"})
 
-        self.assertEqual(ai_enhancer._request_json_object.call_count, 2)
+        self.assertEqual(ai_enhancer._request_json_object.call_count, 3)
         first_payload = ai_enhancer._request_json_object.call_args_list[0].kwargs["payload"]
         retry_payload = ai_enhancer._request_json_object.call_args_list[1].kwargs["payload"]
+        length_retry_payload = ai_enhancer._request_json_object.call_args_list[2].kwargs["payload"]
         self.assertEqual(first_payload["previous_topic"], "简介生成的新主题")
         self.assertTrue(first_payload["must_differ_from_current_title"])
         self.assertEqual(first_payload["streamer_participation"]["mode"], "unknown")
         self.assertFalse(first_payload["streamer_participation"]["gameplay_verified"])
         self.assertEqual(first_payload["verified_streamer_game"], {})
-        self.assertEqual(retry_payload["rejected_title_topic"], current_topic)
+        self.assertEqual(
+            retry_payload["rejected_title_topic"],
+            "强行开团团灭后复盘怪队友不能4v5",
+        )
+        self.assertGreater(
+            len(length_retry_payload["rejected_title_topic"]),
+            bridge.RECORDING_TITLE_TOPIC_LIMIT,
+        )
         self.assertEqual(
             result["title"],
-            "YYF直播间热议30分钟豪言反噬遭一轮游｜08-01 20:01",
+            "30分钟豪言反噬遭一轮游｜08-01 20:01",
         )
         self.assertEqual(
             result["ai_title_topic"],
-            "YYF直播间热议30分钟豪言反噬遭一轮游",
+            "30分钟豪言反噬遭一轮游",
         )
+        store.assert_called_once_with("a" * 64, result)
+
+    def test_long_recording_title_retries_until_it_covers_distinct_stages(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "recording.flv"
+            video.write_bytes(b"video")
+            timeline = "\n".join(
+                f"{minute:02d}:00 第{index}个已验证事件包含具体动作和结果"
+                for index, minute in enumerate((0, 8, 16, 24, 32, 40, 48, 56))
+            )
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "旧标题｜08-06 19:24",
+                "description": timeline,
+                "tags": [],
+                "partition_id": "17",
+                "room_name": "yyfyyf",
+                "result": {"video_duration_seconds": 3600},
+                "stages": [],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock(side_effect=[
+                {"title_topic": "误删入口让圣物消失", "selected_timeline_indexes": [4]},
+                {
+                    "title_topic": "负六百魔伤仍选魔法技能，随后误删入口",
+                    "selected_timeline_indexes": [4, 5],
+                },
+                {
+                    "title_topic": "飞升后卡等级又误删入口，负六百魔伤仍坚持选择魔法技能",
+                    "selected_timeline_indexes": [2, 7],
+                },
+            ])
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock(return_value=object())
+
+            with mock.patch.dict(
+                sys.modules, {"modules.ai_enhancer": ai_enhancer}
+            ), mock.patch.object(
+                manager, "pipeline_job", return_value=job
+            ), mock.patch.object(
+                manager, "_store_pipeline_review_override"
+            ) as store, mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config", return_value={}
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={"streamer": "YYF", "date": "08-06", "live_title": "直播"},
+            ), mock.patch(
+                "bridge.render_metadata",
+                side_effect=lambda _video, _cfg, ai_topic="": (
+                    f"{ai_topic}｜08-06 19:24", "", []
+                ),
+            ):
+                result = manager.regenerate_published_metadata("a" * 64, {"title"})
+
+        self.assertEqual(ai_enhancer._request_json_object.call_count, 3)
+        self.assertEqual(
+            ai_enhancer._request_json_object.call_args_list[1].kwargs["payload"][
+                "rejected_title_reason"
+            ],
+            "长录播标题只覆盖一个过短的微小节点",
+        )
+        self.assertEqual(
+            ai_enhancer._request_json_object.call_args_list[2].kwargs["payload"][
+                "rejected_title_reason"
+            ],
+            "长录播标题没有跨阶段时间点支撑",
+        )
+        self.assertIn("负六百魔伤仍坚持选择魔法技能", result["title"])
+        store.assert_called_once_with("a" * 64, result)
+
+    def test_title_regeneration_removes_room_discussion_label_filler(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "recording.flv"
+            video.write_bytes(b"video")
+            job = {
+                "status": "completed",
+                "bvid": "BV1test",
+                "video_path": str(video),
+                "title": "旧标题｜08-06 18:36",
+                "description": "28:56 小哈尼跑到第三圈已经完成套圈，弹幕紧盯后程悬念。",
+                "tags": [],
+                "partition_id": "17",
+                "room_name": "国民大舅哥",
+                "result": {"video_duration_seconds": 1200},
+                "stages": [],
+            }
+            ai_enhancer = mock.Mock()
+            ai_enhancer._request_json_object = mock.Mock(return_value={
+                "title_topic": (
+                    "国民大舅哥直播间热议直播间讨论半马接力："
+                    "小哈尼三圈完成套圈，弹幕紧盯后程悬念"
+                ),
+                "coverage_mode": "sparse",
+                "selected_timeline_indexes": [0],
+            })
+            ai_enhancer.generate_video_tags = mock.Mock()
+            ai_enhancer.get_openai_client = mock.Mock(return_value=object())
+
+            with mock.patch.dict(
+                sys.modules, {"modules.ai_enhancer": ai_enhancer}
+            ), mock.patch.object(
+                manager, "pipeline_job", return_value=job
+            ), mock.patch.object(
+                manager, "_store_pipeline_review_override"
+            ) as store, mock.patch(
+                "modules.config_manager.load_config",
+                return_value={"OPENAI_API_KEY": "test"},
+            ), mock.patch("bridge.load_config", return_value={}), mock.patch(
+                "bridge.effective_config", return_value={}
+            ), mock.patch(
+                "bridge.recording_metadata_values",
+                return_value={
+                    "streamer": "国民大舅哥",
+                    "date": "08-06 18:36",
+                    "live_title": "直播",
+                },
+            ), mock.patch(
+                "bridge.render_metadata",
+                side_effect=lambda _video, _cfg, ai_topic="": (
+                    f"{ai_topic}｜08-06 18:36", "", []
+                ),
+            ):
+                result = manager.regenerate_published_metadata("a" * 64, {"title"})
+
+        self.assertEqual(
+            result["ai_title_topic"],
+            "半马接力：小哈尼三圈完成套圈，弹幕紧盯后程悬念",
+        )
+        self.assertNotIn("直播间热议", result["title"])
         store.assert_called_once_with("a" * 64, result)
 
     def test_title_only_regeneration_preserves_spectating_boundary(self):
@@ -452,7 +690,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "YYF观战老蔡三角区跳吼，马甲首夺高导冠军｜08-04 20:39",
         )
 
-    def test_title_regeneration_keeps_current_title_after_two_identical_results(self):
+    def test_title_regeneration_keeps_current_title_after_three_identical_results(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp:
             video = Path(temp) / "recording.flv"
@@ -495,7 +733,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 with self.assertRaisesRegex(RecorderConfigError, "保留原标题"):
                     manager.regenerate_published_metadata("a" * 64, {"title"})
 
-        self.assertEqual(ai_enhancer._request_json_object.call_count, 2)
+        self.assertEqual(ai_enhancer._request_json_object.call_count, 3)
         store.assert_not_called()
 
     def test_4x3_cover_regeneration_uses_reviewed_title_and_only_updates_4x3(self):
@@ -835,12 +1073,25 @@ class LiveRecorderStatusTests(unittest.TestCase):
         defaults = LiveRecorderManager.recording_prompt_defaults()
 
         self.assertEqual(set(defaults), {"title", "description", "cover"})
-        self.assertIn("核心主题", defaults["title"])
+        self.assertIn("默认选择一个最强事件", defaults["title"])
         self.assertIn("时间点式中文简介", defaults["description"])
         self.assertIn("DOTA2", defaults["cover"])
-        self.assertIn("主语不必放在最前", defaults["title"])
+        self.assertIn("语义完整", defaults["title"])
         self.assertIn("完整 XML", defaults["description"])
         self.assertIn("封面人物底稿", defaults["cover"])
+
+    def test_global_recording_prompts_fall_back_to_builtin_per_field(self):
+        builtins = LiveRecorderManager.recording_prompt_defaults()
+
+        effective = LiveRecorderManager.effective_recording_prompt_defaults({
+            "RECORDING_AI_TITLE_PROMPT": "全局标题要求",
+            "RECORDING_AI_DESCRIPTION_PROMPT": "",
+            "RECORDING_AI_COVER_PROMPT": "全局封面要求",
+        })
+
+        self.assertEqual(effective["title"], "全局标题要求")
+        self.assertEqual(effective["description"], builtins["description"])
+        self.assertEqual(effective["cover"], "全局封面要求")
 
     def test_room_can_upload_and_restore_custom_cover_reference(self):
         manager = LiveRecorderManager()
@@ -2092,6 +2343,72 @@ class LiveRecorderStatusTests(unittest.TestCase):
             str(recorder_module.APP_ROOT / "fonts"),
         )
 
+    def test_bridge_prompt_precedence_is_room_then_global_then_builtin(self):
+        manager = LiveRecorderManager()
+        app_config = {
+            "RECORDING_AI_TITLE_PROMPT": "全局标题要求",
+            "RECORDING_AI_DESCRIPTION_PROMPT": "全局简介要求",
+            "RECORDING_AI_COVER_PROMPT": "",
+            "DANMAKU_DURATION_SECONDS": 10,
+            "DANMAKU_FONT_SIZE": 42,
+            "DANMAKU_OPACITY": 0.92,
+            "DANMAKU_ENCODER": "cpu",
+            "DANMAKU_ENCODE_PRESET": "medium",
+            "DANMAKU_ENCODE_QUALITY": 20,
+        }
+        rooms = [
+            dict(
+                self.rooms[0],
+                ai_title_prompt="直播间标题要求",
+                ai_description_prompt="",
+                ai_cover_prompt="直播间封面要求",
+            ),
+            dict(self.rooms[1]),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "bridge.config.json"
+            config_path.write_text("{}", encoding="utf-8")
+            with mock.patch.object(
+                recorder_module,
+                "BRIDGE_CONFIG_PATH",
+                config_path,
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value=app_config,
+            ):
+                manager._sync_bridge_profiles(rooms)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(config["ai_title_prompt"], "全局标题要求")
+        self.assertEqual(config["ai_description_prompt"], "全局简介要求")
+        self.assertEqual(config["ai_cover_prompt"], "")
+        self.assertEqual(
+            config["profiles"][0]["ai_title_prompt"],
+            "直播间标题要求",
+        )
+        self.assertEqual(
+            config["profiles"][0]["ai_cover_prompt"],
+            "直播间封面要求",
+        )
+        self.assertNotIn("ai_description_prompt", config["profiles"][0])
+        self.assertNotIn("ai_title_prompt", config["profiles"][1])
+        self.assertNotIn("ai_description_prompt", config["profiles"][1])
+        self.assertNotIn("ai_cover_prompt", config["profiles"][1])
+        room_effective = bridge.effective_config(
+            config,
+            Path(f"clip-{recorder_module._room_file_marker(rooms[0])}.flv"),
+        )
+        inherited_effective = bridge.effective_config(
+            config,
+            Path(f"clip-{recorder_module._room_file_marker(rooms[1])}.flv"),
+        )
+        self.assertEqual(room_effective["ai_title_prompt"], "直播间标题要求")
+        self.assertEqual(room_effective["ai_description_prompt"], "全局简介要求")
+        self.assertEqual(room_effective["ai_cover_prompt"], "直播间封面要求")
+        self.assertEqual(inherited_effective["ai_title_prompt"], "全局标题要求")
+        self.assertEqual(inherited_effective["ai_description_prompt"], "全局简介要求")
+        self.assertEqual(inherited_effective["ai_cover_prompt"], "")
+
     def test_bridge_profiles_preserve_absolute_runtime_paths(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2375,6 +2692,89 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(jobs[0]["duration_seconds"], 647)
         self.assertEqual(jobs[0]["duration_text"], "10:47")
         self.assertEqual(persisted_display_id, "BL-ALICE-0723-001")
+
+    def test_pipeline_job_finds_records_older_than_the_latest_hundred(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                for index in range(101):
+                    fingerprint = f"{index:064x}"
+                    timestamp = f"2026-07-{1 + index // 24:02d}T{index % 24:02d}:00:00+00:00"
+                    db.execute(
+                        "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'failed', 1, '{}', 'failed', ?, ?)",
+                        (fingerprint, f"/data/recordings/job-{index}.flv", timestamp, timestamp),
+                    )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[]):
+                oldest = manager.pipeline_job(f"{0:064x}")
+
+        self.assertIsNotNone(oldest)
+        self.assertEqual(oldest["id"], f"{0:064x}")
+
+    def test_pipeline_room_filter_is_applied_before_limit(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                for index in range(50):
+                    fingerprint = f"{index + 1:064x}"
+                    timestamp = f"2026-08-06T12:{59 - index:02d}:00+00:00"
+                    db.execute(
+                        "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'failed', 1, '{}', 'failed', ?, ?)",
+                        (fingerprint, f"/data/recordings/Other-job-{index}.flv", timestamp, timestamp),
+                    )
+                target_id = "f" * 64
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'failed', 1, '{}', 'failed', ?, ?)",
+                    (
+                        target_id,
+                        "/data/recordings/TargetStreamer-old.flv",
+                        "2026-08-05T10:00:00+00:00",
+                        "2026-08-05T10:00:00+00:00",
+                    ),
+                )
+
+            rooms = [{
+                "id": "target-room",
+                "name": "TargetStreamer",
+                "avatar_url": "",
+                "platform": "douyu",
+            }]
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=rooms):
+                jobs = manager.pipeline_jobs(50, room_id="target-room")
+
+        self.assertEqual([job["id"] for job in jobs], [target_id])
 
     def test_pipeline_display_ids_use_stable_daily_sequence(self):
         manager = LiveRecorderManager()
@@ -2776,6 +3176,63 @@ class LiveRecorderStatusTests(unittest.TestCase):
             )
             self.assertTrue(paused["retryable"])
             self.assertFalse(paused["pausable"])
+
+    def test_pause_does_not_change_database_when_worker_cannot_stop(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            fingerprint = "9" * 64
+            updated_at = "2026-08-06T06:00:00+00:00"
+            with sqlite3.connect(state_path) as db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', 1, '{}', NULL, ?, ?)",
+                    (fingerprint, "/data/recordings/active.flv", updated_at, updated_at),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'running', '{}', NULL, ?, NULL, ?)",
+                    (fingerprint, updated_at, updated_at),
+                )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(
+                manager, "list_rooms", return_value=[]
+            ), mock.patch.object(
+                manager,
+                "_terminate_pipeline_worker",
+                side_effect=RecorderConfigError("任务进程仍在运行"),
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "仍在运行"):
+                    manager.pause_pipeline_job(fingerprint)
+
+            with sqlite3.connect(state_path) as db:
+                self.assertEqual(
+                    db.execute(
+                        "SELECT status FROM uploads WHERE fingerprint=?",
+                        (fingerprint,),
+                    ).fetchone()[0],
+                    "processing",
+                )
+                self.assertEqual(
+                    db.execute(
+                        "SELECT status FROM upload_stages WHERE fingerprint=? AND stage='upload'",
+                        (fingerprint,),
+                    ).fetchone()[0],
+                    "running",
+                )
 
     def test_delete_active_pipeline_job_stops_it_first(self):
         manager = LiveRecorderManager()

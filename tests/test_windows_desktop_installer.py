@@ -47,9 +47,9 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
             (root / "portable.mode").touch()
             layout = resolve_windows_runtime(root / "PotatoFlow.exe", root / "resources")
             self.assertEqual(layout.mode, "portable")
-            self.assertEqual(layout.data_root, root / "data")
-            self.assertEqual(layout.recordings_root, root / "recordings")
-            self.assertEqual(layout.exports_root, root / "exports")
+            self.assertEqual(layout.data_root, (root / "data").resolve())
+            self.assertEqual(layout.recordings_root, (root / "recordings").resolve())
+            self.assertEqual(layout.exports_root, (root / "exports").resolve())
 
     def test_installed_runtime_separates_internal_and_user_files(self):
         with tempfile.TemporaryDirectory() as temp, mock.patch.dict(
@@ -59,8 +59,14 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
             root = Path(temp) / "program"
             layout = resolve_windows_runtime(root / "PotatoFlow.exe", root)
             self.assertEqual(layout.mode, "installed")
-            self.assertEqual(layout.data_root, Path(temp) / "local" / "PotatoFlow")
-            self.assertEqual(layout.recordings_root, Path(temp) / "docs" / "PotatoFlow" / "recordings")
+            self.assertEqual(
+                layout.data_root,
+                (Path(temp) / "local" / "PotatoFlow").resolve(),
+            )
+            self.assertEqual(
+                layout.recordings_root,
+                (Path(temp) / "docs" / "PotatoFlow" / "recordings").resolve(),
+            )
 
     def test_runtime_environment_points_components_at_locked_bin(self):
         with tempfile.TemporaryDirectory() as temp, mock.patch.dict(os.environ, {}, clear=True):
@@ -71,11 +77,18 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
                 (root / "bin" / name).touch()
             layout = resolve_windows_runtime(root / "PotatoFlow.exe", root)
             configure_runtime_environment(layout)
-            self.assertEqual(os.environ["POTATOFLOW_RECORDINGS_DIR"], str(root / "recordings"))
-            self.assertEqual(os.environ["RECORDER_BIN"], str(root / "bin" / "biliup.exe"))
+            self.assertEqual(
+                os.environ["POTATOFLOW_RECORDINGS_DIR"],
+                str((root / "recordings").resolve()),
+            )
+            self.assertEqual(
+                os.environ["RECORDER_BIN"],
+                str((root / "bin" / "biliup.exe").resolve()),
+            )
 
     def test_release_build_outputs_installer_and_portable(self):
         workflow = (ROOT / ".github" / "workflows" / "windows-release.yml").read_text(encoding="utf-8")
+        application_workflow = (ROOT / ".github" / "workflows" / "application.yml").read_text(encoding="utf-8")
         builder = (APP_ROOT / "build-tools" / "build_exe.py").read_text(encoding="utf-8")
         launcher = (APP_ROOT / "build-tools" / "setup_app.py").read_text(encoding="utf-8")
 
@@ -87,6 +100,9 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn("runtime-manifest.json", builder)
         self.assertIn('SERVER_ONLY_FLAG = "--server-only"', launcher)
         self.assertIn("POTATOFLOW_DATA_DIR", launcher)
+        self.assertIn("windows-tests:", application_workflow)
+        self.assertIn("./ops/test-all.ps1", application_workflow)
+        self.assertIn("Run all test suites before packaging", workflow)
 
     def test_desktop_tray_uses_decodable_png_icon(self):
         launcher_path = APP_ROOT / "build-tools" / "setup_app.py"

@@ -257,6 +257,57 @@ class SecurityBoundaryTests(unittest.TestCase):
             {"AUTO_MODE_ENABLED": "off", "NOTIFY_ENABLED": "off"},
         )
 
+    def test_recording_ai_prompt_rejects_more_than_six_thousand_characters(self):
+        with patch.object(app_module, "load_config", return_value={}):
+            result = app_module._perform_settings_save(
+                {"RECORDING_AI_TITLE_PROMPT": "题" * 6001},
+                {},
+            )
+
+        self.assertFalse(result["success"])
+        self.assertIn("不能超过 6000 字", result["final_detail"])
+
+    def test_saving_recording_ai_prompt_syncs_bridge_config_without_restart(self):
+        updated = {
+            "RECORDINGS_PATH": "docker-data/recordings",
+            "RECORDING_AI_TITLE_PROMPT": "  先写人物与英雄  ",
+        }
+        with (
+            patch.object(
+                app_module,
+                "load_config",
+                return_value={"RECORDINGS_PATH": "docker-data/recordings"},
+            ),
+            patch.object(app_module, "update_config", return_value=updated) as update,
+            patch.object(app_module.live_recorder_manager, "sync_configs") as sync,
+            patch.object(app_module.live_recorder_manager, "refresh_credentials") as refresh,
+            patch.object(app_module, "configure_app"),
+            patch("modules.task_manager.get_global_task_processor"),
+            patch.object(app_module, "_sync_notification_service"),
+            patch.object(
+                app_module.youtube_monitor,
+                "reload_api_client",
+                return_value=(False, "missing_api_key"),
+            ),
+            patch.object(app_module.youtube_monitor, "stop_all_schedules"),
+        ):
+            result = app_module._perform_settings_save(
+                {
+                    "settings_scope": "vtab-ai-models",
+                    "settings_scope_fields": "RECORDING_AI_TITLE_PROMPT",
+                    "RECORDING_AI_TITLE_PROMPT": "  先写人物与英雄  ",
+                },
+                {},
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            update.call_args.args[0]["RECORDING_AI_TITLE_PROMPT"],
+            "先写人物与英雄",
+        )
+        sync.assert_called_once_with()
+        refresh.assert_not_called()
+
     def test_windows_desktop_mode_requires_windows_and_desktop_launcher(self):
         with patch.dict(
             app_module.os.environ,

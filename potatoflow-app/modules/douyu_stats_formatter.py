@@ -64,6 +64,7 @@ HERO_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 GSI_MIN_OBSERVATION_SECONDS = 60.0
+GSI_GAME_END_LOOKAHEAD_SECONDS = 15 * 60.0
 XML_MIN_MENTION_SCORE = 25
 XML_MIN_DOMINANCE_RATIO = 2.0
 XML_MIN_MENTION_SHARE = 0.6
@@ -423,6 +424,112 @@ def select_gsi_history_player(
     return selected
 
 
+def select_gsi_history_segments(
+    history: object,
+    start_ts: float,
+    end_ts: float,
+) -> list[dict]:
+    """Return stable, non-overlapping explicit GSI hero segments.
+
+    A one-hour recording can legitimately contain several Dota 2 games and
+    therefore several heroes. The single-player selector intentionally rejects
+    that situation; this selector keeps each stable time segment separately so
+    equipment is not lost from the description or an event-matched cover.
+    """
+    entries = history if isinstance(history, list) else []
+    candidates: list[tuple[float, float, dict, str, bool]] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("player"), dict):
+            continue
+        entry_start = max(start_ts, float(entry.get("start_unix_ts") or 0))
+        entry_end = min(
+            end_ts,
+            float(entry.get("last_seen_unix_ts") or entry_start),
+        )
+        if entry_end - entry_start < GSI_MIN_OBSERVATION_SECONDS:
+            continue
+        player = dict(entry["player"])
+        if not str(player.get("hero") or "").strip():
+            continue
+        candidates.append((
+            entry_start,
+            entry_end,
+            player,
+            str(entry.get("source") or "gsi"),
+            bool(entry.get("verified_in_lineup", True)),
+        ))
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    selected: list[dict] = []
+    last_end = 0.0
+    for entry_start, entry_end, player, source, verified_in_lineup in candidates:
+        # Distinct heroes covering the same moment are ambiguous. Keep neither
+        # side of an overlap rather than assigning another player's equipment.
+        if selected and entry_start < last_end:
+            prior = selected[-1]
+            prior_key = str(prior.get("id") or _normalise_text(prior.get("hero")))
+            current_key = str(player.get("id") or _normalise_text(player.get("hero")))
+            if prior_key != current_key:
+                selected.pop()
+                last_end = selected[-1]["gsi_segment_end_unix_ts"] if selected else 0.0
+                continue
+        player["identity_source"] = (
+            f"gsi_hero_segment:{source}"
+            if verified_in_lineup
+            else f"gsi_explicit_hero_segment:{source}"
+        )
+        player["equipment_snapshot_unix_ts"] = entry_end
+        player["gsi_observed_seconds"] = round(entry_end - entry_start, 3)
+        player["gsi_verified_in_lineup"] = verified_in_lineup
+        player["gsi_segment_start_unix_ts"] = entry_start
+        player["gsi_segment_end_unix_ts"] = entry_end
+        selected.append(player)
+        last_end = entry_end
+    return selected
+
+
+def _gsi_segments_for_recording(
+    history: object,
+    start_ts: float,
+    end_ts: float,
+) -> list[dict]:
+    """Return recording segments and mark only GSI-confirmed game boundaries.
+
+    A following stable, different hero is useful evidence that the prior hero
+    segment ended. It is not evidence of who won, so callers must never turn
+    this flag alone into a result claim.
+    """
+    with_lookahead = select_gsi_history_segments(
+        history,
+        start_ts,
+        end_ts + GSI_GAME_END_LOOKAHEAD_SECONDS,
+    )
+    recording_segments = [
+        dict(segment)
+        for segment in with_lookahead
+        if float(segment.get("gsi_segment_end_unix_ts") or 0) >= start_ts
+        and float(segment.get("gsi_segment_start_unix_ts") or 0) <= end_ts
+    ]
+    for segment in recording_segments:
+        segment_end = float(segment.get("gsi_segment_end_unix_ts") or 0)
+        segment_key = str(
+            segment.get("id") or _normalise_text(segment.get("hero"))
+        )
+        successor = next((
+            candidate
+            for candidate in with_lookahead
+            if float(candidate.get("gsi_segment_start_unix_ts") or 0) > segment_end
+            and float(candidate.get("gsi_segment_start_unix_ts") or 0) - segment_end
+            <= GSI_GAME_END_LOOKAHEAD_SECONDS
+            and str(candidate.get("id") or _normalise_text(candidate.get("hero")))
+            != segment_key
+        ), None)
+        if successor is not None:
+            segment["ended_confirmed"] = True
+            segment["end_confirmation_source"] = "next_stable_gsi_hero"
+    return recording_segments
+
+
 def select_streamer_player(
     game: dict,
     comments: Iterable[tuple[float, str]],
@@ -539,11 +646,40 @@ def _format_game_line(anchor: dict) -> str:
     return summary
 
 
-def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
-    """Return the streamer hero, KDA and final in-recording equipment snapshot."""
+def get_game_for_cover(
+    video_dir: str | os.PathLike[str],
+    event_seconds: float | None = None,
+) -> dict | None:
+    """Return the event-matched hero and final in-segment equipment snapshot."""
     comments = load_xml_comments(video_dir)
     start_ts, end_ts = recording_timeframe(video_dir, comments)
     stats = load_stats(_stats_path(video_dir))
+    history_segments = _gsi_segments_for_recording(
+        stats.get("gsi_hero_history"),
+        start_ts,
+        end_ts,
+    )
+    if event_seconds is not None and history_segments:
+        event_ts = start_ts + max(0.0, float(event_seconds))
+        exact_matching = [
+            segment
+            for segment in history_segments
+            if float(segment.get("gsi_segment_start_unix_ts") or 0)
+            <= event_ts
+            <= float(segment.get("gsi_segment_end_unix_ts") or 0)
+        ]
+        if len(exact_matching) == 1:
+            return exact_matching[0]
+        if not exact_matching:
+            nearby_matching = [
+                segment
+                for segment in history_segments
+                if float(segment.get("gsi_segment_start_unix_ts") or 0) - 30.0
+                <= event_ts
+                <= float(segment.get("gsi_segment_end_unix_ts") or 0) + 30.0
+            ]
+            if len(nearby_matching) == 1:
+                return nearby_matching[0]
     best: tuple[float, dict] | None = None
     for game in _overlapping_games(stats, start_ts, end_ts):
         game_start = max(start_ts, float(game.get("start_unix_ts") or start_ts))
@@ -560,11 +696,58 @@ def get_game_for_cover(video_dir: str | os.PathLike[str]) -> dict | None:
                 best = (overlap, candidate)
     if best is not None:
         return best[1]
+    if len(history_segments) == 1:
+        return history_segments[0]
     return select_gsi_history_player(
         stats.get("gsi_hero_history"), start_ts, end_ts
     ) or select_comment_hero(
         stats.get("dota_hero_catalog", []), comments, start_ts, end_ts
     )
+
+
+def get_game_segments(video_dir: str | os.PathLike[str]) -> list[dict]:
+    """Return stable GSI games with offsets relative to this recording."""
+    comments = load_xml_comments(video_dir)
+    start_ts, end_ts = recording_timeframe(video_dir, comments)
+    stats = load_stats(_stats_path(video_dir))
+    segments = _gsi_segments_for_recording(
+        stats.get("gsi_hero_history"),
+        start_ts,
+        end_ts,
+    )
+    return [
+        {
+            "start_seconds": round(max(
+                0.0,
+                float(segment.get("gsi_segment_start_unix_ts") or start_ts)
+                - start_ts,
+            ), 3),
+            "end_seconds": round(min(
+                max(0.0, end_ts - start_ts),
+                float(segment.get("gsi_segment_end_unix_ts") or end_ts)
+                - start_ts,
+            ), 3),
+            **{
+                key: segment.get(key)
+                for key in (
+                    "hero",
+                    "items",
+                    "neutral",
+                    "scepter",
+                    "shard",
+                    "kills",
+                    "deaths",
+                    "assists",
+                    "kda",
+                    "identity_source",
+                    "ended_confirmed",
+                    "end_confirmation_source",
+                )
+                if segment.get(key) not in (None, "", [])
+            },
+        }
+        for segment in segments
+    ]
 
 
 def get_identity_diagnostics(video_dir: str | os.PathLike[str]) -> dict:
@@ -673,13 +856,21 @@ def format_stats(
         game_lines.append(_format_game_line(anchor))
 
     if not game_lines:
-        anchor = select_gsi_history_player(
-            stats.get("gsi_hero_history"), start_ts, end_ts
-        ) or select_comment_hero(
-            stats.get("dota_hero_catalog", []), comments, start_ts, end_ts
+        history_segments = _gsi_segments_for_recording(
+            stats.get("gsi_hero_history"),
+            start_ts,
+            end_ts,
         )
-        if anchor:
-            game_lines.append(_format_game_line(anchor))
+        if history_segments:
+            game_lines.extend(_format_game_line(anchor) for anchor in history_segments)
+        else:
+            anchor = select_gsi_history_player(
+                stats.get("gsi_hero_history"), start_ts, end_ts
+            ) or select_comment_hero(
+                stats.get("dota_hero_catalog", []), comments, start_ts, end_ts
+            )
+            if anchor:
+                game_lines.append(_format_game_line(anchor))
 
     if (
         not gift_totals and not diamond_events

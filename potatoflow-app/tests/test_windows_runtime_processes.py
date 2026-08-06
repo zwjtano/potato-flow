@@ -1,14 +1,24 @@
 import os
 import subprocess
 import sys
+import tempfile
+import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from modules import bilibili_runtime
 from modules import ffmpeg_manager
 from modules import live_recorder_manager
+from modules import speech_recognition
+from modules import submission_engine
 from modules import task_manager
+from modules import vad_processor
+from modules import youtube_handler
+import danmaku_pipeline
+import bridge
+from tools import render_subtitle_preview
 
 
 def test_runtime_ffmpeg_environment_is_checked_before_download(tmp_path):
@@ -75,6 +85,79 @@ def test_windows_ffmpeg_probes_never_open_a_console():
         }
 
 
+def test_all_windows_media_and_upload_helpers_hide_short_lived_processes():
+    expected = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    helpers = (
+        bridge._hidden_subprocess_kwargs,
+        bilibili_runtime._hidden_subprocess_kwargs,
+        danmaku_pipeline._hidden_subprocess_kwargs,
+        live_recorder_manager._hidden_process_kwargs,
+        speech_recognition._hidden_subprocess_kwargs,
+        submission_engine._hidden_subprocess_kwargs,
+        task_manager._hidden_subprocess_kwargs,
+        vad_processor._hidden_subprocess_kwargs,
+        youtube_handler._hidden_subprocess_kwargs,
+        render_subtitle_preview._hidden_subprocess_kwargs,
+    )
+    for helper in helpers:
+        module = sys.modules[helper.__module__]
+        with mock.patch.object(module.os, "name", "nt"):
+            assert helper() == expected
+
+
+def test_windows_pipeline_worker_is_terminated_with_hidden_taskkill():
+    manager = live_recorder_manager.LiveRecorderManager()
+    completed = mock.Mock(returncode=0, stdout="", stderr="")
+    with (
+        mock.patch.object(live_recorder_manager.os, "name", "nt"),
+        mock.patch.object(manager, "_pipeline_worker_pid", return_value=4321),
+        mock.patch.object(manager, "_pipeline_process_alive", return_value=False),
+        mock.patch.object(
+            live_recorder_manager.subprocess,
+            "run",
+            return_value=completed,
+        ) as run,
+    ):
+        assert manager._terminate_pipeline_worker({}) == 4321
+
+    assert run.call_args.args[0] == [
+        "taskkill.exe", "/PID", "4321", "/T", "/F",
+    ]
+    assert run.call_args.kwargs["creationflags"] == getattr(
+        subprocess,
+        "CREATE_NO_WINDOW",
+        0,
+    )
+
+
+def test_windows_pipeline_command_line_uses_hidden_powershell():
+    completed = mock.Mock(
+        returncode=0,
+        stdout='python.exe bridge.py ingest "C:\\recordings\\clip.flv"',
+    )
+    with (
+        mock.patch.object(live_recorder_manager.os, "name", "nt"),
+        mock.patch.object(
+            live_recorder_manager.shutil,
+            "which",
+            return_value="powershell.exe",
+        ),
+        mock.patch.object(
+            live_recorder_manager.subprocess,
+            "run",
+            return_value=completed,
+        ) as run,
+    ):
+        command = live_recorder_manager.LiveRecorderManager._pipeline_process_cmdline(4321)
+
+    assert "bridge.py" in command
+    assert run.call_args.kwargs["creationflags"] == getattr(
+        subprocess,
+        "CREATE_NO_WINDOW",
+        0,
+    )
+
+
 def test_incompatible_recorder_migration_database_is_backed_up(tmp_path):
     runtime = tmp_path / "recorder-engine"
     database = runtime / "data" / "data.sqlite3"
@@ -117,3 +200,30 @@ def test_file_library_navigation_opens_the_file_manager():
     assert "#recording-files" in base
     assert "window.addEventListener('hashchange', syncFileLibraryRoute)" in live_recording
     assert "bootstrap.Modal.getOrCreateInstance(filesModal).show()" in live_recording
+
+
+def load_tests(_loader, _tests, _pattern):
+    """Expose the module's function-style Windows checks to unittest discovery."""
+    fixture_tests = {
+        "test_runtime_ffmpeg_environment_is_checked_before_download",
+        "test_ffmpeg_download_uses_writable_application_data",
+        "test_incompatible_recorder_migration_database_is_backed_up",
+        "test_other_recorder_failures_never_rotate_database",
+    }
+    suite = unittest.TestSuite()
+    for name, function in sorted(globals().items()):
+        if not name.startswith("test_") or not callable(function):
+            continue
+        if name in fixture_tests:
+            def run_with_tmp_path(test_function=function):
+                with tempfile.TemporaryDirectory() as temp:
+                    test_function(Path(temp))
+
+            test_case = unittest.FunctionTestCase(
+                run_with_tmp_path,
+                description=name,
+            )
+        else:
+            test_case = unittest.FunctionTestCase(function, description=name)
+        suite.addTest(test_case)
+    return suite

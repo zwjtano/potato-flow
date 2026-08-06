@@ -693,7 +693,11 @@ class TelegramControlService:
         value = str(reference or "").strip()
         if not value:
             raise RecorderConfigError("请提供任务编号，例如 /task 1")
-        jobs = list(self.manager.pipeline_jobs(100))
+        if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+            exact_job = self.manager.pipeline_job(value.lower())
+            if exact_job:
+                return exact_job
+        jobs = list(self.manager.pipeline_jobs(None))
         if value.isdigit():
             index = int(value)
             if 1 <= index <= len(jobs):
@@ -758,6 +762,7 @@ class TelegramControlService:
             "verify": "校验",
             "cleanup": "清理",
             "upload": "投稿",
+            "collection": "加入合集",
         }
         stage_icons = {
             "completed": "✅",

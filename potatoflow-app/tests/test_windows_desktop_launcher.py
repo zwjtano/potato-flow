@@ -1,5 +1,6 @@
 import importlib.util
 import socket
+import unittest
 import urllib.error
 from pathlib import Path
 from unittest import mock
@@ -125,6 +126,7 @@ def test_tray_exit_runs_off_the_pystray_callback_thread():
     assert "threading.Timer(20, os._exit" in source
     assert 'pystray.MenuItem("检查更新", check_updates)' in source
     assert "check_updates(manual=False)" in source
+    assert 'getattr(subprocess, "CREATE_NO_WINDOW", 0)' in source
     assert source.index('name="desktop-exit"') < source.index("webview.start(")
 
 
@@ -139,3 +141,12 @@ def test_installer_stops_processes_and_never_deletes_documents_root():
     assert "DelTree(UserFiles + '\\\\exports'" in generator
     assert "DelTree(UserFiles, True, True, True)" not in generator
     assert "检测到源码仓库，已拒绝清理该目录" in generator
+
+
+def load_tests(_loader, _tests, _pattern):
+    """Expose the module's function-style Windows checks to unittest discovery."""
+    suite = unittest.TestSuite()
+    for name, function in sorted(globals().items()):
+        if name.startswith("test_") and callable(function):
+            suite.addTest(unittest.FunctionTestCase(function, description=name))
+    return suite

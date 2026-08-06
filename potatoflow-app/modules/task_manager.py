@@ -89,6 +89,13 @@ def _background_subprocess_kwargs() -> dict[str, Any]:
     }
 
 
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    """Prevent short-lived media probes from flashing a Windows console."""
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 def _convert_vtt_text_to_srt_text(vtt_content: str) -> str:
     """将普通/YouTube 自动字幕 VTT 文本稳健转换为 SRT 文本。"""
     import re
@@ -2945,6 +2952,7 @@ class TaskProcessor:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=120,
                 encoding='utf-8', errors='replace',
+                **_hidden_subprocess_kwargs(),
             )
             task_logger.debug(f"yt-dlp 封面采集输出: {proc.stdout}")
             if proc.returncode != 0:
@@ -3862,7 +3870,8 @@ class TaskProcessor:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=15
+                timeout=15,
+                **_hidden_subprocess_kwargs(),
             )
             err_msg = (test_result.stderr or test_result.stdout or '').strip()
             if not err_msg and test_result.returncode != 0:
@@ -6123,7 +6132,8 @@ class TaskProcessor:
                     # subprocess imported at module level
                     result = subprocess.run(
                         [ffmpeg_bin, '-hide_banner', '-filters'],
-                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=20
+                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=20,
+                        **_hidden_subprocess_kwargs(),
                     )
                     if result.returncode == 0 and filter_name in result.stdout:
                         return True
@@ -6241,7 +6251,8 @@ class TaskProcessor:
                             text=True,
                             encoding='utf-8',
                             errors='replace',
-                            timeout=10
+                            timeout=10,
+                            **_hidden_subprocess_kwargs(),
                         )
                         encoder_text = f"{list_result.stdout or ''}\n{list_result.stderr or ''}"
                         return list_result.returncode == 0 and encoder_name in encoder_text
@@ -6263,7 +6274,8 @@ class TaskProcessor:
                                 text=True,
                                 encoding='utf-8',
                                 errors='replace',
-                                timeout=10
+                                timeout=10,
+                                **_hidden_subprocess_kwargs(),
                             )
                             encoder_text = f"{list_result.stdout or ''}\n{list_result.stderr or ''}"
                             encoder_list_available = (
@@ -6849,7 +6861,8 @@ class TaskProcessor:
                 text=True, 
                 encoding='utf-8',
                 errors='replace',
-                timeout=60  # 添加60秒超时
+                timeout=60,  # 添加60秒超时
+                **_hidden_subprocess_kwargs(),
             )
             
             if result.returncode == 0:
@@ -6894,7 +6907,8 @@ class TaskProcessor:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=30
+                timeout=30,
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 data = json.loads(result.stdout)
@@ -6957,7 +6971,8 @@ class TaskProcessor:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=30
+                timeout=30,
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 data = json.loads(result.stdout)

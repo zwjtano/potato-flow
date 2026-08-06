@@ -18,6 +18,12 @@ from .ffmpeg_manager import get_ffmpeg_path
 from .subtitle_pipeline_types import DetectedSpeechWindow
 
 
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    if os.name != 'nt':
+        return {}
+    return {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)}
+
+
 @dataclass
 class VadConfig:
     provider: str = 'silero-vad'
@@ -705,6 +711,7 @@ class VadProcessor:
                 encoding='utf-8',
                 errors='replace',
                 timeout=120,
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode != 0 or not os.path.exists(out_wav):
                 self.logger.warning("Audio clip extraction failed: %s", (result.stderr or '')[:200])

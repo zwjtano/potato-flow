@@ -19,6 +19,13 @@ _YOUTUBE_DOWNLOAD_MAX_HEIGHT_VALUES = ('2160', '1440', '1080', '720', '480', '36
 _YOUTUBE_DOWNLOAD_QUALITY_MODE_DEFAULT = 'highest'
 _YOUTUBE_DOWNLOAD_MAX_HEIGHT_DEFAULT = '1080'
 
+RECORDING_AI_PROMPT_CONFIG_KEYS = {
+    "title": "RECORDING_AI_TITLE_PROMPT",
+    "description": "RECORDING_AI_DESCRIPTION_PROMPT",
+    "cover": "RECORDING_AI_COVER_PROMPT",
+}
+RECORDING_AI_PROMPT_MAX_LENGTH = 6000
+
 # 默认配置
 DEFAULT_CONFIG = {
     "AUTO_MODE_ENABLED": False, # 无人值守自动投稿总开关
@@ -115,6 +122,10 @@ DEFAULT_CONFIG = {
     # 4:3 使用独立请求与构图提示，生成后再单独处理为投稿尺寸。
     # Official Images API sizes are square or 3:2; final output is cropped to 4:3.
     "OPENAI_IMAGE_SIZE_4X3": "1536x1024",
+    # 录播 AI 投稿创作要求。直播间单独配置优先；留空使用 bridge 内置默认。
+    "RECORDING_AI_TITLE_PROMPT": "",
+    "RECORDING_AI_DESCRIPTION_PROMPT": "",
+    "RECORDING_AI_COVER_PROMPT": "",
     "MIN_RECORDING_UPLOAD_DURATION_SECONDS": 300,
     "OPENAI_THINKING_ENABLED": False,
     "OPENAI_TIMEOUT_SECONDS": 600,  # OpenAI API 请求超时秒数；思考模型输出可达64k token，建议不低于300

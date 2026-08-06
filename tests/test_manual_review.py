@@ -10,7 +10,7 @@ class ManualReviewTests(unittest.TestCase):
         app_source = (ROOT / "potatoflow-app" / "app.py").read_text(encoding="utf-8")
 
         self.assertIn("failed_tasks = get_tasks_by_status(TASK_STATES['FAILED'])", app_source)
-        self.assertIn("if job.get('status') == 'failed'", app_source)
+        self.assertIn("statuses={'failed'}", app_source)
         self.assertIn("recording_jobs=recording_review_jobs", app_source)
 
     def test_review_page_exposes_recording_failure_details_and_retry(self):
@@ -36,6 +36,8 @@ class ManualReviewTests(unittest.TestCase):
 
         self.assertIn("def live_recording_job_review(fingerprint)", app_source)
         self.assertIn("save_pipeline_review(", app_source)
+        self.assertIn("tags=tags if tags_submitted else job.get('tags', [])", app_source)
+        self.assertIn("if 'description' in request.form", app_source)
         self.assertIn("确认并继续生成封面与投稿", template)
         self.assertIn('name="cover_file"', template)
         self.assertIn('name="partition_id"', template)
@@ -156,7 +158,8 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn('"ai_title_prompt"', manager_source)
         self.assertIn('"ai_description_prompt"', manager_source)
         self.assertIn('"ai_cover_prompt"', manager_source)
-        self.assertIn("查看三个系统默认提示词", live_template)
+        self.assertIn("查看当前继承的三个提示词", live_template)
+        self.assertIn("留空继承全局设置", live_template)
         self.assertIn('name="ai_title_prompt"', live_template)
         self.assertIn('name="ai_description_prompt"', live_template)
         self.assertIn('name="ai_cover_prompt"', live_template)

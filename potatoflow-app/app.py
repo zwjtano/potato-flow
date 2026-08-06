@@ -24,7 +24,13 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash, safe_join
 from modules.youtube_handler import extract_video_urls_from_playlist
 from modules.utils import get_app_subdir
-from modules.config_manager import load_config, update_config, reset_specific_config
+from modules.config_manager import (
+    RECORDING_AI_PROMPT_CONFIG_KEYS,
+    RECORDING_AI_PROMPT_MAX_LENGTH,
+    load_config,
+    reset_specific_config,
+    update_config,
+)
 from modules.upload_line_manager import (
     load_probe_state as load_upload_probe_state,
     probe_and_select as probe_upload_lines,
@@ -1203,6 +1209,16 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
         if 'SUBTITLE_FONT_NAME' in form_data:
             form_data['SUBTITLE_FONT_NAME'] = str(form_data['SUBTITLE_FONT_NAME']).strip()
 
+        for config_key in RECORDING_AI_PROMPT_CONFIG_KEYS.values():
+            if config_key not in form_data:
+                continue
+            prompt_text = str(form_data.get(config_key) or "").strip()
+            if len(prompt_text) > RECORDING_AI_PROMPT_MAX_LENGTH:
+                raise RecorderConfigError(
+                    f"录播 AI 提示词每项不能超过 {RECORDING_AI_PROMPT_MAX_LENGTH} 字"
+                )
+            form_data[config_key] = prompt_text
+
         danmaku_ranges = {
             'DANMAKU_DURATION_SECONDS': (float, 1, 30, '弹幕飘屏时间'),
             'DANMAKU_FONT_SIZE': (int, 12, 120, '弹幕字号'),
@@ -1232,6 +1248,21 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
                 live_recorder_manager.sync_configs()
             except RecorderConfigError as exc:
                 _append_settings_message(messages, 'warning', f'ASS 设置已保存，但录制配置同步失败：{exc}')
+        recording_prompt_settings_changed = bool(
+            set(RECORDING_AI_PROMPT_CONFIG_KEYS.values()) & set(form_data)
+        )
+        if recording_prompt_settings_changed:
+            try:
+                # Rebuild only generated configuration. The current recorder
+                # process does not need to restart; subsequent tasks read the
+                # updated bridge configuration.
+                live_recorder_manager.sync_configs()
+            except RecorderConfigError as exc:
+                _append_settings_message(
+                    messages,
+                    'warning',
+                    f'录播 AI 提示词已保存，但桥接配置同步失败：{exc}',
+                )
         if {'DESKTOP_START_WITH_WINDOWS', 'DESKTOP_ALLOW_LAN'} & set(form_data):
             try:
                 from modules.desktop_runtime import sync_windows_startup
@@ -1502,6 +1533,7 @@ def live_recording():
         recorder_status=live_recorder_manager.status(),
         recorder_log=live_recorder_manager.tail_log(),
         recording_prompt_defaults=live_recorder_manager.recording_prompt_defaults(),
+        recording_prompt_inherited=live_recorder_manager.effective_recording_prompt_defaults(config),
         selected_room_id=selected_room_id,
         bilibili_accounts=normalize_accounts(config),
         bilibili_default_account_id=default_account_id(config),
@@ -1673,18 +1705,35 @@ def live_recording_job_review(fingerprint):
     if request.method == 'POST':
         try:
             action = request.form.get('action', 'save').strip().lower()
+            tags_submitted = 'tags_json' in request.form
             try:
-                tags = json.loads(request.form.get('tags_json', '[]'))
+                tags = json.loads(
+                    request.form.get('tags_json', '[]')
+                    if tags_submitted
+                    else json.dumps(job.get('tags', []), ensure_ascii=False)
+                )
             except json.JSONDecodeError:
                 tags = []
             if not isinstance(tags, list):
                 tags = []
             live_recorder_manager.save_pipeline_review(
                 fingerprint,
-                title=request.form.get('title', '') or job.get('title', ''),
-                description=request.form.get('description', '') or job.get('description', ''),
-                tags=tags or job.get('tags', []),
-                partition_id=request.form.get('partition_id', '') or job.get('partition_id', ''),
+                title=(
+                    request.form.get('title', '')
+                    if 'title' in request.form
+                    else job.get('title', '')
+                ),
+                description=(
+                    request.form.get('description', '')
+                    if 'description' in request.form
+                    else job.get('description', '')
+                ),
+                tags=tags if tags_submitted else job.get('tags', []),
+                partition_id=(
+                    request.form.get('partition_id', '')
+                    if 'partition_id' in request.form
+                    else job.get('partition_id', '')
+                ),
                 cover_file=request.files.get('cover_file'),
                 cover43_file=request.files.get('cover43_file'),
             )
@@ -2961,7 +3010,7 @@ def tasks():
     all_youtube_tasks = get_all_tasks()
     for task in all_youtube_tasks:
         _decorate_youtube_task_for_view(task, config)
-    all_recording_jobs = live_recorder_manager.pipeline_jobs(500)
+    all_recording_jobs = live_recorder_manager.pipeline_jobs(None)
     queue_summary = build_queue_summary(all_youtube_tasks, all_recording_jobs)
     room_options = recording_room_options(all_recording_jobs)
     allowed_rooms = {'all', *(item['value'] for item in room_options)}
@@ -3290,10 +3339,10 @@ def manual_review():
     known_task_ids = {task.get('id') for task in review_tasks}
     review_tasks.extend(task for task in failed_tasks if task.get('id') not in known_task_ids)
     review_tasks.sort(key=lambda task: str(task.get('updated_at') or ''), reverse=True)
-    recording_review_jobs = [
-        job for job in live_recorder_manager.pipeline_jobs(100)
-        if job.get('status') == 'failed'
-    ]
+    recording_review_jobs = live_recorder_manager.pipeline_jobs(
+        100,
+        statuses={'failed'},
+    )
     
     # 封面图片现在直接从downloads目录提供
     
@@ -4255,6 +4304,7 @@ def settings():
         whisper_languages=WHISPER_LANGUAGE_LIST,
         bilibili_partition_mapping=bilibili_partition_mapping,
         builtin_prompts=builtin_prompts,
+        recording_prompt_defaults=live_recorder_manager.recording_prompt_defaults(),
         recordings_path=str(recordings_dir()),
         windows_desktop_mode=_is_windows_desktop_mode(),
     )

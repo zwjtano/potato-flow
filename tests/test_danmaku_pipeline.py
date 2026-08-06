@@ -49,6 +49,8 @@ class DanmakuPipelineTests(unittest.TestCase):
             QueryValueEx=lambda *_args, **_kwargs: ("Intel Core i7-9700", 1),
         )
         with patch.dict(sys.modules, {"winreg": fake_winreg}), patch(
+            "danmaku_pipeline.os.name", "nt"
+        ), patch(
             "danmaku_pipeline.os.cpu_count", return_value=8
         ):
             cpu = danmaku_pipeline._cpu_device()

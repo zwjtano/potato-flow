@@ -25,6 +25,13 @@ import tempfile
 import uuid
 from pathlib import Path
 
+
+def _hidden_subprocess_kwargs() -> dict[str, int]:
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -77,7 +84,13 @@ def render_sample(
             "-q:v", "2",
             str(out_path),
         ]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **_hidden_subprocess_kwargs(),
+        )
     finally:
         try:
             if ass_path.exists():

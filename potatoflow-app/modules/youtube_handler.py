@@ -40,6 +40,13 @@ class YtDlpUnavailableError(RuntimeError):
     """本地 yt-dlp 命令入口不可用。"""
 
 
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    """Keep yt-dlp and FFmpeg commands invisible in the Windows desktop."""
+    if os.name != 'nt':
+        return {}
+    return {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)}
+
+
 def _format_unexpected_download_error(exc: Exception) -> str:
     if isinstance(exc, YtDlpUnavailableError):
         return str(exc)
@@ -288,7 +295,8 @@ def _find_yt_dlp_command(log: logging.Logger) -> list[str]:
                 text=True,
                 timeout=10,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 log.info(f"使用{command_label}")
@@ -400,7 +408,8 @@ def merge_streams_with_ffmpeg(task_dir: str, ffmpeg_path: str | None = None, log
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                **_hidden_subprocess_kwargs(),
             )
         except Exception as exc:
             log.warning(f"手动合并过程中发生异常: {exc}")
@@ -509,7 +518,8 @@ def test_video_availability(youtube_url, yt_dlp_cmd, cookies_path=None, logger=N
                 text=True,
                 timeout=45,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                **_hidden_subprocess_kwargs(),
             )
 
             if process.returncode == 0:
@@ -759,7 +769,8 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                             bufsize=1,
                             universal_newlines=True,
                             encoding='utf-8',
-                            errors='replace'  # 遇到无法解码的字符时用?替换
+                            errors='replace',  # 遇到无法解码的字符时用?替换
+                            **_hidden_subprocess_kwargs(),
                         )
                         logger.info(f"subprocess.Popen创建成功，PID: {process.pid}")
                     except Exception as e:
@@ -848,7 +859,8 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                         check=True, 
                         timeout=300,
                         encoding='utf-8',
-                        errors='replace'  # 遇到无法解码的字符时用?替换
+                        errors='replace',  # 遇到无法解码的字符时用?替换
+                        **_hidden_subprocess_kwargs(),
                     )
                     if cancel_event is not None and cancel_event.is_set():
                         logger.info("检测到任务取消请求，终止yt-dlp命令执行")
