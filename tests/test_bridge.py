@@ -1736,6 +1736,32 @@ class BridgeTests(unittest.TestCase):
             segments,
         ))
 
+    def test_verified_gameplay_rejects_audience_label_prefix(self):
+        timeline = ["02:13 川神的风暴之灵被锤中"]
+        segments = [{
+            "start_seconds": 0,
+            "end_seconds": 1200,
+            "hero": "风暴之灵",
+            "identity_source": "gsi_explicit_hero_segment:http",
+        }]
+
+        self.assertTrue(
+            bridge.recording_title_audience_prefix_obscures_selected_gsi_gameplay(
+                "观众讨论川神使用风暴之灵被锤中",
+                [0],
+                timeline,
+                segments,
+            )
+        )
+        self.assertFalse(
+            bridge.recording_title_audience_prefix_obscures_selected_gsi_gameplay(
+                "川神的风暴之灵被锤中后残血脱身",
+                [0],
+                timeline,
+                segments,
+            )
+        )
+
     def test_competitive_result_rejects_inverted_winner(self):
         comments = [
             types.SimpleNamespace(time=60.0, text="南枫输了"),
@@ -3393,6 +3419,7 @@ class BridgeTests(unittest.TestCase):
             "进入抽卡环节，弹幕刷屏保底",
             "实战队伍频繁踩中范围伤害，弹幕调侃",
             "牛姐对视挑战失败，弹幕围绕“牛蛙”",
+            "本局结束后转入玛西对局；后段继续守高",
         ):
             with self.subTest(topic=topic):
                 self.assertTrue(bridge.recording_title_topic_is_vague(topic))

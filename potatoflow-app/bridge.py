@@ -92,6 +92,8 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "名誉的现实传言不得入题，不能通过添加“弹幕称”继续保留；中性现实消息使用“观众讨论”，"
     "明显玩笑使用“直播间调侃”。"
     "现场可见的游戏表现和比赛结果直接陈述，不得套用“直播间热议/讨论”等房间前缀。"
+    "结构化 GSI 已确认主播操作时，标题不得以“观众讨论、弹幕认为、直播间质疑”开头；"
+    "不得把“结束后转入下一局、进入某英雄对局”写进标题占用篇幅，应直接写各局具体动作、转折或结果。"
     "同时给出 cover_text：只压缩标题中排序第一的核心事件，优先8至18字、最多24字，可比投稿标题短；"
     "不得新增人物、动作、结果或来源，不得强塞主播名，负面现实传言不得进入封面文案。无法安全压缩时返回空字符串。"
 )
@@ -1147,6 +1149,8 @@ _WEAK_RECORDING_TITLE_RE = re.compile(
     r"|(?:继续|持续|仍在)(?:进行|推进|游戏|比赛|挑战)$"
     r"|弹幕(?:调侃|讨论|热议|关注|吐槽|刷屏)$"
     r"|(?:弹幕|观众)(?:围绕|关于).{1,16}$"
+    r"|(?:转入|进入|开始)(?:下一|新|[0-9A-Za-z\u4e00-\u9fff]{1,8})"
+    r"(?:局|场|把|对局)(?:后|；|，|,|$)"
 )
 _OPAQUE_RECORDING_TITLE_ATTRIBUTION_RE = re.compile(r"(?:被指|被曝|据称)")
 _TITLE_ROOM_DISCUSSION_PREFIX_RE = re.compile(
@@ -1530,6 +1534,26 @@ def recording_title_missing_selected_gsi_streamer(
         return False
     # An empty title forces all event-matched heroes to be reported as missing;
     # a non-empty result means at least one selected event is verified gameplay.
+    return bool(recording_title_missing_selected_gsi_heroes(
+        "",
+        selected_indexes,
+        verified_timeline,
+        game_segments,
+    ))
+
+
+def recording_title_audience_prefix_obscures_selected_gsi_gameplay(
+    title: str,
+    selected_indexes: Any,
+    verified_timeline: list[str],
+    game_segments: Any,
+) -> bool:
+    """Reject audience-label prefixes when GSI already proves the gameplay."""
+    if not re.match(
+        r"^(?:观众|弹幕|直播间)(?:讨论|称|认为|质疑|调侃|吐槽|关注)",
+        normalize_recording_title_filler(title),
+    ):
+        return False
     return bool(recording_title_missing_selected_gsi_heroes(
         "",
         selected_indexes,
@@ -5619,6 +5643,7 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
 若 verified_live_context 的 game/game_segments 标记 ended_confirmed，它只用于确定对局边界，不能单独作为标题；
 只有 verified_timeline 同时明确写出胜负、翻盘、基地告破或决定性收尾时，具体结束结果才提升为最高优先级。
 禁止生成“本局结束”“转入下一局”“开始下一把”等没有具体结果的信息。
+即使标题还有其他看点，也不得用“结束后转入下一局、进入某英雄对局”等过场语串联；直接写两局各自的具体事件。
 弹幕很多但没有具体动作、对象或结果，不等于标题价值高。“进入后段/进入环节/继续进行/第几圈左右”只是过程状态，
 不能单独作为标题；应优先选择后续已经出现的完成、反超、胜负、分数、关键操作或强反差。多个候选强度接近时，
 优先选择证据最集中、人物关系最清楚、
@@ -5638,6 +5663,7 @@ streamer_identity.preferred_title_name，并自然融入“谁做了什么”的
 删除观众反应后仍不影响事件主线时，优先不写。只有观众反应本身推动剧情、形成明显反差或成为核心笑点时，
 标题才可采用“事件主线 + 具体弹幕反应”，写清弹幕在提醒什么、催什么、刷什么梗或调侃成什么；同一标题最多
 保留一处观众反应。不得只写没有内容的“弹幕热议/讨论/关注”，也不得为了出现“弹幕”而牺牲事件主线。
+结构化 GSI 已确认主播当局操作时，直接写主播、英雄和事件，不得以“观众讨论、弹幕认为、直播间质疑”开头。
 结构示例只用于理解写法，绝不能复制未出现在输入中的事实：连续挑战可写“某人一人挑战十人接力，三圈套圈后
 后程悬念拉满”；多环节可写“连战多款小游戏，从断崖垫底到手速局终于第一”；若刷梗确实是核心笑点，才可写
 “合成EX后战力冲万亿，小怪依旧刮痧，0%输出笑翻弹幕”。
@@ -5761,6 +5787,18 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
                                 or title_payload["streamer_identity"].get("public_name")
                                 or "主播"
                             )
+                        )
+                    elif recording_title_audience_prefix_obscures_selected_gsi_gameplay(
+                        candidate_topic,
+                        selected_timeline_indexes,
+                        title_payload["verified_timeline"],
+                        game_segments,
+                    ):
+                        diagnostics[
+                            "title_topic_audience_prefix_for_verified_gameplay"
+                        ] = True
+                        rejection_reason = (
+                            "结构化 GSI 已确认主播操作，标题不得用观众或弹幕作开头"
                         )
                 if not rejection_reason:
                     title_topic = candidate_topic

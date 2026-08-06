@@ -4374,6 +4374,17 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         rejected_topic = candidate_topic
                         rejection_reason = "已选主播游戏事件遗漏已确认的人物主语"
                         continue
+                    if bridge.recording_title_audience_prefix_obscures_selected_gsi_gameplay(
+                        candidate_topic,
+                        candidate_result.get("selected_timeline_indexes"),
+                        bridge.timeline_lines(current_description),
+                        validation_segments,
+                    ):
+                        rejected_topic = candidate_topic
+                        rejection_reason = (
+                            "结构化 GSI 已确认主播操作，标题不得用观众或弹幕作开头"
+                        )
+                        continue
                     if title_identity(candidate_topic) == title_identity(current_topic):
                         rejected_topic = candidate_topic
                         rejection_reason = "AI 连续返回与当前稿件相同的标题"
