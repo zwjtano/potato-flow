@@ -69,6 +69,7 @@ class SubmissionEngineAdapterTests(unittest.TestCase):
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
         return str(path)
 
+    @unittest.skipIf(os.name == "nt", "POSIX shell fixture; Windows executable discovery is tested separately")
     def test_new_submission_returns_bvid_and_progress(self):
         with tempfile.TemporaryDirectory() as temp:
             cookie = Path(temp) / "cookie.json"
@@ -110,6 +111,7 @@ class SubmissionEngineAdapterTests(unittest.TestCase):
             self.assertNotIn("speed_bytes_per_sec", details[-1])
             self.assertFalse(cookie.exists(), "临时投稿 Cookie 应在进程结束后删除")
 
+    @unittest.skipIf(os.name == "nt", "POSIX shell fixture; Windows executable discovery is tested separately")
     def test_append_keeps_existing_bvid(self):
         with tempfile.TemporaryDirectory() as temp:
             cookie = Path(temp) / "cookie.json"

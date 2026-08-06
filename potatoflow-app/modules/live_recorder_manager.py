@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -334,6 +335,11 @@ def _recording_file_type(path: Path) -> str | None:
 def _workspace_runtime_path(value: Any, default: str) -> str:
     """Convert repository-relative paths into paths valid in the active runtime."""
     raw = str(value or default).strip()
+    # A bridge config can intentionally contain a Linux/container path even
+    # while it is edited by the Windows desktop build.  pathlib on Windows
+    # treats `/custom/...` as drive-relative, so preserve this spelling.
+    if raw.startswith("/"):
+        return raw
     path = Path(raw).expanduser()
     if path.is_absolute():
         return str(path)
@@ -2128,7 +2134,7 @@ class LiveRecorderManager:
         if not state_path.is_file():
             return False
         try:
-            with sqlite3.connect(state_path, timeout=5) as db:
+            with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                 cursor = db.execute(
                     "DELETE FROM multipart_sessions WHERE session_key=?",
                     (session_key,),
@@ -2744,7 +2750,7 @@ class LiveRecorderManager:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         reason = "服务重启中断了当前处理，请点击重试继续"
         try:
-            with sqlite3.connect(state_path, timeout=5) as db:
+            with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                 interrupted_fingerprints = {
                     row[0]
                     for row in db.execute(
@@ -2796,7 +2802,7 @@ class LiveRecorderManager:
         known_paths: set[Path] = set()
         if state_path.is_file():
             try:
-                with sqlite3.connect(state_path, timeout=5) as db:
+                with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                     known_paths = {
                         Path(str(row[0])).expanduser().resolve()
                         for row in db.execute("SELECT video_path FROM uploads").fetchall()
@@ -3250,7 +3256,7 @@ class LiveRecorderManager:
             if room:
                 room_marker = _room_file_marker(room)
         try:
-            with sqlite3.connect(state_path, timeout=5) as db:
+            with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                 db.row_factory = sqlite3.Row
                 display_ids = self._ensure_pipeline_display_ids(db, room_markers)
                 filters = []
@@ -3794,7 +3800,7 @@ class LiveRecorderManager:
         state_path = self._pipeline_state_path()
         state_path.parent.mkdir(parents=True, exist_ok=True)
         now = str(metadata.get("updated_at") or datetime.now(timezone.utc).isoformat())
-        with sqlite3.connect(state_path, timeout=30) as db:
+        with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
             db.execute(
                 """CREATE TABLE IF NOT EXISTS recording_review_overrides (
                     fingerprint TEXT PRIMARY KEY,
@@ -4716,7 +4722,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             whole_result["bilibili"] = updated_result
             now = datetime.now(timezone.utc).isoformat()
             state_path = self._pipeline_state_path()
-            with sqlite3.connect(state_path, timeout=30) as db:
+            with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
                 db.execute(
                     "UPDATE uploads SET result_json=?, updated_at=? WHERE fingerprint=?",
                     (json.dumps(whole_result, ensure_ascii=False), now, fingerprint),
@@ -5025,7 +5031,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
     def _ensure_archive_replacement_table(self) -> None:
         state_path = self._pipeline_state_path()
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(state_path, timeout=30) as db:
+        with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
             db.execute(
                 """CREATE TABLE IF NOT EXISTS bilibili_source_replacements (
                     id TEXT PRIMARY KEY,
@@ -5067,7 +5073,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 assignments.append(f"{column}=?")
                 values.append(value)
         values.append(replacement_id)
-        with sqlite3.connect(self._pipeline_state_path(), timeout=30) as db:
+        with closing(sqlite3.connect(self._pipeline_state_path(), timeout=30)) as db, db:
             db.execute(
                 f"UPDATE bilibili_source_replacements SET {', '.join(assignments)} WHERE id=?",
                 values,
@@ -5075,7 +5081,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 
     def archive_replacement_jobs(self, limit: int = 30) -> list[dict[str, Any]]:
         self._ensure_archive_replacement_table()
-        with sqlite3.connect(self._pipeline_state_path(), timeout=30) as db:
+        with closing(sqlite3.connect(self._pipeline_state_path(), timeout=30)) as db, db:
             db.row_factory = sqlite3.Row
             rows = db.execute(
                 "SELECT * FROM bilibili_source_replacements ORDER BY created_at DESC LIMIT ?",
@@ -5121,7 +5127,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         if file_id not in allowed_ids:
             raise RecorderConfigError("只能选择已完成 ASS 烧录且当前未被占用的视频")
         self._ensure_archive_replacement_table()
-        with sqlite3.connect(self._pipeline_state_path(), timeout=30) as db:
+        with closing(sqlite3.connect(self._pipeline_state_path(), timeout=30)) as db, db:
             active = db.execute(
                 """SELECT id FROM bilibili_source_replacements
                    WHERE bvid=? AND page_number=? AND status IN ('queued','uploading','submitting')""",
@@ -5217,17 +5223,18 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         """Read one process command line on Linux, macOS, or Windows."""
         if pid <= 1:
             return ""
-        proc_cmdline = Path(f"/proc/{pid}/cmdline")
-        if proc_cmdline.is_file():
-            try:
-                return (
-                    proc_cmdline.read_bytes()
-                    .replace(b"\0", b" ")
-                    .decode("utf-8", errors="replace")
-                    .strip()
-                )
-            except OSError:
-                return ""
+        if os.name != "nt":
+            proc_cmdline = Path(f"/proc/{pid}/cmdline")
+            if proc_cmdline.is_file():
+                try:
+                    return (
+                        proc_cmdline.read_bytes()
+                        .replace(b"\0", b" ")
+                        .decode("utf-8", errors="replace")
+                        .strip()
+                    )
+                except OSError:
+                    return ""
         try:
             if os.name == "nt":
                 powershell = shutil.which("powershell.exe") or shutil.which("powershell")
@@ -5576,7 +5583,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 
         state_path = self._pipeline_state_path()
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        with self._lock, sqlite3.connect(state_path, timeout=30) as db:
+        with self._lock, closing(sqlite3.connect(state_path, timeout=30)) as db, db:
             current = db.execute(
                 "SELECT status FROM uploads WHERE fingerprint=?",
                 (fingerprint,),
@@ -5607,7 +5614,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         if not state_path.is_file():
             raise RecorderConfigError("没有找到该录播任务")
 
-        with sqlite3.connect(state_path, timeout=30) as db:
+        with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
             status_row = db.execute(
                 "SELECT status FROM uploads WHERE fingerprint=?",
                 (fingerprint,),
@@ -5621,7 +5628,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             if job.get("status") in {"processing", "video_uploaded"}:
                 self.pause_pipeline_job(fingerprint)
 
-        with self._lock, sqlite3.connect(state_path, timeout=30) as db:
+        with self._lock, closing(sqlite3.connect(state_path, timeout=30)) as db, db:
             db.row_factory = sqlite3.Row
             row = db.execute(
                 "SELECT * FROM uploads WHERE fingerprint=?",
@@ -5858,7 +5865,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         if automatic:
             now = datetime.now(timezone.utc).isoformat(timespec="seconds")
             try:
-                with sqlite3.connect(state_path, timeout=5) as db:
+                with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                     cursor = db.execute(
                         """UPDATE uploads SET status='processing', updated_at=?
                            WHERE fingerprint=? AND status='failed'""",
@@ -5886,7 +5893,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         except OSError as exc:
             if claimed:
                 now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                with sqlite3.connect(state_path, timeout=5) as db:
+                with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                     db.execute(
                         """UPDATE uploads SET status='failed', error=?, updated_at=?
                            WHERE fingerprint=? AND status='processing'""",

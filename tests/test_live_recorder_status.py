@@ -984,6 +984,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             self.assertEqual(result["ai_cover_regeneration_errors"], [])
             store.assert_called_once_with("a" * 64, result)
 
+    @unittest.skipIf(os.name == "nt", "Docker mount discovery is POSIX-only")
     def test_default_recordings_directory_uses_docker_mount_when_available(self):
         with mock.patch(
             "modules.config_manager.load_config",
@@ -1467,7 +1468,10 @@ class LiveRecorderStatusTests(unittest.TestCase):
             {"name": "SESSDATA", "value": "session"},
         )
         self.assertIn("bili_qn: 25000", content)
-        self.assertIn(f'bili_cookie_file: "{normalized_path}"', content)
+        self.assertIn(
+            f"bili_cookie_file: {json.dumps(str(normalized_path), ensure_ascii=False)}",
+            content,
+        )
 
     def test_config_maps_room_resolution_to_each_platform_quality_override(self):
         manager = LiveRecorderManager()

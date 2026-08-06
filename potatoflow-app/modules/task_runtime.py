@@ -7,6 +7,7 @@ import socket
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional
 
@@ -46,6 +47,16 @@ class TaskLeaseStore:
         conn.execute("PRAGMA busy_timeout = 30000")
         return conn
 
+    @contextmanager
+    def _connection(self):
+        """Commit or roll back, then close so Windows does not retain the DB."""
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def ensure_schema(self, conn: Optional[sqlite3.Connection] = None) -> None:
         owns_connection = conn is None
         active_conn = conn or self._connect()
@@ -77,7 +88,7 @@ class TaskLeaseStore:
             return False
         now = float(self._clock())
         lease_until = now + self.lease_seconds
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT owner_id, acquired_at, lease_until "
@@ -112,7 +123,7 @@ class TaskLeaseStore:
             return 0
         now = float(self._clock())
         placeholders = ",".join("?" for _ in normalized)
-        with self._connect() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 f"""
                 UPDATE task_worker_leases
@@ -126,7 +137,7 @@ class TaskLeaseStore:
     def release(self, task_id: str) -> bool:
         if not task_id:
             return False
-        with self._connect() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM task_worker_leases WHERE task_id = ? AND owner_id = ?",
                 (task_id, self.owner_id),
@@ -134,7 +145,7 @@ class TaskLeaseStore:
             return bool(cursor.rowcount)
 
     def release_owner(self) -> int:
-        with self._connect() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM task_worker_leases WHERE owner_id = ?",
                 (self.owner_id,),
@@ -145,7 +156,7 @@ class TaskLeaseStore:
         if not task_id:
             return False
         now = float(self._clock())
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT lease_until FROM task_worker_leases WHERE task_id = ?",
                 (task_id,),
@@ -153,7 +164,7 @@ class TaskLeaseStore:
             return bool(row and float(row["lease_until"]) > now)
 
     def get(self, task_id: str) -> Optional[TaskLease]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM task_worker_leases WHERE task_id = ?",
                 (task_id,),

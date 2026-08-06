@@ -1522,8 +1522,9 @@ class DouyuStatsTests(unittest.TestCase):
                 output = Path(temporary) / "主播" / ".potato-flow" / "douyu-stats.json"
                 self.assertEqual(json.loads(output.read_text())["schema_version"], 2)
                 self.assertEqual(list(output.parent.glob("*.tmp")), [])
-                self.assertEqual(output.stat().st_mode & 0o777, 0o640)
-                self.assertEqual(output.parent.stat().st_mode & 0o777, 0o750)
+                if os.name != "nt":
+                    self.assertEqual(output.stat().st_mode & 0o777, 0o640)
+                    self.assertEqual(output.parent.stat().st_mode & 0o777, 0o750)
             finally:
                 daemon.RECORDINGS_DIR = previous
 

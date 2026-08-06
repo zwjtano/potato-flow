@@ -2377,10 +2377,16 @@ class StateStore:
         except OSError:
             pass
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self):
+        """Open a transaction and always release its Windows file handle."""
         db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
-        return db
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def cleanup_expired_retained_xml(self) -> list[str]:
         """Delete only XML files explicitly retained by completed upload tasks."""
