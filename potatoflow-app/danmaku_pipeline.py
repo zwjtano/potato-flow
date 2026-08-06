@@ -33,6 +33,18 @@ _CPU_ENCODER_PROBE_SIZE = "128x128"
 _HARDWARE_ENCODER_PROBE_SIZE = "640x360"
 _DEFAULT_RENDER_BLOCKLIST = {"合成大西瓜"}
 
+
+def _background_subprocess_kwargs() -> dict[str, Any]:
+    """Keep FFmpeg and hardware probes out of the Windows desktop."""
+    if os.name != "nt":
+        return {"start_new_session": True}
+    return {
+        "creationflags": (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    }
+
 ENCODER_PROFILES: dict[str, dict[str, Any]] = {
     "cpu": {
         "label": "CPU（libx264）",
@@ -228,6 +240,18 @@ def _graphics_devices() -> list[dict[str, str]]:
         else:
             devices.append({**device, "backend": "nvidia"})
     return devices
+
+
+def _resolve_encoder_for_devices(ffmpeg: str, requested: str) -> str:
+    """Map stale hardware selections to the encoder supported by this machine."""
+    requested = str(requested or "auto").strip().lower()
+    if requested == "cpu":
+        return requested
+    devices = _graphics_devices()
+    if requested == "auto" or not any(item.get("backend") == requested for item in devices):
+        recommendation = probe_encoding_capabilities(ffmpeg, preferred="auto").get("recommendation", {})
+        return str(recommendation.get("id") or "cpu")
+    return requested
 
 
 def _probe_failure_reason(backend: str, error: str, devices: list[dict[str, str]]) -> str:
@@ -649,11 +673,7 @@ def burn_ass(
         video_filter = f"subtitles=filename='{_filter_path(ass_path)}'"
         if fonts_dir and fonts_dir.is_dir():
             video_filter += f":fontsdir='{_filter_path(fonts_dir)}'"
-        selected_encoder = str(encoder or "cpu").strip().lower()
-        if selected_encoder == "auto":
-            selected_encoder = str(
-                probe_encoding_capabilities(ffmpeg).get("recommendation", {}).get("id") or "cpu"
-            )
+        selected_encoder = _resolve_encoder_for_devices(ffmpeg, str(encoder or "auto"))
         if selected_encoder not in ENCODER_PROFILES:
             selected_encoder = "cpu"
         profile = ENCODER_PROFILES[selected_encoder]
@@ -699,6 +719,7 @@ def burn_ass(
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                **_background_subprocess_kwargs(),
             )
             progress: dict[str, str] = {}
             diagnostics: deque[str] = deque(maxlen=200)
@@ -783,6 +804,9 @@ def burn_ass(
                     "quality_name": "CRF",
                     "quality": 20,
                 })
+            selected_encoder = "cpu"
+            profile = ENCODER_PROFILES["cpu"]
+            selected_preset = "medium"
             returncode, stderr = encode_with_audio_retry(
                 _encoder_video_args("cpu", "medium", 20)
             )
@@ -800,12 +824,9 @@ def burn_ass(
         return output
 
 
-def deduplicate_summary_comments(
-    comments: list[DanmakuComment],
-    max_repeats: int = 2,
-) -> list[DanmakuComment]:
-    """Keep every distinct useful comment while bounding identical spam."""
-    max_repeats = max(1, min(10, int(max_repeats)))
+def select_summary_comments(comments: list[DanmakuComment], limit: int = 400) -> list[DanmakuComment]:
+    """Deduplicate spam while retaining both chronology and concrete evidence."""
+    limit = max(1, min(2000, int(limit)))
     unique: list[DanmakuComment] = []
     seen: dict[str, int] = {}
     for item in comments:
@@ -814,28 +835,8 @@ def deduplicate_summary_comments(
             continue
         count = seen.get(normalized, 0)
         seen[normalized] = count + 1
-        if count < max_repeats:
+        if count < 2:
             unique.append(item)
-    return unique
-
-
-def batch_summary_comments(
-    comments: list[DanmakuComment],
-    batch_size: int = 600,
-) -> list[list[DanmakuComment]]:
-    """Split all deduplicated comments into chronological model-sized batches."""
-    batch_size = max(100, min(1200, int(batch_size)))
-    unique = deduplicate_summary_comments(comments)
-    return [
-        unique[index:index + batch_size]
-        for index in range(0, len(unique), batch_size)
-    ]
-
-
-def select_summary_comments(comments: list[DanmakuComment], limit: int = 800) -> list[DanmakuComment]:
-    """Deduplicate spam while retaining both chronology and concrete evidence."""
-    limit = max(1, min(2000, int(limit)))
-    unique = deduplicate_summary_comments(comments)
     if len(unique) <= limit:
         return unique
 

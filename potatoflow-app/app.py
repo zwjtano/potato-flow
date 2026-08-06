@@ -1509,7 +1509,7 @@ def live_recording():
             'duration': config.get('DANMAKU_DURATION_SECONDS', 10),
             'font_size': config.get('DANMAKU_FONT_SIZE', 42),
             'opacity': config.get('DANMAKU_OPACITY', 0.92),
-            'encoder': config.get('DANMAKU_ENCODER', 'cpu'),
+            'encoder': config.get('DANMAKU_ENCODER', 'auto'),
             'preset': config.get('DANMAKU_ENCODE_PRESET', 'medium'),
             'quality': config.get('DANMAKU_ENCODE_QUALITY', 20),
         },
@@ -2027,15 +2027,8 @@ def live_recording_files_open_folder():
             'error': '打开文件夹仅支持在 PotatoFlow 所在电脑本机操作。',
         }), 403
 
-    payload = request.get_json(silent=True) or {}
-    file_id = str(payload.get('file_id') or '').strip()
-
     try:
-        if file_id:
-            file_path, _ = live_recorder_manager.recording_file(file_id)
-            path = file_path.parent
-        else:
-            path = validate_recordings_dir(load_config().get('RECORDINGS_PATH', 'docker-data/recordings'))
+        path = validate_recordings_dir(load_config().get('RECORDINGS_PATH', 'docker-data/recordings'))
         if sys.platform == 'win32':
             os.startfile(str(path))
         elif sys.platform == 'darwin':
@@ -2060,8 +2053,7 @@ def live_recording_files_open_folder():
     except (OSError, RecorderConfigError) as exc:
         return jsonify({'ok': False, 'error': f'无法打开录播文件夹：{exc}'}), 500
 
-    message = '已打开文件所在文件夹。' if file_id else '已在系统文件管理器中打开录播文件夹。'
-    return jsonify({'ok': True, 'message': message, 'path': str(path)})
+    return jsonify({'ok': True, 'message': '已在系统文件管理器中打开录播文件夹。', 'path': str(path)})
 
 
 @app.route('/live-recording/files/<file_id>/download')
