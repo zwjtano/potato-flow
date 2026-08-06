@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -184,6 +185,25 @@ class BilibiliProgressTests(unittest.TestCase):
 
 
 class BilibiliCollectionTests(unittest.TestCase):
+    def test_console_log_falls_back_when_terminal_cannot_encode_chinese(self):
+        uploader = BilibiliUploader("cookies.json")
+        calls = []
+
+        def fake_print(message):
+            calls.append(message)
+            if len(calls) == 1:
+                raise UnicodeEncodeError("charmap", str(message), 0, 1, "unsupported")
+
+        stdout = Mock(encoding="cp1252")
+        with patch.object(sys, "stdout", stdout), patch(
+            "builtins.print",
+            side_effect=fake_print,
+        ):
+            uploader.log("Bilibili 稿件加入合集成功")
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("\\u7a3f", calls[1])
+
     def test_new_submission_uses_creator_archive_detail_before_collection_add(self):
         calls = []
 
