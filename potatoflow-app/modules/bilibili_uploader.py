@@ -300,7 +300,12 @@ class BilibiliUploader:
         else:
             print(message)
 
-    def add_to_collection(self, result: dict, collection_id: str) -> dict:
+    def add_to_collection(
+        self,
+        result: dict,
+        collection_id: str,
+        title: str = "",
+    ) -> dict:
         """Add a newly submitted archive to the first section of a B站 collection."""
         aid = int((result or {}).get("aid") or 0)
         season_id = int(str(collection_id or "").strip() or 0)
@@ -353,20 +358,35 @@ class BilibiliUploader:
                 if not section_id:
                     raise RuntimeError(f"合集 {season_id} 的默认分区 ID 无效")
 
-                video_info = await (
+                archive_query = {"topic_grey": 1}
+                bvid = str((result or {}).get("bvid") or "").strip()
+                if bvid:
+                    archive_query["bvid"] = bvid
+                else:
+                    archive_query["aid"] = aid
+                archive_payload = await (
                     Api(
-                        url="https://api.bilibili.com/x/web-interface/view",
+                        url="https://member.bilibili.com/x/vupre/web/archive/view",
                         method="GET",
+                        verify=True,
                         credential=credential,
                     )
-                    .update_params(aid=aid)
+                    .update_params(**archive_query)
                     .result
                 )
-                pages = video_info.get("pages", []) if isinstance(video_info, dict) else []
-                cid = int(((pages[0] if pages else {}) or {}).get("cid") or 0)
-                title = str((video_info or {}).get("title") or "").strip()
-                if not cid or not title:
-                    raise RuntimeError("B站没有返回稿件 cid 或标题，无法加入合集")
+                archive_payload = archive_payload if isinstance(archive_payload, dict) else {}
+                archive = archive_payload.get("archive")
+                archive = archive if isinstance(archive, dict) else archive_payload
+                videos = archive_payload.get("videos")
+                if not isinstance(videos, list):
+                    videos = archive.get("videos")
+                first_video = videos[0] if isinstance(videos, list) and videos else {}
+                cid = int((first_video or {}).get("cid") or 0)
+                archive_title = str(
+                    archive.get("title") or title or (result or {}).get("title") or ""
+                ).strip()
+                if not cid or not archive_title:
+                    raise RuntimeError("创作中心没有返回稿件 cid 或标题，无法加入合集")
 
                 await (
                     Api(
@@ -385,13 +405,13 @@ class BilibiliUploader:
                         episodes=[{
                             "aid": aid,
                             "cid": cid,
-                            "title": title,
+                            "title": archive_title,
                             "charging_pay": 0,
                         }],
                     )
                     .result
                 )
-                return section_id, title
+                return section_id, archive_title
 
             try:
                 section_id, title = asyncio.run(_add())
@@ -1654,7 +1674,11 @@ class BilibiliUploader:
                 and not existing_submission
                 and isinstance(result, dict)
             ):
-                result["collection"] = self.add_to_collection(result, collection_id)
+                result["collection"] = self.add_to_collection(
+                    result,
+                    collection_id,
+                    title=title,
+                )
             return success, result
 
     def _upload_video_unlocked(

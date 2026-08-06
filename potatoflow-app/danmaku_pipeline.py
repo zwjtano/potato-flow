@@ -25,6 +25,11 @@ try:
 except ImportError:  # pragma: no cover - production runs on Linux/macOS
     fcntl = None
 
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - production runs on Windows
+    msvcrt = None
+
 
 _BURN_THREAD_LOCK = threading.Lock()
 _ENCODER_PROBE_LOCK = threading.Lock()
@@ -398,12 +403,27 @@ def danmaku_burn_slot(
         with lock_path.open("a+b") as lock_handle:
             if fcntl is not None:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            elif msvcrt is not None:
+                lock_handle.seek(0, os.SEEK_END)
+                if lock_handle.tell() == 0:
+                    lock_handle.write(b"\0")
+                    lock_handle.flush()
+                while True:
+                    try:
+                        lock_handle.seek(0)
+                        msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        time.sleep(0.2)
             try:
                 report("burning")
                 yield
             finally:
                 if fcntl is not None:
                     fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                elif msvcrt is not None:
+                    lock_handle.seek(0)
+                    msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 @dataclass(frozen=True)

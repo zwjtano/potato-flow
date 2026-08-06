@@ -41,11 +41,14 @@ SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 class DanmakuPipelineTests(unittest.TestCase):
     def test_cpu_query_reports_model_and_logical_cores(self):
-        with patch("danmaku_pipeline.platform.system", return_value="Windows"), patch(
-            "danmaku_pipeline.platform.processor", return_value="Intel Core i7-9700"
-        ), patch(
-            "danmaku_pipeline.Path.is_file", return_value=False
-        ), patch(
+        registry_key = unittest.mock.MagicMock()
+        registry_key.__enter__.return_value = registry_key
+        fake_winreg = types.SimpleNamespace(
+            HKEY_LOCAL_MACHINE=object(),
+            OpenKey=lambda *_args, **_kwargs: registry_key,
+            QueryValueEx=lambda *_args, **_kwargs: ("Intel Core i7-9700", 1),
+        )
+        with patch.dict(sys.modules, {"winreg": fake_winreg}), patch(
             "danmaku_pipeline.os.cpu_count", return_value=8
         ):
             cpu = danmaku_pipeline._cpu_device()

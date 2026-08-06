@@ -182,6 +182,75 @@ class BilibiliProgressTests(unittest.TestCase):
             )
         self.assertEqual(final["percent"], 95.0)
 
+
+class BilibiliCollectionTests(unittest.TestCase):
+    def test_new_submission_uses_creator_archive_detail_before_collection_add(self):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.params = {}
+                self.data = {}
+                calls.append(self)
+
+            def update_params(self, **kwargs):
+                self.params.update(kwargs)
+                return self
+
+            def update_data(self, **kwargs):
+                self.data.update(kwargs)
+                return self
+
+            @property
+            async def result(self):
+                if self.url.endswith("/seasons"):
+                    return {
+                        "seasons": [{
+                            "season": {"id": 8761711},
+                            "sections": {"sections": [{"id": 998877}]},
+                        }]
+                    }
+                if self.url.endswith("/archive/view"):
+                    return {
+                        "archive": {"title": "YYF 测试标题"},
+                        "videos": [{"cid": 40646542968}],
+                    }
+                return {}
+
+        credential = Mock(bili_jct="csrf-token")
+        uploader = BilibiliUploader("cookie.json")
+        with patch("modules.bilibili_uploader.configure_bilibili_runtime"), patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=credential,
+        ), patch("modules.bilibili_uploader.Api", FakeApi):
+            details = uploader.add_to_collection(
+                {"aid": 117047153401393, "bvid": "BV1JHuE6VEyr"},
+                "8761711",
+                title="YYF 测试标题",
+            )
+
+        self.assertTrue(details["added"])
+        self.assertEqual(details["section_id"], 998877)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(calls[0].url.endswith("/seasons"))
+        self.assertTrue(calls[1].url.endswith("/archive/view"))
+        self.assertEqual(calls[1].params["bvid"], "BV1JHuE6VEyr")
+        self.assertTrue(calls[2].url.endswith("/season/section/episodes/add"))
+        self.assertNotIn("/x/web-interface/view", {call.url for call in calls})
+        self.assertEqual(
+            calls[2].data,
+            {
+                "sectionId": 998877,
+                "episodes": [{
+                    "aid": 117047153401393,
+                    "cid": 40646542968,
+                    "title": "YYF 测试标题",
+                    "charging_pay": 0,
+                }],
+            },
+        )
+
     def test_upload_video_emits_stage_progress_and_retry_log(self):
         progress = []
         stages = []
