@@ -251,6 +251,55 @@ class BilibiliCollectionTests(unittest.TestCase):
             },
         )
 
+    def test_existing_collection_membership_is_idempotent(self):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.params = {}
+                calls.append(self.url)
+
+            def update_params(self, **kwargs):
+                self.params.update(kwargs)
+                return self
+
+            def update_data(self, **_kwargs):
+                raise AssertionError("already-added archive must not be added again")
+
+            @property
+            async def result(self):
+                if self.url.endswith("/seasons"):
+                    return {
+                        "seasons": [{
+                            "season": {"id": 8761711},
+                            "sections": {"sections": [{"id": 998877}]},
+                        }]
+                    }
+                if self.url.endswith("/archive/view"):
+                    return {
+                        "archive": {
+                            "title": "YYF 测试标题",
+                            "season_id": 8761711,
+                        },
+                        "videos": [{"cid": 40646542968}],
+                    }
+                return {}
+
+        uploader = BilibiliUploader("cookie.json")
+        with patch("modules.bilibili_uploader.configure_bilibili_runtime"), patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=Mock(bili_jct="csrf-token"),
+        ), patch("modules.bilibili_uploader.Api", FakeApi):
+            details = uploader.add_to_collection(
+                {"aid": 117047153401393, "bvid": "BV1JHuE6VEyr"},
+                "8761711",
+            )
+
+        self.assertTrue(details["added"])
+        self.assertTrue(details["already_added"])
+        self.assertEqual(len(calls), 2)
+
     def test_upload_video_emits_stage_progress_and_retry_log(self):
         progress = []
         stages = []

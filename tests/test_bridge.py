@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -25,15 +26,48 @@ class BridgeTests(unittest.TestCase):
             bridge.qualify_danmaku_only_real_world_claim(
                 "国民大舅哥被动宣布新人归熊掌，退货没成功"
             ),
-            "弹幕称国民大舅哥被动宣布新人归熊掌，退货没成功"[:28],
+            "直播间调侃国民大舅哥被动宣布新人归熊掌，退货没成功",
         )
         self.assertEqual(
             bridge.qualify_danmaku_only_real_world_claim("弹幕称新人已经转入熊掌"),
-            "弹幕称新人已经转入熊掌",
+            "观众讨论新人已经转入熊掌",
+        )
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim("观众讨论某选手涉嫌假赛"),
+            "",
+        )
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim("弹幕称某选手已经结婚"),
+            "观众讨论某选手已经结婚",
         )
         self.assertEqual(
             bridge.qualify_danmaku_only_real_world_claim("走到河边，抽烟2.0刷屏"),
             "走到河边，抽烟2.0刷屏",
+        )
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim("弹幕称影魔六神装完成翻盘"),
+            "影魔六神装完成翻盘",
+        )
+
+    def test_real_world_claim_over_limit_is_rejected_instead_of_truncated(self):
+        claim = (
+            "某选手已经正式签约一家新的职业俱乐部并将在下周参加首场比赛，"
+            "随后还会前往海外长期集训并担任队伍的核心位置"
+        )
+
+        self.assertGreater(len(f"观众讨论{claim}"), bridge.RECORDING_TITLE_TOPIC_LIMIT)
+        self.assertEqual(bridge.qualify_danmaku_only_real_world_claim(claim), "")
+
+    def test_negative_danmaku_rumors_are_removed_from_title_and_description(self):
+        self.assertEqual(
+            bridge.qualify_danmaku_only_real_world_claim("弹幕称某选手因假赛被封禁"),
+            "",
+        )
+        self.assertEqual(
+            bridge.remove_negative_rumor_text(
+                "观众讨论新队伍阵容。弹幕称某选手因假赛被封禁。随后进入下一局。"
+            ),
+            "观众讨论新队伍阵容。随后进入下一局。",
         )
 
     def test_app_root_accepts_legacy_config_key_and_directory(self):
@@ -218,7 +252,20 @@ class BridgeTests(unittest.TestCase):
         prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
 
         self.assertIn("出装引争议", prompt)
+        self.assertIn("被指", prompt)
         self.assertIn("必须直接写清具体动作", prompt)
+
+    def test_title_rejects_opaque_attribution(self):
+        self.assertTrue(
+            bridge.recording_title_uses_opaque_attribution(
+                "风暴之灵复盘被指忘记双倍符"
+            )
+        )
+        self.assertFalse(
+            bridge.recording_title_uses_opaque_attribution(
+                "川神风暴之灵复盘双倍符决策"
+            )
+        )
 
     def test_default_title_prompt_integrates_subject_without_label_prefix(self):
         prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT
@@ -261,6 +308,8 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得替换主角或混合人脸", prompt)
         self.assertIn("只有最终投稿标题明确出现", prompt)
         self.assertIn("简介、时间线或弹幕中顺带提及的人物一律不得出镜", prompt)
+        self.assertIn("优先8至18字、最多24字", prompt)
+        self.assertIn("负面未经证实的现实传言不得进入封面", prompt)
         self.assertNotIn("只有在弹幕可靠提及其他主播", prompt)
 
     def test_recording_tags_dedupe_repeated_streamer_aliases(self):
@@ -371,6 +420,105 @@ class BridgeTests(unittest.TestCase):
                 gameplay_verified=True,
             ),
             "playing",
+        )
+
+    def test_title_requires_event_matched_gsi_hero_without_streamer_prefix(self):
+        timeline = [
+            "13:21 本局高地推进并最终出现基地爆炸",
+            "48:17 玛西连续空掉两个大招后攻击刃甲被反伤",
+        ]
+        segments = [
+            {"start_seconds": 0, "end_seconds": 1149, "hero": "风暴之灵"},
+            {"start_seconds": 1407, "end_seconds": 3501, "hero": "玛西"},
+        ]
+
+        self.assertEqual(
+            bridge.recording_title_missing_selected_gsi_heroes(
+                "高地推进后基地爆炸；玛西空大后被刃甲反伤",
+                [0, 1],
+                timeline,
+                segments,
+            ),
+            ["风暴之灵"],
+        )
+        self.assertEqual(
+            bridge.recording_title_missing_selected_gsi_heroes(
+                "风暴之灵高地推进至基地爆炸；玛西空大后被刃甲反伤",
+                [0, 1],
+                timeline,
+                segments,
+            ),
+            [],
+        )
+        self.assertTrue(
+            bridge.recording_title_missing_selected_gsi_streamer(
+                "风暴之灵高地推进至基地爆炸；玛西空大后被刃甲反伤",
+                [0, 1],
+                timeline,
+                segments,
+                "川神",
+            )
+        )
+        self.assertFalse(
+            bridge.recording_title_missing_selected_gsi_streamer(
+                "川神风暴之灵推进至基地爆炸；换玛西后被刃甲反伤",
+                [0, 1],
+                timeline,
+                segments,
+                "川神",
+            )
+        )
+
+    def test_real_multigame_title_requires_streamer_heroes_even_with_opponent_mention(self):
+        timeline = [
+            "06:15 第一局末段基地被摧毁，弹幕随后出现下一把，并继续讨论帕克买活后阵亡",
+            "41:34 玛西追击火猫和小小时，观众多次提醒不要继续追击",
+        ]
+        segments = [
+            {"start_seconds": 0, "end_seconds": 1149, "hero": "风暴之灵"},
+            {"start_seconds": 1407, "end_seconds": 3501, "hero": "玛西"},
+        ]
+
+        self.assertEqual(
+            bridge.recording_title_missing_selected_gsi_heroes(
+                "第一局基地被摧毁；追击火猫后被拉扯",
+                [0, 1],
+                timeline,
+                segments,
+            ),
+            ["风暴之灵", "玛西"],
+        )
+        self.assertEqual(
+            bridge.recording_title_missing_selected_gsi_heroes(
+                "川神风暴之灵基地告破；换玛西追击火猫后被拉扯",
+                [0, 1],
+                timeline,
+                segments,
+            ),
+            [],
+        )
+
+    def test_long_recording_coverage_uses_actual_timeline_span(self):
+        timeline = [
+            "00:30 事件一",
+            "08:00 事件二",
+            "19:15 事件三",
+            "37:22 事件四",
+            "48:17 事件五",
+            "56:24 事件六",
+            "58:08 事件七",
+            "59:35 事件八",
+        ]
+
+        self.assertFalse(
+            bridge.recording_title_timeline_coverage_is_sufficient(
+                [3, 4, 5], 3600, len(timeline), timeline
+            )
+        )
+        self.assertTrue(
+            bridge.recording_title_timeline_coverage_is_sufficient(
+                [2, 4, 6], 3600, len(timeline), timeline
+            )
         )
 
     def test_live_stats_are_placed_after_archive_description(self):
@@ -738,7 +886,11 @@ class BridgeTests(unittest.TestCase):
                 }
             self.assertEqual(scene, "recording_danmaku_title_from_description")
             title_payloads.append(kwargs["payload"])
-            return {"title_topic": "最终简介提炼标题"}
+            return {
+                "title_topic": "完整事件1推进后在完整事件8收尾，弹幕见证整段变化",
+                "coverage_mode": "main_arc",
+                "selected_timeline_indexes": [0, 7],
+            }
 
         enhancer._request_json_object = request
         config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
@@ -759,7 +911,10 @@ class BridgeTests(unittest.TestCase):
                 timeline_duration_seconds=3600,
             )
 
-        self.assertEqual(topic, "最终简介提炼标题")
+        self.assertEqual(
+            topic,
+            "完整事件1推进后在完整事件8收尾，弹幕见证整段变化",
+        )
         self.assertEqual(len(bridge.timeline_lines(description)), 8)
         self.assertEqual(title_payloads[0]["final_description"], description)
         self.assertEqual(title_payloads[0]["verified_timeline"], bridge.timeline_lines(description))
@@ -778,6 +933,65 @@ class BridgeTests(unittest.TestCase):
                 "recording_danmaku_title_from_description",
             ],
         )
+
+    def test_long_recording_never_falls_back_to_single_timeline_point_after_retries(self):
+        package = types.ModuleType("modules")
+        package.__path__ = []
+        enhancer = types.ModuleType("modules.ai_enhancer")
+        config_manager = types.ModuleType("modules.config_manager")
+        enhancer.get_openai_client = lambda _cfg: object()
+        comments = [
+            types.SimpleNamespace(time=float(index * 300), text=f"证据{index}")
+            for index in range(8)
+        ]
+        title_calls = []
+
+        def request(**kwargs):
+            if kwargs["scene_name"] == "recording_danmaku_summary":
+                return {
+                    "description": "完整简介",
+                    "timeline": [{
+                        "event": f"完整事件{index}",
+                        "evidence_texts": [f"证据{index}"],
+                        "evidence_keywords": [f"证据{index}"],
+                    } for index in range(8)],
+                }
+            self.assertEqual(
+                kwargs["scene_name"],
+                "recording_danmaku_title_from_description",
+            )
+            title_calls.append(kwargs["payload"])
+            return {
+                "title_topic": "单个短节点",
+                "coverage_mode": "sparse",
+                "selected_timeline_indexes": [4],
+            }
+
+        enhancer._request_json_object = request
+        config_manager.load_config = lambda: {"OPENAI_API_KEY": "test"}
+        diagnostics = {}
+
+        with patch.dict(sys.modules, {
+            "modules": package,
+            "modules.ai_enhancer": enhancer,
+            "modules.config_manager": config_manager,
+        }):
+            description, topic = bridge.generate_danmaku_metadata_with_ai(
+                comments,
+                "",
+                {
+                    "_config_dir": str(Path(bridge.__file__).resolve().parent),
+                    "ai_danmaku_summary_enabled": True,
+                },
+                timeline_duration_seconds=3600,
+                timeline_diagnostics=diagnostics,
+            )
+
+        self.assertEqual(len(bridge.timeline_lines(description)), 8)
+        self.assertEqual(topic, "")
+        self.assertEqual(len(title_calls), 3)
+        self.assertTrue(diagnostics["title_topic_manual_review_required"])
+        self.assertTrue(diagnostics["title_topic_long_video_fallback_rejected"])
 
     def test_generic_recording_intro_is_removed_from_final_body(self):
         stats = "——— 直播数据 ———\n👥 在线 8257~10000"
@@ -1226,10 +1440,28 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("现在只能根据 final_description", source)
         self.assertIn("重新生成完整 description 和完整 timeline", source)
         self.assertIn("简介包含两个先后发生的独立转折", source)
-        self.assertIn("标题必须选择简介中最有看点的一个具体事件", source)
+        self.assertIn("默认选择一个最强事件", source)
+        self.assertIn("只有两个事件都足够重要且在48字内仍能分别完整表达时", source)
+        self.assertIn("使用 main_arc", source)
+        self.assertIn("使用 two_highlights", source)
+        self.assertIn("标题不需要每条都出现", source)
+        self.assertIn("删除观众反应后仍不影响", source)
+        self.assertIn("同一标题最多保留一处观众反应", source)
+        self.assertIn("优先写清“谁和谁做了什么”", source)
+        self.assertIn("不得猜测为一起玩", source)
+        self.assertIn("按5W1H检查", source)
+        self.assertIn("原因也不得从常识", source)
+        self.assertIn("非 DOTA2 的游戏", source)
+        self.assertIn("普通催促、单条“你”", source)
+        self.assertIn("selected_timeline_indexes", source)
+        self.assertIn("禁止截断半句话", source)
         self.assertIn("每条 event 必须是 evidence_texts 的最小忠实改写", source)
         self.assertIn("一条像总结稿的超长弹幕不能独自支撑", source)
         self.assertIn("开场承接", source)
+        self.assertIn("分析批次的第一条不等于录播开场", source)
+        self.assertIn("后续批次严禁使用“开场”措辞", source)
+        self.assertIn("事件正文默认不写“前段/中段/后段”", source)
+        self.assertIn("不能把04分钟写成中段", source)
 
     def test_profile_override_and_metadata(self):
         base = {
@@ -1287,6 +1519,20 @@ class BridgeTests(unittest.TestCase):
             )
         self.assertEqual(title, "中韩流行歌单·点歌闲聊｜07-23 09:45")
 
+    def test_verified_ai_title_ignores_legacy_streamer_template(self):
+        video = Path("叫我老陈就好了_来这里开心就好_2026-08-07_02-05.flv")
+
+        title, _, _ = bridge.render_metadata(
+            video,
+            {
+                "title_template": "川神｜{ai_topic}｜{date}｜【直播回放】",
+                "streamer_name": "叫我老陈就好了",
+            },
+            ai_topic="玛西追击三人未能完成击杀",
+        )
+
+        self.assertEqual(title, "玛西追击三人未能完成击杀｜08-07 02:05")
+
     def test_third_party_observer_topic_naturally_attributes_streamer(self):
         self.assertEqual(
             bridge.contextualize_streamer_title_topic(
@@ -1301,6 +1547,32 @@ class BridgeTests(unittest.TestCase):
                 "老蔡三角区跳吼，马甲首夺高导冠军", "YYF", "unknown"
             ),
             "老蔡三角区跳吼，马甲首夺高导冠军",
+        )
+
+    def test_room_discussion_fillers_are_removed_from_event_title(self):
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "国民大舅哥直播间热议直播间讨论小冉加速与小哈尼互超",
+                "国民大舅哥",
+                "unknown",
+            ),
+            "小冉加速与小哈尼互超",
+        )
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "YYF直播中谢彬三星角色打出高伤害",
+                "YYF",
+                "playing",
+            ),
+            "谢彬三星角色打出高伤害",
+        )
+        self.assertEqual(
+            bridge.contextualize_streamer_title_topic(
+                "DD｜进入抽卡环节，弹幕刷屏“保底”“歪了”",
+                "奶哥",
+                "playing",
+            ),
+            "进入抽卡环节，弹幕刷屏“保底”“歪了”",
         )
 
     def test_yyf_title_name_uses_fengge_by_default_and_pangtou_for_verified_poor_play(self):
@@ -2172,7 +2444,7 @@ class BridgeTests(unittest.TestCase):
                 set(stages),
                 {
                     "detect", "record", "ass", "burn", "ai", "xml_identity", "live_stats",
-                    "cover_16x9", "cover_4x3", "upload", "cleanup",
+                    "cover_16x9", "cover_4x3", "upload", "collection", "cleanup",
                 },
             )
             self.assertEqual(stages["record"]["status"], "completed")
@@ -2525,7 +2797,7 @@ class BridgeTests(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(exclusion["reason"], "generated_burn")
 
-    def test_retry_detaches_unsubmitted_first_part_from_stale_session(self):
+    def test_retry_repairs_unsubmitted_first_part_in_original_session(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "clip.mp4"
@@ -2557,7 +2829,11 @@ class BridgeTests(unittest.TestCase):
 
             self.assertTrue(bridge.upload_one(video, cfg, store, retry=True, dry_run=True))
 
-            self.assertIsNone(store.results(key)["multipart_session"])
+            self.assertEqual(store.results(key)["multipart_session"], "room-1")
+            self.assertEqual(
+                store.multipart_session("room-1")["pending_first_video"],
+                str(video),
+            )
 
     def test_ingest_retry_only_processes_the_selected_failed_path(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -2676,6 +2952,91 @@ class BridgeTests(unittest.TestCase):
             details = store.stage_state(key, "cleanup")["details"]
             self.assertIn("retained_xml_deleted_at", details)
             self.assertEqual(details["retained"], [])
+
+    def test_collection_failure_retries_without_reuploading_video(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_完成三次反杀_2026-08-06_20-00.flv"
+            cover = root / "cover.jpg"
+            cookie = root / "cookie.json"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cookie.write_text("[]", encoding="utf-8")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "bilibili_collection_id": "8761711",
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "ai_danmaku_summary_enabled": False,
+                "post_description_comment": False,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.claim(key, video, "bilibili")
+            store.finish(key, "failed", error="ready for review")
+            store.save_review_override(key, {
+                "title": "主播高地三杀带队逆转",
+                "description": "00:10 主播高地三杀带队逆转",
+                "tags": ["录播"],
+                "partition_id": "171",
+                "cover_path": str(cover),
+                "hold_before_cover": False,
+            })
+            upload_calls = []
+            collection_calls = []
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **kwargs):
+                    upload_calls.append(kwargs)
+                    return True, {"aid": 123, "bvid": "BV1collection"}
+
+                def add_to_collection(self, result, collection_id, title=""):
+                    collection_calls.append((dict(result), collection_id, title))
+                    if len(collection_calls) == 1:
+                        return {
+                            "enabled": True,
+                            "added": False,
+                            "season_id": 8761711,
+                            "aid": 123,
+                            "error": "temporary failure",
+                        }
+                    return {
+                        "enabled": True,
+                        "added": True,
+                        "season_id": 8761711,
+                        "section_id": 99,
+                        "aid": 123,
+                    }
+
+            patches = (
+                patch.object(bridge, "video_duration_seconds", return_value=600.0),
+                patch.object(
+                    bridge,
+                    "generate_recording_cover_with_ai",
+                    return_value=(None, {"ai_cover_generated": False}),
+                ),
+                patch.object(bridge, "import_app", return_value=(FakeUploader, None)),
+            )
+            with patches[0], patches[1], patches[2]:
+                self.assertFalse(bridge.upload_one(video, cfg, store, retry=True))
+                self.assertEqual(store.stage_state(key, "upload")["status"], "completed")
+                self.assertEqual(store.stage_state(key, "collection")["status"], "failed")
+                self.assertEqual(store.results(key)["bilibili"]["bvid"], "BV1collection")
+
+                self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
+
+            self.assertEqual(len(upload_calls), 1)
+            self.assertEqual(len(collection_calls), 2)
+            self.assertEqual(store.stage_state(key, "collection")["status"], "completed")
+            self.assertTrue(store.results(key)["bilibili"]["collection"]["added"])
 
     def test_persist_pipeline_cover_survives_disposable_artifact_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -2957,8 +3318,30 @@ class BridgeTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(topic, "YYF操刀小狗带4个拳套出门")
+        self.assertEqual(
+            topic,
+            "YYF操刀小狗带4个拳套出门，弹幕讨论其出装与对线压力",
+        )
         self.assertFalse(bridge.recording_title_topic_is_vague(topic))
+
+    def test_timeline_fallback_skips_over_limit_event_without_slicing(self):
+        diagnostics = {}
+        long_event = (
+            "枫哥在高地连续完成三次关键反杀并最终带领队伍守住基地逆转比赛，"
+            "弹幕从担心基地失守到刷屏庆祝整场翻盘"
+        )
+        topic = bridge.recording_title_topic_from_timeline(
+            "",
+            f"00:10 {long_event}\n31:08 枫哥高地三杀带队逆转",
+            diagnostics=diagnostics,
+        )
+
+        self.assertEqual(topic, "枫哥高地三杀带队逆转")
+        self.assertEqual(diagnostics["title_topic_timeline_over_limit_count"], 1)
+        self.assertEqual(
+            bridge.recording_title_topic_from_timeline("", f"00:10 {long_event}"),
+            "枫哥在高地连续完成三次关键反杀并最终带领队伍守住基地逆转比赛",
+        )
 
     def test_passive_reaction_titles_are_vague_but_concrete_followups_are_kept(self):
         for topic in (
@@ -2976,7 +3359,91 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(topic=topic):
                 self.assertFalse(bridge.recording_title_topic_is_vague(topic))
 
-    def test_recording_cover_hero_must_match_reviewed_title(self):
+    def test_progress_only_titles_are_weak(self):
+        for topic in (
+            "小哈尼长跑挑战进入后段",
+            "半马接力：小哈尼第三圈左右",
+            "进入抽卡环节，弹幕刷屏保底",
+            "实战队伍频繁踩中范围伤害，弹幕调侃",
+            "牛姐对视挑战失败，弹幕围绕“牛蛙”",
+        ):
+            with self.subTest(topic=topic):
+                self.assertTrue(bridge.recording_title_topic_is_vague(topic))
+
+    def test_timeline_fallback_keeps_complete_detail_instead_of_first_clause(self):
+        topic = bridge.recording_title_topic_from_timeline(
+            "挑战进入后段",
+            "00:10 小冉突然加速，小哈尼追上后两人多次互超",
+        )
+
+        self.assertEqual(topic, "小冉突然加速，小哈尼追上后两人多次互超")
+
+    def test_only_rich_long_recordings_reject_tiny_single_moment_titles(self):
+        self.assertTrue(
+            bridge.recording_title_topic_is_underfilled(
+                "负六百魔伤仍选魔法技能", 3600, 10
+            )
+        )
+        self.assertFalse(
+            bridge.recording_title_topic_is_underfilled(
+                "负六百魔伤仍选魔法技能", 1200, 10
+            )
+        )
+        self.assertFalse(
+            bridge.recording_title_topic_is_underfilled(
+                "飞升后卡等级；负六百魔伤仍选魔法技能", 3600, 10
+            )
+        )
+
+    def test_long_recording_title_requires_cross_stage_timeline_evidence(self):
+        self.assertFalse(
+            bridge.recording_title_timeline_coverage_is_sufficient([4], 3600, 10)
+        )
+        self.assertFalse(
+            bridge.recording_title_timeline_coverage_is_sufficient([4, 5], 3600, 10)
+        )
+        self.assertTrue(
+            bridge.recording_title_timeline_coverage_is_sufficient([1, 7], 3600, 10)
+        )
+        self.assertTrue(
+            bridge.recording_title_timeline_coverage_is_sufficient([], 1200, 10)
+        )
+
+    def test_recent_server_long_recording_title_examples_are_complete(self):
+        topics = (
+            "副本输出从刮痧到突然领先，后段一波“222”操作收尾",
+            "机械派对四人挑战20秒团灭，果小果从1105分垫底到手速局第一",
+            "小哈尼单挑十人接力，遭小AA反超后再追，42圈仍领先",
+            "满级专武让战力快速起飞，神性路线争到最后才发现Tab切换",
+            "从林老师背人深蹲到末世派对，记忆小游戏连错拿下0分",
+            "谢彬三星弓箭手从落后冲到领先；三炮全中炸掉基地",
+            "小哈尼穿小僵尸服1V10挑战半马，开局拉开后17圈暂时领先",
+            "RPG商城掀起“军备竞赛”，160抽连吃保底后芯片又装不上",
+            "难一推进受阻后商店掀起“军备竞赛”，通行证与抽卡保底接连上阵",
+            "骚子打招呼接连被无视，牛姐与理理对视后“东坡肉”互动收尾",
+            "鲷哥战力反超冲上千亿；合成EX后数值进兆仍打不动BOSS",
+            "胖头160亿战力被反超；挑战压到0.5%仍未限时击杀",
+            "宝石镶嵌和套装机制一路没理清，RPG天团鏖战一下午仍卡难一",
+            "更新崩溃后重回战斗，三炮全中炸掉基地；谢彬战力升至第一",
+            "千亿战力仍打不动BOSS，服务器崩后围绕YYF、谢彬和阿龙争输出位",
+            "首个十连几乎全是紫色晶石，入口圣物被移出，黑市宝石始终没花",
+            "阿龙一人扛下九成输出，枫哥与沙雕难一刮痧又抽错常驻池",
+            "复杂RPG从装备拾取到“无限踩圈”，后段才摸到狩猎套装主流程",
+            "CS拆弹完成“史上最伟大翻盘”，骑车速降后又转入无限螺旋2",
+            "排队十分钟后转战CS，从一打四残局到5:13惜败，空枪拆包收尾",
+        )
+
+        audience_worded = 0
+        for topic in topics:
+            with self.subTest(topic=topic):
+                self.assertGreaterEqual(len(topic), 18)
+                self.assertLessEqual(len(topic), bridge.RECORDING_TITLE_TOPIC_LIMIT)
+                self.assertFalse(bridge.recording_title_topic_is_vague(topic))
+                self.assertNotRegex(topic, r"直播间(?:热议|讨论|关注)|[｜|]")
+                audience_worded += bool(re.search(r"弹幕|观众|刷屏|起哄", topic))
+        self.assertLessEqual(audience_worded, 5)
+
+    def test_recording_cover_hero_rejects_only_explicit_title_conflict(self):
         self.assertTrue(
             bridge.recording_cover_hero_matches_title(
                 "主宰",
@@ -2995,6 +3462,12 @@ class BridgeTests(unittest.TestCase):
                 "川神主锤骷髅王假3真1打爆下路｜08-01 18:02",
             )
         )
+        self.assertTrue(
+            bridge.recording_cover_hero_matches_title(
+                "风暴之灵",
+                "高地推进后基地爆炸｜08-07 02:05",
+            )
+        )
 
     def test_cover_context_uses_timestamp_free_verified_timeline(self):
         context, source = bridge.recording_cover_event_context(
@@ -3004,6 +3477,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(source, "verified_timeline")
         self.assertEqual(context, "YYF锁定1号位；小狗主魔免引发争论")
         self.assertNotIn("00:06", context)
+
+    def test_cover_context_keeps_event_timestamp_for_gsi_segment_matching(self):
+        description = (
+            "00:12 蓝猫更新紫怨后继续刷钱\n"
+            "41:44 玛西补出BKB后发起团战"
+        )
+        context, _ = bridge.recording_cover_event_context(
+            description,
+            "玛西补出BKB后发起团战",
+        )
+
+        self.assertEqual(
+            bridge.recording_cover_event_timestamp_seconds(description, context),
+            41 * 60 + 44,
+        )
 
     def test_verified_timeline_never_promotes_itself_to_hero_identity(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
@@ -3024,6 +3512,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("小鱼人＝斯拉克（Slark）", instruction)
         self.assertIn("白牛＝裂魂人（Spirit Breaker）", instruction)
         self.assertIn("绝对不能画成蓝色猫", instruction)
+        self.assertIn("绝对不能画成紫色猫", instruction)
         self.assertIn("禁止混入《英雄联盟》、宝可梦或其他作品", instruction)
 
     def test_dota2_metadata_prompt_disambiguates_old_lady_as_snapfire(self):
@@ -3133,6 +3622,47 @@ class BridgeTests(unittest.TestCase):
             ),
             "奶哥蓝猫残局收割",
         )
+
+    def test_cover_copy_can_be_shorter_without_inventing_or_cutting(self):
+        source = "奶哥带队连续避开范围伤害，最终完成高难关卡挑战"
+        self.assertEqual(
+            bridge.recording_cover_display_text(
+                source,
+                "奶哥完成高难挑战",
+                "谢彬DD",
+            ),
+            "奶哥完成高难挑战",
+        )
+        self.assertEqual(
+            bridge.recording_cover_display_text(
+                source,
+                "奶哥突然宣布退役",
+                "谢彬DD",
+            ),
+            "奶哥带队连续避开范围伤害",
+        )
+        self.assertEqual(
+            bridge.recording_cover_display_text(
+                "弹幕称某选手因假赛被封禁",
+                "假赛被封禁",
+            ),
+            "",
+        )
+
+    def test_cover_copy_layout_adapts_to_length_and_aspect_ratio(self):
+        short_layout = bridge.recording_cover_text_layout_instruction(
+            "极限翻盘",
+            (1920, 1080),
+        )
+        long_layout = bridge.recording_cover_text_layout_instruction(
+            "奶哥带队连续避开范围伤害并最终完成高难关卡挑战",
+            (1600, 1200),
+        )
+        self.assertIn("单行大字", short_layout)
+        self.assertIn("左侧或右侧约三分之一", short_layout)
+        self.assertIn("两至三行", long_layout)
+        self.assertIn("上方或下方约三分之一", long_layout)
+        self.assertIn("至少8%的安全边距", long_layout)
 
     def test_cover_subject_identity_locks_aliases_to_character_base(self):
         yyf_instruction = bridge.recording_cover_subject_identity_instruction(
@@ -3511,7 +4041,8 @@ class BridgeTests(unittest.TestCase):
         )
         prompt = image_edit.call_args.kwargs["prompt"]
         self.assertIn("横向 1920:1080 视频封面", prompt)
-        self.assertIn("与投稿标题共用的核心事件：土豆新地图极限挑战", prompt)
+        self.assertIn("完整投稿标题中的第一核心事件", prompt)
+        self.assertIn("封面短文案：土豆新地图极限挑战", prompt)
         self.assertIn("封面主角称呼：土豆", prompt)
         self.assertIn("不得排成“主角｜主题”", prompt)
         self.assertIn("封面主角身份锁定", prompt)
@@ -3753,9 +4284,11 @@ class BridgeTests(unittest.TestCase):
                         "cover_reference_path": str(character_base),
                     },
                     work_dir=work_dir,
+                    game_context_locked=True,
                 )
 
         self.assertTrue(details["ai_cover_dota2_item_reference_used"])
+        self.assertEqual(details["ai_cover_dota2_source"], "locked_text_match")
         self.assertEqual(
             [item["english_name"] for item in details["ai_cover_dota2_items"]],
             ["Black King Bar", "Scythe of Vyse"],
@@ -3767,6 +4300,8 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("BKB＝黑皇杖（Black King Bar）", prompt)
         self.assertIn("羊刀＝邪恶镰刀（Scythe of Vyse）", prompt)
         self.assertIn("OFFICIAL ITEM ICON REFERENCES", prompt)
+        self.assertIn("必须清楚表现至少一件", prompt)
+        self.assertIn("装备事实独立于人物归属", prompt)
         self.assertIn("禁止在封面底部或任何位置生成物品栏", prompt)
         self.assertIn("不得绘制仿冒的装备图标", prompt)
 

@@ -939,6 +939,87 @@ class DouyuStatsTests(unittest.TestCase):
         ]
 
         self.assertIsNone(formatter.select_gsi_history_player(history, 100, 250))
+        segments = formatter.select_gsi_history_segments(history, 100, 250)
+        self.assertEqual([item["hero"] for item in segments], ["巫医", "食人魔魔法师"])
+        text = formatter.format_stats(
+            {"gsi_hero_history": history},
+            100,
+            250,
+            [],
+        )
+        self.assertIn("🎮 第1局：巫医", text)
+        self.assertIn("🎮 第2局：食人魔魔法师", text)
+
+    def test_event_matched_cover_uses_the_corresponding_gsi_segment(self):
+        history = [
+            {
+                "start_unix_ts": 100,
+                "last_seen_unix_ts": 170,
+                "source": "http",
+                "verified_in_lineup": False,
+                "player": player(17, "风暴之灵", ["紫怨", "动力鞋"]),
+            },
+            {
+                "start_unix_ts": 180,
+                "last_seen_unix_ts": 260,
+                "source": "http",
+                "verified_in_lineup": False,
+                "player": player(136, "玛西", ["黑皇杖", "相位鞋"]),
+            },
+        ]
+        with mock.patch.object(formatter, "load_xml_comments", return_value=[]), mock.patch.object(
+            formatter,
+            "recording_timeframe",
+            return_value=(100.0, 260.0),
+        ), mock.patch.object(
+            formatter,
+            "load_stats",
+            return_value={"gsi_hero_history": history},
+        ), mock.patch.object(formatter, "_overlapping_games", return_value=[]):
+            anchor = formatter.get_game_for_cover("/unused", event_seconds=100)
+
+        self.assertEqual(anchor["hero"], "玛西")
+        self.assertEqual(anchor["items"], ["黑皇杖", "相位鞋"])
+        self.assertEqual(anchor["identity_source"], "gsi_explicit_hero_segment:http")
+
+    def test_game_segments_mark_confirmed_end_without_inventing_winner(self):
+        history = [
+            {
+                "start_unix_ts": 100,
+                "last_seen_unix_ts": 170,
+                "source": "http",
+                "verified_in_lineup": False,
+                "player": player(17, "风暴之灵", ["紫怨"]),
+            },
+            {
+                "start_unix_ts": 200,
+                "last_seen_unix_ts": 270,
+                "source": "http",
+                "verified_in_lineup": False,
+                "player": player(136, "玛西", ["黑皇杖"]),
+            },
+            {
+                "start_unix_ts": 320,
+                "last_seen_unix_ts": 390,
+                "source": "http",
+                "verified_in_lineup": False,
+                "player": player(137, "獸", ["闪烁匕首"]),
+            },
+        ]
+        with mock.patch.object(formatter, "load_xml_comments", return_value=[]), mock.patch.object(
+            formatter,
+            "recording_timeframe",
+            return_value=(100.0, 300.0),
+        ), mock.patch.object(
+            formatter,
+            "load_stats",
+            return_value={"gsi_hero_history": history},
+        ):
+            segments = formatter.get_game_segments("/unused")
+
+        self.assertEqual([item["hero"] for item in segments], ["风暴之灵", "玛西"])
+        self.assertTrue(all(item["ended_confirmed"] for item in segments))
+        self.assertTrue(all("winner" not in item for item in segments))
 
     def test_formatter_uses_last_gsi_snapshot_inside_recording(self):
         game = {
@@ -1441,8 +1522,9 @@ class DouyuStatsTests(unittest.TestCase):
                 output = Path(temporary) / "主播" / ".potato-flow" / "douyu-stats.json"
                 self.assertEqual(json.loads(output.read_text())["schema_version"], 2)
                 self.assertEqual(list(output.parent.glob("*.tmp")), [])
-                self.assertEqual(output.stat().st_mode & 0o777, 0o640)
-                self.assertEqual(output.parent.stat().st_mode & 0o777, 0o750)
+                if os.name != "nt":
+                    self.assertEqual(output.stat().st_mode & 0o777, 0o640)
+                    self.assertEqual(output.parent.stat().st_mode & 0o777, 0o750)
             finally:
                 daemon.RECORDINGS_DIR = previous
 

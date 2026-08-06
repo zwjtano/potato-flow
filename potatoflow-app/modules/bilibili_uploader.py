@@ -388,6 +388,20 @@ class BilibiliUploader:
                 if not cid or not archive_title:
                     raise RuntimeError("创作中心没有返回稿件 cid 或标题，无法加入合集")
 
+                archive_season = archive.get("season")
+                archive_season_id = int(
+                    archive.get("season_id")
+                    or archive.get("seasonId")
+                    or (
+                        archive_season.get("id")
+                        if isinstance(archive_season, dict)
+                        else 0
+                    )
+                    or 0
+                )
+                if archive_season_id == season_id:
+                    return section_id, archive_title, True
+
                 await (
                     Api(
                         url=(
@@ -411,17 +425,28 @@ class BilibiliUploader:
                     )
                     .result
                 )
-                return section_id, archive_title
+                return section_id, archive_title, False
 
             try:
-                section_id, title = asyncio.run(_add())
+                section_id, title, already_added = asyncio.run(_add())
             except RuntimeError as exc:
                 if "cannot be called from a running event loop" not in str(exc):
                     raise
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    section_id, title = pool.submit(asyncio.run, _add()).result()
-            details.update({"added": True, "section_id": section_id, "title": title})
-            self.log(f"Bilibili稿件已加入合集 {season_id}，分区 {section_id}")
+                    section_id, title, already_added = pool.submit(
+                        asyncio.run,
+                        _add(),
+                    ).result()
+            details.update({
+                "added": True,
+                "already_added": already_added,
+                "section_id": section_id,
+                "title": title,
+            })
+            if already_added:
+                self.log(f"Bilibili稿件已在合集 {season_id}，无需重复添加")
+            else:
+                self.log(f"Bilibili稿件已加入合集 {season_id}，分区 {section_id}")
         except Exception as exc:
             details["error"] = _compact_exception_text(str(exc))
             self.log(f"Bilibili稿件加入合集失败（投稿已成功）: {details['error']}")

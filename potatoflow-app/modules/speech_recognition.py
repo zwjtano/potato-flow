@@ -30,6 +30,12 @@ except Exception:  # pragma: no cover - 防御性兜底
     AISegmentationError = Exception  # type: ignore[assignment]
 
 
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    if os.name != 'nt':
+        return {}
+    return {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)}
+
+
 def _setup_task_logger(task_id: str) -> logging.Logger:
     from .utils import get_app_subdir
     from logging.handlers import RotatingFileHandler
@@ -425,6 +431,7 @@ class SpeechRecognizer:
                 encoding='utf-8',
                 errors='replace',
                 timeout=600,
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode != 0 or not os.path.exists(audio_path):
                 self.logger.error("Audio extraction failed: %s", result.stderr)
@@ -455,6 +462,7 @@ class SpeechRecognizer:
                 encoding='utf-8',
                 errors='replace',
                 timeout=120,
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode != 0 or not os.path.exists(out_wav):
                 return None
@@ -481,6 +489,7 @@ class SpeechRecognizer:
                 encoding='utf-8',
                 errors='replace',
                 timeout=60,
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode != 0:
                 return None

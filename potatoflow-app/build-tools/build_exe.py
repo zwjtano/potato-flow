@@ -257,8 +257,8 @@ var
 begin
   if CurUninstallStep <> usPostUninstall then Exit;
   if UninstallSilent then Exit;
-  InternalData := ExpandConstant('{{localappdata}}\PotatoFlow');
-  UserFiles := ExpandConstant('{{userdocs}}\PotatoFlow');
+  InternalData := ExpandConstant('{{localappdata}}\\PotatoFlow');
+  UserFiles := ExpandConstant('{{userdocs}}\\PotatoFlow');
   if MsgBox('默认保留配置、数据库和缓存。是否删除内部数据？' + #13#10 + InternalData,
     mbConfirmation, MB_YESNO) = IDYES then
     DelTree(InternalData, True, True, True);

@@ -26,6 +26,13 @@ PROGRESS_PREFIX = "POTATOFLOW_PROGRESS="
 STAGE_PREFIX = "POTATOFLOW_STAGE="
 
 
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    """Prevent the bundled biliup executable from opening a Windows console."""
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 def _recorder_binary() -> str:
     configured = str(
         os.environ.get("RECORDER_BIN") or os.environ.get("BILIUP_BIN") or ""
@@ -126,6 +133,7 @@ def verify_submission_cookie(cookie_file: str) -> tuple[bool, str]:
             errors="replace",
             timeout=60,
             env=os.environ.copy(),
+            **_hidden_subprocess_kwargs(),
         )
         if completed.returncode == 0:
             return True, "投稿引擎已通过网页 Cookie 读取稿件列表"
@@ -212,6 +220,7 @@ def upload_with_recorder(
             errors="replace",
             bufsize=1,
             env=environment,
+            **_hidden_subprocess_kwargs(),
         )
         assert process.stdout is not None
         with process.stdout:

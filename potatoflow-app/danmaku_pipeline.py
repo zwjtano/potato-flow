@@ -46,6 +46,13 @@ def _background_subprocess_kwargs() -> dict[str, Any]:
     return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
 
 
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    """Keep short-lived probes from flashing a console on Windows."""
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 ENCODER_PROFILES: dict[str, dict[str, Any]] = {
     "cpu": {
         "label": "CPU（libx264）",
@@ -123,6 +130,7 @@ def _nvidia_devices() -> list[dict[str, str]]:
             capture_output=True,
             text=True,
             timeout=8,
+            **_hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -158,6 +166,7 @@ def _cpu_device() -> dict[str, Any]:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                **_hidden_subprocess_kwargs(),
             )
             if result.returncode == 0:
                 name = str(result.stdout or "").strip()
@@ -194,6 +203,7 @@ def _windows_graphics_devices() -> list[dict[str, str]]:
             capture_output=True,
             text=True,
             timeout=10,
+            **_hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -315,7 +325,13 @@ def probe_encoding_capabilities(
         available = False
         error = ""
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                **_hidden_subprocess_kwargs(),
+            )
             available = result.returncode == 0
             if not available:
                 error = str(result.stderr or result.stdout or "").strip()[-800:]
@@ -654,7 +670,13 @@ def probe_video_size(video: Path, ffprobe: str = "ffprobe") -> tuple[int, int]:
         "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(video),
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            **_hidden_subprocess_kwargs(),
+        )
         match = re.search(r"(\d+)x(\d+)", result.stdout)
         if result.returncode == 0 and match:
             return int(match.group(1)), int(match.group(2))
@@ -715,6 +737,7 @@ def burn_ass(
                 capture_output=True,
                 text=True,
                 timeout=30,
+                **_hidden_subprocess_kwargs(),
             )
             if probe.returncode == 0:
                 duration_seconds = max(0.0, float(probe.stdout.strip() or 0))

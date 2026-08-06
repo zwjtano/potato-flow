@@ -22,6 +22,12 @@ _PEM_CERTIFICATE = re.compile(
 )
 
 
+def _hidden_subprocess_kwargs() -> dict[str, int]:
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 def _existing_ca_bundle_from_env() -> Optional[str]:
     for name in (
         "BILIBILI_CA_BUNDLE",
@@ -53,6 +59,7 @@ def _read_macos_keychain_certificates() -> list[bytes]:
             check=False,
             capture_output=True,
             timeout=10,
+            **_hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return []

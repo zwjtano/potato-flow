@@ -10,6 +10,7 @@ SETTINGS_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "settings.html"
 BASE_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "base.html"
 APP_SOURCE = ROOT / "potatoflow-app" / "app.py"
 LIVE_RECORDING_TEMPLATE = ROOT / "potatoflow-app" / "templates" / "live_recording.html"
+CONFIG_MANAGER_SOURCE = ROOT / "potatoflow-app" / "modules" / "config_manager.py"
 
 
 class SettingsSwitchTests(unittest.TestCase):
@@ -75,6 +76,26 @@ class SettingsSwitchTests(unittest.TestCase):
         self.assertGreaterEqual(template.count('name="bilibili_collection_id"'), 2)
         self.assertIn("自动加入 B站合集", template)
         self.assertIn('data-role="bilibili-collection-field"', template)
+
+    def test_settings_exposes_global_recording_ai_prompts(self):
+        template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+        app_source = APP_SOURCE.read_text(encoding="utf-8")
+        config_source = CONFIG_MANAGER_SOURCE.read_text(encoding="utf-8")
+        live_template = LIVE_RECORDING_TEMPLATE.read_text(encoding="utf-8")
+
+        for config_key in (
+            "RECORDING_AI_TITLE_PROMPT",
+            "RECORDING_AI_DESCRIPTION_PROMPT",
+            "RECORDING_AI_COVER_PROMPT",
+        ):
+            self.assertIn(f'name="{config_key}"', template)
+            self.assertIn(f'"{config_key}": ""', config_source)
+        self.assertIn("RECORDING_AI_PROMPT_MAX_LENGTH", app_source)
+        self.assertIn("live_recorder_manager.sync_configs()", app_source)
+        self.assertIn("直播间单独设置 → 这里的全局设置 → 系统内置", template)
+        self.assertIn("查看三个系统内置提示词", template)
+        self.assertIn("recording_prompt_inherited.title", live_template)
+        self.assertIn("留空继承全局设置", live_template)
 
     def test_mobile_settings_navigation_uses_a_wrapping_grid(self):
         css = SETTINGS_REDESIGN_STYLE_FILE.read_text(encoding="utf-8")

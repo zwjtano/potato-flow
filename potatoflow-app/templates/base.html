@@ -48,6 +48,7 @@
             <a class="app-nav-link {% if request.path == url_for('index') %}active{% endif %}" href="{{ url_for('index') }}" aria-label="总览" title="总览"><i class="bi bi-grid-1x2"></i><span>总览</span></a>
             <div class="app-nav-label">录播工作流</div>
             <a class="app-nav-link {% if request.path.startswith('/live-recording') %}active{% endif %}" href="{{ url_for('live_recording') }}" aria-label="直播间" title="直播间"><i class="bi bi-record-circle"></i><span>直播间</span></a>
+            <a class="app-nav-link" href="{{ url_for('live_recording') }}#recording-files" aria-label="录播文件" title="录播文件"><i class="bi bi-folder2-open"></i><span>录播文件</span></a>
             <a class="app-nav-link {% if request.path.startswith('/youtube_monitor') %}active{% endif %}" href="{{ url_for('youtube_monitor_index') }}" aria-label="YouTube 监控" title="YouTube 监控"><i class="bi bi-youtube"></i><span>YouTube 监控</span></a>
             <div class="app-nav-label">处理与发布</div>
             <a class="app-nav-link {% if request.path.startswith('/bilibili-archives') %}active{% endif %}" href="{{ url_for('bilibili_archives') }}" aria-label="投稿中心" title="投稿中心"><i class="bi bi-collection-play"></i><span>投稿中心</span></a>

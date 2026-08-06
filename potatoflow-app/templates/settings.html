@@ -67,7 +67,7 @@
                 </a>
                 <a class="nav-link" id="vtab-ai-models-tab" data-bs-toggle="pill" href="#vtab-ai-models" role="tab" aria-controls="vtab-ai-models" aria-selected="false">
                     <span class="settings-nav-icon"><i class="bi bi-robot"></i></span>
-                    <span class="settings-nav-copy"><strong>AI 模型</strong><small>模型服务与专项能力</small></span>
+                    <span class="settings-nav-copy"><strong>AI 与提示词</strong><small>模型服务、投稿提示词</small></span>
                     <span class="settings-nav-state {{ 'is-ready' if ai_ready else 'is-attention' }}">{{ '可用' if ai_ready else '待配置' }}</span>
                 </a>
                 <a class="nav-link" id="vtab-subtitle-voice-tab" data-bs-toggle="pill" href="#vtab-subtitle-voice" role="tab" aria-controls="vtab-subtitle-voice" aria-selected="false">
@@ -749,8 +749,8 @@
                             <section class="settings-section">
                                 <div class="settings-section-header">
                                     <div>
-                                        <h3 class="mb-1">AI 模型</h3>
-                                        <p class="section-lead mb-0">集中管理全局模型接入和字幕专用覆盖，留空项默认继承全局配置。</p>
+                                        <h3 class="mb-1">AI 与提示词</h3>
+                                        <p class="section-lead mb-0">集中管理模型接入、录播投稿提示词和字幕专用覆盖。</p>
                                     </div>
                                 </div>
                                 <div class="row g-4 settings-pane-grid">
@@ -919,6 +919,71 @@
                                                         </div>
                                                         <div class="col-12">
                                                             <p class="help-text mb-0">仅用于字幕质检；地址、密钥、模型名留空时按“字幕质检专用覆盖”→“字幕翻译专用覆盖”→“全局模型”的顺序回退。</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    {% set recording_custom_prompt_count =
+                                        (1 if config.get('RECORDING_AI_TITLE_PROMPT', '') else 0)
+                                        + (1 if config.get('RECORDING_AI_DESCRIPTION_PROMPT', '') else 0)
+                                        + (1 if config.get('RECORDING_AI_COVER_PROMPT', '') else 0) %}
+                                    <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">录播投稿</span>
+                                                    <h4>标题、简介与封面生图提示词</h4>
+                                                </div>
+                                                <span class="settings-status-badge {{ 'is-info' if recording_custom_prompt_count else 'is-neutral' }}">
+                                                    {{ recording_custom_prompt_count ~ ' 项全局自定义' if recording_custom_prompt_count else '使用系统内置' }}
+                                                </span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="alert alert-info mb-3">
+                                                    <i class="bi bi-diagram-3 me-1"></i>
+                                                    生效顺序：直播间单独设置 → 这里的全局设置 → 系统内置。这里控制选题重点、口吻和画面风格；事实校验、人物关系、标题长度、风险过滤、人物底稿与 DOTA2 官方素材约束始终保留。
+                                                </div>
+                                                <div class="row g-3">
+                                                    <div class="col-12">
+                                                        <div class="form-group">
+                                                            <label for="recording-ai-title-prompt" class="form-label">AI 标题提示词</label>
+                                                            <textarea id="recording-ai-title-prompt" name="RECORDING_AI_TITLE_PROMPT" rows="6" maxlength="6000" class="form-control" placeholder="留空使用系统内置标题提示词">{{ config.get('RECORDING_AI_TITLE_PROMPT', '') }}</textarea>
+                                                            <p class="help-text mb-0">控制标题选题、信息密度和表达风格。GSI 已确认主播实际游玩时，人物与对应英雄等事实约束仍由系统强制检查。</p>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <div class="form-group">
+                                                            <label for="recording-ai-description-prompt" class="form-label">AI 简介提示词</label>
+                                                            <textarea id="recording-ai-description-prompt" name="RECORDING_AI_DESCRIPTION_PROMPT" rows="6" maxlength="6000" class="form-control" placeholder="留空使用系统内置简介提示词">{{ config.get('RECORDING_AI_DESCRIPTION_PROMPT', '') }}</textarea>
+                                                            <p class="help-text mb-0">控制时间线详略、叙述口吻和希望优先保留的信息；无证据的 5W1H 内容不会被补写。</p>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <div class="form-group">
+                                                            <label for="recording-ai-cover-prompt" class="form-label">AI 封面生图提示词</label>
+                                                            <textarea id="recording-ai-cover-prompt" name="RECORDING_AI_COVER_PROMPT" rows="6" maxlength="6000" class="form-control" placeholder="留空使用系统内置封面生图提示词">{{ config.get('RECORDING_AI_COVER_PROMPT', '') }}</textarea>
+                                                            <p class="help-text mb-0">控制构图、配色、氛围与视觉风格。封面短文案可比投稿标题短，人物身份和英雄装备仍必须来自已核验信息。</p>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <div class="alert alert-secondary mb-0">
+                                                            <div class="d-flex justify-content-between align-items-center gap-2">
+                                                                <strong><i class="bi bi-eye"></i> 查看三个系统内置提示词</strong>
+                                                                <button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#builtin-recording-ai-prompts" aria-expanded="false" aria-controls="builtin-recording-ai-prompts">
+                                                                    <i class="bi bi-chevron-down"></i> 展开/收起
+                                                                </button>
+                                                            </div>
+                                                            <div class="collapse mt-3" id="builtin-recording-ai-prompts">
+                                                                <strong>标题默认</strong>
+                                                                <pre class="small text-muted builtin-prompt-pre mt-1">{{ recording_prompt_defaults.title }}</pre>
+                                                                <strong>简介默认</strong>
+                                                                <pre class="small text-muted builtin-prompt-pre mt-1">{{ recording_prompt_defaults.description }}</pre>
+                                                                <strong>封面生图默认</strong>
+                                                                <pre class="small text-muted builtin-prompt-pre mt-1 mb-0">{{ recording_prompt_defaults.cover }}</pre>
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -2465,8 +2530,8 @@
         },
         {
             id: 'vtab-ai-content', icon: 'bi-stars', name: 'AI 内容',
-            description: '模型、分段与元数据提示词',
-            titles: ['AI 模型与专项配置', 'AI 智能分段', '元数据翻译主提示词', '简介重试提示词']
+            description: '模型、录播投稿与元数据提示词',
+            titles: ['AI 模型与专项配置', '标题、简介与封面生图提示词', 'AI 智能分段', '元数据翻译主提示词', '简介重试提示词']
         },
         {
             id: 'vtab-subtitles', icon: 'bi-badge-cc', name: '字幕与语音',
