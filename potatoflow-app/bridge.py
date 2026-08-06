@@ -41,6 +41,8 @@ from dota2_items import (
     build_dota2_item_reference_sheet,
     dota2_item_prompt_instruction,
     match_dota2_items,
+    overlay_dota2_item_badges,
+    prioritize_dota2_item_matches,
 )
 from dota2_heroes import build_dota2_hero_reference
 from runtime_environment import configure_linux_ca_environment
@@ -4141,7 +4143,9 @@ def generate_recording_cover_with_ai(
                 f"{', '.join(tooltip_items)}。"
                 "只能表现这份列表中的主装备，数量不得超过列表数量；不得额外添加第七件装备。"
                 "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
-                "禁止在封面底部或任何位置生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
+                "图像模型生成阶段禁止自行生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
+                "系统会在成图后于右下角添加最多两枚 Valve 官方小型装备标识，"
+                "因此右下角必须保留干净安全区，模型不得在该区域仿画任何装备图标；"
                 "装备只可作为角色造型与场景语义参考，不得绘制仿冒的装备图标。"
             )
         else:
@@ -4180,7 +4184,12 @@ def generate_recording_cover_with_ai(
             }
             else "tooltip"
         )
-        dota2_item_matches = match_dota2_items(*tooltip_items)
+        dota2_item_matches = prioritize_dota2_item_matches(
+            match_dota2_items(*tooltip_items),
+            title,
+            ai_topic,
+            cover_event_context,
+        )
         dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
     elif game_context_locked:
         dota2_item_matches = (
@@ -4224,10 +4233,11 @@ def generate_recording_cover_with_ai(
         )
         dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
         details["ai_cover_dota2_source"] = "text_match"
+    dota2_item_cache_dir = resolve_path(".dota2-item-cache", cfg)
     if dota2_item_matches:
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
-            Path("/data/cache/dota2/items"),
+            dota2_item_cache_dir,
             work_dir / "dota2_item_references.png",
         )
         details["ai_cover_dota2_items"] = [
@@ -4545,6 +4555,21 @@ def generate_recording_cover_with_ai(
     if completed.returncode != 0 or not cover.is_file():
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
+    if dota2_item_matches and details.get("ai_cover_dota2_item_reference_used"):
+        try:
+            applied_item_badges = overlay_dota2_item_badges(
+                cover,
+                dota2_item_matches,
+                dota2_item_cache_dir,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Dota 2 装备标识合成失败: {exc}") from exc
+        if not applied_item_badges:
+            raise RuntimeError("Dota 2 装备标识合成失败: 没有可用的官方装备图标")
+        details["ai_cover_dota2_item_badges_applied"] = True
+        details["ai_cover_dota2_item_badges"] = applied_item_badges
+    else:
+        details["ai_cover_dota2_item_badges_applied"] = False
     details.update({
         "ai_cover_generated": True,
         "ai_cover_model": image_model,
@@ -4788,9 +4813,25 @@ def infer_streamer_participation_mode(
     return "unknown"
 
 
+def dota2_gsi_hero_is_usable(hero: Any) -> bool:
+    """Reject telemetry placeholders and internal identifiers as hero names."""
+    name = str(hero or "").strip()
+    if not name:
+        return False
+    folded = name.casefold()
+    compact = re.sub(r"\s+", "", folded)
+    if re.fullmatch(r"(?:未知|unknown)(?:[\(（\[].*[\)）\]])?", compact):
+        return False
+    if re.fullmatch(r"(?:hero|role)[_ -]?\d+", compact):
+        return False
+    if re.fullmatch(r"\d+", compact) or compact.startswith("npc_dota_hero_"):
+        return False
+    return True
+
+
 def streamer_gameplay_is_verified(game: Any) -> bool:
     """Only owner-bound telemetry may prove that the room owner is playing."""
-    if not isinstance(game, dict) or not str(game.get("hero") or "").strip():
+    if not isinstance(game, dict) or not dota2_gsi_hero_is_usable(game.get("hero")):
         return False
     return str(game.get("identity_source") or "").strip() not in {
         "xml_repeated_hero_only",

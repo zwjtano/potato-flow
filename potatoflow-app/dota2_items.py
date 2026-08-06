@@ -22,6 +22,7 @@ DOTA2_ITEM_ICON_BASE_URL = (
 )
 MAX_MATCHED_ITEMS = 8
 MAX_ITEM_ICON_BYTES = 4 * 1024 * 1024
+MAX_COVER_ITEM_BADGES = 2
 
 
 @dataclass(frozen=True)
@@ -267,6 +268,32 @@ def match_dota2_items(*content: str, limit: int = MAX_MATCHED_ITEMS) -> list[Dot
     return selected
 
 
+def prioritize_dota2_item_matches(
+    matches: Iterable[Dota2ItemMatch],
+    *primary_content: str,
+    limit: int = MAX_MATCHED_ITEMS,
+) -> list[Dota2ItemMatch]:
+    """Put title/event items first without inventing items outside GSI."""
+
+    available = list(matches)
+    available_items = {match.item for match in available}
+    primary = [
+        match
+        for match in match_dota2_items(*primary_content, limit=limit)
+        if match.item in available_items
+    ]
+    ordered: list[Dota2ItemMatch] = []
+    seen: set[Dota2Item] = set()
+    for match in (*primary, *available):
+        if match.item in seen:
+            continue
+        ordered.append(match)
+        seen.add(match.item)
+        if len(ordered) >= max(1, limit):
+            break
+    return ordered
+
+
 def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
     normalized = list(matches)
     if not normalized:
@@ -287,7 +314,9 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "必须以参考板中的轮廓、主色、材质与核心符号为准，"
         "每件装备保持独立，不得把两件装备融合成一件。可以将图标风格转化为精致插画道具，"
         "但不能改变其身份特征；没有出现在识别结果中的装备不要擅自添加。"
-        "禁止在封面底部或任何位置生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
+        "图像模型生成阶段禁止自行生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
+        "系统会在成图后于右下角添加最多两枚 Valve 官方小型装备标识，"
+        "因此右下角必须保留干净安全区，模型不得在该区域仿画任何装备图标；"
         "装备应作为角色手持、穿戴、身旁道具或技能能量焦点自然进入场景，不得只藏在背景，"
         "也不得绘制仿冒的装备图标。"
     )
@@ -415,3 +444,110 @@ def build_dota2_item_reference_sheet(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output_path, format="PNG", optimize=True)
     return output_path, errors
+
+
+def overlay_dota2_item_badges(
+    image_path: Path,
+    matches: Iterable[Dota2ItemMatch],
+    cache_dir: Path,
+    *,
+    max_items: int = MAX_COVER_ITEM_BADGES,
+) -> list[dict[str, str]]:
+    """Place up to two official item badges on a generated Dota 2 cover.
+
+    Image models may receive the official reference sheet yet still turn an
+    item into an unrecognisable costume detail. The deterministic final pass
+    keeps the relevant Valve icons readable without drawing an inventory UI.
+    """
+
+    normalized = list(matches)[: max(1, min(int(max_items), MAX_COVER_ITEM_BADGES))]
+    if not normalized:
+        return []
+    image_path = Path(image_path)
+    if not image_path.is_file():
+        raise FileNotFoundError(f"封面不存在，无法叠加装备标识: {image_path}")
+
+    icon_rows: list[tuple[Dota2ItemMatch, Image.Image]] = []
+    for match in normalized:
+        icon_path = download_dota2_item_icon(match.item, cache_dir)
+        with Image.open(icon_path) as source:
+            icon_rows.append((match, source.convert("RGBA").copy()))
+    if not icon_rows:
+        raise ValueError("没有可用的 Dota 2 官方装备图标")
+
+    with Image.open(image_path) as source:
+        canvas = source.convert("RGBA")
+    width, height = canvas.size
+    scale = max(0.72, min(1.25, min(width / 1920, height / 1080)))
+    icon_width = max(92, round(132 * scale))
+    icon_height = max(67, round(96 * scale))
+    label_height = max(30, round(38 * scale))
+    card_padding = max(10, round(14 * scale))
+    card_width = icon_width + card_padding * 2
+    card_height = icon_height + label_height + card_padding * 2
+    gap = max(10, round(14 * scale))
+    margin = max(26, round(38 * scale))
+    group_width = card_width * len(icon_rows) + gap * (len(icon_rows) - 1)
+    left = width - margin - group_width
+    top = height - margin - card_height
+    if left < margin:
+        raise ValueError("封面尺寸不足，无法安全叠加 Dota 2 装备标识")
+
+    font_path = Path(__file__).resolve().parent / "fonts" / "NotoSansCJKsc-Regular.otf"
+    font_size = max(20, round(25 * scale))
+    font = (
+        ImageFont.truetype(str(font_path), font_size)
+        if font_path.is_file()
+        else ImageFont.load_default()
+    )
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    applied: list[dict[str, str]] = []
+    for index, (match, icon) in enumerate(icon_rows):
+        card_left = left + index * (card_width + gap)
+        card_box = (card_left, top, card_left + card_width, top + card_height)
+        draw.rounded_rectangle(
+            card_box,
+            radius=max(12, round(18 * scale)),
+            fill=(7, 12, 22, 224),
+            outline=(250, 204, 21, 245),
+            width=max(2, round(3 * scale)),
+        )
+        icon.thumbnail((icon_width, icon_height), Image.Resampling.LANCZOS)
+        icon_left = card_left + (card_width - icon.width) // 2
+        icon_top = top + card_padding + (icon_height - icon.height) // 2
+        canvas.alpha_composite(icon, (icon_left, icon_top))
+
+        label = match.item.chinese_name
+        label_box = draw.textbbox((0, 0), label, font=font)
+        label_width = label_box[2] - label_box[0]
+        if label_width > card_width - card_padding:
+            label = label[:6]
+            label_box = draw.textbbox((0, 0), label, font=font)
+            label_width = label_box[2] - label_box[0]
+        draw.text(
+            (
+                card_left + (card_width - label_width) // 2,
+                top + card_padding + icon_height + max(1, round(3 * scale)),
+            ),
+            label,
+            font=font,
+            fill=(255, 255, 255, 255),
+            stroke_width=max(1, round(scale)),
+            stroke_fill=(0, 0, 0, 230),
+        )
+        applied.append(
+            {
+                "alias": match.alias,
+                "chinese_name": match.item.chinese_name,
+                "english_name": match.item.english_name,
+                "icon_slug": match.item.icon_slug,
+            }
+        )
+
+    temporary = image_path.with_name(f".{image_path.stem}-items{image_path.suffix}")
+    try:
+        canvas.convert("RGB").save(temporary, format="JPEG", quality=94, optimize=True)
+        temporary.replace(image_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return applied

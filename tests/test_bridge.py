@@ -470,6 +470,29 @@ class BridgeTests(unittest.TestCase):
             )
         )
 
+    def test_unknown_gsi_hero_does_not_force_placeholder_into_title(self):
+        timeline = ["42:18 本局高地推进后基地爆炸"]
+        segments = [{
+            "start_seconds": 0,
+            "end_seconds": 3501,
+            "hero": "未知(255)",
+            "identity_source": "gsi_streamer_anchor",
+        }]
+
+        self.assertFalse(bridge.dota2_gsi_hero_is_usable("未知(255)"))
+        self.assertFalse(bridge.dota2_gsi_hero_is_usable("unknown(255)"))
+        self.assertFalse(bridge.dota2_gsi_hero_is_usable("npc_dota_hero_126"))
+        self.assertFalse(bridge.streamer_gameplay_is_verified(segments[0]))
+        self.assertEqual(
+            bridge.recording_title_missing_selected_gsi_heroes(
+                "高地推进后基地爆炸",
+                [0],
+                timeline,
+                [segment for segment in segments if bridge.streamer_gameplay_is_verified(segment)],
+            ),
+            [],
+        )
+
     def test_real_multigame_title_requires_streamer_heroes_even_with_opponent_mention(self):
         timeline = [
             "06:15 第一局末段基地被摧毁，弹幕随后出现下一把，并继续讨论帕克买活后阵亡",
@@ -4325,6 +4348,17 @@ class BridgeTests(unittest.TestCase):
                 bridge,
                 "build_dota2_item_reference_sheet",
                 return_value=(item_sheet, []),
+            ), patch.object(
+                bridge,
+                "overlay_dota2_item_badges",
+                return_value=[
+                    {
+                        "alias": "BKB",
+                        "chinese_name": "黑皇杖",
+                        "english_name": "Black King Bar",
+                        "icon_slug": "black_king_bar",
+                    }
+                ],
             ), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
                 _, details = bridge.generate_recording_cover_with_ai(
                     title="DOTA2 蓝猫裸BKB后补羊刀",
@@ -4342,6 +4376,11 @@ class BridgeTests(unittest.TestCase):
                 )
 
         self.assertTrue(details["ai_cover_dota2_item_reference_used"])
+        self.assertTrue(details["ai_cover_dota2_item_badges_applied"])
+        self.assertEqual(
+            details["ai_cover_dota2_item_badges"][0]["english_name"],
+            "Black King Bar",
+        )
         self.assertEqual(details["ai_cover_dota2_source"], "locked_text_match")
         self.assertEqual(
             [item["english_name"] for item in details["ai_cover_dota2_items"]],
@@ -4356,7 +4395,9 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("OFFICIAL ITEM ICON REFERENCES", prompt)
         self.assertIn("必须清楚表现至少一件", prompt)
         self.assertIn("装备事实独立于人物归属", prompt)
-        self.assertIn("禁止在封面底部或任何位置生成物品栏", prompt)
+        self.assertIn("图像模型生成阶段禁止自行生成物品栏", prompt)
+        self.assertIn("右下角添加最多两枚 Valve 官方小型装备标识", prompt)
+        self.assertIn("右下角必须保留干净安全区", prompt)
         self.assertIn("不得绘制仿冒的装备图标", prompt)
 
     def test_unknown_streamer_uses_room_avatar_as_character_base(self):
