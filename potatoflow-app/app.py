@@ -1509,7 +1509,7 @@ def live_recording():
             'duration': config.get('DANMAKU_DURATION_SECONDS', 10),
             'font_size': config.get('DANMAKU_FONT_SIZE', 42),
             'opacity': config.get('DANMAKU_OPACITY', 0.92),
-            'encoder': config.get('DANMAKU_ENCODER', 'cpu'),
+            'encoder': config.get('DANMAKU_ENCODER', 'auto'),
             'preset': config.get('DANMAKU_ENCODE_PRESET', 'medium'),
             'quality': config.get('DANMAKU_ENCODE_QUALITY', 20),
         },
