@@ -22,7 +22,6 @@ DOTA2_ITEM_ICON_BASE_URL = (
 )
 MAX_MATCHED_ITEMS = 8
 MAX_ITEM_ICON_BYTES = 4 * 1024 * 1024
-MAX_COVER_ITEM_BADGES = 2
 
 
 @dataclass(frozen=True)
@@ -309,16 +308,21 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "对应物品，不能按字面画成现实物品，也不能替换成《英雄联盟》或其他游戏装备。"
         f"本次装备识别结果：{resolved}。"
         "随附的 DOTA 2 OFFICIAL ITEM ICON REFERENCES 是这些装备的官方游戏图标参考板；"
-        "识别结果非空时，封面必须清楚表现至少一件与第一核心事件最相关的装备；"
-        "核心事件只点名一件时必须表现该件，多件时优先表现标题直接点名的一至两件。"
+        "识别结果非空时，封面必须清楚表现识别结果中的全部装备；"
+        "标题直接点名的装备可放大或靠近事件主体作为重点，其余装备仍须作为边缘辅助信息完整出现。"
         "必须以参考板中的轮廓、主色、材质与核心符号为准，"
         "每件装备保持独立，不得把两件装备融合成一件。可以将图标风格转化为精致插画道具，"
         "但不能改变其身份特征；没有出现在识别结果中的装备不要擅自添加。"
-        "图像模型生成阶段禁止自行生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
-        "系统会在成图后于右下角添加最多两枚 Valve 官方小型装备标识，"
-        "因此右下角必须保留干净安全区，模型不得在该区域仿画任何装备图标；"
-        "装备应作为角色手持、穿戴、身旁道具或技能能量焦点自然进入场景，不得只藏在背景，"
-        "也不得绘制仿冒的装备图标。"
+        "图像模型可以依据参考图自由表现全部已确认装备：可将装备集中或分散在画面边缘，"
+        "作为角色手持、穿戴、身旁道具或技能能量焦点，并随透视调整大小、角度与光效，"
+        "但必须保留每件装备可辨认的官方身份特征；最多六格主装备以及单独确认的中立物品、"
+        "神杖或魔晶状态都不得只挑两件省略。不得新增名单外装备、把两件装备融合为一件，"
+        "也不得绘制呆板的游戏物品栏 UI。装备视觉应采用独立道具插画、清晰描边与光效层次，"
+        "不得把商店图标原样贴成带黑底和名称的卡片。Dota 2 封面优先采用不对称切片构图："
+        "主播与英雄一前一后构成主视觉，标题放在另一侧或下方并按完整语义分成两至三行；"
+        "装备沿画面上缘和两侧错落分布，标题直接点名的重点装备可以更大，"
+        "其余装备较小但仍须清楚可辨。标题、人物与英雄始终高于装备辅助层，"
+        "装备不得遮脸、压字或贴边裁断。"
     )
 
 
@@ -444,110 +448,3 @@ def build_dota2_item_reference_sheet(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output_path, format="PNG", optimize=True)
     return output_path, errors
-
-
-def overlay_dota2_item_badges(
-    image_path: Path,
-    matches: Iterable[Dota2ItemMatch],
-    cache_dir: Path,
-    *,
-    max_items: int = MAX_COVER_ITEM_BADGES,
-) -> list[dict[str, str]]:
-    """Place up to two official item badges on a generated Dota 2 cover.
-
-    Image models may receive the official reference sheet yet still turn an
-    item into an unrecognisable costume detail. The deterministic final pass
-    keeps the relevant Valve icons readable without drawing an inventory UI.
-    """
-
-    normalized = list(matches)[: max(1, min(int(max_items), MAX_COVER_ITEM_BADGES))]
-    if not normalized:
-        return []
-    image_path = Path(image_path)
-    if not image_path.is_file():
-        raise FileNotFoundError(f"封面不存在，无法叠加装备标识: {image_path}")
-
-    icon_rows: list[tuple[Dota2ItemMatch, Image.Image]] = []
-    for match in normalized:
-        icon_path = download_dota2_item_icon(match.item, cache_dir)
-        with Image.open(icon_path) as source:
-            icon_rows.append((match, source.convert("RGBA").copy()))
-    if not icon_rows:
-        raise ValueError("没有可用的 Dota 2 官方装备图标")
-
-    with Image.open(image_path) as source:
-        canvas = source.convert("RGBA")
-    width, height = canvas.size
-    scale = max(0.72, min(1.25, min(width / 1920, height / 1080)))
-    icon_width = max(92, round(132 * scale))
-    icon_height = max(67, round(96 * scale))
-    label_height = max(30, round(38 * scale))
-    card_padding = max(10, round(14 * scale))
-    card_width = icon_width + card_padding * 2
-    card_height = icon_height + label_height + card_padding * 2
-    gap = max(10, round(14 * scale))
-    margin = max(26, round(38 * scale))
-    group_width = card_width * len(icon_rows) + gap * (len(icon_rows) - 1)
-    left = width - margin - group_width
-    top = height - margin - card_height
-    if left < margin:
-        raise ValueError("封面尺寸不足，无法安全叠加 Dota 2 装备标识")
-
-    font_path = Path(__file__).resolve().parent / "fonts" / "NotoSansCJKsc-Regular.otf"
-    font_size = max(20, round(25 * scale))
-    font = (
-        ImageFont.truetype(str(font_path), font_size)
-        if font_path.is_file()
-        else ImageFont.load_default()
-    )
-    draw = ImageDraw.Draw(canvas, "RGBA")
-    applied: list[dict[str, str]] = []
-    for index, (match, icon) in enumerate(icon_rows):
-        card_left = left + index * (card_width + gap)
-        card_box = (card_left, top, card_left + card_width, top + card_height)
-        draw.rounded_rectangle(
-            card_box,
-            radius=max(12, round(18 * scale)),
-            fill=(7, 12, 22, 224),
-            outline=(250, 204, 21, 245),
-            width=max(2, round(3 * scale)),
-        )
-        icon.thumbnail((icon_width, icon_height), Image.Resampling.LANCZOS)
-        icon_left = card_left + (card_width - icon.width) // 2
-        icon_top = top + card_padding + (icon_height - icon.height) // 2
-        canvas.alpha_composite(icon, (icon_left, icon_top))
-
-        label = match.item.chinese_name
-        label_box = draw.textbbox((0, 0), label, font=font)
-        label_width = label_box[2] - label_box[0]
-        if label_width > card_width - card_padding:
-            label = label[:6]
-            label_box = draw.textbbox((0, 0), label, font=font)
-            label_width = label_box[2] - label_box[0]
-        draw.text(
-            (
-                card_left + (card_width - label_width) // 2,
-                top + card_padding + icon_height + max(1, round(3 * scale)),
-            ),
-            label,
-            font=font,
-            fill=(255, 255, 255, 255),
-            stroke_width=max(1, round(scale)),
-            stroke_fill=(0, 0, 0, 230),
-        )
-        applied.append(
-            {
-                "alias": match.alias,
-                "chinese_name": match.item.chinese_name,
-                "english_name": match.item.english_name,
-                "icon_slug": match.item.icon_slug,
-            }
-        )
-
-    temporary = image_path.with_name(f".{image_path.stem}-items{image_path.suffix}")
-    try:
-        canvas.convert("RGB").save(temporary, format="JPEG", quality=94, optimize=True)
-        temporary.replace(image_path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return applied

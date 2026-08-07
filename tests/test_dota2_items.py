@@ -85,6 +85,13 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("大炮＝代达罗斯之殇（Daedalus）", instruction)
         self.assertIn("不能按字面画成现实物品", instruction)
         self.assertIn("不得把两件装备融合成一件", instruction)
+        self.assertIn("自由表现全部已确认装备", instruction)
+        self.assertIn("必须清楚表现识别结果中的全部装备", instruction)
+        self.assertIn("独立道具插画、清晰描边与光效层次", instruction)
+        self.assertIn("不得把商店图标原样贴成带黑底和名称的卡片", instruction)
+        self.assertIn("主播与英雄一前一后构成主视觉", instruction)
+        self.assertIn("重点装备可以更大", instruction)
+        self.assertIn("装备不得遮脸、压字或贴边裁断", instruction)
 
     def test_title_item_is_prioritized_without_adding_items_outside_gsi(self):
         available = dota2_items.match_dota2_items("魔瓶 BKB 羊刀")
@@ -129,40 +136,6 @@ class Dota2ItemsTests(unittest.TestCase):
             with Image.open(sheet) as image:
                 self.assertGreaterEqual(image.width, 560)
                 self.assertGreater(image.height, 190)
-
-    def test_cover_overlay_uses_official_item_icons_and_preserves_dimensions(self):
-        matches = dota2_items.match_dota2_items("BKB和羊刀")
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            cover = root / "cover.jpg"
-            Image.new("RGB", (1920, 1080), "#1e293b").save(cover)
-
-            def fake_download(item, cache_dir):
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                icon = cache_dir / f"{item.icon_slug}.png"
-                color = "#f59e0b" if item.icon_slug == "black_king_bar" else "#8b5cf6"
-                Image.new("RGBA", (88, 64), color).save(icon)
-                return icon
-
-            with patch.object(
-                dota2_items,
-                "download_dota2_item_icon",
-                side_effect=fake_download,
-            ):
-                applied = dota2_items.overlay_dota2_item_badges(
-                    cover,
-                    matches,
-                    root / "cache",
-                )
-
-            self.assertEqual(
-                [item["english_name"] for item in applied],
-                ["Black King Bar", "Scythe of Vyse"],
-            )
-            with Image.open(cover) as image:
-                self.assertEqual(image.size, (1920, 1080))
-                self.assertNotEqual(image.getpixel((1870, 1030)), (30, 41, 59))
-
 
 if __name__ == "__main__":
     unittest.main()
