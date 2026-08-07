@@ -180,6 +180,9 @@ GUOXIAOGUO_COVER_REFERENCE = (
     APP_ROOT / "assets" / "streamer-references" / "guoxiaoguo.png"
 )
 GUOXIAOGUO_STREAMER_ALIASES = {"果小果", "果小果是个弟弟"}
+XIEBIN_DD_COVER_REFERENCE = (
+    APP_ROOT / "assets" / "streamer-references" / "xiebin-dd.png"
+)
 DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "YYF",
@@ -3251,6 +3254,9 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     if normalized == "果小果":
         if GUOXIAOGUO_COVER_REFERENCE.is_file():
             return "果小果", GUOXIAOGUO_COVER_REFERENCE
+    if normalized == "DD":
+        if XIEBIN_DD_COVER_REFERENCE.is_file():
+            return "谢彬DD", XIEBIN_DD_COVER_REFERENCE
     return None
 
 
@@ -3263,6 +3269,13 @@ def recording_cover_reference_instruction(reference_name: str) -> str:
             "醒目的红色大蝴蝶结；绝对不能画成蛋壳、破壳小鸡、普通帽子、花朵或只剩黄色圆点。"
             "保持二次元 Q 版插画风格，禁止改成真人，也不要生成成其他角色。"
             "可以根据直播主题更换背景、服装和姿势。"
+        )
+    if reference_name == "谢彬DD":
+        return (
+            "上传的参考照片是主播谢彬 DD 本人经过裁切的固定人物底稿。必须以图中同一人为唯一人物原型，"
+            "保留短黑发、脸型、眉眼、鼻唇和整体身份辨识度；照片中的黑色夹克与胸前握拳手势只作为"
+            "体态参考，可以根据直播主题更换服装、动作和背景。Dota 2 封面仍须按系统规则转为高质量"
+            "二次元 Q 版或游戏切片插画，不得保留真人摄影皮肤，也不得生成另一张脸。"
         )
     return (
         f"上传的参考照片是主播 {reference_name} 本人。必须以照片中的人物为唯一人物原型，"

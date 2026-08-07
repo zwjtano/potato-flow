@@ -56,11 +56,13 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn('mv "${legacy_path}" "${canonical_path}"', installer)
         self.assertFalse((ROOT / "potatoflow-app" / "requirements.txt").exists())
 
-    def test_image_contains_only_current_bundled_cover_references(self):
+    def test_image_contains_current_bundled_cover_references(self):
         reference_root = ROOT / "potatoflow-app" / "assets" / "streamer-references"
-        reference = reference_root / "guoxiaoguo.png"
-        self.assertTrue(reference.is_file())
-        self.assertGreater(reference.stat().st_size, 1024)
+        for filename in ("guoxiaoguo.png", "xiebin-dd.png"):
+            with self.subTest(filename=filename):
+                reference = reference_root / filename
+                self.assertTrue(reference.is_file())
+                self.assertGreater(reference.stat().st_size, 1024)
         self.assertFalse((reference_root / "yyf.png").exists())
 
     def test_entrypoint_persists_runtime_data(self):

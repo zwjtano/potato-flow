@@ -4672,6 +4672,20 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("绝对不能画成蛋壳", instruction)
         self.assertIn("禁止改成真人", instruction)
 
+    def test_xiebin_dd_reference_aliases_are_recognized(self):
+        self.assertTrue(bridge.XIEBIN_DD_COVER_REFERENCE.is_file())
+        for alias in ("DD", "谢彬DD", "谢彬", "谢斌", "奶哥", "奶D"):
+            with self.subTest(alias=alias):
+                reference = bridge.recording_cover_reference(alias)
+                self.assertIsNotNone(reference)
+                self.assertEqual(reference[0], "谢彬DD")
+                self.assertEqual(reference[1], bridge.XIEBIN_DD_COVER_REFERENCE)
+        instruction = bridge.recording_cover_reference_instruction("谢彬DD")
+        self.assertIn("经过裁切的固定人物底稿", instruction)
+        self.assertIn("短黑发、脸型、眉眼、鼻唇", instruction)
+        self.assertIn("不得保留真人摄影皮肤", instruction)
+        self.assertIn("不得生成另一张脸", instruction)
+
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.json"
