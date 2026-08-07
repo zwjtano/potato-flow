@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import html
 import json
 import re
 import urllib.error
@@ -16,6 +17,9 @@ from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
 
 DOTA2_ITEM_DATA_SOURCE = "https://www.dota2.com/datafeed/itemlist?language=schinese"
+DOTA2_ITEM_DETAIL_SOURCE = (
+    "https://www.dota2.com/datafeed/itemdata?item_id={item_id}&language=schinese"
+)
 DOTA2_ITEM_ICON_BASE_URL = (
     "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/"
     "dota_react/items"
@@ -194,8 +198,8 @@ DOTA2_ITEMS: tuple[Dota2Item, ...] = (
 
 
 @lru_cache(maxsize=1)
-def _official_dota2_items() -> tuple[Dota2Item, ...]:
-    """Load the complete current item catalogue from Valve's Datafeed."""
+def _official_dota2_item_rows() -> tuple[dict[str, object], ...]:
+    """Load the current raw item catalogue once from Valve's Datafeed."""
     request = urllib.request.Request(
         DOTA2_ITEM_DATA_SOURCE,
         headers={"User-Agent": "Mozilla/5.0 PotatoFlow/1.0"},
@@ -206,8 +210,14 @@ def _official_dota2_items() -> tuple[Dota2Item, ...]:
     except (OSError, ValueError, urllib.error.URLError):
         return ()
     rows = payload.get("result", {}).get("data", {}).get("itemabilities", [])
+    return tuple(row for row in rows if isinstance(row, dict))
+
+
+@lru_cache(maxsize=1)
+def _official_dota2_items() -> tuple[Dota2Item, ...]:
+    """Load the complete current item catalogue from Valve's Datafeed."""
     result: list[Dota2Item] = []
-    for row in rows if isinstance(rows, list) else []:
+    for row in _official_dota2_item_rows():
         internal_name = str(row.get("name") or "")
         chinese_name = str(row.get("name_loc") or "").strip()
         english_name = str(row.get("name_english_loc") or "").strip()
@@ -217,6 +227,114 @@ def _official_dota2_items() -> tuple[Dota2Item, ...]:
         if chinese_name and english_name and icon_slug:
             result.append(_item(chinese_name, english_name, icon_slug))
     return tuple(result)
+
+
+@lru_cache(maxsize=1)
+def _official_dota2_item_id_map() -> dict[str, int]:
+    result: dict[str, int] = {}
+    for row in _official_dota2_item_rows():
+        internal_name = str(row.get("name") or "")
+        try:
+            item_id = int(row.get("id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if internal_name.startswith("item_") and item_id > 0:
+            result[internal_name.removeprefix("item_")] = item_id
+    return result
+
+
+def _clean_official_item_text(value: object, limit: int = 180) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<br\s*/?>", "；", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"%[a-zA-Z0-9_]+%", "", text)
+    text = text.replace("%", "")
+    text = re.sub(r"\s+", " ", text).strip(" ；")
+    text = re.sub(r"；+", "；", text)
+    if len(text) <= limit:
+        return text
+    shortened = text[:limit].rsplit("；", 1)[0].rstrip(" ，。；")
+    return shortened or text[:limit].rstrip(" ，。；")
+
+
+@lru_cache(maxsize=256)
+def _official_dota2_item_visual_context(icon_slug: str) -> tuple[str, str]:
+    item_id = _official_dota2_item_id_map().get(str(icon_slug or "").strip())
+    if not item_id:
+        return "", ""
+    request = urllib.request.Request(
+        DOTA2_ITEM_DETAIL_SOURCE.format(item_id=item_id),
+        headers={"User-Agent": "Mozilla/5.0 PotatoFlow/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as remote:
+            payload = json.load(remote)
+    except (OSError, ValueError, urllib.error.URLError):
+        return "", ""
+    rows = payload.get("result", {}).get("data", {}).get("items", [])
+    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+    return (
+        _clean_official_item_text(row.get("lore_loc")),
+        _clean_official_item_text(row.get("desc_loc")),
+    )
+
+
+def load_dota2_item_visual_contexts(
+    matches: Iterable[Dota2ItemMatch],
+) -> list[dict[str, str]]:
+    """Load Valve lore and function text used to integrate equipment naturally."""
+    normalized = list(matches)
+
+    def load(match: Dota2ItemMatch) -> dict[str, str]:
+        lore, function = _official_dota2_item_visual_context(match.item.icon_slug)
+        return {
+            "chinese_name": match.item.chinese_name,
+            "english_name": match.item.english_name,
+            "icon_slug": match.item.icon_slug,
+            "lore": lore,
+            "function": function,
+        }
+
+    if not normalized:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(4, len(normalized)),
+    ) as pool:
+        contexts = list(pool.map(load, normalized))
+    return [row for row in contexts if row.get("lore") or row.get("function")]
+
+
+def dota2_item_visual_context_prompt_instruction(
+    contexts: Iterable[dict[str, str]],
+) -> str:
+    normalized = list(contexts)
+    if not normalized:
+        return ""
+    rows: list[str] = []
+    for context in normalized:
+        name = str(context.get("chinese_name") or "").strip()
+        lore = str(context.get("lore") or "").strip()
+        function = str(context.get("function") or "").strip()
+        facts = "；".join(
+            part
+            for part in (
+                f"背景：{lore}" if lore else "",
+                f"功能：{function}" if function else "",
+            )
+            if part
+        )
+        if name and facts:
+            rows.append(f"{name}（{facts}）")
+    if not rows:
+        return ""
+    return (
+        "Valve 官方装备背景与功能（只用于理解造型、材质、用途和穿戴方式，不得新增剧情事实）："
+        + "；".join(rows)
+        + "。先以官方图标锁定每件装备的身份，再结合其官方背景与功能，把适合的装备自然设计成"
+        "人物已经穿戴的护甲、鞋、披风或饰品，或正在手持、背负、腰挂的武器和法器；"
+        "不适合穿戴的球体、消耗品和特殊物件才作为身旁道具或能量焦点。"
+        "人物身上、手中或身旁已经出现的装备就算完成一次展示，不得再在边缘、背景、倒影或装饰层复制同一件。"
+    )
 
 
 def _all_dota2_items() -> tuple[Dota2Item, ...]:
@@ -315,6 +433,8 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "但不能改变其身份特征；没有出现在识别结果中的装备不要擅自添加。"
         "图像模型可以依据参考图自由表现全部已确认装备：可将装备集中或分散在画面边缘，"
         "作为角色手持、穿戴、身旁道具或技能能量焦点，并随透视调整大小、角度与光效，"
+        "优先尝试把适合的装备自然穿戴或持握在人物身上；每件确认装备在整张图中必须恰好出现一次，"
+        "穿戴、手持或身旁出现都已经计数，不得再以悬浮图标、背景回声、镜像、倒影或装饰复制同一件。"
         "但必须保留每件装备可辨认的官方身份特征；最多六格主装备以及单独确认的中立物品、"
         "神杖或魔晶状态都不得只挑两件省略。不得新增名单外装备、把两件装备融合为一件，"
         "也不得绘制呆板的游戏物品栏 UI。装备视觉应采用独立道具插画、清晰描边与光效层次，"
