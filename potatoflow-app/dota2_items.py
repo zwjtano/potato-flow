@@ -270,9 +270,14 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         "back_garment",
         "直接穿在背部和双肩，作为唯一披风、护服、翼饰或背负装置",
         (
-            "pipe", "glimmer_cape", "eternal_shroud", "butterfly", "shawl",
+            "pipe", "glimmer_cape", "eternal_shroud", "shawl",
             "consecrated_wraps", "cloak_of_flames", "ancient_janggo",
         ),
+    ),
+    (
+        "back_green_wings",
+        "将蝴蝶装备自然展开为背部一对绿色发光双翼，左右两翼属于同一件装备，禁止再画蝴蝶图标或第二对翅膀",
+        ("butterfly",),
     ),
     (
         "forearm",
@@ -311,11 +316,16 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         "固定在胸甲、肩甲或腰带的独立能量插槽内；必须与身体连接，禁止自由悬浮",
         (
             "aether_lens", "aghanims_shard", "ultimate_scepter_2", "refresher",
-            "octarine_core", "lotus_orb", "sphere", "bloodstone", "skadi",
+            "octarine_core", "lotus_orb", "sphere", "bloodstone",
             "moon_shard", "gem", "refresher_shard", "essence_distiller",
             "conjurers_catalyst", "dormant_curio", "point_booster", "idol_of_screeauk",
             "stormcrafter",
         ),
+    ),
+    (
+        "chest_frost_core",
+        "将斯嘉蒂之眼嵌入胸甲正中央，表现为轮廓完整、蓝白冰霜清晰的唯一胸前核心，禁止在身旁重复悬浮",
+        ("skadi",),
     ),
     (
         "waist_short_weapon",
@@ -342,10 +352,15 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         "装入背部斜向刀鞘的独立刀剑位，多件时平行分层，禁止融合成一把",
         (
             "rapier", "radiance", "greater_crit", "bfury", "manta", "invis_sword",
-            "silver_edge", "desolator", "diffusal_blade", "disperser", "mage_slayer",
+            "desolator", "diffusal_blade", "disperser", "mage_slayer",
             "echo_sabre", "sange", "yasha", "kaya", "sange_and_yasha",
             "kaya_and_sange", "yasha_and_kaya", "relic",
         ),
+    ),
+    (
+        "back_center_blade",
+        "将白银之锋从背部中央斜向背负；若同时有蝴蝶，必须从绿色双翼中央穿出并完整露出独立刀身，禁止与双翼融合",
+        ("silver_edge",),
     ),
     (
         "offhand_shield",
@@ -573,6 +588,16 @@ def dota2_item_placement_plan(
         "waist_short_weapon",
         "back_long_weapon",
         "back_blade",
+        "back_center_blade",
+    }
+    # Keep purpose-built back blades on the back when a second weapon is
+    # available. Long weapons, staves and short weapons can form a readable
+    # left-hand offhand without undoing their distinctive back composition.
+    offhand_slots = {
+        "back_right_staff",
+        "back_left_staff",
+        "waist_short_weapon",
+        "back_long_weapon",
     }
     handheld_candidates: list[tuple[int, int, str]] = []
     for index, match in enumerate(normalized_matches):
@@ -585,17 +610,35 @@ def dota2_item_placement_plan(
         item_cost = item_costs.get(slug, 0)
         if eligible and item_cost > 0:
             handheld_candidates.append((item_cost, -index, slug))
-    if handheld_candidates:
-        handheld_slug = max(handheld_candidates)[2]
+    ranked_handheld_slugs = [
+        slug
+        for _cost, _stable_index, slug in sorted(
+            handheld_candidates,
+            reverse=True,
+        )
+    ]
+    if ranked_handheld_slugs:
+        primary_handheld_slug = ranked_handheld_slugs[0]
     elif hero_primary_attribute == "intelligence" and any(
         match.item.icon_slug.lower() == "ultimate_scepter"
         for match in normalized_matches
     ):
         # Preserve the hard Aghanim rule if Valve's price endpoint is temporarily
         # unavailable; no other unknown-price weapon is promoted speculatively.
-        handheld_slug = "ultimate_scepter"
+        primary_handheld_slug = "ultimate_scepter"
     else:
-        handheld_slug = ""
+        primary_handheld_slug = ""
+    secondary_handheld_slug = ""
+    for candidate_slug in ranked_handheld_slugs:
+        if candidate_slug == primary_handheld_slug:
+            continue
+        if candidate_slug == "ultimate_scepter":
+            secondary_handheld_slug = candidate_slug
+            break
+        candidate_preset = DOTA2_ITEM_PLACEMENT_PRESETS.get(candidate_slug, {})
+        if candidate_preset.get("slot") in offhand_slots:
+            secondary_handheld_slug = candidate_slug
+            break
     plans: list[dict[str, object]] = []
     worn_tokens = (
         "boots", "greaves", "shoe", "cuirass", "guard", "mail", "armor",
@@ -622,17 +665,32 @@ def dota2_item_placement_plan(
         slug = match.item.icon_slug.lower()
         item_cost = item_costs.get(slug, 0)
         high_value = item_cost >= HIGH_VALUE_ITEM_COST
-        if slug == handheld_slug:
+        if slug == primary_handheld_slug:
             slot = "direct_hand"
             if slug == "ultimate_scepter":
                 placement = (
                     "阿哈利姆神杖就是 A 杖；该英雄为智力英雄，且它在本局适合手持的装备中"
-                    f"官方价格最高（{item_cost} 金币），作为画面唯一手持主装备直接拿在人物右手中"
+                    f"官方价格最高（{item_cost} 金币），作为画面右手主装备直接拿在人物右手中"
                 )
             else:
                 placement = (
                     f"Valve 官方价格为 {item_cost} 金币，在本局适合手持的装备中最高；"
-                    "作为画面唯一手持主装备直接拿在人物右手中，原预设背负或腰挂位置取消"
+                    "作为画面右手主装备直接拿在人物右手中，原预设背负或腰挂位置取消"
+                )
+            preset_used = True
+            floating_allowed = False
+        elif slug == secondary_handheld_slug:
+            slot = "direct_offhand"
+            if slug == "ultimate_scepter":
+                placement = (
+                    "阿哈利姆神杖就是 A 杖；该英雄为智力英雄，且它是主装备之后价格最高的合适副手法器"
+                    f"（{item_cost} 金币），直接拿在人物左手中；必须与右手主装备保持两个完整独立实体"
+                )
+            else:
+                placement = (
+                    f"Valve 官方价格为 {item_cost} 金币，是右手主装备之外价格最高且适合副手的武器；"
+                    "作为画面左手副武器直接拿在人物左手中，原预设背负或腰挂位置取消；"
+                    "必须与右手主装备保持两个完整独立实体，不得融合、交叉遮没或画成同一把"
                 )
             preset_used = True
             floating_allowed = False
@@ -640,8 +698,8 @@ def dota2_item_placement_plan(
             slot = "back_center_scepter"
             if hero_primary_attribute == "intelligence":
                 placement = (
-                    "阿哈利姆神杖就是 A 杖；该英雄虽为智力英雄，但更高价装备已占用唯一手持位，"
-                    "因此固定在背部中央法器槽，禁止再手持"
+                    "阿哈利姆神杖就是 A 杖；该英雄虽为智力英雄，但本局手持价格与位置优先级"
+                    "没有让它进入主手或副手，因此固定在背部中央法器槽，禁止再手持"
                 )
             else:
                 placement = "阿哈利姆神杖就是 A 杖；该英雄不是智力英雄，固定在背部中央法器槽，禁止手持"
@@ -695,7 +753,8 @@ def dota2_item_placement_plan(
                 "hero_primary_attribute": hero_primary_attribute,
                 "item_cost": item_cost,
                 "high_value": high_value,
-                "is_primary_handheld": slug == handheld_slug,
+                "is_primary_handheld": slug == primary_handheld_slug,
+                "is_secondary_handheld": slug == secondary_handheld_slug,
             }
         )
     return plans
@@ -717,6 +776,8 @@ def dota2_item_placement_plan_prompt_instruction(
         + "；".join(rows)
         + "。每个编号只能对应画面中的一个物理实体；穿在人物身上、拿在手里、固定在背部或腰间后，"
         "禁止再沿画面边缘展示它的图标。不得改变已分配的位置；只有逐件计划明确写出允许悬浮时才可悬浮一处。"
+        "若计划同时分配右手主装备和左手副武器，两件必须分别使用对应手臂持握，完整露出各自轮廓与核心符号；"
+        "禁止把两件融合、交叉遮没、连成一把或让同一只手同时持有两件。"
         "自然穿戴或持握不能牺牲装备辨识度：每件装备的官方轮廓、主色、材质和标志性符号都要完整露出，"
         "不能被身体、标题、光效或其他装备遮成普通武器和泛化装饰；缩略图中仍应逐件可辨。"
         "美观与识别度同等重要：禁止为露全装备而使用生硬的大图标、贴纸或等尺寸陈列；"
