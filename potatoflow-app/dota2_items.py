@@ -223,7 +223,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
 ] = (
     (
         "aghanims_scepter",
-        "阿哈利姆神杖就是 A 杖；仅智力英雄直接手持，其他英雄固定在背部法器槽",
+        "阿哈利姆神杖就是 A 杖；仅智力英雄可参与唯一手持主装备比较，其他英雄固定在背部法器槽",
         ("ultimate_scepter",),
     ),
     (
@@ -231,7 +231,6 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         "固定在背部右侧纵向装备槽，露出完整识别特征，不占用手持 A 杖的位置",
         (
             "black_king_bar", "force_staff", "rod_of_atos", "staff_of_wizardry",
-            "stormcrafter",
         ),
     ),
     (
@@ -239,7 +238,6 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         "固定在背部左侧纵向装备槽，露出完整识别特征，不占用手持 A 杖的位置",
         (
             "crellas_crozier", "sheepstick", "cyclone", "wind_waker", "ghost",
-            "spellslinger",
         ),
     ),
     (
@@ -272,7 +270,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         "直接穿在背部和双肩，作为唯一披风、护服、翼饰或背负装置",
         (
             "pipe", "glimmer_cape", "eternal_shroud", "butterfly", "shawl",
-            "consecrated_wraps", "cloak_of_flames", "eagle", "ancient_janggo",
+            "consecrated_wraps", "cloak_of_flames", "ancient_janggo",
         ),
     ),
     (
@@ -281,6 +279,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         (
             "hand_of_midas", "armlet", "iron_talon", "bracer", "gauntlets",
             "gunpowder_gauntlets", "occult_bracelet", "wraith_band",
+            "partisans_brand",
         ),
     ),
     (
@@ -298,7 +297,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
             "orchid", "phylactery", "aeon_disk", "urn_of_shadows", "spirit_vessel",
             "holy_locket", "solar_crest", "medallion_of_courage", "null_talisman",
             "dandelion_amulet", "enchanters_bauble", "prophets_pendulum",
-            "talisman_of_evasion", "wind_lace",
+            "talisman_of_evasion", "wind_lace", "spellslinger",
         ),
     ),
     (
@@ -314,6 +313,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
             "octarine_core", "lotus_orb", "sphere", "bloodstone", "skadi",
             "moon_shard", "gem", "refresher_shard", "essence_distiller",
             "conjurers_catalyst", "dormant_curio", "point_booster", "idol_of_screeauk",
+            "stormcrafter",
         ),
     ),
     (
@@ -333,7 +333,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
             "hurricane_pike", "gungir", "nullifier", "monkey_king_bar", "basher",
             "abyssal_blade", "maelstrom", "mjollnir", "dragon_lance",
             "heavens_halberd", "meteor_hammer", "devastator", "giant_maul",
-            "harpoon", "hydras_breath", "ogre_axe", "partisans_brand",
+            "harpoon", "hydras_breath", "ogre_axe", "eagle",
         ),
     ),
     (
@@ -343,7 +343,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
             "rapier", "radiance", "greater_crit", "bfury", "manta", "invis_sword",
             "silver_edge", "desolator", "diffusal_blade", "disperser", "mage_slayer",
             "echo_sabre", "sange", "yasha", "kaya", "sange_and_yasha",
-            "kaya_and_sange", "yasha_and_kaya",
+            "kaya_and_sange", "yasha_and_kaya", "relic",
         ),
     ),
     (
@@ -359,7 +359,7 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         (
             "bottle", "clarity", "flask", "famango", "great_famango", "faerie_fire",
             "dust", "smoke_of_deceit", "cheese", "tango", "tango_single",
-            "tpscroll", "branches", "mana_draught", "kobold_cup", "relic",
+            "tpscroll", "branches", "mana_draught", "kobold_cup",
         ),
     ),
     (
@@ -453,10 +453,10 @@ def _clean_official_item_text(value: object, limit: int = 180) -> str:
 
 
 @lru_cache(maxsize=256)
-def _official_dota2_item_visual_context(icon_slug: str) -> tuple[str, str]:
+def _official_dota2_item_visual_context(icon_slug: str) -> tuple[str, str, int]:
     item_id = _official_dota2_item_id_map().get(str(icon_slug or "").strip())
     if not item_id:
-        return "", ""
+        return "", "", 0
     request = urllib.request.Request(
         DOTA2_ITEM_DETAIL_SOURCE.format(item_id=item_id),
         headers={"User-Agent": "Mozilla/5.0 PotatoFlow/1.0"},
@@ -465,29 +465,37 @@ def _official_dota2_item_visual_context(icon_slug: str) -> tuple[str, str]:
         with urllib.request.urlopen(request, timeout=20) as remote:
             payload = json.load(remote)
     except (OSError, ValueError, urllib.error.URLError):
-        return "", ""
+        return "", "", 0
     rows = payload.get("result", {}).get("data", {}).get("items", [])
     row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+    try:
+        item_cost = max(0, int(row.get("item_cost") or 0))
+    except (TypeError, ValueError):
+        item_cost = 0
     return (
         _clean_official_item_text(row.get("lore_loc")),
         _clean_official_item_text(row.get("desc_loc")),
+        item_cost,
     )
 
 
 def load_dota2_item_visual_contexts(
     matches: Iterable[Dota2ItemMatch],
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     """Load Valve lore and function text used to integrate equipment naturally."""
     normalized = list(matches)
 
-    def load(match: Dota2ItemMatch) -> dict[str, str]:
-        lore, function = _official_dota2_item_visual_context(match.item.icon_slug)
+    def load(match: Dota2ItemMatch) -> dict[str, object]:
+        lore, function, item_cost = _official_dota2_item_visual_context(
+            match.item.icon_slug
+        )
         return {
             "chinese_name": match.item.chinese_name,
             "english_name": match.item.english_name,
             "icon_slug": match.item.icon_slug,
             "lore": lore,
             "function": function,
+            "item_cost": item_cost,
         }
 
     if not normalized:
@@ -496,11 +504,15 @@ def load_dota2_item_visual_contexts(
         max_workers=min(4, len(normalized)),
     ) as pool:
         contexts = list(pool.map(load, normalized))
-    return [row for row in contexts if row.get("lore") or row.get("function")]
+    return [
+        row
+        for row in contexts
+        if row.get("lore") or row.get("function") or row.get("item_cost")
+    ]
 
 
 def dota2_item_visual_context_prompt_instruction(
-    contexts: Iterable[dict[str, str]],
+    contexts: Iterable[dict[str, object]],
 ) -> str:
     normalized = list(contexts)
     if not normalized:
@@ -510,11 +522,16 @@ def dota2_item_visual_context_prompt_instruction(
         name = str(context.get("chinese_name") or "").strip()
         lore = str(context.get("lore") or "").strip()
         function = str(context.get("function") or "").strip()
+        try:
+            item_cost = max(0, int(context.get("item_cost") or 0))
+        except (TypeError, ValueError):
+            item_cost = 0
         facts = "；".join(
             part
             for part in (
                 f"背景：{lore}" if lore else "",
                 f"功能：{function}" if function else "",
+                f"官方价格：{item_cost} 金币" if item_cost else "",
             )
             if part
         )
@@ -536,8 +553,48 @@ def dota2_item_placement_plan(
     matches: Iterable[Dota2ItemMatch],
     *,
     hero_primary_attribute: str = "",
+    item_visual_contexts: Iterable[dict[str, object]] = (),
 ) -> list[dict[str, object]]:
     """Assign one physical manifestation to each item before image generation."""
+    normalized_matches = list(matches)
+    item_costs: dict[str, int] = {}
+    for context in item_visual_contexts:
+        slug = str(context.get("icon_slug") or "").strip().lower()
+        try:
+            item_cost = max(0, int(context.get("item_cost") or 0))
+        except (TypeError, ValueError):
+            item_cost = 0
+        if slug:
+            item_costs[slug] = item_cost
+    handheld_slots = {
+        "back_right_staff",
+        "back_left_staff",
+        "waist_short_weapon",
+        "back_long_weapon",
+        "back_blade",
+    }
+    handheld_candidates: list[tuple[int, int, str]] = []
+    for index, match in enumerate(normalized_matches):
+        slug = match.item.icon_slug.lower()
+        if slug == "ultimate_scepter":
+            eligible = hero_primary_attribute == "intelligence"
+        else:
+            preset = DOTA2_ITEM_PLACEMENT_PRESETS.get(slug, {})
+            eligible = preset.get("slot") in handheld_slots
+        item_cost = item_costs.get(slug, 0)
+        if eligible and item_cost > 0:
+            handheld_candidates.append((item_cost, -index, slug))
+    if handheld_candidates:
+        handheld_slug = max(handheld_candidates)[2]
+    elif hero_primary_attribute == "intelligence" and any(
+        match.item.icon_slug.lower() == "ultimate_scepter"
+        for match in normalized_matches
+    ):
+        # Preserve the hard Aghanim rule if Valve's price endpoint is temporarily
+        # unavailable; no other unknown-price weapon is promoted speculatively.
+        handheld_slug = "ultimate_scepter"
+    else:
+        handheld_slug = ""
     plans: list[dict[str, object]] = []
     worn_tokens = (
         "boots", "greaves", "shoe", "cuirass", "guard", "mail", "armor",
@@ -560,14 +617,31 @@ def dota2_item_placement_plan(
         return any(token in parts for token in tokens)
 
     slot_counts: dict[str, int] = {}
-    for match in matches:
+    for match in normalized_matches:
         slug = match.item.icon_slug.lower()
-        if slug == "ultimate_scepter":
-            if hero_primary_attribute == "intelligence":
-                slot = "direct_hand"
-                placement = "阿哈利姆神杖就是 A 杖；该英雄为智力英雄，必须作为唯一一根 A 杖直接拿在人物右手中"
+        item_cost = item_costs.get(slug, 0)
+        if slug == handheld_slug:
+            slot = "direct_hand"
+            if slug == "ultimate_scepter":
+                placement = (
+                    "阿哈利姆神杖就是 A 杖；该英雄为智力英雄，且它在本局适合手持的装备中"
+                    f"官方价格最高（{item_cost} 金币），作为画面唯一手持主装备直接拿在人物右手中"
+                )
             else:
-                slot = "back_center_scepter"
+                placement = (
+                    f"Valve 官方价格为 {item_cost} 金币，在本局适合手持的装备中最高；"
+                    "作为画面唯一手持主装备直接拿在人物右手中，原预设背负或腰挂位置取消"
+                )
+            preset_used = True
+            floating_allowed = False
+        elif slug == "ultimate_scepter":
+            slot = "back_center_scepter"
+            if hero_primary_attribute == "intelligence":
+                placement = (
+                    "阿哈利姆神杖就是 A 杖；该英雄虽为智力英雄，但更高价装备已占用唯一手持位，"
+                    "因此固定在背部中央法器槽，禁止再手持"
+                )
+            else:
                 placement = "阿哈利姆神杖就是 A 杖；该英雄不是智力英雄，固定在背部中央法器槽，禁止手持"
             preset_used = True
             floating_allowed = False
@@ -611,6 +685,8 @@ def dota2_item_placement_plan(
                 "floating_allowed": floating_allowed,
                 "preset_used": preset_used,
                 "hero_primary_attribute": hero_primary_attribute,
+                "item_cost": item_cost,
+                "is_primary_handheld": slug == handheld_slug,
             }
         )
     return plans
@@ -731,7 +807,8 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "必须以参考板中的轮廓、主色、材质与核心符号为准，"
         "每件装备保持独立，不得把两件装备融合成一件。可以将图标风格转化为精致插画道具，"
         "但不能改变其身份特征；没有出现在识别结果中的装备不要擅自添加。"
-        "图像模型可以依据参考图自由表现全部已确认装备，但必须先为每件装备选择唯一的一种实体位置："
+        "图像模型可以依据参考图丰富表现全部已确认装备，但必须严格服从后续逐件位置计划，"
+        "不得自行改变手持、穿戴、背负、腰挂或身旁位置。每件装备只能使用唯一的一种实体位置："
         "角色穿戴、手持、背负、腰挂或身旁道具五选一，并随透视调整大小、角度与光效。"
         "适合的装备应自然穿戴或持握在人物身上；每件确认装备在整张图中必须恰好出现一次，"
         "穿戴、手持或身旁出现都已经计数，不得再以悬浮图标、背景回声、镜像、倒影或装饰复制同一件。"
@@ -739,10 +816,11 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "神杖或魔晶状态都不得只挑两件省略。不得新增名单外装备、把两件装备融合为一件，"
         "也不得绘制呆板的游戏物品栏 UI。装备视觉应采用独立道具插画、清晰描边与光效层次，"
         "不得把商店图标原样贴成带黑底和名称的卡片。Dota 2 封面优先采用不对称切片构图："
-        "主播与英雄一前一后构成主视觉，标题放在另一侧或下方并按完整语义分成两至三行；"
+        "有明确玩家或主播人物底稿时，只画该人物 Cos 已确认英雄作为唯一人物主视觉，禁止再画英雄本体、"
+        "英雄脸、英雄剪影或第二个人物；没有可靠人物身份时才用英雄本体。标题放在另一侧或下方并按完整语义分成两至三行；"
         "只有没有被人物穿戴、手持、背负或腰挂的身旁道具，才可沿画面上缘和两侧错落分布；"
         "标题直接点名的重点装备可以更大，其余装备较小但仍须清楚可辨。"
-        "标题、人物与英雄始终高于装备辅助层，"
+        "标题与唯一人物或英雄主体始终高于装备辅助层，"
         "装备不得遮脸、压字或贴边裁断。"
     )
 

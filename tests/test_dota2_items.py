@@ -85,14 +85,16 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("大炮＝代达罗斯之殇（Daedalus）", instruction)
         self.assertIn("不能按字面画成现实物品", instruction)
         self.assertIn("不得把两件装备融合成一件", instruction)
-        self.assertIn("自由表现全部已确认装备", instruction)
+        self.assertIn("丰富表现全部已确认装备", instruction)
+        self.assertIn("必须严格服从后续逐件位置计划", instruction)
         self.assertIn("必须清楚表现识别结果中的全部装备", instruction)
         self.assertIn("每件确认装备在整张图中必须恰好出现一次", instruction)
         self.assertIn("穿戴、手持或身旁出现都已经计数", instruction)
         self.assertIn("背景回声、镜像、倒影", instruction)
         self.assertIn("独立道具插画、清晰描边与光效层次", instruction)
         self.assertIn("不得把商店图标原样贴成带黑底和名称的卡片", instruction)
-        self.assertIn("主播与英雄一前一后构成主视觉", instruction)
+        self.assertIn("只画该人物 Cos 已确认英雄作为唯一人物主视觉", instruction)
+        self.assertIn("禁止再画英雄本体", instruction)
         self.assertIn("重点装备可以更大", instruction)
         self.assertIn("装备不得遮脸、压字或贴边裁断", instruction)
         self.assertNotIn("装备沿画面上缘和两侧错落分布", instruction)
@@ -107,6 +109,7 @@ class Dota2ItemsTests(unittest.TestCase):
                     "icon_slug": "heart",
                     "lore": "保存完好的心脏，来自早已绝种的怪兽。",
                     "function": "提升携带者的耐久力。",
+                    "item_cost": 5200,
                 },
                 {
                     "chinese_name": "远行鞋",
@@ -114,10 +117,12 @@ class Dota2ItemsTests(unittest.TestCase):
                     "icon_slug": "travel_boots",
                     "lore": "足生双翼，上天入地。",
                     "function": "升级回城能力。",
+                    "item_cost": 2500,
                 },
             ]
         )
         self.assertIn("Valve 官方装备背景与功能", instruction)
+        self.assertIn("官方价格：5200 金币", instruction)
         self.assertIn("自然设计成人物已经穿戴的护甲、鞋、披风或饰品", instruction)
         self.assertIn("人物身上、手中或身旁已经出现的装备就算完成一次展示", instruction)
         self.assertIn("不得再在边缘、背景、倒影或装饰层复制同一件", instruction)
@@ -129,25 +134,44 @@ class Dota2ItemsTests(unittest.TestCase):
         plans = dota2_items.dota2_item_placement_plan(
             matches,
             hero_primary_attribute="strength",
+            item_visual_contexts=[
+                {"icon_slug": "heart", "item_cost": 5200},
+                {"icon_slug": "overwhelming_blink", "item_cost": 6800},
+                {"icon_slug": "black_king_bar", "item_cost": 4050},
+                {"icon_slug": "travel_boots", "item_cost": 2500},
+                {"icon_slug": "shivas_guard", "item_cost": 5175},
+                {"icon_slug": "ultimate_scepter", "item_cost": 4200},
+            ],
         )
         by_slug = {plan["icon_slug"]: plan["placement"] for plan in plans}
         self.assertIn("胸甲正中央", by_slug["heart"])
-        self.assertIn("腰带外侧", by_slug["overwhelming_blink"])
+        self.assertIn("适合手持的装备中最高", by_slug["overwhelming_blink"])
+        self.assertIn("6800 金币", by_slug["overwhelming_blink"])
         self.assertIn("双脚和小腿", by_slug["travel_boots"])
         self.assertIn("独立能量插槽", by_slug["conjurers_catalyst"])
         self.assertIn("阿哈利姆神杖就是 A 杖", by_slug["ultimate_scepter"])
         self.assertIn("不是智力英雄", by_slug["ultimate_scepter"])
         self.assertIn("禁止手持", by_slug["ultimate_scepter"])
+        a_scepter_matches = dota2_items.match_dota2_items("A杖 BKB")
         intelligence_plans = dota2_items.dota2_item_placement_plan(
-            matches,
+            a_scepter_matches,
             hero_primary_attribute="intelligence",
+            item_visual_contexts=[
+                {"icon_slug": "ultimate_scepter", "item_cost": 4200},
+                {"icon_slug": "black_king_bar", "item_cost": 4050},
+            ],
         )
         intelligence_by_slug = {
             plan["icon_slug"]: plan["placement"]
             for plan in intelligence_plans
         }
         self.assertIn("该英雄为智力英雄", intelligence_by_slug["ultimate_scepter"])
+        self.assertIn("官方价格最高", intelligence_by_slug["ultimate_scepter"])
         self.assertIn("直接拿在人物右手中", intelligence_by_slug["ultimate_scepter"])
+        self.assertEqual(
+            sum(bool(plan["is_primary_handheld"]) for plan in intelligence_plans),
+            1,
+        )
         instruction = dota2_items.dota2_item_placement_plan_prompt_instruction(plans)
         self.assertIn("逐件单次实体分配", instruction)
         self.assertIn("每个编号只能对应画面中的一个物理实体", instruction)
@@ -167,6 +191,14 @@ class Dota2ItemsTests(unittest.TestCase):
                 for preset in dota2_items.DOTA2_ITEM_PLACEMENT_PRESETS.values()
             )
         )
+
+    def test_shape_specific_items_use_matching_physical_slots(self):
+        presets = dota2_items.DOTA2_ITEM_PLACEMENT_PRESETS
+        self.assertEqual(presets["spellslinger"]["slot"], "neck_chest_accessory")
+        self.assertEqual(presets["eagle"]["slot"], "back_long_weapon")
+        self.assertEqual(presets["relic"]["slot"], "back_blade")
+        self.assertEqual(presets["partisans_brand"]["slot"], "forearm")
+        self.assertEqual(presets["stormcrafter"]["slot"], "body_core")
 
     def test_official_item_text_removes_html_and_template_tokens(self):
         cleaned = dota2_items._clean_official_item_text(
