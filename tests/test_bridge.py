@@ -4477,6 +4477,10 @@ class BridgeTests(unittest.TestCase):
             [item["english_name"] for item in details["ai_cover_dota2_items"]],
             ["Black King Bar", "Scythe of Vyse"],
         )
+        self.assertEqual(
+            [item["icon_slug"] for item in details["ai_cover_dota2_item_placement_plan"]],
+            ["black_king_bar", "sheepstick"],
+        )
         reference_files = image_edit.call_args.kwargs["image"]
         self.assertEqual(Path(reference_files[0].name), character_base)
         self.assertEqual(Path(reference_files[1].name), item_sheet)
@@ -4491,6 +4495,8 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得新增名单外装备", prompt)
         self.assertIn("独立道具插画、清晰描边与光效层次", prompt)
         self.assertIn("不得把商店图标原样贴成带黑底和名称的卡片", prompt)
+        self.assertIn("逐件单次实体分配", prompt)
+        self.assertIn("禁止再沿画面边缘展示它的图标", prompt)
 
     def test_unknown_streamer_uses_room_avatar_as_character_base(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
