@@ -315,12 +315,13 @@ class BilibiliUploader:
         collection_id: str,
         title: str = "",
     ) -> dict:
-        """Add a newly submitted archive to the first section of a B站 collection."""
+        """Add an archive to a B站 collection and keep the newest addition first."""
         aid = int((result or {}).get("aid") or 0)
         season_id = int(str(collection_id or "").strip() or 0)
         details = {
             "enabled": bool(season_id),
             "added": False,
+            "positioned_first": False,
             "season_id": season_id or None,
             "aid": aid or None,
         }
@@ -335,6 +336,109 @@ class BilibiliUploader:
             credential = load_credential_from_file(self.cookie_file)
 
             async def _add():
+                def _episode_aid(episode: dict) -> int:
+                    archive = episode.get("archive")
+                    archive = archive if isinstance(archive, dict) else {}
+                    return int(
+                        episode.get("aid")
+                        or episode.get("archive_id")
+                        or archive.get("aid")
+                        or 0
+                    )
+
+                def _episode_id(episode: dict) -> int:
+                    return int(episode.get("id") or episode.get("episode_id") or 0)
+
+                async def _load_section(section_id: int) -> dict:
+                    payload = await (
+                        Api(
+                            url=(
+                                "https://member.bilibili.com/x2/creative/web/"
+                                "season/section"
+                            ),
+                            method="GET",
+                            verify=True,
+                            credential=credential,
+                        )
+                        .update_params(id=section_id)
+                        .result
+                    )
+                    return payload if isinstance(payload, dict) else {}
+
+                async def _position_first(section_id: int) -> bool:
+                    section_payload = {}
+                    episodes = []
+                    for attempt in range(4):
+                        section_payload = await _load_section(section_id)
+                        episodes = section_payload.get("episodes")
+                        episodes = episodes if isinstance(episodes, list) else []
+                        if any(_episode_aid(row or {}) == aid for row in episodes):
+                            break
+                        if attempt < 3:
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                    else:
+                        raise RuntimeError(
+                            f"稿件 {aid} 已加入合集，但分区列表尚未返回该稿件"
+                        )
+
+                    target = next(
+                        row for row in episodes
+                        if _episode_aid(row or {}) == aid
+                    )
+                    if episodes and episodes[0] is target:
+                        return True
+
+                    ordered = [target] + [row for row in episodes if row is not target]
+                    sorts = []
+                    for index, row in enumerate(ordered, start=1):
+                        episode_id = _episode_id(row or {})
+                        if not episode_id:
+                            raise RuntimeError("合集分区返回了缺少 id 的稿件，无法安全重排")
+                        sorts.append({"id": episode_id, "sort": index})
+
+                    section = section_payload.get("section")
+                    section = section if isinstance(section, dict) else {}
+                    await (
+                        Api(
+                            url=(
+                                "https://member.bilibili.com/x2/creative/web/"
+                                "season/section/edit"
+                            ),
+                            method="POST",
+                            verify=True,
+                            json_body=True,
+                            credential=credential,
+                        )
+                        .update_params(csrf=credential.bili_jct)
+                        .update_data(
+                            section={
+                                "id": section_id,
+                                "type": int(section.get("type") or 0),
+                                "seasonId": season_id,
+                                "title": str(section.get("title") or ""),
+                            },
+                            sorts=sorts,
+                        )
+                        .result
+                    )
+
+                    for attempt in range(3):
+                        verified = await _load_section(section_id)
+                        verified_episodes = verified.get("episodes")
+                        verified_episodes = (
+                            verified_episodes
+                            if isinstance(verified_episodes, list)
+                            else []
+                        )
+                        if (
+                            verified_episodes
+                            and _episode_aid(verified_episodes[0] or {}) == aid
+                        ):
+                            return True
+                        if attempt < 2:
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                    raise RuntimeError(f"合集 {season_id} 保存后未确认稿件 {aid} 位于首位")
+
                 seasons_payload = await (
                     Api(
                         url="https://member.bilibili.com/x2/creative/web/seasons",
@@ -408,54 +512,58 @@ class BilibiliUploader:
                     )
                     or 0
                 )
-                if archive_season_id == season_id:
-                    return section_id, archive_title, True
-
-                await (
-                    Api(
-                        url=(
-                            "https://member.bilibili.com/x2/creative/web/"
-                            "season/section/episodes/add"
-                        ),
-                        method="POST",
-                        verify=True,
-                        json_body=True,
-                        credential=credential,
+                already_added = archive_season_id == season_id
+                if not already_added:
+                    await (
+                        Api(
+                            url=(
+                                "https://member.bilibili.com/x2/creative/web/"
+                                "season/section/episodes/add"
+                            ),
+                            method="POST",
+                            verify=True,
+                            json_body=True,
+                            credential=credential,
+                        )
+                        .update_params(csrf=credential.bili_jct)
+                        .update_data(
+                            sectionId=section_id,
+                            episodes=[{
+                                "aid": aid,
+                                "cid": cid,
+                                "title": archive_title,
+                                "charging_pay": 0,
+                            }],
+                        )
+                        .result
                     )
-                    .update_params(csrf=credential.bili_jct)
-                    .update_data(
-                        sectionId=section_id,
-                        episodes=[{
-                            "aid": aid,
-                            "cid": cid,
-                            "title": archive_title,
-                            "charging_pay": 0,
-                        }],
-                    )
-                    .result
-                )
-                return section_id, archive_title, False
+                positioned_first = await _position_first(section_id)
+                return section_id, archive_title, already_added, positioned_first
 
             try:
-                section_id, title, already_added = asyncio.run(_add())
+                section_id, title, already_added, positioned_first = asyncio.run(_add())
             except RuntimeError as exc:
                 if "cannot be called from a running event loop" not in str(exc):
                     raise
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    section_id, title, already_added = pool.submit(
+                    section_id, title, already_added, positioned_first = pool.submit(
                         asyncio.run,
                         _add(),
                     ).result()
             details.update({
                 "added": True,
                 "already_added": already_added,
+                "positioned_first": positioned_first,
                 "section_id": section_id,
                 "title": title,
             })
             if already_added:
-                self.log(f"Bilibili稿件已在合集 {season_id}，无需重复添加")
+                self.log(f"Bilibili稿件已在合集 {season_id}，并已确认位于首位")
             else:
-                self.log(f"Bilibili稿件已加入合集 {season_id}，分区 {section_id}")
+                self.log(
+                    f"Bilibili稿件已加入合集 {season_id}，"
+                    f"分区 {section_id}，并已置于首位"
+                )
         except Exception as exc:
             details["error"] = _compact_exception_text(str(exc))
             self.log(f"Bilibili稿件加入合集失败（投稿已成功）: {details['error']}")

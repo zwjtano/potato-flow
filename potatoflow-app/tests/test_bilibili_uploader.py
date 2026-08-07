@@ -208,6 +208,11 @@ class BilibiliCollectionTests(unittest.TestCase):
         calls = []
 
         class FakeApi:
+            episodes = [
+                {"id": 11, "aid": 111, "title": "旧稿件"},
+                {"id": 22, "aid": 117047153401393, "title": "YYF 测试标题"},
+            ]
+
             def __init__(self, **kwargs):
                 self.url = kwargs["url"]
                 self.params = {}
@@ -236,6 +241,15 @@ class BilibiliCollectionTests(unittest.TestCase):
                         "archive": {"title": "YYF 测试标题"},
                         "videos": [{"cid": 40646542968}],
                     }
+                if self.url.endswith("/season/section/edit"):
+                    order = {row["id"]: row["sort"] for row in self.data["sorts"]}
+                    self.__class__.episodes.sort(key=lambda row: order[row["id"]])
+                    return {}
+                if self.url.endswith("/season/section"):
+                    return {
+                        "section": {"id": 998877, "type": 0, "title": "默认分区"},
+                        "episodes": list(self.__class__.episodes),
+                    }
                 return {}
 
         credential = Mock(bili_jct="csrf-token")
@@ -251,8 +265,9 @@ class BilibiliCollectionTests(unittest.TestCase):
             )
 
         self.assertTrue(details["added"])
+        self.assertTrue(details["positioned_first"])
         self.assertEqual(details["section_id"], 998877)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 6)
         self.assertTrue(calls[0].url.endswith("/seasons"))
         self.assertTrue(calls[1].url.endswith("/archive/view"))
         self.assertEqual(calls[1].params["bvid"], "BV1JHuE6VEyr")
@@ -270,22 +285,40 @@ class BilibiliCollectionTests(unittest.TestCase):
                 }],
             },
         )
+        edit_call = next(
+            call for call in calls
+            if call.url.endswith("/season/section/edit")
+        )
+        self.assertEqual(
+            edit_call.data["sorts"],
+            [{"id": 22, "sort": 1}, {"id": 11, "sort": 2}],
+        )
+        self.assertEqual(edit_call.data["section"]["seasonId"], 8761711)
 
     def test_existing_collection_membership_is_idempotent(self):
         calls = []
 
         class FakeApi:
+            episodes = [
+                {"id": 11, "aid": 111, "title": "旧稿件"},
+                {"id": 22, "aid": 117047153401393, "title": "YYF 测试标题"},
+            ]
+
             def __init__(self, **kwargs):
                 self.url = kwargs["url"]
                 self.params = {}
-                calls.append(self.url)
+                self.data = {}
+                calls.append(self)
 
             def update_params(self, **kwargs):
                 self.params.update(kwargs)
                 return self
 
-            def update_data(self, **_kwargs):
-                raise AssertionError("already-added archive must not be added again")
+            def update_data(self, **kwargs):
+                if self.url.endswith("/season/section/episodes/add"):
+                    raise AssertionError("already-added archive must not be added again")
+                self.data.update(kwargs)
+                return self
 
             @property
             async def result(self):
@@ -304,6 +337,15 @@ class BilibiliCollectionTests(unittest.TestCase):
                         },
                         "videos": [{"cid": 40646542968}],
                     }
+                if self.url.endswith("/season/section/edit"):
+                    order = {row["id"]: row["sort"] for row in self.data["sorts"]}
+                    self.__class__.episodes.sort(key=lambda row: order[row["id"]])
+                    return {}
+                if self.url.endswith("/season/section"):
+                    return {
+                        "section": {"id": 998877, "type": 0, "title": "默认分区"},
+                        "episodes": list(self.__class__.episodes),
+                    }
                 return {}
 
         uploader = BilibiliUploader("cookie.json")
@@ -318,7 +360,73 @@ class BilibiliCollectionTests(unittest.TestCase):
 
         self.assertTrue(details["added"])
         self.assertTrue(details["already_added"])
-        self.assertEqual(len(calls), 2)
+        self.assertTrue(details["positioned_first"])
+        self.assertFalse(any(
+            call.url.endswith("/season/section/episodes/add") for call in calls
+        ))
+        self.assertEqual(
+            next(
+                call for call in calls
+                if call.url.endswith("/season/section/edit")
+            ).data["sorts"],
+            [{"id": 22, "sort": 1}, {"id": 11, "sort": 2}],
+        )
+
+    def test_collection_member_already_first_does_not_submit_reorder(self):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+                self.params = {}
+                calls.append(self)
+
+            def update_params(self, **kwargs):
+                self.params.update(kwargs)
+                return self
+
+            def update_data(self, **_kwargs):
+                raise AssertionError("first archive must not be edited or re-added")
+
+            @property
+            async def result(self):
+                if self.url.endswith("/seasons"):
+                    return {
+                        "seasons": [{
+                            "season": {"id": 8761711},
+                            "sections": {"sections": [{"id": 998877}]},
+                        }]
+                    }
+                if self.url.endswith("/archive/view"):
+                    return {
+                        "archive": {
+                            "title": "YYF 测试标题",
+                            "season_id": 8761711,
+                        },
+                        "videos": [{"cid": 40646542968}],
+                    }
+                if self.url.endswith("/season/section"):
+                    return {
+                        "section": {"id": 998877, "type": 0, "title": "默认分区"},
+                        "episodes": [
+                            {"id": 22, "aid": 117047153401393},
+                            {"id": 11, "aid": 111},
+                        ],
+                    }
+                return {}
+
+        uploader = BilibiliUploader("cookie.json")
+        with patch("modules.bilibili_uploader.configure_bilibili_runtime"), patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=Mock(bili_jct="csrf-token"),
+        ), patch("modules.bilibili_uploader.Api", FakeApi):
+            details = uploader.add_to_collection(
+                {"aid": 117047153401393, "bvid": "BV1JHuE6VEyr"},
+                "8761711",
+            )
+
+        self.assertTrue(details["positioned_first"])
+        self.assertFalse(any(call.url.endswith("/section/edit") for call in calls))
 
     def test_upload_video_emits_stage_progress_and_retry_log(self):
         progress = []
