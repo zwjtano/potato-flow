@@ -1622,6 +1622,29 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(title, "玛西追击三人未能完成击杀｜08-07 02:05")
 
+    def test_danmaku_edition_marker_is_inserted_before_title_time(self):
+        title = bridge.recording_danmaku_edition_title(
+            "玛西追击三人未能完成击杀｜08-07 02:05"
+        )
+
+        self.assertEqual(title, "玛西追击三人未能完成击杀｜弹幕版 08-07 02:05")
+        self.assertEqual(bridge.recording_danmaku_edition_title(title), title)
+
+    def test_danmaku_edition_marker_is_removed_from_cover_text(self):
+        self.assertEqual(
+            bridge.strip_danmaku_edition_marker(
+                "玛西追击三人未能完成击杀｜弹幕版 08-07 02:05"
+            ),
+            "玛西追击三人未能完成击杀｜08-07 02:05",
+        )
+        self.assertEqual(
+            bridge.recording_cover_display_text(
+                "玛西追击三人未能完成击杀",
+                "弹幕版 玛西追击三人未能完成击杀",
+            ),
+            "玛西追击三人未能完成击杀",
+        )
+
     def test_third_party_observer_topic_naturally_attributes_streamer(self):
         self.assertEqual(
             bridge.contextualize_streamer_title_topic(
@@ -2863,7 +2886,7 @@ class BridgeTests(unittest.TestCase):
                 "burn_in": True,
             })
             store.stage(key, "ai", "completed", {
-                "title": "主播完成实际挑战",
+                "title": "主播完成实际挑战｜08-07 02:05",
                 "description": "已生成正文",
                 "description_body": "已生成正文",
                 "title_topic": "主播完成实际挑战",
@@ -2925,6 +2948,10 @@ class BridgeTests(unittest.TestCase):
 
             expected = root / "clip.danmaku.mp4"
             self.assertEqual(Path(uploads[0]["video_file_path"]), expected.resolve())
+            self.assertEqual(
+                uploads[0]["title"],
+                "主播完成实际挑战｜弹幕版 08-07 02:05",
+            )
             self.assertTrue(expected.is_file())
             self.assertFalse(legacy_burn.exists())
             burn_details = store.stage_state(key, "burn")["details"]
@@ -4228,7 +4255,7 @@ class BridgeTests(unittest.TestCase):
                 "modules.config_manager": config_module,
             }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
                 cover, details = bridge.generate_recording_cover_with_ai(
-                    title="【直播回放】土豆｜新地图极限挑战｜2026-07-23",
+                    title="【直播回放】土豆｜新地图极限挑战｜弹幕版 07-23 21:30",
                     ai_topic="新地图极限挑战",
                     description="主播挑战新地图，弹幕反应热烈。",
                     streamer="土豆",
@@ -4242,6 +4269,7 @@ class BridgeTests(unittest.TestCase):
                     work_dir=work_dir,
                     target_size=(1920, 1080),
                     output_path=work_dir / "record-only.jpg",
+                    cover_text="弹幕版 土豆新地图极限挑战",
                 )
 
         self.assertEqual(cover.name, "record-only.jpg")
@@ -4253,6 +4281,7 @@ class BridgeTests(unittest.TestCase):
             "https://images.example.com/v1",
         )
         self.assertEqual(details["ai_cover_headline"], "土豆新地图极限挑战")
+        self.assertTrue(details["ai_cover_submission_marker_removed"])
         self.assertEqual(details["ai_cover_subject_name"], "土豆")
         self.assertEqual(details["ai_cover_width"], 1920)
         self.assertEqual(details["ai_cover_height"], 1080)
@@ -4276,6 +4305,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("绝对禁止出现日期", prompt)
         self.assertIn("采用低饱和蓝紫色，并突出 Roshan 团战", prompt)
         self.assertNotIn("2026-07-23", prompt)
+        self.assertNotIn("弹幕版", prompt)
 
     def test_empty_custom_cover_prompt_does_not_duplicate_system_defaults(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
