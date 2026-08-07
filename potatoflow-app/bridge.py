@@ -41,7 +41,6 @@ from dota2_items import (
     build_dota2_item_reference_sheet,
     dota2_item_prompt_instruction,
     match_dota2_items,
-    overlay_dota2_item_badges,
     prioritize_dota2_item_matches,
 )
 from dota2_heroes import build_dota2_hero_reference
@@ -59,14 +58,15 @@ def _hidden_subprocess_kwargs() -> dict[str, Any]:
 DEFAULT_TITLE_TEMPLATE = "{streamer}｜{ai_topic}｜{date}"
 DEFAULT_DESCRIPTION_TEMPLATE = "{recording_intro}"
 RECORDING_TITLE_TOPIC_LIMIT = 48
-RECORDING_COVER_TEXT_PREFERRED_LIMIT = 18
-RECORDING_COVER_TEXT_HARD_LIMIT = 24
+RECORDING_COVER_TEXT_PREFERRED_LIMIT = 24
+RECORDING_COVER_TEXT_HARD_LIMIT = 28
 DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "根据本段直播的实际内容和弹幕反应，从有精确证据的重要事件中提炼一个自然、"
     "有信息量、语义完整的标题。默认选择一个最强事件；若最终简介中确有两个同等重要、彼此独立且都值得展示的事件，"
     "允许在48字内写入两个，并按重要性排序、使用中文分号“；”明确分隔。不得加入第三个事件，不得堆砌无关关键词。"
-    "标题优先写清具体人物、动作、对象、变化、反差或结果；完整信息优先，不追求越短越好，通常用18至42字"
-    "把事件说完整。主播确实参与、观战、评价或本身是话题对象时，才将其标题首选名自然融入事件句；"
+    "标题优先写清具体人物、动作、对象、变化、反差或结果；完整信息优先，不追求越短越好，普通录播通常用22至44字，"
+    "一小时长录播在证据充足时通常用30至46字保留主线、转折和结果；只有有效内容确实稀疏时才可更短，"
+    "绝不能为凑字补猜，无论长短都要把事件说完整。主播确实参与、观战、评价或本身是话题对象时，才将其标题首选名自然融入事件句；"
     "主播只是房间归属或背景时不要写，不能为统一格式强塞主播名。"
     "不得使用“主播名｜事件”或“主播名：事件”这种标签格式。突出关键对局、英雄、事件或节目效果，"
     "不使用夸张的虚假结论；标题中的核心事件必须同时进入重要时间点。"
@@ -96,8 +96,10 @@ DEFAULT_RECORDING_TITLE_AI_PROMPT = (
     "现场可见的游戏表现和比赛结果直接陈述，不得套用“直播间热议/讨论”等房间前缀。"
     "结构化 GSI 已确认主播操作时，标题不得以“观众讨论、弹幕认为、直播间质疑”开头；"
     "不得把“结束后转入下一局、进入某英雄对局”写进标题占用篇幅，应直接写各局具体动作、转折或结果。"
-    "同时给出 cover_text：只压缩标题中排序第一的核心事件，优先8至18字、最多24字，可比投稿标题短；"
-    "不得新增人物、动作、结果或来源，不得强塞主播名，负面现实传言不得进入封面文案。无法安全压缩时返回空字符串。"
+    "同时给出 cover_text：只压缩标题中排序第一的核心事件，证据充足时优先16至24字、最多28字，可比投稿标题短；"
+    "应保留人物或英雄、关键装备或阶段、核心动作、转折或结果中至少两类有区分度的信息，不要只剩一个泛化动作；"
+    "有效内容确实稀疏时可用8至15字。不得新增人物、动作、结果或来源，不得强塞主播名，"
+    "负面现实传言不得进入封面文案。无法安全压缩时返回空字符串。"
 )
 DEFAULT_RECORDING_DESCRIPTION_AI_PROMPT = (
     "生成尽可能完整、可直接用于哔哩哔哩投稿的时间点式中文简介。最终正文只保留程序核验并格式化后的"
@@ -143,16 +145,21 @@ DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "封面只围绕最终标题中排序第一的最重要事件构图，即使标题用分号写了第二个事件也不得画入封面。"
     "保持单一场景、单一叙事焦点，不使用双场景、三场景、分屏或事件拼贴。标题已经包含当前主播时，"
     "封面短文案才自然保留标题中的主角名；标题没有当前主播时不得强塞名字，不使用“主角名｜事件”"
-    "这种机械标签。封面文案允许比投稿标题短，只保留第一核心事件，优先8至18字、最多24字；不得新增事实、"
+    "这种机械标签。封面文案允许比投稿标题短，只保留第一核心事件；证据充足时优先16至24字、最多28字，"
+    "保留人物或英雄、关键装备或阶段、核心动作、转折或结果中至少两类有区分度的信息，不要只剩一个泛化动作；"
+    "有效内容确实稀疏时可用8至15字。不得新增事实、"
     "改写人物关系或删除中性消息的来源限定，负面未经证实的现实传言不得进入封面。主体醒目、对比清楚、"
-    "适合手机缩略图；短文案使用一至两行大字，最多占画面约四成，给人物和事件留出主要视觉空间。"
+    "适合手机缩略图；短文案根据语义使用一至三行大字，证据充足的 Dota 2 事件优先两至三行，"
+    "最多占画面约四成，给人物和事件留出主要视觉空间。"
     "当前主播出镜时必须使用已上传的封面人物底稿，"
     "所有主播别名都指向底稿中的同一人，不得根据昵称猜测长相、另画陌生人或按字面生成动植物。"
     "只有最终投稿标题明确出现、且获得唯一匹配头像的其他主播，才可作为次要人物；"
     "简介、时间线或弹幕中顺带提及的人物一律不得出镜，不得替换主角或混合人脸。"
     "参考图只用于人物身份，不得复制其中的文字、水印、直播界面和无关背景。DOTA2 英雄和技能必须符合游戏原设；"
-    "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备，"
-    "禁止自绘或仿冒装备图标。"
+    "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备。"
+    "已确认装备可以像游戏切片封面一样自由融入构图：分散在画面边缘、作为手持或身旁道具、穿戴部件或技能能量焦点，"
+    "允许随透视调整大小、角度和光效，但必须保留每件装备可辨认的官方身份特征；不得新增名单外装备、漏掉确认装备，"
+    "不得把两件装备融合为一件，也不要绘制呆板的游戏物品栏 UI。"
     "游戏名、英雄、装备、人物动作、比赛结果和情绪方向只能来自最终标题与已核验事件上下文；"
     "讨论或观战内容缺少可靠游戏画面时使用人物反应和抽象氛围，不得补画具体英雄或胜负。"
     "画面不要出现日期、时间、房间号、平台界面、二维码或水印。16:9 与 4:3 必须独立构图，"
@@ -1400,7 +1407,7 @@ def recording_title_topic_is_underfilled(
     return bool(
         duration >= 45 * 60
         and int(verified_timeline_count or 0) >= 6
-        and len(clean) < 18
+        and len(clean) < 24
         and "；" not in clean
     )
 
@@ -3098,10 +3105,15 @@ def dota2_gsi_equipment_prompt_instruction(
     sections.append(
         "只能表现上述已确认的装备与状态，不得增加名单外装备。"
         "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
-        "图像模型生成阶段禁止自行生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
-        "系统会在成图后于右下角添加最多两枚 Valve 官方小型装备标识，"
-        "因此右下角必须保留干净安全区，模型不得在该区域仿画任何装备图标；"
-        "装备只可作为角色造型与场景语义参考，不得绘制仿冒的装备图标。"
+        "图像模型可以依据随附的 Valve 官方装备图标参考自由表现全部已确认装备："
+        "可将装备集中或分散在画面边缘，作为角色手持、穿戴、身旁道具或技能能量焦点，"
+        "并随透视调整大小、角度与光效，但必须保留每件装备可辨认的官方身份特征；"
+        "最多六格主装备以及单独确认的中立物品、神杖或魔晶状态都不得只挑两件省略。"
+        "不得新增名单外装备、把两件装备融合为一件或绘制呆板的游戏物品栏 UI；"
+        "装备视觉应采用独立道具插画、清晰描边与光效层次，不得把商店图标原样贴成带黑底和名称的卡片；"
+        "Dota 2 封面优先采用不对称切片构图：主播与英雄一前一后构成主视觉，标题放在另一侧或下方，"
+        "按完整语义分成两至三行；装备沿画面上缘和两侧错落分布，标题直接点名的重点装备可以更大，"
+        "其余装备较小但仍须清楚可辨。标题、人物与英雄始终高于装备辅助层，装备不得遮脸、压字或贴边裁断。"
     )
     return "".join(sections)
 
@@ -3684,6 +3696,29 @@ def recording_cover_dota2_streamer_instruction(
     )
 
 
+def recording_cover_verified_hero_cosplay_instruction(
+    hero: str,
+    *,
+    gameplay_verified: bool,
+) -> str:
+    """Allow streamer-as-hero cosplay only for verified first-person gameplay."""
+    hero_name = str(hero or "").strip()
+    if not hero_name or not gameplay_verified:
+        return (
+            "本段没有结构化数据确认当前主播亲自使用某个英雄；"
+            "不得让主播穿成被观战、被讨论或仅由弹幕猜测的英雄。"
+        )
+    return (
+        f"结构化游戏数据已确认当前主播亲自使用 {hero_name}。主播主视觉应采用“本人 Cos 本局英雄”的表现："
+        "严格保留封面人物底稿中的脸部、发型、头饰或卡通形象识别特征，同时换上该英雄可辨认的服饰、"
+        "护甲、武器、主色与技能光效；不得把主播的脸直接替换成英雄原脸。"
+        "主播 Cos 统一采用高质量二次元 Q 版或游戏切片插画风格，即使人物底稿来自真实头像，"
+        "也只能提取身份特征后卡通化，禁止照片皮肤、真人摄影、写实人像或仿真人三维半身像。"
+        f"{hero_name} 英雄本体可作为后方较大的气势层或技能背景，与前景 Cos 主播形成一前一后关系，"
+        "但不能生成第二个主播、重复脸或让英雄本体抢走主播主视觉。"
+    )
+
+
 def recording_cover_subject_identity_instruction(
     streamer: str,
     subject_name: str,
@@ -4219,6 +4254,7 @@ def generate_recording_cover_with_ai(
                 )
             else:
                 hero_source_instruction = "（来自斗鱼主播视角数据）"
+            verified_cosplay = not hero_only_from_danmaku
             dota2_instruction = (
                 f"主播本局使用的英雄为 {tooltip_hero}{hero_source_instruction}。"
                 + (
@@ -4229,6 +4265,13 @@ def generate_recording_cover_with_ai(
                 )
                 + tooltip_kda_instruction
                 + dota2_instruction
+                + recording_cover_verified_hero_cosplay_instruction(
+                    tooltip_hero,
+                    gameplay_verified=verified_cosplay,
+                )
+            )
+            details["ai_cover_dota2_streamer_cosplay"] = (
+                "verified_hero" if verified_cosplay else "disabled_unverified_gameplay"
             )
         details["ai_cover_tooltip_hero"] = tooltip_hero
         details["ai_cover_tooltip_items"] = tooltip_items
@@ -4615,21 +4658,16 @@ def generate_recording_cover_with_ai(
     if completed.returncode != 0 or not cover.is_file():
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
-    if dota2_item_matches and details.get("ai_cover_dota2_item_reference_used"):
-        try:
-            applied_item_badges = overlay_dota2_item_badges(
-                cover,
-                dota2_item_matches,
-                dota2_item_cache_dir,
-            )
-        except Exception as exc:
-            raise RuntimeError(f"Dota 2 装备标识合成失败: {exc}") from exc
-        if not applied_item_badges:
-            raise RuntimeError("Dota 2 装备标识合成失败: 没有可用的官方装备图标")
-        details["ai_cover_dota2_item_badges_applied"] = True
-        details["ai_cover_dota2_item_badges"] = applied_item_badges
-    else:
-        details["ai_cover_dota2_item_badges_applied"] = False
+    details["ai_cover_dota2_item_render_mode"] = (
+        "creative_official_references"
+        if dota2_item_matches and details.get("ai_cover_dota2_item_reference_used")
+        else "none"
+    )
+    details["ai_cover_dota2_item_expected_count"] = (
+        len(dota2_item_matches)
+        if details.get("ai_cover_dota2_item_reference_used")
+        else 0
+    )
     details.update({
         "ai_cover_generated": True,
         "ai_cover_model": image_model,
@@ -5773,7 +5811,8 @@ streamer_identity.preferred_title_name，并自然融入“谁做了什么”的
 标题要像自然中文事件句，而不是搜索关键词堆叠、摘要栏目名或营销结论；避免连续堆放人名、英雄名和情绪词。
 不得出现未知、Role 编号、内部 ID、文件名、任务号、模型诊断词或直播间默认标题中的无证据信息。
 禁止“主播名｜事件”“主播名：事件”格式，不含日期、时间和“直播回放”。完整信息优先，不追求越短越好；
-普通录播通常用18至42字，一小时长录播通常用28至44字保留主线、转折和结果，不设机械下限。标题最多48个字符；
+普通录播通常用22至44字；一小时长录播在证据充足时通常用30至46字保留主线、转折和结果，只有有效内容确实稀疏时
+才可更短，绝不能为凑字补猜。标题最多48个字符；
 双事件标题也必须在48字内
 分别表达完整，超长时优先删除较弱事件或重新改写，禁止截断半句话。
 {title_prompt}
@@ -5783,8 +5822,10 @@ streamer_identity.preferred_title_name，并自然融入“谁做了什么”的
 verified_timeline 按0开始编号。返回标题时必须同时返回 selected_timeline_indexes，列出直接支撑标题的时间点；
 长录播的主线标题也必须列出至少两个跨阶段证据，不能只引用单个瞬间。
 同时返回 coverage_mode，值只能是 main_arc、two_highlights 或 sparse。
-同时返回 cover_text：只压缩标题中排序第一的核心事件，优先8至18字、最多24字，可比投稿标题短；不得新增事实、
-不得强塞主播名、不得删除中性消息的来源限定。无法安全压缩时返回空字符串。
+同时返回 cover_text：只压缩标题中排序第一的核心事件，证据充足时优先16至24字、最多28字，可比投稿标题短；
+保留人物或英雄、关键装备或阶段、核心动作、转折或结果中至少两类有区分度的信息，不要只剩一个泛化动作；
+有效内容确实稀疏时可用8至15字。不得新增事实、不得强塞主播名、不得删除中性消息的来源限定。
+无法安全压缩时返回空字符串。
 返回 JSON 对象：{{"title_topic":"...","cover_text":"...","coverage_mode":"main_arc","selected_timeline_indexes":[0,4]}}。
 """.strip()
         title_generation_validated = False

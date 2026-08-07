@@ -313,7 +313,8 @@ class BridgeTests(unittest.TestCase):
 
         self.assertIn("Valve 官方装备图标参考", prompt)
         self.assertIn("缺少官方参考时不得表现具体装备", prompt)
-        self.assertIn("禁止自绘或仿冒装备图标", prompt)
+        self.assertIn("自由融入构图", prompt)
+        self.assertIn("不得新增名单外装备", prompt)
         self.assertIn("标题已经包含当前主播时", prompt)
         self.assertIn("标题没有当前主播时不得强塞名字", prompt)
         self.assertIn("排序第一", prompt)
@@ -323,7 +324,9 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得替换主角或混合人脸", prompt)
         self.assertIn("只有最终投稿标题明确出现", prompt)
         self.assertIn("简介、时间线或弹幕中顺带提及的人物一律不得出镜", prompt)
-        self.assertIn("优先8至18字、最多24字", prompt)
+        self.assertIn("优先16至24字、最多28字", prompt)
+        self.assertIn("至少两类有区分度的信息", prompt)
+        self.assertIn("Dota 2 事件优先两至三行", prompt)
         self.assertIn("负面未经证实的现实传言不得进入封面", prompt)
         self.assertNotIn("只有在弹幕可靠提及其他主播", prompt)
 
@@ -518,6 +521,9 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("中立物品：锯齿短刀；中立物品不占主装备六格", prompt)
         self.assertIn("额外升级状态：A杖, 魔晶", prompt)
         self.assertIn("不得重复算作第七件主装备", prompt)
+        self.assertIn("自由表现全部已确认装备", prompt)
+        self.assertIn("独立道具插画、清晰描边与光效层次", prompt)
+        self.assertIn("主播与英雄一前一后构成主视觉", prompt)
         self.assertNotIn("不得额外添加第七件装备", prompt)
 
     def test_known_dota2_items_do_not_silently_continue_without_references(self):
@@ -3762,7 +3768,7 @@ class BridgeTests(unittest.TestCase):
                 "奶哥突然宣布退役",
                 "谢彬DD",
             ),
-            "奶哥带队连续避开范围伤害",
+            source,
         )
         self.assertEqual(
             bridge.recording_cover_display_text(
@@ -3783,7 +3789,7 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertIn("单行大字", short_layout)
         self.assertIn("左侧或右侧约三分之一", short_layout)
-        self.assertIn("两至三行", long_layout)
+        self.assertIn("两行大字", long_layout)
         self.assertIn("上方或下方约三分之一", long_layout)
         self.assertIn("至少8%的安全边距", long_layout)
 
@@ -4039,6 +4045,25 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("拒绝者＝Dota 2 主播/选手 Paparazi", instruction)
         self.assertIn("封面主体仍必须以当前直播间的封面人物底稿", instruction)
         self.assertIn("其他被提及选手不能取代主播", instruction)
+
+    def test_verified_dota2_gameplay_uses_streamer_cosplay_without_replacing_face(self):
+        instruction = bridge.recording_cover_verified_hero_cosplay_instruction(
+            "光之守卫",
+            gameplay_verified=True,
+        )
+        self.assertIn("本人 Cos 本局英雄", instruction)
+        self.assertIn("保留封面人物底稿中的脸部", instruction)
+        self.assertIn("不得把主播的脸直接替换成英雄原脸", instruction)
+        self.assertIn("高质量二次元 Q 版或游戏切片插画风格", instruction)
+        self.assertIn("禁止照片皮肤、真人摄影、写实人像", instruction)
+        self.assertIn("英雄本体可作为后方较大的气势层", instruction)
+
+        unverified = bridge.recording_cover_verified_hero_cosplay_instruction(
+            "光之守卫",
+            gameplay_verified=False,
+        )
+        self.assertIn("不得让主播穿成被观战", unverified)
+        self.assertNotIn("本人 Cos 本局英雄", unverified)
 
     def test_yyf_cover_expression_follows_segment_performance(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
@@ -4394,17 +4419,6 @@ class BridgeTests(unittest.TestCase):
                 bridge,
                 "build_dota2_item_reference_sheet",
                 return_value=(item_sheet, []),
-            ), patch.object(
-                bridge,
-                "overlay_dota2_item_badges",
-                return_value=[
-                    {
-                        "alias": "BKB",
-                        "chinese_name": "黑皇杖",
-                        "english_name": "Black King Bar",
-                        "icon_slug": "black_king_bar",
-                    }
-                ],
             ), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
                 _, details = bridge.generate_recording_cover_with_ai(
                     title="DOTA2 蓝猫裸BKB后补羊刀",
@@ -4422,11 +4436,11 @@ class BridgeTests(unittest.TestCase):
                 )
 
         self.assertTrue(details["ai_cover_dota2_item_reference_used"])
-        self.assertTrue(details["ai_cover_dota2_item_badges_applied"])
         self.assertEqual(
-            details["ai_cover_dota2_item_badges"][0]["english_name"],
-            "Black King Bar",
+            details["ai_cover_dota2_item_render_mode"],
+            "creative_official_references",
         )
+        self.assertEqual(details["ai_cover_dota2_item_expected_count"], 2)
         self.assertEqual(details["ai_cover_dota2_source"], "locked_text_match")
         self.assertEqual(
             [item["english_name"] for item in details["ai_cover_dota2_items"]],
@@ -4439,12 +4453,13 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("BKB＝黑皇杖（Black King Bar）", prompt)
         self.assertIn("羊刀＝邪恶镰刀（Scythe of Vyse）", prompt)
         self.assertIn("OFFICIAL ITEM ICON REFERENCES", prompt)
-        self.assertIn("必须清楚表现至少一件", prompt)
+        self.assertIn("必须清楚表现识别结果中的全部装备", prompt)
         self.assertIn("装备事实独立于人物归属", prompt)
-        self.assertIn("图像模型生成阶段禁止自行生成物品栏", prompt)
-        self.assertIn("右下角添加最多两枚 Valve 官方小型装备标识", prompt)
-        self.assertIn("右下角必须保留干净安全区", prompt)
-        self.assertIn("不得绘制仿冒的装备图标", prompt)
+        self.assertIn("自由表现全部已确认装备", prompt)
+        self.assertIn("不得只挑两件省略", prompt)
+        self.assertIn("不得新增名单外装备", prompt)
+        self.assertIn("独立道具插画、清晰描边与光效层次", prompt)
+        self.assertIn("不得把商店图标原样贴成带黑底和名称的卡片", prompt)
 
     def test_unknown_streamer_uses_room_avatar_as_character_base(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"

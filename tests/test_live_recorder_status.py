@@ -535,7 +535,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             ai_enhancer._request_json_object = mock.Mock(side_effect=[
                 {"title_topic": "误删入口让圣物消失", "selected_timeline_indexes": [4]},
                 {
-                    "title_topic": "负六百魔伤仍选魔法技能，随后误删入口",
+                    "title_topic": "负六百魔伤仍选魔法技能，随后误删入口导致圣物彻底消失",
                     "selected_timeline_indexes": [4, 5],
                 },
                 {
