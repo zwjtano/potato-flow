@@ -192,13 +192,14 @@ def test_other_recorder_failures_never_rotate_database(tmp_path):
     assert database.read_bytes() == b"keep-me"
 
 
-def test_file_library_navigation_opens_the_file_manager():
+def test_file_library_stays_in_live_room_without_sidebar_navigation():
     template_root = Path(__file__).resolve().parents[1] / "templates"
     base = (template_root / "base.html").read_text(encoding="utf-8")
     live_recording = (template_root / "live_recording.html").read_text(encoding="utf-8")
 
-    assert "#recording-files" in base
-    assert "window.addEventListener('hashchange', syncFileLibraryRoute)" in live_recording
+    assert '#recording-files' not in base
+    assert 'aria-label="录播文件"' not in base
+    assert 'data-bs-target="#recordingFilesModal"' in live_recording
     assert "bootstrap.Modal.getOrCreateInstance(filesModal).show()" in live_recording
 
 

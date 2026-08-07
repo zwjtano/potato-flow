@@ -21,9 +21,18 @@ MANUAL_REVIEW_SOURCE = (
 BILIBILI_ARCHIVES_SOURCE = (
     APP_ROOT / "templates" / "bilibili_archives.html"
 ).read_text(encoding="utf-8")
+LIVE_RECORDING_SOURCE = (
+    APP_ROOT / "templates" / "live_recording.html"
+).read_text(encoding="utf-8")
 
 
 class UiRefinementTests(unittest.TestCase):
+    def test_recording_files_stays_inside_live_room_without_duplicate_nav_entry(self):
+        self.assertNotIn('aria-label="录播文件"', BASE_SOURCE)
+        self.assertNotIn('#recording-files', BASE_SOURCE)
+        self.assertIn('data-bs-target="#recordingFilesModal"', LIVE_RECORDING_SOURCE)
+        self.assertIn('id="recordingFilesModal"', LIVE_RECORDING_SOURCE)
+
     def test_refinement_layer_loads_after_page_specific_styles(self):
         self.assertIn("css/ui-refinement.css", BASE_SOURCE)
         self.assertIn("?v={{ app_version }}-6", BASE_SOURCE)
