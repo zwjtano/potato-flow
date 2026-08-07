@@ -180,6 +180,9 @@ GUOXIAOGUO_COVER_REFERENCE = (
     APP_ROOT / "assets" / "streamer-references" / "guoxiaoguo.png"
 )
 GUOXIAOGUO_STREAMER_ALIASES = {"果小果", "果小果是个弟弟"}
+XIEBIN_DD_COVER_REFERENCE = (
+    APP_ROOT / "assets" / "streamer-references" / "xiebin-dd.png"
+)
 DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "YYF",
@@ -3121,7 +3124,7 @@ def dota2_gsi_equipment_prompt_instruction(
     sections.append(
         "只能表现上述已确认的装备与状态，不得增加名单外装备。"
         "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
-        "图像模型可以依据随附的 Valve 官方装备图标参考自由表现全部已确认装备："
+        "图像模型可以依据随附的 Valve 官方装备图标参考丰富表现全部已确认装备，但必须服从后续逐件位置计划："
         "可将装备集中或分散在画面边缘，作为角色手持、穿戴、身旁道具或技能能量焦点，"
         "优先尝试把适合的装备自然穿戴或持握在人物身上；人物身上、手中或身旁已经出现就算一次完整展示，"
         "同一件不得再以悬浮图标、背景回声、镜像、倒影或装饰重复出现。"
@@ -3129,9 +3132,11 @@ def dota2_gsi_equipment_prompt_instruction(
         "最多六格主装备以及单独确认的中立物品、神杖或魔晶状态都不得只挑两件省略。"
         "不得新增名单外装备、把两件装备融合为一件或绘制呆板的游戏物品栏 UI；"
         "装备视觉应采用独立道具插画、清晰描边与光效层次，不得把商店图标原样贴成带黑底和名称的卡片；"
-        "Dota 2 封面优先采用不对称切片构图：主播与英雄一前一后构成主视觉，标题放在另一侧或下方，"
+        "Dota 2 封面优先采用不对称切片构图：有明确玩家或主播人物底稿时，只画该人物 Cos 已确认英雄作为唯一人物主视觉，"
+        "禁止在后方、侧面或背景再次绘制英雄本体、英雄脸、英雄剪影或第二个人物；没有可靠人物身份时才使用英雄本体。"
+        "标题放在另一侧或下方，"
         "按完整语义分成两至三行；装备沿画面上缘和两侧错落分布，标题直接点名的重点装备可以更大，"
-        "其余装备较小但仍须清楚可辨。标题、人物与英雄始终高于装备辅助层，装备不得遮脸、压字或贴边裁断。"
+        "其余装备较小但仍须清楚可辨。标题与唯一人物或英雄主体始终高于装备辅助层，装备不得遮脸、压字或贴边裁断。"
     )
     return "".join(sections)
 
@@ -3249,6 +3254,9 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     if normalized == "果小果":
         if GUOXIAOGUO_COVER_REFERENCE.is_file():
             return "果小果", GUOXIAOGUO_COVER_REFERENCE
+    if normalized == "DD":
+        if XIEBIN_DD_COVER_REFERENCE.is_file():
+            return "谢彬DD", XIEBIN_DD_COVER_REFERENCE
     return None
 
 
@@ -3261,6 +3269,13 @@ def recording_cover_reference_instruction(reference_name: str) -> str:
             "醒目的红色大蝴蝶结；绝对不能画成蛋壳、破壳小鸡、普通帽子、花朵或只剩黄色圆点。"
             "保持二次元 Q 版插画风格，禁止改成真人，也不要生成成其他角色。"
             "可以根据直播主题更换背景、服装和姿势。"
+        )
+    if reference_name == "谢彬DD":
+        return (
+            "上传的参考照片是主播谢彬 DD 本人经过裁切的固定人物底稿。必须以图中同一人为唯一人物原型，"
+            "保留短黑发、脸型、眉眼、鼻唇和整体身份辨识度；照片中的黑色夹克与胸前握拳手势只作为"
+            "体态参考，可以根据直播主题更换服装、动作和背景。Dota 2 封面仍须按系统规则转为高质量"
+            "二次元 Q 版或游戏切片插画，不得保留真人摄影皮肤，也不得生成另一张脸。"
         )
     return (
         f"上传的参考照片是主播 {reference_name} 本人。必须以照片中的人物为唯一人物原型，"
@@ -3732,8 +3747,9 @@ def recording_cover_verified_hero_cosplay_instruction(
         "护甲、武器、主色与技能光效；不得把主播的脸直接替换成英雄原脸。"
         "主播 Cos 统一采用高质量二次元 Q 版或游戏切片插画风格，即使人物底稿来自真实头像，"
         "也只能提取身份特征后卡通化，禁止照片皮肤、真人摄影、写实人像或仿真人三维半身像。"
-        f"{hero_name} 英雄本体可作为后方较大的气势层或技能背景，与前景 Cos 主播形成一前一后关系，"
-        "但不能生成第二个主播、重复脸或让英雄本体抢走主播主视觉。"
+        f"该 Cos 主播就是画面中唯一的 {hero_name} 角色；禁止在后方、侧面、背景或技能特效中"
+        "再次生成英雄本体、英雄原脸、英雄剪影、第二个人物或重复脸。气势背景只能使用不含人物轮廓的"
+        "战场环境、技能能量、光影和粒子。"
     )
 
 
@@ -4372,6 +4388,7 @@ def generate_recording_cover_with_ai(
         item_placement_plan = dota2_item_placement_plan(
             dota2_item_matches,
             hero_primary_attribute=hero_primary_attribute,
+            item_visual_contexts=item_visual_contexts,
         )
         details["ai_cover_dota2_item_placement_plan"] = item_placement_plan
         dota2_item_instruction += dota2_item_placement_plan_prompt_instruction(

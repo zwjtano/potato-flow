@@ -479,6 +479,10 @@ class PublishedMetadataEditorTests(unittest.TestCase):
     def test_new_submission_can_be_added_to_room_collection(self):
         class CollectionApi(_FakeApi):
             calls = []
+            episodes = [
+                {"id": 11, "aid": 111, "title": "旧稿件"},
+                {"id": 22, "aid": 123, "title": "录播标题"},
+            ]
 
             @property
             def result(self):
@@ -495,6 +499,23 @@ class PublishedMetadataEditorTests(unittest.TestCase):
                         return {
                             "archive": {"title": "录播标题"},
                             "videos": [{"cid": 456}],
+                        }
+                    if self.url.endswith("/season/section/edit"):
+                        order = {
+                            row["id"]: row["sort"] for row in self.data["sorts"]
+                        }
+                        self.__class__.episodes.sort(
+                            key=lambda row: order[row["id"]]
+                        )
+                        return {}
+                    if self.url.endswith("/season/section"):
+                        return {
+                            "section": {
+                                "id": 8081933,
+                                "type": 0,
+                                "title": "默认分区",
+                            },
+                            "episodes": list(self.__class__.episodes),
                         }
                     return {}
 
@@ -516,6 +537,7 @@ class PublishedMetadataEditorTests(unittest.TestCase):
             )
 
         self.assertTrue(result["added"])
+        self.assertTrue(result["positioned_first"])
         self.assertEqual(result["section_id"], 8081933)
         add_call = next(
             call for call in CollectionApi.calls
@@ -524,6 +546,14 @@ class PublishedMetadataEditorTests(unittest.TestCase):
         self.assertEqual(add_call.data["sectionId"], 8081933)
         self.assertEqual(add_call.data["episodes"][0]["aid"], 123)
         self.assertEqual(add_call.data["episodes"][0]["cid"], 456)
+        edit_call = next(
+            call for call in CollectionApi.calls
+            if call.url.endswith("/season/section/edit")
+        )
+        self.assertEqual(
+            edit_call.data["sorts"],
+            [{"id": 22, "sort": 1}, {"id": 11, "sort": 2}],
+        )
 
     def test_upload_wrapper_adds_only_new_submission_to_collection(self):
         uploader = bilibili_uploader.BilibiliUploader("cookies.json")
