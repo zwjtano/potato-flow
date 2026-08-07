@@ -27,6 +27,17 @@ DOTA2_ITEM_ICON_BASE_URL = (
 MAX_MATCHED_ITEMS = 8
 MAX_ITEM_ICON_BYTES = 4 * 1024 * 1024
 HIGH_VALUE_ITEM_COST = 2500
+DOTA2_COVER_LAYOUT_CLASSIC = "classic"
+DOTA2_COVER_LAYOUT_FUSION = "fusion"
+DOTA2_COVER_LAYOUT_MODES = {
+    DOTA2_COVER_LAYOUT_CLASSIC,
+    DOTA2_COVER_LAYOUT_FUSION,
+}
+
+
+def normalize_dota2_cover_layout_mode(value: object) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in DOTA2_COVER_LAYOUT_MODES else DOTA2_COVER_LAYOUT_CLASSIC
 
 
 @dataclass(frozen=True)
@@ -536,6 +547,7 @@ def load_dota2_item_visual_contexts(
 
 def dota2_item_visual_context_prompt_instruction(
     contexts: Iterable[dict[str, object]],
+    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
 ) -> str:
     normalized = list(contexts)
     if not normalized:
@@ -562,13 +574,21 @@ def dota2_item_visual_context_prompt_instruction(
             rows.append(f"{name}（{facts}）")
     if not rows:
         return ""
+    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
+        return (
+            "Valve 官方装备背景与功能（只用于理解造型、材质、用途和穿戴方式，不得新增剧情事实）："
+            + "；".join(rows)
+            + "。先以官方图标锁定每件装备身份，再结合背景与功能，将适合的装备自然设计为人物"
+            "穿戴的护甲、鞋、披风或饰品，或手持、背负、腰挂的武器和法器；球体、消耗品和"
+            "特殊物件可作为身旁道具或能量焦点。每件只出现一次，不得在边缘、背景、倒影或装饰层复制。"
+        )
     return (
-        "Valve 官方装备背景与功能（只用于理解造型、材质、用途和穿戴方式，不得新增剧情事实）："
+        "Valve 官方装备背景与功能（只用于理解造型、材质和用途，不得新增剧情事实）："
         + "；".join(rows)
-        + "。先以官方图标锁定每件装备的身份，再结合其官方背景与功能，把适合的装备自然设计成"
-        "人物已经穿戴的护甲、鞋、披风或饰品，或正在手持、背负、腰挂的武器和法器；"
-        "不适合穿戴的球体、消耗品和特殊物件才作为身旁道具或能量焦点。"
-        "人物身上、手中或身旁已经出现的装备就算完成一次展示，不得再在边缘、背景、倒影或装饰层复制同一件。"
+        + "。只以官方图标锁定每件装备身份，全部作为独立切片图标；可沿主体外围错落展示，"
+        "也可根据构图统一放在画面最下方安全区一排；"
+        "背景和功能不得用于把装备改造成人物服装、护甲、肢体、手持武器或技能光效。"
+        "每件只出现一次，不得在人物、英雄、背景、倒影或装饰层复制同款。"
     )
 
 
@@ -778,30 +798,34 @@ def dota2_item_placement_plan(
 
 def dota2_item_placement_plan_prompt_instruction(
     plans: Iterable[dict[str, object]],
+    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
 ) -> str:
     normalized = list(plans)
     if not normalized:
         return ""
-    rows = [
-        f"{index}. {plan['chinese_name']}：{plan['placement']}；"
-        f"{'允许一处独立悬浮' if plan.get('floating_allowed') else '禁止独立悬浮'}"
-        for index, plan in enumerate(normalized, start=1)
-    ]
+    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
+        rows = [
+            f"{index}. {plan['chinese_name']}：{plan['placement']}；"
+            f"{'允许一处独立悬浮' if plan.get('floating_allowed') else '禁止独立悬浮'}"
+            for index, plan in enumerate(normalized, start=1)
+        ]
+        return (
+            "融合模式逐件位置计划，成图必须逐项执行："
+            + "；".join(rows)
+            + "。每件只能对应一个物理实体；穿戴、手持、背负或腰挂后不得再显示同款图标。"
+            "主手和副手装备必须分别完整持握，不得融合、遮没或连成一把。"
+            "每件仍须保留官方轮廓、主色、材质和核心符号，在缩略图中清楚可辨。"
+        )
+    rows = [f"{index}. {plan['chinese_name']}" for index, plan in enumerate(normalized, start=1)]
     return (
-        "生成前先锁定以下逐件单次实体分配，成图必须逐项执行："
+        "生成前锁定以下装备图标清单，成图必须逐项展示且各出现一次："
         + "；".join(rows)
-        + "。每个编号只能对应画面中的一个物理实体；穿在人物身上、拿在手里、固定在背部或腰间后，"
-        "禁止再沿画面边缘展示它的图标。不得改变已分配的位置；只有逐件计划明确写出允许悬浮时才可悬浮一处。"
-        "若计划同时分配右手主装备和左手副武器，两件必须分别使用对应手臂持握，完整露出各自轮廓与核心符号；"
-        "禁止把两件融合、交叉遮没、连成一把或让同一只手同时持有两件。"
-        "自然穿戴或持握不能牺牲装备辨识度：每件装备的官方轮廓、主色、材质和标志性符号都要完整露出，"
-        "不能被身体、标题、光效或其他装备遮成普通武器和泛化装饰；缩略图中仍应逐件可辨。"
-        "美观与识别度同等重要：禁止为露全装备而使用生硬的大图标、贴纸或等尺寸陈列；"
-        "必须用合理透视、材质光影、前后景和人物动作把装备自然融入场景。"
-        f"官方价格达到 {HIGH_VALUE_ITEM_COST} 金币的高级装备全部使用高辨识优先，不能只突出其中一两件；"
-        "高级装备通过更清楚的完整轮廓、局部尺寸和明暗对比形成重点，禁止重新排成围绕人物的图标圈。"
-        "人物的泛化护甲、武器和装饰不得复刻名单内装备的核心轮廓、主色和符号，"
-        "避免形成视觉上的第二件同款。"
+        + "。忽略内部穿戴、手持、背负或腰挂位置计划；这些计划不再用于封面。"
+        "全部装备恢复为独立官方图标式切片；根据标题与主体占位，可沿主播人物和官方英雄的外围安全区域"
+        "错落环绕，也可统一放在画面最下方安全区一排。"
+        "每件必须完整露出官方轮廓、主色、材质和核心符号，缩略图中逐件可辨；"
+        "不得穿到人物或英雄身上，不得变成服装、普通武器、肢体、技能光效或场景装饰。"
+        "图标可以有不同大小与轻微角度以形成层次，但不能互相融合、遮挡、重复，也不能遮脸、压字或贴边裁断。"
     )
 
 
@@ -879,7 +903,10 @@ def prioritize_dota2_item_matches(
     return ordered
 
 
-def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
+def dota2_item_prompt_instruction(
+    matches: Iterable[Dota2ItemMatch],
+    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
+) -> str:
     normalized = list(matches)
     if not normalized:
         return (
@@ -889,6 +916,16 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         f"{match.alias}＝{match.item.label}"
         for match in normalized
     )
+    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
+        return (
+            "Dota 2 装备与俗称消歧规则：所有命中的装备都必须理解为 Valve《Dota 2》的对应物品，"
+            f"不能按字面臆造或替换为其他游戏装备。本次装备识别结果：{resolved}。"
+            "随附的 DOTA 2 OFFICIAL ITEM ICON REFERENCES 只负责锁定装备身份；成图应依据官方轮廓、"
+            "主色、材质和核心符号，把装备转化为高清实体并按后续逐件位置计划自然穿戴、手持、背负或腰挂。"
+            "不适合实体装备化的物件才可成为身旁道具或能量焦点。每件必须恰好出现一次，不得融合、"
+            "重复、镜像或新增名单外装备；不得照搬商店黑底、名称和物品栏 UI。"
+            "主播人物与英雄采用同一个完整 Cos 人物主视觉，标题和人物高于装备辅助层。"
+        )
     return (
         "Dota 2 装备与俗称消歧规则：所有命中的装备都必须理解为 Valve《Dota 2》的"
         "对应物品，不能按字面画成现实物品，也不能替换成《英雄联盟》或其他游戏装备。"
@@ -898,28 +935,22 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "成图不得照搬其中的低清像素或模糊纹理，应二创为边缘清楚、材质明确的高清实体装备，"
         "但不得偏离官方轮廓、主色、构件关系和核心符号。"
         "识别结果非空时，封面必须清楚表现识别结果中的全部装备；"
-        "标题直接点名的装备可放大或靠近事件主体作为重点，其余装备仍须通过穿戴、持握、背负、"
-        "腰挂或不对称场景道具完整出现，禁止平均铺在画面边缘。"
-        "美观与识别度同等重要：不得将装备处理成生硬的大图标、贴纸或等尺寸陈列，"
-        "应以合理透视、材质光影、前后景和人物动作自然融入画面。"
+        "标题直接点名的装备可放大作为重点，其余装备仍须作为独立官方图标式切片完整出现。"
         "必须以参考板中的轮廓、主色、材质与核心符号为准，"
         "每件装备保持独立，不得把两件装备融合成一件。可以将图标风格转化为精致插画道具，"
         "但不能改变其身份特征；没有出现在识别结果中的装备不要擅自添加。"
-        "图像模型可以依据参考图丰富表现全部已确认装备，但必须严格服从后续逐件位置计划，"
-        "不得自行改变手持、穿戴、背负、腰挂或身旁位置。每件装备只能使用唯一的一种实体位置："
-        "角色穿戴、手持、背负、腰挂或身旁道具五选一，并随透视调整大小、角度与光效。"
-        "适合的装备应自然穿戴或持握在人物身上；每件确认装备在整张图中必须恰好出现一次，"
-        "穿戴、手持或身旁出现都已经计数，不得再以悬浮图标、背景回声、镜像、倒影或装饰复制同一件。"
+        "图像模型必须依据参考图表现全部已确认装备，并忽略后续数据中任何穿戴、手持、背负或腰挂位置建议。"
+        "每件确认装备在整张图中必须恰好出现一次，统一使用透明背景、清晰描边和适度光效的独立切片图标；"
+        "不得把装备穿到主播或英雄身上，也不得以背景回声、镜像、倒影或装饰复制同一件。"
         "但必须保留每件装备可辨认的官方身份特征；最多六格主装备以及单独确认的中立物品、"
         "神杖或魔晶状态都不得只挑两件省略。不得新增名单外装备、把两件装备融合为一件，"
         "也不得绘制呆板的游戏物品栏 UI。装备视觉应采用独立道具插画、清晰描边与光效层次，"
-        "不得把商店图标原样贴成带黑底和名称的卡片。Dota 2 封面优先采用不对称切片构图："
-        "有明确玩家或主播人物底稿时，只画该人物 Cos 已确认英雄作为唯一人物主视觉，禁止再画英雄本体、"
-        "英雄脸、英雄剪影或第二个人物；没有可靠人物身份时才用英雄本体。标题放在另一侧或下方并按完整语义分成两至三行；"
-        "只有没有被人物穿戴、手持、背负或腰挂的身旁道具，才可集中在一处次要场景区域并按不同景深不对称分布；"
-        "禁止环形、放射状、花环式、左右对称或沿上缘和两侧围绕人物排列；"
+        "不得把商店图标原样贴成带黑底和名称的卡片。Dota 2 封面采用经典双主体切片构图："
+        "主播头像人物独立位于前景，已确认的 Valve 官方英雄独立位于侧后方，禁止融合两者；"
+        "标题放在另一侧或上方并按完整语义分成两至三行；装备图标可沿人物和英雄外围安全区域错落环绕，"
+        "也可根据实际布局统一放在画面最下方安全区一排；"
         "标题直接点名的重点装备可以更大，其余装备较小但仍须清楚可辨。"
-        "标题与唯一人物或英雄主体始终高于装备辅助层，"
+        "标题、主播人物与官方英雄主体始终高于装备辅助层，"
         "装备不得遮脸、压字或贴边裁断。"
     )
 

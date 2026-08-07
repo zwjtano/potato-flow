@@ -85,29 +85,27 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("大炮＝代达罗斯之殇（Daedalus）", instruction)
         self.assertIn("不能按字面画成现实物品", instruction)
         self.assertIn("不得把两件装备融合成一件", instruction)
-        self.assertIn("丰富表现全部已确认装备", instruction)
-        self.assertIn("必须严格服从后续逐件位置计划", instruction)
+        self.assertIn("表现全部已确认装备", instruction)
+        self.assertIn("忽略后续数据中任何穿戴、手持、背负或腰挂位置建议", instruction)
         self.assertIn("必须清楚表现识别结果中的全部装备", instruction)
         self.assertIn("按整数倍无插值放大", instruction)
         self.assertIn("二创为边缘清楚、材质明确的高清实体装备", instruction)
         self.assertIn("不得偏离官方轮廓、主色、构件关系和核心符号", instruction)
         self.assertIn("每件确认装备在整张图中必须恰好出现一次", instruction)
-        self.assertIn("穿戴、手持或身旁出现都已经计数", instruction)
-        self.assertIn("背景回声、镜像、倒影", instruction)
+        self.assertIn("独立切片图标", instruction)
+        self.assertIn("背景回声、镜像、倒影或装饰复制同一件", instruction)
         self.assertIn("独立道具插画、清晰描边与光效层次", instruction)
         self.assertIn("不得把商店图标原样贴成带黑底和名称的卡片", instruction)
-        self.assertIn("只画该人物 Cos 已确认英雄作为唯一人物主视觉", instruction)
-        self.assertIn("禁止再画英雄本体", instruction)
+        self.assertIn("主播头像人物独立位于前景", instruction)
+        self.assertIn("Valve 官方英雄独立位于侧后方", instruction)
         self.assertIn("重点装备可以更大", instruction)
         self.assertIn("装备不得遮脸、压字或贴边裁断", instruction)
-        self.assertNotIn("装备沿画面上缘和两侧错落分布", instruction)
-        self.assertIn("只有没有被人物穿戴、手持、背负或腰挂的身旁道具", instruction)
-        self.assertIn("禁止环形、放射状、花环式", instruction)
-        self.assertIn("美观与识别度同等重要", instruction)
-        self.assertIn("合理透视、材质光影、前后景和人物动作", instruction)
+        self.assertIn("装备图标可沿人物和英雄外围安全区域错落环绕", instruction)
+        self.assertIn("画面最下方安全区一排", instruction)
+        self.assertIn("禁止融合两者", instruction)
         self.assertNotIn("其余装备仍须作为边缘辅助信息", instruction)
 
-    def test_item_visual_context_prompt_supports_natural_wearing_without_duplicates(self):
+    def test_item_visual_context_prompt_keeps_items_as_separate_icons(self):
         instruction = dota2_items.dota2_item_visual_context_prompt_instruction(
             [
                 {
@@ -130,9 +128,28 @@ class Dota2ItemsTests(unittest.TestCase):
         )
         self.assertIn("Valve 官方装备背景与功能", instruction)
         self.assertIn("官方价格：5200 金币", instruction)
-        self.assertIn("自然设计成人物已经穿戴的护甲、鞋、披风或饰品", instruction)
-        self.assertIn("人物身上、手中或身旁已经出现的装备就算完成一次展示", instruction)
-        self.assertIn("不得再在边缘、背景、倒影或装饰层复制同一件", instruction)
+        self.assertIn("全部作为独立切片图标", instruction)
+        self.assertIn("画面最下方安全区一排", instruction)
+        self.assertIn("不得用于把装备改造成人物服装、护甲、肢体", instruction)
+        self.assertIn("不得在人物、英雄、背景、倒影或装饰层复制同款", instruction)
+
+    def test_item_prompts_can_restore_fusion_layout(self):
+        matches = dota2_items.match_dota2_items("BKB 羊刀")
+        item_instruction = dota2_items.dota2_item_prompt_instruction(
+            matches,
+            "fusion",
+        )
+        self.assertIn("穿戴、手持、背负或腰挂", item_instruction)
+        self.assertIn("同一个完整 Cos 人物", item_instruction)
+        self.assertNotIn("底部一排", item_instruction)
+
+        plans = dota2_items.dota2_item_placement_plan(matches)
+        placement_instruction = dota2_items.dota2_item_placement_plan_prompt_instruction(
+            plans,
+            "fusion",
+        )
+        self.assertIn("融合模式逐件位置计划", placement_instruction)
+        self.assertIn("不得再显示同款图标", placement_instruction)
 
     def test_item_placement_plan_assigns_one_manifestation_per_item(self):
         matches = dota2_items.match_dota2_items(
@@ -185,16 +202,13 @@ class Dota2ItemsTests(unittest.TestCase):
             1,
         )
         instruction = dota2_items.dota2_item_placement_plan_prompt_instruction(plans)
-        self.assertIn("逐件单次实体分配", instruction)
-        self.assertIn("每个编号只能对应画面中的一个物理实体", instruction)
-        self.assertIn("禁止再沿画面边缘展示它的图标", instruction)
-        self.assertIn("自然穿戴或持握不能牺牲装备辨识度", instruction)
-        self.assertIn("右手主装备和左手副武器", instruction)
-        self.assertIn("禁止把两件融合、交叉遮没、连成一把", instruction)
-        self.assertIn("缩略图中仍应逐件可辨", instruction)
-        self.assertIn("达到 2500 金币的高级装备全部使用高辨识优先", instruction)
-        self.assertIn("禁止重新排成围绕人物的图标圈", instruction)
-        self.assertIn("泛化护甲、武器和装饰不得复刻名单内装备", instruction)
+        self.assertIn("装备图标清单", instruction)
+        self.assertIn("忽略内部穿戴、手持、背负或腰挂位置计划", instruction)
+        self.assertIn("沿主播人物和官方英雄的外围安全区域", instruction)
+        self.assertIn("画面最下方安全区一排", instruction)
+        self.assertIn("缩略图中逐件可辨", instruction)
+        self.assertIn("不得穿到人物或英雄身上", instruction)
+        self.assertIn("不能互相融合、遮挡、重复", instruction)
 
     def test_dual_hand_plan_keeps_wings_chest_core_and_back_blade_distinct(self):
         matches = dota2_items.match_dota2_items(

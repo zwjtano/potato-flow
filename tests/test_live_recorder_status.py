@@ -2390,6 +2390,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "RECORDING_AI_TITLE_PROMPT": "全局标题要求",
             "RECORDING_AI_DESCRIPTION_PROMPT": "全局简介要求",
             "RECORDING_AI_COVER_PROMPT": "",
+            "RECORDING_DOTA2_COVER_LAYOUT_MODE": "fusion",
             "DANMAKU_DURATION_SECONDS": 10,
             "DANMAKU_FONT_SIZE": 42,
             "DANMAKU_OPACITY": 0.92,
@@ -2423,6 +2424,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(config["ai_title_prompt"], "全局标题要求")
         self.assertEqual(config["ai_description_prompt"], "全局简介要求")
         self.assertEqual(config["ai_cover_prompt"], "")
+        self.assertEqual(config["dota2_cover_layout_mode"], "fusion")
         self.assertEqual(
             config["profiles"][0]["ai_title_prompt"],
             "直播间标题要求",
@@ -2449,6 +2451,8 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(inherited_effective["ai_title_prompt"], "全局标题要求")
         self.assertEqual(inherited_effective["ai_description_prompt"], "全局简介要求")
         self.assertEqual(inherited_effective["ai_cover_prompt"], "")
+        self.assertEqual(room_effective["dota2_cover_layout_mode"], "fusion")
+        self.assertEqual(inherited_effective["dota2_cover_layout_mode"], "fusion")
 
     def test_bridge_profiles_preserve_absolute_runtime_paths(self):
         manager = LiveRecorderManager()
