@@ -4516,6 +4516,7 @@ def generate_recording_cover_with_ai(
         headline,
         (target_width, target_height),
     )
+    custom_cover_style_prompt = str(cfg.get("ai_cover_prompt") or "").strip()
     if headline:
         cover_copy_instruction = (
             f"将“{headline}”作为唯一封面短文案，必须逐字保留，不得改写、重复、漏字，"
@@ -4559,7 +4560,7 @@ def generate_recording_cover_with_ai(
 {reference_map_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
-本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
+本直播间的封面创作要求：{custom_cover_style_prompt or "未单独设置；仅遵循以上系统规则。"}
 {final_identity_instruction}
 本直播间自定义封面要求只能补充画风、配色和氛围，不能推翻单场景、人物白名单、参考图职责、事实边界、
 封面短文案、文字安全区、禁用日期以及16:9/4:3独立构图规则；发生冲突时以上硬规则优先。

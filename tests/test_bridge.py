@@ -4204,6 +4204,18 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("采用低饱和蓝紫色，并突出 Roshan 团战", prompt)
         self.assertNotIn("2026-07-23", prompt)
 
+    def test_empty_custom_cover_prompt_does_not_duplicate_system_defaults(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'custom_cover_style_prompt or "未单独设置；仅遵循以上系统规则。"',
+            source,
+        )
+        self.assertNotIn(
+            'cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT',
+            source,
+        )
+
     def test_yyf_recording_cover_defaults_to_current_room_avatar(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
