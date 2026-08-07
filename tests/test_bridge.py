@@ -1622,6 +1622,29 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(title, "玛西追击三人未能完成击杀｜08-07 02:05")
 
+    def test_danmaku_edition_marker_is_inserted_before_title_time(self):
+        title = bridge.recording_danmaku_edition_title(
+            "玛西追击三人未能完成击杀｜08-07 02:05"
+        )
+
+        self.assertEqual(title, "玛西追击三人未能完成击杀｜弹幕版 08-07 02:05")
+        self.assertEqual(bridge.recording_danmaku_edition_title(title), title)
+
+    def test_danmaku_edition_marker_is_removed_from_cover_text(self):
+        self.assertEqual(
+            bridge.strip_danmaku_edition_marker(
+                "玛西追击三人未能完成击杀｜弹幕版 08-07 02:05"
+            ),
+            "玛西追击三人未能完成击杀｜08-07 02:05",
+        )
+        self.assertEqual(
+            bridge.recording_cover_display_text(
+                "玛西追击三人未能完成击杀",
+                "弹幕版 玛西追击三人未能完成击杀",
+            ),
+            "玛西追击三人未能完成击杀",
+        )
+
     def test_third_party_observer_topic_naturally_attributes_streamer(self):
         self.assertEqual(
             bridge.contextualize_streamer_title_topic(
@@ -2863,7 +2886,7 @@ class BridgeTests(unittest.TestCase):
                 "burn_in": True,
             })
             store.stage(key, "ai", "completed", {
-                "title": "主播完成实际挑战",
+                "title": "主播完成实际挑战｜08-07 02:05",
                 "description": "已生成正文",
                 "description_body": "已生成正文",
                 "title_topic": "主播完成实际挑战",
@@ -2925,6 +2948,10 @@ class BridgeTests(unittest.TestCase):
 
             expected = root / "clip.danmaku.mp4"
             self.assertEqual(Path(uploads[0]["video_file_path"]), expected.resolve())
+            self.assertEqual(
+                uploads[0]["title"],
+                "主播完成实际挑战｜弹幕版 08-07 02:05",
+            )
             self.assertTrue(expected.is_file())
             self.assertFalse(legacy_burn.exists())
             burn_details = store.stage_state(key, "burn")["details"]
@@ -4228,7 +4255,7 @@ class BridgeTests(unittest.TestCase):
                 "modules.config_manager": config_module,
             }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
                 cover, details = bridge.generate_recording_cover_with_ai(
-                    title="【直播回放】土豆｜新地图极限挑战｜2026-07-23",
+                    title="【直播回放】土豆｜新地图极限挑战｜弹幕版 07-23 21:30",
                     ai_topic="新地图极限挑战",
                     description="主播挑战新地图，弹幕反应热烈。",
                     streamer="土豆",
@@ -4242,6 +4269,7 @@ class BridgeTests(unittest.TestCase):
                     work_dir=work_dir,
                     target_size=(1920, 1080),
                     output_path=work_dir / "record-only.jpg",
+                    cover_text="弹幕版 土豆新地图极限挑战",
                 )
 
         self.assertEqual(cover.name, "record-only.jpg")
@@ -4253,6 +4281,7 @@ class BridgeTests(unittest.TestCase):
             "https://images.example.com/v1",
         )
         self.assertEqual(details["ai_cover_headline"], "土豆新地图极限挑战")
+        self.assertTrue(details["ai_cover_submission_marker_removed"])
         self.assertEqual(details["ai_cover_subject_name"], "土豆")
         self.assertEqual(details["ai_cover_width"], 1920)
         self.assertEqual(details["ai_cover_height"], 1080)
@@ -4276,6 +4305,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("绝对禁止出现日期", prompt)
         self.assertIn("采用低饱和蓝紫色，并突出 Roshan 团战", prompt)
         self.assertNotIn("2026-07-23", prompt)
+        self.assertNotIn("弹幕版", prompt)
 
     def test_empty_custom_cover_prompt_does_not_duplicate_system_defaults(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
@@ -4562,6 +4592,157 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("装备图标清单", prompt)
         self.assertIn("沿主播人物和官方英雄的外围安全区域", prompt)
         self.assertIn("画面最下方安全区一排", prompt)
+
+    def test_dual_cover_generation_reuses_official_reference_sheets(self):
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work_dir = root / "artifacts"
+            item_sheet = root / "dota2-items.png"
+            item_sheet.write_bytes(b"official-item-reference")
+            character_base = root / "character-base.png"
+            character_base.write_bytes(b"character-base")
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=Mock(return_value=response),
+                generate=Mock(),
+            ))
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            shared_cache = {}
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(
+                bridge,
+                "build_dota2_item_reference_sheet",
+                return_value=(item_sheet, []),
+            ) as build_item_sheet, patch.object(
+                bridge.subprocess,
+                "run",
+                side_effect=fake_ffmpeg,
+            ):
+                _, first_details = bridge.generate_recording_cover_with_ai(
+                    title="DOTA2 蓝猫裸BKB后补羊刀",
+                    ai_topic="BKB羊刀翻盘",
+                    description="蓝猫更新黑皇杖和邪恶镰刀后赢下团战。",
+                    streamer="新主播",
+                    cfg={
+                        "_config_dir": str(root),
+                        "app_root": str(app_root),
+                        "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(character_base),
+                    },
+                    work_dir=work_dir,
+                    target_size=(1920, 1080),
+                    output_path=work_dir / "cover-16x9.jpg",
+                    game_context_locked=True,
+                    shared_reference_cache=shared_cache,
+                )
+                _, second_details = bridge.generate_recording_cover_with_ai(
+                    title="DOTA2 蓝猫裸BKB后补羊刀",
+                    ai_topic="BKB羊刀翻盘",
+                    description="蓝猫更新黑皇杖和邪恶镰刀后赢下团战。",
+                    streamer="新主播",
+                    cfg={
+                        "_config_dir": str(root),
+                        "app_root": str(app_root),
+                        "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(character_base),
+                    },
+                    work_dir=work_dir,
+                    target_size=(1600, 1200),
+                    output_path=work_dir / "cover-4x3.jpg",
+                    game_context_locked=True,
+                    shared_reference_cache=shared_cache,
+                )
+
+        build_item_sheet.assert_called_once()
+        self.assertEqual(first_details["ai_cover_shared_reference_cache_hits"], [])
+        self.assertIn(
+            "dota2_items",
+            second_details["ai_cover_shared_reference_cache_hits"],
+        )
+
+    def test_cover_visual_matching_ignores_unselected_later_events(self):
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            character_base = root / "character-base.png"
+            character_base.write_bytes(b"character-base")
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=Mock(return_value=response),
+                generate=Mock(),
+            ))
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(
+                bridge,
+                "match_dota2_abilities",
+                return_value=[],
+            ) as ability_match, patch.object(
+                bridge.subprocess,
+                "run",
+                side_effect=fake_ffmpeg,
+            ):
+                _, details = bridge.generate_recording_cover_with_ai(
+                    title="蓝猫关键团完成翻盘",
+                    ai_topic="蓝猫关键团完成翻盘",
+                    description=(
+                        "00:12 蓝猫关键团完成翻盘。\n"
+                        "38:40 卡尔天火命中结束另一局。"
+                    ),
+                    streamer="新主播",
+                    cfg={
+                        "_config_dir": str(root),
+                        "app_root": str(app_root),
+                        "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(character_base),
+                    },
+                    work_dir=root / "artifacts",
+                )
+
+        ability_inputs = "\n".join(str(value) for value in ability_match.call_args.args)
+        self.assertNotIn("卡尔天火", ability_inputs)
+        self.assertEqual(
+            details["ai_cover_visual_fact_scope"],
+            "primary_verified_event",
+        )
+        prompt = client.images.edit.call_args.kwargs["prompt"]
+        self.assertIn("先按以下固定顺序完成设计", prompt)
+        self.assertIn("忽略简介中其他时间点的英雄、技能、装备和人物", prompt)
 
     def test_unknown_streamer_uses_room_avatar_as_character_base(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"

@@ -2907,12 +2907,35 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
     raise RuntimeError(f"FFmpeg 自动截取封面失败（已尝试多个时间点）: {' | '.join(errors)[-1600:]}")
 
 
+def strip_danmaku_edition_marker(value: str) -> str:
+    """Remove the submission-only danmaku marker from cover-facing text."""
+    cleaned = re.sub(r"\s*弹幕版\s*", "", str(value or ""))
+    cleaned = re.sub(r"[｜|]\s*[｜|]", "｜", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip(" -_｜|·")
+
+
+def recording_danmaku_edition_title(title: str) -> str:
+    """Place the burned-danmaku edition marker immediately before title time."""
+    clean_title = strip_danmaku_edition_marker(title)
+    time_match = re.search(
+        r"[｜|]\s*(?P<time>\d{1,2}-\d{1,2}\s+\d{1,2}[:：]\d{2})\s*$",
+        clean_title,
+    )
+    if time_match:
+        prefix = clean_title[:time_match.start()].rstrip(" ｜|")
+        return f"{prefix}｜弹幕版 {time_match.group('time')}"
+    return f"{clean_title}｜弹幕版" if clean_title else "弹幕版"
+
+
 def recording_cover_headline(
     title: str,
     ai_topic: str = "",
     streamer: str = "",
 ) -> str:
     """Extract a cover-safe headline without dates, clocks or template chrome."""
+    title = strip_danmaku_edition_marker(title)
+    ai_topic = strip_danmaku_edition_marker(ai_topic)
     generic_topics = {"直播精彩内容", "精彩内容", "直播回放", "精彩直播", "直播录像"}
     candidate = str(ai_topic or "").strip()
     if candidate in generic_topics:
@@ -2960,13 +2983,17 @@ def recording_cover_display_text(
     streamer: str = "",
 ) -> str:
     """Choose compact, grounded cover copy without slicing a sentence."""
-    source = normalize_recording_title_filler(str(headline or "").split("；", 1)[0])
+    source = normalize_recording_title_filler(
+        strip_danmaku_edition_marker(headline).split("；", 1)[0]
+    )
     source = source.strip(" -_｜|：:，,。.!！；; ")
     if not source or recording_text_contains_negative_rumor(source):
         return ""
 
     def normalize_candidate(value: str) -> str:
-        candidate = normalize_recording_title_filler(value)
+        candidate = normalize_recording_title_filler(
+            strip_danmaku_edition_marker(value)
+        )
         candidate = candidate.split("；", 1)[0]
         return candidate.strip(" -_｜|：:，,。.!！；; ")
 
@@ -4059,8 +4086,14 @@ def generate_recording_cover_with_ai(
     game_context: dict[str, Any] | None = None,
     game_context_locked: bool = False,
     cover_text: str = "",
+    shared_reference_cache: dict[str, Any] | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
     """Generate one independent AI cover for the requested Bilibili aspect ratio."""
+    reference_cache = shared_reference_cache if shared_reference_cache is not None else {}
+    reference_cache_hits: list[str] = []
+    cover_title = strip_danmaku_edition_marker(title)
+    cover_ai_topic = strip_danmaku_edition_marker(ai_topic)
+    cover_text = strip_danmaku_edition_marker(cover_text)
     root = resolve_app_root(cfg)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -4073,8 +4106,12 @@ def generate_recording_cover_with_ai(
         cfg.get("dota2_cover_layout_mode")
         or ai_cfg.get("RECORDING_DOTA2_COVER_LAYOUT_MODE")
     )
-    cover_subject_name = recording_cover_subject_name(streamer, title)
-    source_headline = recording_cover_headline(title, ai_topic, streamer)
+    cover_subject_name = recording_cover_subject_name(streamer, cover_title)
+    source_headline = recording_cover_headline(
+        cover_title,
+        cover_ai_topic,
+        streamer,
+    )
     cover_event_context, cover_context_source = recording_cover_event_context(
         description,
         source_headline,
@@ -4099,6 +4136,7 @@ def generate_recording_cover_with_ai(
         "ai_cover_context_source": cover_context_source,
         "ai_cover_event_context": cover_event_context,
         "ai_cover_event_seconds": cover_event_seconds,
+        "ai_cover_submission_marker_removed": "弹幕版" in str(title or ""),
     }
     if not enabled:
         return None, details
@@ -4136,8 +4174,15 @@ def generate_recording_cover_with_ai(
                 f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
                 "且未获取到该直播间头像，无法生成 AI 封面"
             )
+        avatar_cache_key = f"streamer-avatar:{avatar_url}"
+        cached_avatar_path = Path(str(reference_cache.get(avatar_cache_key) or ""))
         try:
-            avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
+            if cached_avatar_path.is_file():
+                avatar_reference = cached_avatar_path
+                reference_cache_hits.append("streamer_avatar")
+            else:
+                avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
+                reference_cache[avatar_cache_key] = str(avatar_reference)
         except Exception as exc:
             raise ValueError(
                 f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
@@ -4193,22 +4238,40 @@ def generate_recording_cover_with_ai(
     # submission title may add a guest reference. Timeline descriptions often
     # mention many players incidentally; attaching those avatars lets a clearer
     # guest photo override a stylized current-room reference.
-    guest_candidates = recording_cover_guest_candidates(streamer, title)
+    guest_candidates = recording_cover_guest_candidates(streamer, cover_title)
     guest_references: list[dict[str, str]] = []
     guest_reference_errors: list[dict[str, str]] = []
     for guest_candidate in guest_candidates:
         try:
-            resolved_guest = resolve_recording_guest_avatar(guest_candidate, cfg)
-            if resolved_guest is None:
-                guest_reference_errors.append({
-                    "name": guest_candidate["name"],
-                    "error": "斗鱼搜索未形成唯一精确匹配",
-                })
-                continue
-            guest_reference = download_recording_avatar_reference(
-                resolved_guest["avatar_url"],
-                cfg,
+            guest_cache_key = (
+                "guest-avatar:"
+                + str(guest_candidate.get("name") or "")
+                + ":"
+                + str(guest_candidate.get("mentioned_as") or "")
             )
+            cached_guest = reference_cache.get(guest_cache_key)
+            if isinstance(cached_guest, dict) and Path(
+                str(cached_guest.get("reference_path") or "")
+            ).is_file():
+                resolved_guest = dict(cached_guest)
+                guest_reference = Path(str(resolved_guest.pop("reference_path")))
+                reference_cache_hits.append("guest_avatar")
+            else:
+                resolved_guest = resolve_recording_guest_avatar(guest_candidate, cfg)
+                if resolved_guest is None:
+                    guest_reference_errors.append({
+                        "name": guest_candidate["name"],
+                        "error": "斗鱼搜索未形成唯一精确匹配",
+                    })
+                    continue
+                guest_reference = download_recording_avatar_reference(
+                    resolved_guest["avatar_url"],
+                    cfg,
+                )
+                reference_cache[guest_cache_key] = {
+                    **resolved_guest,
+                    "reference_path": str(guest_reference),
+                }
             reference_index = add_cover_reference(
                 guest_reference,
                 (
@@ -4250,11 +4313,15 @@ def generate_recording_cover_with_ai(
             "弹幕用户名或职业选手外号"
             "自行增加陌生人物。"
         )
+    # Cover art follows the first verified event only. Scanning the whole
+    # description here can leak a later game's hero or ability into the main
+    # scene even though the copy and composition intentionally exclude it.
     dota2_instruction = recording_cover_dota2_instruction(
-        title,
-        ai_topic,
-        description,
+        cover_title,
+        cover_ai_topic,
+        cover_event_context,
     )
+    details["ai_cover_visual_fact_scope"] = "primary_verified_event"
     # Prefer Douyu's explicit streamer-view hero and its final in-recording
     # equipment snapshot. XML identity is retained only for legacy snapshots.
     tooltip_hero = ""
@@ -4284,7 +4351,7 @@ def generate_recording_cover_with_ai(
                 anchor = None
             if anchor and not recording_cover_hero_matches_title(
                 str(anchor.get("hero") or ""),
-                f"{title}\n{cover_event_context}",
+                f"{cover_title}\n{cover_event_context}",
             ):
                 details["ai_cover_hero_context_rejected"] = str(
                     anchor.get("hero") or ""
@@ -4382,8 +4449,8 @@ def generate_recording_cover_with_ai(
         )
         dota2_item_matches = prioritize_dota2_item_matches(
             match_dota2_items(*tooltip_items),
-            title,
-            ai_topic,
+            cover_title,
+            cover_ai_topic,
             cover_event_context,
         )
         dota2_item_instruction += dota2_item_prompt_instruction(
@@ -4392,11 +4459,11 @@ def generate_recording_cover_with_ai(
         )
     elif game_context_locked:
         dota2_item_matches = (
-            match_dota2_items(title, ai_topic, cover_event_context)
+            match_dota2_items(cover_title, cover_ai_topic, cover_event_context)
             if recording_cover_has_dota2_context(
                 streamer,
-                title,
-                ai_topic,
+                cover_title,
+                cover_ai_topic,
                 cover_event_context,
             )
             else []
@@ -4421,11 +4488,11 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_source"] = "locked_no_match"
     else:
         dota2_item_matches = (
-            match_dota2_items(title, ai_topic, cover_event_context)
+            match_dota2_items(cover_title, cover_ai_topic, cover_event_context)
             if recording_cover_has_dota2_context(
                 streamer,
-                title,
-                ai_topic,
+                cover_title,
+                cover_ai_topic,
                 cover_event_context,
             )
             else []
@@ -4462,11 +4529,27 @@ def generate_recording_cover_with_ai(
             item_placement_plan,
             cover_layout_mode,
         )
-        item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
-            dota2_item_matches,
-            dota2_item_cache_dir,
-            work_dir / "dota2_item_references.png",
+        item_reference_cache_key = "dota2-items:" + "|".join(
+            match.item.icon_slug for match in dota2_item_matches
         )
+        cached_item_reference = reference_cache.get(item_reference_cache_key)
+        if isinstance(cached_item_reference, dict) and Path(
+            str(cached_item_reference.get("path") or "")
+        ).is_file():
+            item_reference_path = Path(str(cached_item_reference["path"]))
+            item_reference_errors = list(cached_item_reference.get("errors") or [])
+            reference_cache_hits.append("dota2_items")
+        else:
+            item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
+                dota2_item_matches,
+                dota2_item_cache_dir,
+                work_dir / "dota2_item_references.png",
+            )
+            if item_reference_path is not None:
+                reference_cache[item_reference_cache_key] = {
+                    "path": str(item_reference_path),
+                    "errors": list(item_reference_errors),
+                }
         details["ai_cover_dota2_items"] = [
             {
                 "alias": match.alias,
@@ -4491,13 +4574,29 @@ def generate_recording_cover_with_ai(
                 item_reference_errors,
             )
     if tooltip_hero:
-        hero_reference_path, official_hero, hero_reference_error = (
-            build_dota2_hero_reference(
-                tooltip_hero,
-                Path("/data/cache/dota2/heroes"),
-                work_dir / "dota2_hero_reference.png",
+        hero_reference_cache_key = f"dota2-hero:{tooltip_hero}"
+        cached_hero_reference = reference_cache.get(hero_reference_cache_key)
+        if isinstance(cached_hero_reference, dict) and Path(
+            str(cached_hero_reference.get("path") or "")
+        ).is_file():
+            hero_reference_path = Path(str(cached_hero_reference["path"]))
+            official_hero = cached_hero_reference.get("hero")
+            hero_reference_error = str(cached_hero_reference.get("error") or "")
+            reference_cache_hits.append("dota2_hero")
+        else:
+            hero_reference_path, official_hero, hero_reference_error = (
+                build_dota2_hero_reference(
+                    tooltip_hero,
+                    Path("/data/cache/dota2/heroes"),
+                    work_dir / "dota2_hero_reference.png",
+                )
             )
-        )
+            if hero_reference_path is not None:
+                reference_cache[hero_reference_cache_key] = {
+                    "path": str(hero_reference_path),
+                    "hero": official_hero,
+                    "error": hero_reference_error,
+                }
         details["ai_cover_dota2_official_hero"] = (
             {
                 "chinese_name": official_hero.chinese_name,
@@ -4530,12 +4629,12 @@ def generate_recording_cover_with_ai(
                 "本局英雄的官方参考图不可用。为避免画错英雄，禁止展示任何具体英雄。"
             )
     dota2_ability_matches = (
-        match_dota2_abilities(title, ai_topic, description)
+        match_dota2_abilities(cover_title, cover_ai_topic, cover_event_context)
         if recording_cover_has_dota2_context(
             streamer,
-            title,
-            ai_topic,
-            description,
+            cover_title,
+            cover_ai_topic,
+            cover_event_context,
         )
         else []
     )
@@ -4543,13 +4642,31 @@ def generate_recording_cover_with_ai(
         dota2_ability_matches
     )
     if dota2_ability_matches:
-        ability_reference_path, ability_reference_errors = (
-            build_dota2_ability_reference_sheet(
-                dota2_ability_matches,
-                resolve_path(".dota2-ability-cache", cfg),
-                work_dir / "dota2_ability_references.png",
-            )
+        ability_reference_cache_key = "dota2-abilities:" + "|".join(
+            match.ability.icon_slug for match in dota2_ability_matches
         )
+        cached_ability_reference = reference_cache.get(ability_reference_cache_key)
+        if isinstance(cached_ability_reference, dict) and Path(
+            str(cached_ability_reference.get("path") or "")
+        ).is_file():
+            ability_reference_path = Path(str(cached_ability_reference["path"]))
+            ability_reference_errors = list(
+                cached_ability_reference.get("errors") or []
+            )
+            reference_cache_hits.append("dota2_abilities")
+        else:
+            ability_reference_path, ability_reference_errors = (
+                build_dota2_ability_reference_sheet(
+                    dota2_ability_matches,
+                    resolve_path(".dota2-ability-cache", cfg),
+                    work_dir / "dota2_ability_references.png",
+                )
+            )
+            if ability_reference_path is not None:
+                reference_cache[ability_reference_cache_key] = {
+                    "path": str(ability_reference_path),
+                    "errors": list(ability_reference_errors),
+                }
         details["ai_cover_dota2_abilities"] = [
             {
                 "alias": match.alias,
@@ -4577,16 +4694,16 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_ability_reference_used"] = False
     dota2_streamer_instruction = recording_cover_dota2_streamer_instruction(
         streamer,
-        title,
+        cover_title,
     )
     streamer_expression_instruction = recording_cover_streamer_expression_instruction(
         streamer,
-        title,
-        ai_topic,
+        cover_title,
+        cover_ai_topic,
         cover_event_context,
     )
     streamer_role, streamer_role_instruction = (
-        recording_cover_streamer_role_instruction(streamer, title)
+        recording_cover_streamer_role_instruction(streamer, cover_title)
     )
     details["ai_cover_streamer_role"] = streamer_role
     reference_map_instruction = "\n".join(
@@ -4606,6 +4723,7 @@ def generate_recording_cover_with_ai(
         "昵称映射或房间自定义提示词中出现，也一律不得画进封面。Image 1 始终是当前主播的"
         "唯一身份来源，其他图片不得改变、融合或替换 Image 1 的脸部与角色特征。"
     )
+    details["ai_cover_shared_reference_cache_hits"] = list(reference_cache_hits)
     target_width, target_height = target_size or (1146, 717)
     orientation = "横向" if target_width >= target_height else "竖向"
     aspect_label = (
@@ -4671,6 +4789,12 @@ def generate_recording_cover_with_ai(
         )
     prompt = f"""
 为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
+先按以下固定顺序完成设计，不得让后面的装饰要求覆盖前面的硬约束：
+1. 事实：只采用第一核心事件与已核验事件上下文，忽略简介中其他时间点的英雄、技能、装备和人物；
+2. 身份：先锁定 Image 1 的当前主播，再按人物白名单处理有独立身份参考的次要人物；
+3. 构图：按当前画幅和经典分离/英雄融合模式安排主体，并为完整文案预留安全区；
+4. 文案：只绘制给定封面短文案，逐字保留；无安全文案时保持无字；
+5. 装饰：最后才加入已附官方参考的英雄、装备、技能和氛围，不得新增名单外元素。
 主播：{streamer or "主播"}
 封面主角称呼：{cover_subject_name or streamer or "主播"}
 完整投稿标题中的第一核心事件（只用于事实边界，不要求全部写在封面上）：{source_headline}
@@ -6424,6 +6548,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "ass"
         upload_video = video
+        danmaku_burned_for_upload = False
         ass_path = None
         comments = []
         store.stage(key, "ass", "running", {"danmaku_xml": str(danmaku_xml) if danmaku_xml else None})
@@ -6459,6 +6584,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                         )
                         if reusable_burn is not None:
                             upload_video = reusable_burn
+                            danmaku_burned_for_upload = True
                             burn_stage_details.update(reuse_details)
                             store.stage(key, "burn", "completed", burn_stage_details)
 
@@ -6490,6 +6616,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                             queue_status_callback=update_burn_queue,
                             progress_callback=update_burn_progress,
                         )
+                        danmaku_burned_for_upload = True
                         store.stage(key, "burn", "completed", {
                             **burn_stage_details,
                             "burned_video_path": str(upload_video),
@@ -6912,6 +7039,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 tags = dedupe_recording_tags(override_tags, limit=6)
             partition = str(review_override.get("partition_id") or partition).strip()
 
+        if danmaku_burned_for_upload:
+            title = recording_danmaku_edition_title(title)
+
         tags = dedupe_recording_tags(tags, limit=12)
 
         page_title = recording_part_title(video, part_number, part_topic)
@@ -7147,6 +7277,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
 
         current_stage = "cover_16x9"
         cover_generation: dict[str, Any] = {}
+        cover_reference_cache: dict[str, Any] = {}
         cover16_status = "skipped"
         cover43_status = "skipped"
         session_cover = str(multipart.get("cover_path") or "").strip() if multipart else ""
@@ -7236,6 +7367,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     game_context=cover_game_context,
                     game_context_locked=True,
                     cover_text=str(ai_details.get("cover_text") or ""),
+                    shared_reference_cache=cover_reference_cache,
                 )
                 if generated_cover:
                     cover = generated_cover
@@ -7327,6 +7459,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     game_context=cover_game_context,
                     game_context_locked=True,
                     cover_text=str(ai_details.get("cover_text") or ""),
+                    shared_reference_cache=cover_reference_cache,
                 )
                 if generated_cover43:
                     cover43 = generated_cover43

@@ -4127,8 +4127,10 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
 本直播间的简介要求：{description_prompt}
 本直播间自定义要求只能补充题材重点、语气和风格，不能推翻证据边界、人物关系、标题长度、长录播覆盖、
 主播名使用、5W1H缺证省略和风险过滤规则。较负面的未经证实现实传言必须删除。
-同时返回 cover_text：只压缩标题中排序第一的核心事件，优先8至18字、最多24字，可比投稿标题短；不得新增事实、
-不得强塞主播名、不得删除中性消息的来源限定。无法安全压缩时返回空字符串。
+同时返回 cover_text：只压缩标题中排序第一的核心事件，证据充足时优先16至24字、最多28字，可比投稿标题短；
+应保留人物或英雄、关键装备或阶段、核心动作、转折或结果中至少两类有区分度的信息，不要只剩泛化动作；
+有效内容确实稀疏时可用8至15字。不得新增事实、不得强塞主播名、不得删除中性消息的来源限定。
+无法安全压缩时返回空字符串。
 返回 JSON：{{"title_topic":"...","cover_text":"...","coverage_mode":"main_arc","selected_timeline_indexes":[0,4],"description":"..."}}。
 """.strip()
             generated: dict[str, Any] = {}
@@ -4603,6 +4605,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
                 generation_id = uuid.uuid4().hex
                 generated_variants: list[str] = []
+                cover_reference_cache: dict[str, Any] = {}
                 variants = (
                     ("16x9", (1920, 1080), artifact_dir / "ai_cover_16x9.jpg"),
                     ("4x3", (1600, 1200), artifact_dir / "ai_cover_4x3.jpg"),
@@ -4634,6 +4637,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                                 game_context=cover_game_context,
                                 game_context_locked=True,
                                 cover_text=cover_text,
+                                shared_reference_cache=cover_reference_cache,
                             )
                         )
                         cover_details[variant] = variant_details
