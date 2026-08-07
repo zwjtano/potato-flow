@@ -40,6 +40,8 @@ from dota2_abilities import (
 from dota2_items import (
     build_dota2_item_reference_sheet,
     dota2_item_prompt_instruction,
+    dota2_item_visual_context_prompt_instruction,
+    load_dota2_item_visual_contexts,
     match_dota2_items,
     prioritize_dota2_item_matches,
 )
@@ -158,7 +160,9 @@ DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "参考图只用于人物身份，不得复制其中的文字、水印、直播界面和无关背景。DOTA2 英雄和技能必须符合游戏原设；"
     "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备。"
     "已确认装备可以像游戏切片封面一样自由融入构图：分散在画面边缘、作为手持或身旁道具、穿戴部件或技能能量焦点，"
-    "允许随透视调整大小、角度和光效，但必须保留每件装备可辨认的官方身份特征；不得新增名单外装备、漏掉确认装备，"
+    "优先尝试把适合的装备自然穿戴或持握在人物身上；人物身上、手中或身旁已经出现就算一次完整展示，"
+    "同一件不得再以悬浮图标、背景回声、镜像、倒影或装饰重复出现。允许随透视调整大小、角度和光效，"
+    "但必须保留每件装备可辨认的官方身份特征；不得新增名单外装备、漏掉确认装备，"
     "不得把两件装备融合为一件，也不要绘制呆板的游戏物品栏 UI。"
     "游戏名、英雄、装备、人物动作、比赛结果和情绪方向只能来自最终标题与已核验事件上下文；"
     "讨论或观战内容缺少可靠游戏画面时使用人物反应和抽象氛围，不得补画具体英雄或胜负。"
@@ -3117,6 +3121,8 @@ def dota2_gsi_equipment_prompt_instruction(
         "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
         "图像模型可以依据随附的 Valve 官方装备图标参考自由表现全部已确认装备："
         "可将装备集中或分散在画面边缘，作为角色手持、穿戴、身旁道具或技能能量焦点，"
+        "优先尝试把适合的装备自然穿戴或持握在人物身上；人物身上、手中或身旁已经出现就算一次完整展示，"
+        "同一件不得再以悬浮图标、背景回声、镜像、倒影或装饰重复出现。"
         "并随透视调整大小、角度与光效，但必须保留每件装备可辨认的官方身份特征；"
         "最多六格主装备以及单独确认的中立物品、神杖或魔晶状态都不得只挑两件省略。"
         "不得新增名单外装备、把两件装备融合为一件或绘制呆板的游戏物品栏 UI；"
@@ -4347,6 +4353,11 @@ def generate_recording_cover_with_ai(
         details["ai_cover_dota2_source"] = "text_match"
     dota2_item_cache_dir = resolve_path(".dota2-item-cache", cfg)
     if dota2_item_matches:
+        item_visual_contexts = load_dota2_item_visual_contexts(dota2_item_matches)
+        details["ai_cover_dota2_item_visual_contexts"] = item_visual_contexts
+        dota2_item_instruction += dota2_item_visual_context_prompt_instruction(
+            item_visual_contexts
+        )
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
             dota2_item_cache_dir,

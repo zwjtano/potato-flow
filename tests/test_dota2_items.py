@@ -87,11 +87,44 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("不得把两件装备融合成一件", instruction)
         self.assertIn("自由表现全部已确认装备", instruction)
         self.assertIn("必须清楚表现识别结果中的全部装备", instruction)
+        self.assertIn("每件确认装备在整张图中必须恰好出现一次", instruction)
+        self.assertIn("穿戴、手持或身旁出现都已经计数", instruction)
+        self.assertIn("背景回声、镜像、倒影", instruction)
         self.assertIn("独立道具插画、清晰描边与光效层次", instruction)
         self.assertIn("不得把商店图标原样贴成带黑底和名称的卡片", instruction)
         self.assertIn("主播与英雄一前一后构成主视觉", instruction)
         self.assertIn("重点装备可以更大", instruction)
         self.assertIn("装备不得遮脸、压字或贴边裁断", instruction)
+
+    def test_item_visual_context_prompt_supports_natural_wearing_without_duplicates(self):
+        instruction = dota2_items.dota2_item_visual_context_prompt_instruction(
+            [
+                {
+                    "chinese_name": "恐鳌之心",
+                    "english_name": "Heart of Tarrasque",
+                    "icon_slug": "heart",
+                    "lore": "保存完好的心脏，来自早已绝种的怪兽。",
+                    "function": "提升携带者的耐久力。",
+                },
+                {
+                    "chinese_name": "远行鞋",
+                    "english_name": "Boots of Travel",
+                    "icon_slug": "travel_boots",
+                    "lore": "足生双翼，上天入地。",
+                    "function": "升级回城能力。",
+                },
+            ]
+        )
+        self.assertIn("Valve 官方装备背景与功能", instruction)
+        self.assertIn("自然设计成人物已经穿戴的护甲、鞋、披风或饰品", instruction)
+        self.assertIn("人物身上、手中或身旁已经出现的装备就算完成一次展示", instruction)
+        self.assertIn("不得再在边缘、背景、倒影或装饰层复制同一件", instruction)
+
+    def test_official_item_text_removes_html_and_template_tokens(self):
+        cleaned = dota2_items._clean_official_item_text(
+            "<h1>主动：闪烁</h1>传送到%blink_range%距离。<br><br>持续%duration%秒。"
+        )
+        self.assertEqual(cleaned, "主动：闪烁传送到距离。；持续秒。")
 
     def test_title_item_is_prioritized_without_adding_items_outside_gsi(self):
         available = dota2_items.match_dota2_items("魔瓶 BKB 羊刀")
