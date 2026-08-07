@@ -315,11 +315,18 @@ DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
         "body_core",
         "固定在胸甲、肩甲或腰带的独立能量插槽内；必须与身体连接，禁止自由悬浮",
         (
-            "aether_lens", "aghanims_shard", "ultimate_scepter_2", "refresher",
-            "octarine_core", "lotus_orb", "sphere", "bloodstone",
-            "moon_shard", "gem", "refresher_shard", "essence_distiller",
+            "aether_lens", "aghanims_shard", "ultimate_scepter_2", "essence_distiller",
             "conjurers_catalyst", "dormant_curio", "point_booster", "idol_of_screeauk",
             "stormcrafter",
+        ),
+    ),
+    (
+        "floating_orb",
+        "保持官方球体或核心轮廓，作为人物手掌上方或单侧肩旁的独立悬浮能量焦点；"
+        "不得嵌进身体、改成技能光球、贴到画面边缘或与其他球类排成一圈",
+        (
+            "refresher", "octarine_core", "lotus_orb", "sphere", "bloodstone",
+            "moon_shard", "gem", "refresher_shard",
         ),
     ),
     (
@@ -400,7 +407,7 @@ def _build_item_placement_presets() -> dict[str, dict[str, object]]:
             presets[slug] = {
                 "slot": slot,
                 "placement": placement,
-                "floating_allowed": False,
+                "floating_allowed": slot == "floating_orb",
             }
     return presets
 
@@ -656,6 +663,7 @@ def dota2_item_placement_plan(
         "lotus", "heart", "eye", "moon", "aegis", "cheese", "smoke",
         "ward", "locket", "pendant", "ring",
     )
+    floating_tokens = ("orb", "sphere")
     def has_token(slug: str, tokens: tuple[str, ...]) -> bool:
         parts = set(slug.split("_"))
         return any(token in parts for token in tokens)
@@ -721,6 +729,14 @@ def dota2_item_placement_plan(
             placement = "固定在背部独立装备槽，禁止临时改成手持或悬浮图标"
             preset_used = False
             floating_allowed = False
+        elif has_token(slug, floating_tokens):
+            slot = "future_floating_orb"
+            placement = (
+                "按官方球体轮廓作为人物手掌上方或单侧肩旁的唯一悬浮能量焦点；"
+                "不得改成技能光球、贴边或与其他装备围成一圈"
+            )
+            preset_used = False
+            floating_allowed = True
         elif has_token(slug, focus_tokens):
             slot = "future_body_core"
             placement = "固定在胸甲或腰带的独立能量插槽内，禁止自由悬浮"
