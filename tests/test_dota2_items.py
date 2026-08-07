@@ -189,10 +189,55 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("每个编号只能对应画面中的一个物理实体", instruction)
         self.assertIn("禁止再沿画面边缘展示它的图标", instruction)
         self.assertIn("自然穿戴或持握不能牺牲装备辨识度", instruction)
+        self.assertIn("右手主装备和左手副武器", instruction)
+        self.assertIn("禁止把两件融合、交叉遮没、连成一把", instruction)
         self.assertIn("缩略图中仍应逐件可辨", instruction)
         self.assertIn("达到 2500 金币的高级装备全部使用高辨识优先", instruction)
         self.assertIn("禁止重新排成围绕人物的图标圈", instruction)
         self.assertIn("泛化护甲、武器和装饰不得复刻名单内装备", instruction)
+
+    def test_dual_hand_plan_keeps_wings_chest_core_and_back_blade_distinct(self):
+        matches = dota2_items.match_dota2_items(
+            "假腿 冰眼 大晕锤 金箍棒 蝴蝶 白银之锋"
+        )
+        plans = dota2_items.dota2_item_placement_plan(
+            matches,
+            hero_primary_attribute="agility",
+            item_visual_contexts=[
+                {"icon_slug": "power_treads", "item_cost": 1400},
+                {"icon_slug": "skadi", "item_cost": 5300},
+                {"icon_slug": "abyssal_blade", "item_cost": 6250},
+                {"icon_slug": "monkey_king_bar", "item_cost": 4975},
+                {"icon_slug": "butterfly", "item_cost": 5450},
+                {"icon_slug": "silver_edge", "item_cost": 5450},
+            ],
+        )
+        by_slug = {plan["icon_slug"]: plan for plan in plans}
+
+        self.assertEqual(by_slug["power_treads"]["slot"], "feet")
+        self.assertIn("双脚和小腿", by_slug["power_treads"]["placement"])
+        self.assertEqual(by_slug["skadi"]["slot"], "chest_frost_core")
+        self.assertIn("胸甲正中央", by_slug["skadi"]["placement"])
+        self.assertIn("蓝白冰霜", by_slug["skadi"]["placement"])
+        self.assertEqual(by_slug["abyssal_blade"]["slot"], "direct_hand")
+        self.assertTrue(by_slug["abyssal_blade"]["is_primary_handheld"])
+        self.assertIn("人物右手", by_slug["abyssal_blade"]["placement"])
+        self.assertEqual(by_slug["monkey_king_bar"]["slot"], "direct_offhand")
+        self.assertTrue(by_slug["monkey_king_bar"]["is_secondary_handheld"])
+        self.assertIn("人物左手", by_slug["monkey_king_bar"]["placement"])
+        self.assertEqual(by_slug["butterfly"]["slot"], "back_green_wings")
+        self.assertIn("绿色发光双翼", by_slug["butterfly"]["placement"])
+        self.assertEqual(by_slug["silver_edge"]["slot"], "back_center_blade")
+        self.assertIn("从绿色双翼中央穿出", by_slug["silver_edge"]["placement"])
+        self.assertFalse(by_slug["silver_edge"]["is_secondary_handheld"])
+        self.assertEqual(
+            sum(bool(plan["is_primary_handheld"]) for plan in plans),
+            1,
+        )
+        self.assertEqual(
+            sum(bool(plan["is_secondary_handheld"]) for plan in plans),
+            1,
+        )
 
     def test_all_maintained_and_runtime_items_have_explicit_placement_presets(self):
         maintained = {item.icon_slug for item in dota2_items.DOTA2_ITEMS}
