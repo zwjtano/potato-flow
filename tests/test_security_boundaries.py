@@ -95,6 +95,31 @@ class SecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(response.get_json()["message"], "已打开文件所在文件夹。")
         startfile.assert_called_once_with(str(recording.parent))
 
+    def test_delete_room_system_error_redirects_with_message_instead_of_500(self):
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(app_module, "load_config", return_value={}),
+            patch.object(
+                app_module.live_recorder_manager,
+                "delete_room_and_reload",
+                side_effect=PermissionError("file is temporarily in use"),
+            ),
+        ):
+            response = self.client.post(
+                "/live-recording/rooms/test-room/delete",
+                headers={"X-CSRF-Token": "known-token"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("/live-recording"))
+        with self.client.session_transaction() as session_state:
+            flashes = session_state.get("_flashes", [])
+        self.assertIn(
+            ("danger", "删除直播间失败，请稍后重试；已有录播文件和上传任务未删除。"),
+            flashes,
+        )
+
     def test_password_hash_and_legacy_password_verification(self):
         hashed = app_module.generate_password_hash("correct horse")
 

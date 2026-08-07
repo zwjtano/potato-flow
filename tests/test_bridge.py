@@ -317,6 +317,11 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得新增名单外装备", prompt)
         self.assertIn("人物身上、手中或身旁已经出现就算一次完整展示", prompt)
         self.assertIn("背景回声、镜像、倒影", prompt)
+        self.assertIn("禁止环形、放射状、花环式", prompt)
+        self.assertIn("不能沿四周边缘逐件悬浮", prompt)
+        self.assertIn("美观与识别度同等重要", prompt)
+        self.assertIn("合理透视、材质光影、前后景和人物动作", prompt)
+        self.assertNotIn("分散在画面边缘", prompt)
         self.assertIn("标题已经包含当前主播时", prompt)
         self.assertIn("标题没有当前主播时不得强塞名字", prompt)
         self.assertIn("排序第一", prompt)
@@ -529,7 +534,19 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("独立道具插画、清晰描边与光效层次", prompt)
         self.assertIn("只画该人物 Cos 已确认英雄作为唯一人物主视觉", prompt)
         self.assertIn("禁止在后方、侧面或背景再次绘制英雄本体", prompt)
+        self.assertIn("禁止环形、放射状、花环式", prompt)
+        self.assertIn("不能沿上缘、两侧或四周边缘逐件悬浮", prompt)
+        self.assertIn("不能退化成外围图标圈", prompt)
+        self.assertIn("美观与识别度同等重要", prompt)
+        self.assertIn("生硬的大图标、贴纸或等尺寸陈列", prompt)
+        self.assertNotIn("装备沿画面上缘和两侧错落分布", prompt)
         self.assertNotIn("不得额外添加第七件装备", prompt)
+
+    def test_four_by_three_cover_forbids_equipment_ring_layout(self):
+        source = Path(bridge.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("画幅变窄时也不得把装备改成围绕人物的一圈悬浮图标", source)
+        self.assertIn("剩余装备只在一处次要区域形成不对称层次", source)
 
     def test_known_dota2_items_do_not_silently_continue_without_references(self):
         with self.assertRaisesRegex(RuntimeError, "已停止生成"):
@@ -4073,10 +4090,10 @@ class BridgeTests(unittest.TestCase):
             gameplay_verified=True,
         )
         self.assertIn("本人 Cos 本局英雄", instruction)
-        self.assertIn("保留封面人物底稿中的脸部", instruction)
+        self.assertIn("直接沿用封面人物底稿原有的脸部", instruction)
         self.assertIn("不得把主播的脸直接替换成英雄原脸", instruction)
-        self.assertIn("高质量二次元 Q 版或游戏切片插画风格", instruction)
-        self.assertIn("禁止照片皮肤、真人摄影、写实人像", instruction)
+        self.assertIn("人物脸部不得动漫化、Q版化、真人化", instruction)
+        self.assertIn("两种画幅都必须锁定同一底稿形象", instruction)
         self.assertIn("该 Cos 主播就是画面中唯一的 光之守卫 角色", instruction)
         self.assertIn("禁止在后方、侧面、背景或技能特效中", instruction)
         self.assertIn("再次生成英雄本体", instruction)
@@ -4304,8 +4321,11 @@ class BridgeTests(unittest.TestCase):
         edit_kwargs = image_edit.call_args.kwargs
         self.assertEqual(edit_kwargs["model"], "gpt-image-2")
         self.assertEqual(edit_kwargs["size"], "1536x1024")
+        self.assertEqual(edit_kwargs["input_fidelity"], "high")
         self.assertEqual(Path(edit_kwargs["image"].name), avatar)
         self.assertIn("直播间头像", edit_kwargs["prompt"])
+        self.assertIn("允许根据直播主题受控二创", edit_kwargs["prompt"])
+        self.assertIn("真人或卡通属性不能明显偏离", edit_kwargs["prompt"])
         self.assertNotIn("蓝色鱼形头套", edit_kwargs["prompt"])
         self.assertIn("YYF 的表情与本段内容联动", edit_kwargs["prompt"])
         self.assertIn("碾压或连胜", edit_kwargs["prompt"])
@@ -4670,7 +4690,7 @@ class BridgeTests(unittest.TestCase):
         instruction = bridge.recording_cover_reference_instruction("果小果")
         self.assertIn("头顶荷包蛋发饰", instruction)
         self.assertIn("绝对不能画成蛋壳", instruction)
-        self.assertIn("禁止改成真人", instruction)
+        self.assertIn("禁止重绘成另一种动漫脸或改成真人", instruction)
 
     def test_xiebin_dd_reference_aliases_are_recognized(self):
         self.assertTrue(bridge.XIEBIN_DD_COVER_REFERENCE.is_file())
@@ -4683,8 +4703,8 @@ class BridgeTests(unittest.TestCase):
         instruction = bridge.recording_cover_reference_instruction("谢彬DD")
         self.assertIn("经过裁切的固定人物底稿", instruction)
         self.assertIn("短黑发、脸型、眉眼、鼻唇", instruction)
-        self.assertIn("不得保留真人摄影皮肤", instruction)
-        self.assertIn("不得生成另一张脸", instruction)
+        self.assertIn("保留底稿的真人原貌与原始画风", instruction)
+        self.assertIn("不得动漫化、Q版化、换脸", instruction)
 
     def test_load_config_rejects_non_object(self):
         with tempfile.TemporaryDirectory() as temp:

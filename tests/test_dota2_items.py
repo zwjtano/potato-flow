@@ -88,6 +88,9 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("丰富表现全部已确认装备", instruction)
         self.assertIn("必须严格服从后续逐件位置计划", instruction)
         self.assertIn("必须清楚表现识别结果中的全部装备", instruction)
+        self.assertIn("按整数倍无插值放大", instruction)
+        self.assertIn("二创为边缘清楚、材质明确的高清实体装备", instruction)
+        self.assertIn("不得偏离官方轮廓、主色、构件关系和核心符号", instruction)
         self.assertIn("每件确认装备在整张图中必须恰好出现一次", instruction)
         self.assertIn("穿戴、手持或身旁出现都已经计数", instruction)
         self.assertIn("背景回声、镜像、倒影", instruction)
@@ -99,6 +102,10 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("装备不得遮脸、压字或贴边裁断", instruction)
         self.assertNotIn("装备沿画面上缘和两侧错落分布", instruction)
         self.assertIn("只有没有被人物穿戴、手持、背负或腰挂的身旁道具", instruction)
+        self.assertIn("禁止环形、放射状、花环式", instruction)
+        self.assertIn("美观与识别度同等重要", instruction)
+        self.assertIn("合理透视、材质光影、前后景和人物动作", instruction)
+        self.assertNotIn("其余装备仍须作为边缘辅助信息", instruction)
 
     def test_item_visual_context_prompt_supports_natural_wearing_without_duplicates(self):
         instruction = dota2_items.dota2_item_visual_context_prompt_instruction(
@@ -144,6 +151,7 @@ class Dota2ItemsTests(unittest.TestCase):
             ],
         )
         by_slug = {plan["icon_slug"]: plan["placement"] for plan in plans}
+        plan_by_slug = {plan["icon_slug"]: plan for plan in plans}
         self.assertIn("胸甲正中央", by_slug["heart"])
         self.assertIn("适合手持的装备中最高", by_slug["overwhelming_blink"])
         self.assertIn("6800 金币", by_slug["overwhelming_blink"])
@@ -152,6 +160,10 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("阿哈利姆神杖就是 A 杖", by_slug["ultimate_scepter"])
         self.assertIn("不是智力英雄", by_slug["ultimate_scepter"])
         self.assertIn("禁止手持", by_slug["ultimate_scepter"])
+        self.assertTrue(plan_by_slug["heart"]["high_value"])
+        self.assertIn("属于高级装备", by_slug["heart"])
+        self.assertTrue(plan_by_slug["travel_boots"]["high_value"])
+        self.assertFalse(plan_by_slug["conjurers_catalyst"]["high_value"])
         a_scepter_matches = dota2_items.match_dota2_items("A杖 BKB")
         intelligence_plans = dota2_items.dota2_item_placement_plan(
             a_scepter_matches,
@@ -176,6 +188,10 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("逐件单次实体分配", instruction)
         self.assertIn("每个编号只能对应画面中的一个物理实体", instruction)
         self.assertIn("禁止再沿画面边缘展示它的图标", instruction)
+        self.assertIn("自然穿戴或持握不能牺牲装备辨识度", instruction)
+        self.assertIn("缩略图中仍应逐件可辨", instruction)
+        self.assertIn("达到 2500 金币的高级装备全部使用高辨识优先", instruction)
+        self.assertIn("禁止重新排成围绕人物的图标圈", instruction)
         self.assertIn("泛化护甲、武器和装饰不得复刻名单内装备", instruction)
 
     def test_all_maintained_and_runtime_items_have_explicit_placement_presets(self):
@@ -194,6 +210,7 @@ class Dota2ItemsTests(unittest.TestCase):
 
     def test_shape_specific_items_use_matching_physical_slots(self):
         presets = dota2_items.DOTA2_ITEM_PLACEMENT_PRESETS
+        self.assertEqual(presets["witch_blade"]["slot"], "waist_short_weapon")
         self.assertEqual(presets["spellslinger"]["slot"], "neck_chest_accessory")
         self.assertEqual(presets["eagle"]["slot"], "back_long_weapon")
         self.assertEqual(presets["relic"]["slot"], "back_blade")
@@ -247,8 +264,19 @@ class Dota2ItemsTests(unittest.TestCase):
             self.assertIsNotNone(sheet)
             self.assertTrue(sheet.is_file())
             with Image.open(sheet) as image:
-                self.assertGreaterEqual(image.width, 560)
-                self.assertGreater(image.height, 190)
+                self.assertGreaterEqual(image.width, 688)
+                self.assertGreater(image.height, 264)
+
+    def test_small_official_icon_is_upscaled_and_sharpened_for_model_reference(self):
+        source = Image.new("RGBA", (88, 64), "#101820")
+        for offset in range(20):
+            source.putpixel((20 + offset, 20), (255, 40, 180, 255))
+
+        prepared = dota2_items.prepare_dota2_item_reference_icon(source)
+
+        self.assertEqual(prepared.size, (264, 192))
+        self.assertEqual(prepared.mode, "RGBA")
+        self.assertEqual(prepared.getpixel((60, 60)), source.getpixel((20, 20)))
 
 if __name__ == "__main__":
     unittest.main()
