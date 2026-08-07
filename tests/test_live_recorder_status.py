@@ -2301,6 +2301,33 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(state, "pending")
         ensure_thread.assert_called_once_with()
 
+    def test_delete_room_turns_config_write_error_into_visible_warning(self):
+        manager = LiveRecorderManager()
+        with mock.patch.object(
+            manager, "list_rooms", return_value=self.rooms
+        ), mock.patch.object(
+            recorder_module, "_atomic_json", side_effect=PermissionError("file in use")
+        ):
+            with self.assertRaisesRegex(RecorderConfigError, "无法更新直播间配置"):
+                manager.delete_room("aaaaaa111111")
+
+    def test_delete_room_turns_windows_reload_error_into_visible_warning(self):
+        manager = LiveRecorderManager()
+        with mock.patch.object(manager, "_pid", return_value=4321), mock.patch.object(
+            manager, "list_rooms", side_effect=[self.rooms, [self.rooms[1]]]
+        ), mock.patch.object(
+            manager,
+            "rooms_with_status",
+            return_value=[
+                dict(self.rooms[0], runtime={"recording": False}),
+                dict(self.rooms[1], runtime={"recording": False}),
+            ],
+        ), mock.patch.object(manager, "delete_room", return_value=True), mock.patch.object(
+            manager, "stop", side_effect=PermissionError("file in use")
+        ):
+            with self.assertRaisesRegex(RecorderConfigError, "直播间已删除"):
+                manager.delete_room_and_reload("aaaaaa111111")
+
     def test_bridge_profiles_receive_streamer_name_and_default_title_template(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2547,6 +2574,14 @@ class LiveRecorderStatusTests(unittest.TestCase):
         )
         self.assertIn(
             'html[data-theme="dark"] .recording-task-card .recording-progress-trigger',
+            tasks,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live',
+            tasks,
+        )
+        self.assertIn(
+            'html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress',
             tasks,
         )
         self.assertIn("{{ job.progress_label }}", tasks)

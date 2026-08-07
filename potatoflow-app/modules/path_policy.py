@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import time
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -77,6 +78,16 @@ def atomic_write_text(
     try:
         temporary.write_text(text, encoding=encoding)
         enforce_file_mode(temporary, private=private)
-        temporary.replace(destination)
+        # Windows may briefly keep a configuration file open while the
+        # recorder reloads it. Retrying the atomic replace avoids surfacing a
+        # transient sharing violation as an Internal Server Error.
+        for attempt in range(8):
+            try:
+                temporary.replace(destination)
+                break
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     finally:
         temporary.unlink(missing_ok=True)

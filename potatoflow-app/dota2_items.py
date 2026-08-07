@@ -26,6 +26,7 @@ DOTA2_ITEM_ICON_BASE_URL = (
 )
 MAX_MATCHED_ITEMS = 8
 MAX_ITEM_ICON_BYTES = 4 * 1024 * 1024
+HIGH_VALUE_ITEM_COST = 2500
 
 
 @dataclass(frozen=True)
@@ -620,6 +621,7 @@ def dota2_item_placement_plan(
     for match in normalized_matches:
         slug = match.item.icon_slug.lower()
         item_cost = item_costs.get(slug, 0)
+        high_value = item_cost >= HIGH_VALUE_ITEM_COST
         if slug == handheld_slug:
             slot = "direct_hand"
             if slug == "ultimate_scepter":
@@ -675,6 +677,12 @@ def dota2_item_placement_plan(
         slot_index = slot_counts[slot]
         if slot_index > 1:
             placement += f"；这是该位置第{slot_index}件，必须与前一件分层分开"
+        if high_value:
+            placement += (
+                f"；官方价格 {item_cost} 金币，属于高级装备，必须获得高辨识优先："
+                "完整露出官方轮廓、主色、材质和核心符号，尺寸与明暗对比不得低于普通补给品，"
+                "也不得因穿戴、持握或挂载而缩成难以辨认的小装饰"
+            )
         plans.append(
             {
                 "chinese_name": match.item.chinese_name,
@@ -686,6 +694,7 @@ def dota2_item_placement_plan(
                 "preset_used": preset_used,
                 "hero_primary_attribute": hero_primary_attribute,
                 "item_cost": item_cost,
+                "high_value": high_value,
                 "is_primary_handheld": slug == handheld_slug,
             }
         )
@@ -708,6 +717,12 @@ def dota2_item_placement_plan_prompt_instruction(
         + "；".join(rows)
         + "。每个编号只能对应画面中的一个物理实体；穿在人物身上、拿在手里、固定在背部或腰间后，"
         "禁止再沿画面边缘展示它的图标。不得改变已分配的位置；只有逐件计划明确写出允许悬浮时才可悬浮一处。"
+        "自然穿戴或持握不能牺牲装备辨识度：每件装备的官方轮廓、主色、材质和标志性符号都要完整露出，"
+        "不能被身体、标题、光效或其他装备遮成普通武器和泛化装饰；缩略图中仍应逐件可辨。"
+        "美观与识别度同等重要：禁止为露全装备而使用生硬的大图标、贴纸或等尺寸陈列；"
+        "必须用合理透视、材质光影、前后景和人物动作把装备自然融入场景。"
+        f"官方价格达到 {HIGH_VALUE_ITEM_COST} 金币的高级装备全部使用高辨识优先，不能只突出其中一两件；"
+        "高级装备通过更清楚的完整轮廓、局部尺寸和明暗对比形成重点，禁止重新排成围绕人物的图标圈。"
         "人物的泛化护甲、武器和装饰不得复刻名单内装备的核心轮廓、主色和符号，"
         "避免形成视觉上的第二件同款。"
     )
@@ -802,8 +817,14 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "对应物品，不能按字面画成现实物品，也不能替换成《英雄联盟》或其他游戏装备。"
         f"本次装备识别结果：{resolved}。"
         "随附的 DOTA 2 OFFICIAL ITEM ICON REFERENCES 是这些装备的官方游戏图标参考板；"
+        "参考板已将 Valve 的低分辨率界面图标按整数倍无插值放大，只负责锁定身份；"
+        "成图不得照搬其中的低清像素或模糊纹理，应二创为边缘清楚、材质明确的高清实体装备，"
+        "但不得偏离官方轮廓、主色、构件关系和核心符号。"
         "识别结果非空时，封面必须清楚表现识别结果中的全部装备；"
-        "标题直接点名的装备可放大或靠近事件主体作为重点，其余装备仍须作为边缘辅助信息完整出现。"
+        "标题直接点名的装备可放大或靠近事件主体作为重点，其余装备仍须通过穿戴、持握、背负、"
+        "腰挂或不对称场景道具完整出现，禁止平均铺在画面边缘。"
+        "美观与识别度同等重要：不得将装备处理成生硬的大图标、贴纸或等尺寸陈列，"
+        "应以合理透视、材质光影、前后景和人物动作自然融入画面。"
         "必须以参考板中的轮廓、主色、材质与核心符号为准，"
         "每件装备保持独立，不得把两件装备融合成一件。可以将图标风格转化为精致插画道具，"
         "但不能改变其身份特征；没有出现在识别结果中的装备不要擅自添加。"
@@ -818,7 +839,8 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "不得把商店图标原样贴成带黑底和名称的卡片。Dota 2 封面优先采用不对称切片构图："
         "有明确玩家或主播人物底稿时，只画该人物 Cos 已确认英雄作为唯一人物主视觉，禁止再画英雄本体、"
         "英雄脸、英雄剪影或第二个人物；没有可靠人物身份时才用英雄本体。标题放在另一侧或下方并按完整语义分成两至三行；"
-        "只有没有被人物穿戴、手持、背负或腰挂的身旁道具，才可沿画面上缘和两侧错落分布；"
+        "只有没有被人物穿戴、手持、背负或腰挂的身旁道具，才可集中在一处次要场景区域并按不同景深不对称分布；"
+        "禁止环形、放射状、花环式、左右对称或沿上缘和两侧围绕人物排列；"
         "标题直接点名的重点装备可以更大，其余装备较小但仍须清楚可辨。"
         "标题与唯一人物或英雄主体始终高于装备辅助层，"
         "装备不得遮脸、压字或贴边裁断。"
@@ -855,6 +877,19 @@ def download_dota2_item_icon(item: Dota2Item, cache_dir: Path) -> Path:
         raise ValueError(f"{item.label} 官方图标无效") from exc
     temporary.replace(destination)
     return destination
+
+
+def prepare_dota2_item_reference_icon(
+    icon: Image.Image,
+    scale: int = 3,
+) -> Image.Image:
+    """Pixel-upscale Valve's small UI icon without adding false details."""
+    source = icon.convert("RGBA")
+    factor = max(1, int(scale))
+    return source.resize(
+        (source.width * factor, source.height * factor),
+        Image.Resampling.NEAREST,
+    )
 
 
 def build_dota2_item_reference_sheet(
@@ -897,8 +932,8 @@ def build_dota2_item_reference_sheet(
 
     columns = min(3, len(icons))
     rows = (len(icons) + columns - 1) // columns
-    tile_width, tile_height = 280, 190
-    header_height = 70
+    tile_width, tile_height = 344, 264
+    header_height = 76
     canvas = Image.new(
         "RGB",
         (columns * tile_width, header_height + rows * tile_height),
@@ -930,15 +965,15 @@ def build_dota2_item_reference_sheet(
             outline="#475569",
             width=2,
         )
-        icon.thumbnail((220, 128), Image.Resampling.NEAREST)
+        icon = prepare_dota2_item_reference_icon(icon)
         icon_left = left + (tile_width - icon.width) // 2
-        icon_top = top + 18
+        icon_top = top + 12
         canvas.paste(icon, (icon_left, icon_top), icon)
         label = item.english_name[:38]
         text_box = draw.textbbox((0, 0), label, font=font)
         text_width = text_box[2] - text_box[0]
         draw.text(
-            (left + (tile_width - text_width) // 2, top + 155),
+            (left + (tile_width - text_width) // 2, top + 230),
             label,
             fill="#ffffff",
             font=font,

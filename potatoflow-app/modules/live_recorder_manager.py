@@ -2042,9 +2042,14 @@ class LiveRecorderManager:
             filtered = [room for room in rooms if room.get("id") != room_id]
             if len(filtered) == len(rooms):
                 return False
-            _atomic_json(ROOMS_PATH, filtered)
-            self.sync_configs(filtered)
-            self._write_control_state(filtered)
+            try:
+                _atomic_json(ROOMS_PATH, filtered)
+                self.sync_configs(filtered)
+                self._write_control_state(filtered)
+            except OSError as exc:
+                raise RecorderConfigError(
+                    "无法更新直播间配置，请稍后重试；已有录播文件和上传任务未删除"
+                ) from exc
             return True
 
     def delete_room_and_reload(self, room_id: str) -> str:
@@ -2065,15 +2070,20 @@ class LiveRecorderManager:
             self.delete_room(room_id)
             if not was_running:
                 return "deleted"
-            if not self.list_rooms():
+            try:
+                if not self.list_rooms():
+                    self.stop()
+                    return "stopped"
+                if other_recording:
+                    _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
+                    self._ensure_reload_thread()
+                    return "pending"
                 self.stop()
-                return "stopped"
-            if other_recording:
-                _atomic_json(RELOAD_PATH, {"requested_at": time.time()})
-                self._ensure_reload_thread()
-                return "pending"
-            self.stop()
-            self.start()
+                self.start()
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RecorderConfigError(
+                    "直播间已删除，但录制 worker 重载失败，请在录制页面重新启动录制引擎"
+                ) from exc
             return "reloaded"
 
     def _write_control_state(self, rooms: list[dict[str, Any]] | None = None) -> None:
