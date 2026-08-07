@@ -3820,6 +3820,22 @@ class BridgeTests(unittest.TestCase):
             [("BurNIng", "B神"), ("Paparazi", "拒绝者")],
         )
 
+    def test_cover_guest_candidates_do_not_treat_percentage_as_numeric_alias(self):
+        self.assertEqual(
+            bridge.recording_cover_guest_candidates(
+                "YYF",
+                "枫哥一小时RPG养成，实战输出仍为0.0%",
+            ),
+            [],
+        )
+        self.assertEqual(
+            bridge.recording_cover_guest_candidates(
+                "YYF",
+                "0.0和枫哥一起复盘",
+            ),
+            [{"name": "Sylar", "mentioned_as": "0.0"}],
+        )
+
     def test_pokemon_participant_aliases_keep_similar_people_distinct(self):
         self.assertEqual(bridge.normalize_dota2_streamer_name("狗哥"), "叁肆叁肆")
         self.assertEqual(bridge.normalize_dota2_streamer_name("三生三世"), "叁肆叁肆")
