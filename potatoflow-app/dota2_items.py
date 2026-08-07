@@ -197,6 +197,201 @@ DOTA2_ITEMS: tuple[Dota2Item, ...] = (
 )
 
 
+# Official slugs observed in the runtime icon cache but not required by the
+# curated alias table above. Keep this list so placement coverage is testable.
+DOTA2_KNOWN_RUNTIME_ITEM_SLUGS: tuple[str, ...] = (
+    "bracer", "branches", "chipped_vest", "cloak_of_flames",
+    "conjurers_catalyst", "dandelion_amulet", "defiant_shell", "devastator",
+    "dormant_curio", "dust", "eagle", "enchanters_bauble", "essence_ring",
+    "faerie_fire", "falcon_blade", "gauntlets", "giant_maul", "great_famango",
+    "gunpowder_gauntlets", "harpoon", "heavy_blade", "hydras_breath",
+    "idol_of_screeauk", "kobold_cup", "lifesteal", "mana_draught",
+    "null_talisman", "occult_bracelet", "ogre_axe", "partisans_brand",
+    "pogo_stick", "point_booster", "poor_mans_shield", "prophets_pendulum",
+    "rattlecage", "relic", "ring_of_protection", "ring_of_tarrasque",
+    "searing_signet", "serrated_shiv", "spellslinger", "staff_of_wizardry",
+    "stormcrafter", "talisman_of_evasion", "wind_lace", "wraith_band",
+)
+
+
+# Explicit physical slots for every item in the maintained catalogue plus every
+# official item icon currently cached on server 141. A future Valve item may use
+# the semantic fallback below, but known items never ask the image model to pick
+# its own wearing mode.
+DOTA2_ITEM_PLACEMENT_PRESET_GROUPS: tuple[
+    tuple[str, str, tuple[str, ...]], ...
+] = (
+    (
+        "aghanims_scepter",
+        "阿哈利姆神杖就是 A 杖；仅智力英雄直接手持，其他英雄固定在背部法器槽",
+        ("ultimate_scepter",),
+    ),
+    (
+        "back_right_staff",
+        "固定在背部右侧纵向装备槽，露出完整识别特征，不占用手持 A 杖的位置",
+        (
+            "black_king_bar", "force_staff", "rod_of_atos", "staff_of_wizardry",
+            "stormcrafter",
+        ),
+    ),
+    (
+        "back_left_staff",
+        "固定在背部左侧纵向装备槽，露出完整识别特征，不占用手持 A 杖的位置",
+        (
+            "crellas_crozier", "sheepstick", "cyclone", "wind_waker", "ghost",
+            "spellslinger",
+        ),
+    ),
+    (
+        "feet",
+        "直接穿在双脚和小腿位置，保留官方鞋靴轮廓，禁止再展示鞋类图标",
+        (
+            "arcane_boots", "boots", "power_treads", "phase_boots", "travel_boots",
+            "guardian_greaves", "boots_of_bearing", "tranquil_boots", "pogo_stick",
+        ),
+    ),
+    (
+        "head_face",
+        "直接穿戴在头部或面部的唯一装备位，保留官方头盔或面具轮廓",
+        (
+            "shivas_guard", "veil_of_discord", "hood_of_defiance", "mask_of_madness",
+            "helm_of_the_dominator", "helm_of_the_overlord", "wizard_hat", "satanic",
+            "lifesteal",
+        ),
+    ),
+    (
+        "chest_armor",
+        "直接融合为胸甲和肩甲的一个独立护甲模块，不在画面边缘重复",
+        (
+            "assault", "mekansm", "blade_mail", "splintmail", "craggy_coat",
+            "chipped_vest", "defiant_shell", "rattlecage",
+        ),
+    ),
+    (
+        "back_garment",
+        "直接穿在背部和双肩，作为唯一披风、护服、翼饰或背负装置",
+        (
+            "pipe", "glimmer_cape", "eternal_shroud", "butterfly", "shawl",
+            "consecrated_wraps", "cloak_of_flames", "eagle", "ancient_janggo",
+        ),
+    ),
+    (
+        "forearm",
+        "直接穿在前臂、手腕或手掌，作为唯一护臂、手套或爪具",
+        (
+            "hand_of_midas", "armlet", "iron_talon", "bracer", "gauntlets",
+            "gunpowder_gauntlets", "occult_bracelet", "wraith_band",
+        ),
+    ),
+    (
+        "finger_ring",
+        "直接戴在手指或手背的独立戒指位，以宝石和环形轮廓保持可辨",
+        (
+            "soul_ring", "ring_of_aquila", "ring_of_health", "ring_of_protection",
+            "ring_of_tarrasque", "essence_ring", "searing_signet",
+        ),
+    ),
+    (
+        "neck_chest_accessory",
+        "直接佩戴在颈部或胸前的独立项链、徽记或护符位，不得另画悬浮副本",
+        (
+            "orchid", "phylactery", "aeon_disk", "urn_of_shadows", "spirit_vessel",
+            "holy_locket", "solar_crest", "medallion_of_courage", "null_talisman",
+            "dandelion_amulet", "enchanters_bauble", "prophets_pendulum",
+            "talisman_of_evasion", "wind_lace",
+        ),
+    ),
+    (
+        "chest_heart",
+        "嵌入胸甲正中央，作为唯一的红色心脏核心",
+        ("heart",),
+    ),
+    (
+        "body_core",
+        "固定在胸甲、肩甲或腰带的独立能量插槽内；必须与身体连接，禁止自由悬浮",
+        (
+            "aether_lens", "aghanims_shard", "ultimate_scepter_2", "refresher",
+            "octarine_core", "lotus_orb", "sphere", "bloodstone", "skadi",
+            "moon_shard", "gem", "refresher_shard", "essence_distiller",
+            "conjurers_catalyst", "dormant_curio", "point_booster", "idol_of_screeauk",
+        ),
+    ),
+    (
+        "waist_short_weapon",
+        "收纳在腰带外侧的独立短武器或短法器槽；露出核心轮廓但不得离体悬浮",
+        (
+            "blink", "overwhelming_blink", "swift_blink", "arcane_blink", "dagon",
+            "witch_blade", "angels_demise", "lesser_crit", "ethereal_blade",
+            "magic_wand", "magic_stick", "quelling_blade", "serrated_shiv",
+            "heavy_blade", "falcon_blade", "bloodthorn",
+        ),
+    ),
+    (
+        "back_long_weapon",
+        "固定在背部外侧的独立长武器槽，保持完整轮廓并与其他武器分层错开",
+        (
+            "hurricane_pike", "gungir", "nullifier", "monkey_king_bar", "basher",
+            "abyssal_blade", "maelstrom", "mjollnir", "dragon_lance",
+            "heavens_halberd", "meteor_hammer", "devastator", "giant_maul",
+            "harpoon", "hydras_breath", "ogre_axe", "partisans_brand",
+        ),
+    ),
+    (
+        "back_blade",
+        "装入背部斜向刀鞘的独立刀剑位，多件时平行分层，禁止融合成一把",
+        (
+            "rapier", "radiance", "greater_crit", "bfury", "manta", "invis_sword",
+            "silver_edge", "desolator", "diffusal_blade", "disperser", "mage_slayer",
+            "echo_sabre", "sange", "yasha", "kaya", "sange_and_yasha",
+            "kaya_and_sange", "yasha_and_kaya",
+        ),
+    ),
+    (
+        "offhand_shield",
+        "佩戴在左前臂或背后盾架的唯一盾牌位，保留完整盾面符号",
+        (
+            "vanguard", "crimson_guard", "aegis", "poor_mans_shield",
+        ),
+    ),
+    (
+        "belt_supply",
+        "固定在腰带的独立补给袋、瓶架或挂件中；只露出一件，不得漂浮",
+        (
+            "bottle", "clarity", "flask", "famango", "great_famango", "faerie_fire",
+            "dust", "smoke_of_deceit", "cheese", "tango", "tango_single",
+            "tpscroll", "branches", "mana_draught", "kobold_cup", "relic",
+        ),
+    ),
+    (
+        "book_scroll",
+        "固定在腰后书匣或卷轴筒内，露出封面或卷轴识别特征，不得悬浮",
+        ("eldwurms_edda", "tome_of_knowledge"),
+    ),
+    (
+        "ground_tool",
+        "只在人物脚边地面出现一次，作为插地守卫或落地工具，禁止人物身上再复制",
+        ("ward_observer", "ward_sentry", "ofrenda_shovel"),
+    ),
+)
+
+
+def _build_item_placement_presets() -> dict[str, dict[str, object]]:
+    presets: dict[str, dict[str, object]] = {}
+    for slot, placement, slugs in DOTA2_ITEM_PLACEMENT_PRESET_GROUPS:
+        for slug in slugs:
+            if slug in presets:
+                raise RuntimeError(f"Dota 2 装备穿戴预设重复：{slug}")
+            presets[slug] = {
+                "slot": slot,
+                "placement": placement,
+                "floating_allowed": False,
+            }
+    return presets
+
+
+DOTA2_ITEM_PLACEMENT_PRESETS = _build_item_placement_presets()
+
+
 @lru_cache(maxsize=1)
 def _official_dota2_item_rows() -> tuple[dict[str, object], ...]:
     """Load the current raw item catalogue once from Valve's Datafeed."""
@@ -339,9 +534,11 @@ def dota2_item_visual_context_prompt_instruction(
 
 def dota2_item_placement_plan(
     matches: Iterable[Dota2ItemMatch],
-) -> list[dict[str, str]]:
+    *,
+    hero_primary_attribute: str = "",
+) -> list[dict[str, object]]:
     """Assign one physical manifestation to each item before image generation."""
-    plans: list[dict[str, str]] = []
+    plans: list[dict[str, object]] = []
     worn_tokens = (
         "boots", "greaves", "shoe", "cuirass", "guard", "mail", "armor",
         "cloak", "cape", "hood", "helm", "mask", "coat", "shawl", "hat",
@@ -362,51 +559,80 @@ def dota2_item_placement_plan(
         parts = set(slug.split("_"))
         return any(token in parts for token in tokens)
 
+    slot_counts: dict[str, int] = {}
     for match in matches:
         slug = match.item.icon_slug.lower()
         if slug == "ultimate_scepter":
-            placement = "阿哈利姆神杖就是 A 杖；必须作为唯一一根 A 杖直接拿在人物手中"
-        elif slug == "black_king_bar":
-            placement = "固定在人物背部或侧后方，只出现这一根黑皇杖，不占用手持 A 杖的位置"
-        elif slug == "crellas_crozier":
-            placement = "固定在人物背部另一侧，只出现这一根牧杖，不占用手持 A 杖的位置"
-        elif slug == "heart":
-            placement = "嵌入胸甲正中央，作为唯一的红色心脏核心"
+            if hero_primary_attribute == "intelligence":
+                slot = "direct_hand"
+                placement = "阿哈利姆神杖就是 A 杖；该英雄为智力英雄，必须作为唯一一根 A 杖直接拿在人物右手中"
+            else:
+                slot = "back_center_scepter"
+                placement = "阿哈利姆神杖就是 A 杖；该英雄不是智力英雄，固定在背部中央法器槽，禁止手持"
+            preset_used = True
+            floating_allowed = False
+        elif slug in DOTA2_ITEM_PLACEMENT_PRESETS:
+            preset = DOTA2_ITEM_PLACEMENT_PRESETS[slug]
+            slot = str(preset["slot"])
+            placement = str(preset["placement"])
+            preset_used = True
+            floating_allowed = bool(preset["floating_allowed"])
         elif has_token(slug, worn_tokens):
+            slot = "future_worn_item"
             placement = "按官方轮廓自然穿在对应身体部位，画面中不再出现同款漂浮图标"
+            preset_used = False
+            floating_allowed = False
         elif has_token(slug, held_tokens):
-            placement = "只出现为一件实体武器或法器：手持、背负或腰挂三选一"
+            slot = "future_back_weapon"
+            placement = "固定在背部独立装备槽，禁止临时改成手持或悬浮图标"
+            preset_used = False
+            floating_allowed = False
         elif has_token(slug, focus_tokens):
-            placement = "只出现为一处随身能量核心、饰品或身旁实体道具"
+            slot = "future_body_core"
+            placement = "固定在胸甲或腰带的独立能量插槽内，禁止自由悬浮"
+            preset_used = False
+            floating_allowed = False
         else:
-            placement = "只出现为一件随身实体道具，可穿戴、手持或放在身旁，但不得另画图标副本"
+            slot = "future_belt_item"
+            placement = "固定在腰带独立挂件位，禁止模型自行改成手持、穿戴或悬浮"
+            preset_used = False
+            floating_allowed = False
+        slot_counts[slot] = slot_counts.get(slot, 0) + 1
+        slot_index = slot_counts[slot]
+        if slot_index > 1:
+            placement += f"；这是该位置第{slot_index}件，必须与前一件分层分开"
         plans.append(
             {
                 "chinese_name": match.item.chinese_name,
                 "english_name": match.item.english_name,
                 "icon_slug": match.item.icon_slug,
+                "slot": slot,
                 "placement": placement,
+                "floating_allowed": floating_allowed,
+                "preset_used": preset_used,
+                "hero_primary_attribute": hero_primary_attribute,
             }
         )
     return plans
 
 
 def dota2_item_placement_plan_prompt_instruction(
-    plans: Iterable[dict[str, str]],
+    plans: Iterable[dict[str, object]],
 ) -> str:
     normalized = list(plans)
     if not normalized:
         return ""
     rows = [
-        f"{index}. {plan['chinese_name']}：{plan['placement']}"
+        f"{index}. {plan['chinese_name']}：{plan['placement']}；"
+        f"{'允许一处独立悬浮' if plan.get('floating_allowed') else '禁止独立悬浮'}"
         for index, plan in enumerate(normalized, start=1)
     ]
     return (
         "生成前先锁定以下逐件单次实体分配，成图必须逐项执行："
         + "；".join(rows)
         + "。每个编号只能对应画面中的一个物理实体；穿在人物身上、拿在手里、固定在背部或腰间后，"
-        "禁止再沿画面边缘展示它的图标。只有分配为身旁实体道具的装备才可以独立悬浮，"
-        "而且只能一处。人物的泛化护甲、武器和装饰不得复刻名单内装备的核心轮廓、主色和符号，"
+        "禁止再沿画面边缘展示它的图标。不得改变已分配的位置；只有逐件计划明确写出允许悬浮时才可悬浮一处。"
+        "人物的泛化护甲、武器和装饰不得复刻名单内装备的核心轮廓、主色和符号，"
         "避免形成视觉上的第二件同款。"
     )
 
