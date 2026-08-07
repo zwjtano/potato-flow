@@ -130,10 +130,15 @@ class Dota2Hero:
     chinese_name: str
     english_name: str
     icon_slug: str
+    primary_attribute: str = ""
 
     @property
     def label(self) -> str:
         return f"{self.chinese_name}（{self.english_name}）"
+
+    @property
+    def is_intelligence(self) -> bool:
+        return self.primary_attribute == "intelligence"
 
 
 @lru_cache(maxsize=1)
@@ -154,8 +159,21 @@ def load_official_dota2_heroes() -> tuple[Dota2Hero, ...]:
         chinese_name = str(row.get("name_loc") or "").strip()
         english_name = str(row.get("name_english_loc") or "").strip()
         slug = internal_name.removeprefix("npc_dota_hero_")
+        primary_attribute = {
+            0: "strength",
+            1: "agility",
+            2: "intelligence",
+            3: "universal",
+        }.get(row.get("primary_attr"), "")
         if chinese_name and english_name and slug:
-            result.append(Dota2Hero(chinese_name, english_name, slug))
+            result.append(
+                Dota2Hero(
+                    chinese_name,
+                    english_name,
+                    slug,
+                    primary_attribute,
+                )
+            )
     return tuple(result)
 
 

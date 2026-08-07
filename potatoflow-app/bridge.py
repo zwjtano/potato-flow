@@ -47,7 +47,7 @@ from dota2_items import (
     match_dota2_items,
     prioritize_dota2_item_matches,
 )
-from dota2_heroes import build_dota2_hero_reference
+from dota2_heroes import build_dota2_hero_reference, find_official_dota2_hero
 from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
@@ -4360,7 +4360,19 @@ def generate_recording_cover_with_ai(
         dota2_item_instruction += dota2_item_visual_context_prompt_instruction(
             item_visual_contexts
         )
-        item_placement_plan = dota2_item_placement_plan(dota2_item_matches)
+        placement_hero = (
+            find_official_dota2_hero(tooltip_hero)
+            if tooltip_hero
+            else None
+        )
+        hero_primary_attribute = str(
+            getattr(placement_hero, "primary_attribute", "") or ""
+        )
+        details["ai_cover_dota2_hero_primary_attribute"] = hero_primary_attribute
+        item_placement_plan = dota2_item_placement_plan(
+            dota2_item_matches,
+            hero_primary_attribute=hero_primary_attribute,
+        )
         details["ai_cover_dota2_item_placement_plan"] = item_placement_plan
         dota2_item_instruction += dota2_item_placement_plan_prompt_instruction(
             item_placement_plan

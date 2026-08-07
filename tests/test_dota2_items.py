@@ -126,17 +126,47 @@ class Dota2ItemsTests(unittest.TestCase):
         matches = dota2_items.match_dota2_items(
             "龙心 大跳 BKB 飞鞋 希瓦 克莱拉牧杖 咒术师触媒 A杖"
         )
-        plans = dota2_items.dota2_item_placement_plan(matches)
+        plans = dota2_items.dota2_item_placement_plan(
+            matches,
+            hero_primary_attribute="strength",
+        )
         by_slug = {plan["icon_slug"]: plan["placement"] for plan in plans}
         self.assertIn("胸甲正中央", by_slug["heart"])
-        self.assertIn("手持、背负或腰挂三选一", by_slug["overwhelming_blink"])
-        self.assertIn("对应身体部位", by_slug["travel_boots"])
-        self.assertIn("随身能量核心", by_slug["conjurers_catalyst"])
+        self.assertIn("腰带外侧", by_slug["overwhelming_blink"])
+        self.assertIn("双脚和小腿", by_slug["travel_boots"])
+        self.assertIn("独立能量插槽", by_slug["conjurers_catalyst"])
+        self.assertIn("阿哈利姆神杖就是 A 杖", by_slug["ultimate_scepter"])
+        self.assertIn("不是智力英雄", by_slug["ultimate_scepter"])
+        self.assertIn("禁止手持", by_slug["ultimate_scepter"])
+        intelligence_plans = dota2_items.dota2_item_placement_plan(
+            matches,
+            hero_primary_attribute="intelligence",
+        )
+        intelligence_by_slug = {
+            plan["icon_slug"]: plan["placement"]
+            for plan in intelligence_plans
+        }
+        self.assertIn("该英雄为智力英雄", intelligence_by_slug["ultimate_scepter"])
+        self.assertIn("直接拿在人物右手中", intelligence_by_slug["ultimate_scepter"])
         instruction = dota2_items.dota2_item_placement_plan_prompt_instruction(plans)
         self.assertIn("逐件单次实体分配", instruction)
         self.assertIn("每个编号只能对应画面中的一个物理实体", instruction)
         self.assertIn("禁止再沿画面边缘展示它的图标", instruction)
         self.assertIn("泛化护甲、武器和装饰不得复刻名单内装备", instruction)
+
+    def test_all_maintained_and_runtime_items_have_explicit_placement_presets(self):
+        maintained = {item.icon_slug for item in dota2_items.DOTA2_ITEMS}
+        runtime = set(dota2_items.DOTA2_KNOWN_RUNTIME_ITEM_SLUGS)
+        presets = set(dota2_items.DOTA2_ITEM_PLACEMENT_PRESETS)
+        self.assertEqual(maintained - presets, set())
+        self.assertEqual(runtime - presets, set())
+        self.assertEqual(len(maintained | runtime), len(presets))
+        self.assertTrue(
+            all(
+                preset["floating_allowed"] is False
+                for preset in dota2_items.DOTA2_ITEM_PLACEMENT_PRESETS.values()
+            )
+        )
 
     def test_official_item_text_removes_html_and_template_tokens(self):
         cleaned = dota2_items._clean_official_item_text(
