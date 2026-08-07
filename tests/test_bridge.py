@@ -313,15 +313,14 @@ class BridgeTests(unittest.TestCase):
 
         self.assertIn("Valve 官方装备图标参考", prompt)
         self.assertIn("缺少官方参考时不得表现具体装备", prompt)
-        self.assertIn("自由融入构图", prompt)
+        self.assertIn("独立官方图标展示", prompt)
         self.assertIn("不得新增名单外装备", prompt)
-        self.assertIn("人物身上、手中或身旁已经出现就算一次完整展示", prompt)
-        self.assertIn("背景回声、镜像、倒影", prompt)
-        self.assertIn("禁止环形、放射状、花环式", prompt)
-        self.assertIn("不能沿四周边缘逐件悬浮", prompt)
-        self.assertIn("美观与识别度同等重要", prompt)
-        self.assertIn("合理透视、材质光影、前后景和人物动作", prompt)
-        self.assertNotIn("分散在画面边缘", prompt)
+        self.assertIn("可沿人物和英雄外围错落环绕", prompt)
+        self.assertIn("画面最下方安全区整齐排成一排", prompt)
+        self.assertIn("不得穿到主播或英雄身上", prompt)
+        self.assertIn("不带商店黑底、名称或物品栏边框", prompt)
+        self.assertIn("主播人物与 Valve 官方英雄必须作为两个清楚分开的视觉主体", prompt)
+        self.assertIn("禁止把主播画成英雄 Cos", prompt)
         self.assertIn("标题已经包含当前主播时", prompt)
         self.assertIn("标题没有当前主播时不得强塞名字", prompt)
         self.assertIn("排序第一", prompt)
@@ -528,25 +527,23 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("中立物品：锯齿短刀；中立物品不占主装备六格", prompt)
         self.assertIn("额外升级状态：A杖, 魔晶", prompt)
         self.assertIn("不得重复算作第七件主装备", prompt)
-        self.assertIn("丰富表现全部已确认装备", prompt)
-        self.assertIn("必须服从后续逐件位置计划", prompt)
-        self.assertIn("人物身上、手中或身旁已经出现就算一次完整展示", prompt)
-        self.assertIn("独立道具插画、清晰描边与光效层次", prompt)
-        self.assertIn("只画该人物 Cos 已确认英雄作为唯一人物主视觉", prompt)
-        self.assertIn("禁止在后方、侧面或背景再次绘制英雄本体", prompt)
-        self.assertIn("禁止环形、放射状、花环式", prompt)
-        self.assertIn("不能沿上缘、两侧或四周边缘逐件悬浮", prompt)
-        self.assertIn("不能退化成外围图标圈", prompt)
-        self.assertIn("美观与识别度同等重要", prompt)
-        self.assertIn("生硬的大图标、贴纸或等尺寸陈列", prompt)
-        self.assertNotIn("装备沿画面上缘和两侧错落分布", prompt)
+        self.assertIn("Valve 官方装备图标参考表现全部已确认装备", prompt)
+        self.assertIn("可沿主播人物和官方英雄外围错落环绕", prompt)
+        self.assertIn("画面最下方安全区整齐排成一排", prompt)
+        self.assertIn("禁止把装备穿戴、手持、背负或嵌入主播与英雄身体", prompt)
+        self.assertIn("经典双主体切片构图", prompt)
+        self.assertIn("主播头像人物独立位于前景", prompt)
+        self.assertIn("Valve 官方英雄独立位于侧后方", prompt)
         self.assertNotIn("不得额外添加第七件装备", prompt)
 
-    def test_four_by_three_cover_forbids_equipment_ring_layout(self):
+    def test_both_cover_aspects_allow_surrounding_or_bottom_row_item_icons(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
 
-        self.assertIn("画幅变窄时也不得把装备改成围绕人物的一圈悬浮图标", source)
-        self.assertIn("剩余装备只在一处次要区域形成不对称层次", source)
+        self.assertIn("适合个人空间大图展示。装备图标可沿外围安全区域错落环绕", source)
+        self.assertIn("统一放在最下方安全区一排", source)
+        self.assertIn("画幅变窄时仍使用经典双主体构图", source)
+        self.assertIn("装备以清晰独立的官方图标沿安全区域外围错落环绕", source)
+        self.assertIn("最下方安全区一排", source)
 
     def test_known_dota2_items_do_not_silently_continue_without_references(self):
         with self.assertRaisesRegex(RuntimeError, "已停止生成"):
@@ -4084,37 +4081,45 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("封面主体仍必须以当前直播间的封面人物底稿", instruction)
         self.assertIn("其他被提及选手不能取代主播", instruction)
 
-    def test_verified_dota2_gameplay_uses_streamer_cosplay_without_replacing_face(self):
+    def test_verified_dota2_gameplay_separates_streamer_and_official_hero(self):
         instruction = bridge.recording_cover_verified_hero_cosplay_instruction(
             "光之守卫",
             gameplay_verified=True,
         )
-        self.assertIn("本人 Cos 本局英雄", instruction)
-        self.assertIn("直接沿用封面人物底稿原有的脸部", instruction)
-        self.assertIn("不得把主播的脸直接替换成英雄原脸", instruction)
-        self.assertIn("同一个完整 Cos 人物", instruction)
-        self.assertIn("本局装备再按主手、副手、胸前、背部、腰间和双脚", instruction)
-        self.assertIn("禁止头像贴纸感", instruction)
-        self.assertIn("自适应融合该英雄最有辨识度的视觉特征", instruction)
-        self.assertIn("融合范围不限，可包含但不限于", instruction)
-        self.assertIn("面部或身体器官", instruction)
-        self.assertIn("具体取舍必须服从英雄原设而不是套用固定清单", instruction)
-        self.assertIn("保留底稿的帽子或标志头饰、发型、核心眼眉关系和原画风", instruction)
-        self.assertIn("真人底稿只允许妆效、假体、光影和非骨相皮肤特征", instruction)
-        self.assertIn("卡通或吉祥物底稿可以更明显地融合英雄形态", instruction)
-        self.assertIn("不得直接替换成英雄原脸", instruction)
-        self.assertIn("两种画幅都必须锁定同一底稿形象", instruction)
-        self.assertIn("该 Cos 主播就是画面中唯一的 光之守卫 角色", instruction)
-        self.assertIn("禁止在后方、侧面、背景或技能特效中", instruction)
-        self.assertIn("再次生成英雄本体", instruction)
-        self.assertNotIn("英雄本体可作为后方较大的气势层", instruction)
+        self.assertIn("恢复经典双主体构图", instruction)
+        self.assertIn("主播人物底稿作为独立前景反应主体", instruction)
+        self.assertIn("光之守卫 作为独立的官方游戏英雄出现在侧后方", instruction)
+        self.assertIn("身体、脸部、服装和轮廓必须清楚分开", instruction)
+        self.assertIn("禁止主播 Cos 英雄", instruction)
+        self.assertIn("禁止把头像贴到英雄身体上", instruction)
+        self.assertIn("英雄只出现一次", instruction)
 
         unverified = bridge.recording_cover_verified_hero_cosplay_instruction(
             "光之守卫",
             gameplay_verified=False,
         )
         self.assertIn("不得让主播穿成被观战", unverified)
-        self.assertNotIn("本人 Cos 本局英雄", unverified)
+        self.assertNotIn("恢复经典双主体构图", unverified)
+
+    def test_verified_dota2_gameplay_can_use_fusion_mode(self):
+        instruction = bridge.recording_cover_verified_hero_cosplay_instruction(
+            "光之守卫",
+            gameplay_verified=True,
+            layout_mode="fusion",
+        )
+
+        self.assertIn("使用英雄融合构图", instruction)
+        self.assertIn("本人 Cos 本局英雄", instruction)
+        self.assertIn("同一个完整人物", instruction)
+        self.assertIn("唯一的 光之守卫 角色", instruction)
+        self.assertNotIn("恢复经典双主体构图", instruction)
+
+        avatar_instruction = bridge.recording_avatar_reference_instruction(
+            "YYF",
+            "fusion",
+        )
+        self.assertIn("自适应融合该英雄最有辨识度", avatar_instruction)
+        self.assertIn("形成同一个完整 Cos 人物", avatar_instruction)
 
     def test_yyf_cover_expression_follows_segment_performance(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
@@ -4351,15 +4356,11 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(edit_kwargs["input_fidelity"], "high")
         self.assertEqual(Path(edit_kwargs["image"].name), avatar)
         self.assertIn("直播间头像", edit_kwargs["prompt"])
-        self.assertIn("允许根据直播主题受控二创", edit_kwargs["prompt"])
-        self.assertIn("不能直接改成英雄原脸、无关人物或另一种真人/卡通类型", edit_kwargs["prompt"])
-        self.assertIn("不得把原头像作为圆形贴纸", edit_kwargs["prompt"])
-        self.assertIn("头像的脸、发型、帽子或标志头饰作为身份核心", edit_kwargs["prompt"])
-        self.assertIn("形成同一个完整 Cos 人物", edit_kwargs["prompt"])
-        self.assertIn("自适应融合该英雄最有辨识度的视觉特征", edit_kwargs["prompt"])
-        self.assertIn("融合范围不限，可包含但不限于", edit_kwargs["prompt"])
-        self.assertIn("变化后仍须一眼认出原头像", edit_kwargs["prompt"])
-        self.assertIn("不改变脸部骨相与五官关系", edit_kwargs["prompt"])
+        self.assertIn("独立人物底稿", edit_kwargs["prompt"])
+        self.assertIn("不得把主播画成英雄 Cos", edit_kwargs["prompt"])
+        self.assertIn("不得把头像的脸贴到英雄身体上", edit_kwargs["prompt"])
+        self.assertIn("主播头像人物在前景独立出现", edit_kwargs["prompt"])
+        self.assertIn("官方英雄在侧后方独立出现", edit_kwargs["prompt"])
         self.assertNotIn("蓝色鱼形头套", edit_kwargs["prompt"])
         self.assertIn("YYF 的最终表情必须与标题对应的已核验对局情况联动", edit_kwargs["prompt"])
         self.assertIn("不得根据零散弹幕猜测胜负", edit_kwargs["prompt"])
@@ -4550,14 +4551,17 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("OFFICIAL ITEM ICON REFERENCES", prompt)
         self.assertIn("必须清楚表现识别结果中的全部装备", prompt)
         self.assertIn("装备事实独立于人物归属", prompt)
-        self.assertIn("丰富表现全部已确认装备", prompt)
-        self.assertIn("必须严格服从后续逐件位置计划", prompt)
+        self.assertIn("表现全部已确认装备", prompt)
+        self.assertIn("独立官方图标式切片", prompt)
+        self.assertIn("不得把装备穿到主播或英雄身上", prompt)
+        self.assertIn("忽略后续数据中任何穿戴、手持、背负或腰挂位置建议", prompt)
         self.assertIn("不得只挑两件省略", prompt)
         self.assertIn("不得新增名单外装备", prompt)
         self.assertIn("独立道具插画、清晰描边与光效层次", prompt)
         self.assertIn("不得把商店图标原样贴成带黑底和名称的卡片", prompt)
-        self.assertIn("逐件单次实体分配", prompt)
-        self.assertIn("禁止再沿画面边缘展示它的图标", prompt)
+        self.assertIn("装备图标清单", prompt)
+        self.assertIn("沿主播人物和官方英雄的外围安全区域", prompt)
+        self.assertIn("画面最下方安全区一排", prompt)
 
     def test_unknown_streamer_uses_room_avatar_as_character_base(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"

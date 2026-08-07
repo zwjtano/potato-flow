@@ -2498,6 +2498,12 @@ class LiveRecorderManager:
             config[f"ai_{prompt_name}_prompt"] = str(
                 app_config.get(config_key) or ""
             ).strip()
+        layout_mode = str(
+            app_config.get("RECORDING_DOTA2_COVER_LAYOUT_MODE") or "classic"
+        ).strip().lower()
+        config["dota2_cover_layout_mode"] = (
+            layout_mode if layout_mode in {"classic", "fusion"} else "classic"
+        )
         config["danmaku_duration_seconds"] = float(
             app_config.get("DANMAKU_DURATION_SECONDS", 10) or 10
         )

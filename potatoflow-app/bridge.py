@@ -38,6 +38,8 @@ from dota2_abilities import (
     match_dota2_abilities,
 )
 from dota2_items import (
+    DOTA2_COVER_LAYOUT_CLASSIC,
+    DOTA2_COVER_LAYOUT_FUSION,
     build_dota2_item_reference_sheet,
     dota2_item_placement_plan,
     dota2_item_placement_plan_prompt_instruction,
@@ -45,6 +47,7 @@ from dota2_items import (
     dota2_item_visual_context_prompt_instruction,
     load_dota2_item_visual_contexts,
     match_dota2_items,
+    normalize_dota2_cover_layout_mode,
     prioritize_dota2_item_matches,
 )
 from dota2_heroes import build_dota2_hero_reference, find_official_dota2_hero
@@ -155,30 +158,22 @@ DEFAULT_RECORDING_COVER_AI_PROMPT = (
     "改写人物关系或删除中性消息的来源限定，负面未经证实的现实传言不得进入封面。主体醒目、对比清楚、"
     "适合手机缩略图；短文案根据语义使用一至三行大字，证据充足的 Dota 2 事件优先两至三行，"
     "最多占画面约四成，给人物和事件留出主要视觉空间。"
-    "当前主播出镜时必须直接使用已上传的封面人物底稿作为身份主体，保留底稿原有的脸部、发型和画风，"
-    "不得只提取特征后重新生成一张动漫脸、Q版脸、写实脸或其他风格的替代头像。"
-    "允许围绕底稿做受控二创：可调整适度表情、视线、姿势、英雄服装、光影和背景，"
-    "但脸型比例、五官关系、发型、标志配饰以及真人或卡通属性不能明显偏离底稿。"
-    "只有结构化数据确认主播亲自使用某英雄时，才可在保留这些身份锚点的前提下，自适应融合该英雄最有辨识度的视觉特征；"
-    "融合范围不限，可包含但不限于肤色与材质、面部或身体器官、轮廓比例、体型姿态、服饰结构、元素效果和标志性能力特征，"
-    "例如鳞片、鳃、尖牙、耳鳍、角、发光眼或利爪，具体取舍必须服从该英雄原设而不是套用固定清单；"
-    "不得因此变成英雄原脸、陌生人或失去底稿辨识度。真人底稿只允许妆效、假体、光影和非骨相变化。"
+    "当前主播出镜时必须直接使用已上传的封面人物底稿作为独立人物主体，保留底稿原有的脸部、发型和画风，"
+    "不得只提取特征后重新生成替代头像，也不得将主播头像的脸、身体、服装或皮肤与 Dota 2 英雄融合。"
+    "结构化数据确认主播使用某英雄时，主播人物与 Valve 官方英雄必须作为两个清楚分开的视觉主体："
+    "主播在前景表达反应，英雄在侧后方保持官方完整脸部、体型、护甲、武器、轮廓与主色；"
+    "禁止把主播画成英雄 Cos、把头像贴到英雄身体上，或让英雄特征覆盖主播身份。"
     "所有主播别名都指向底稿中的同一人，不得根据昵称猜测长相、另画陌生人或按字面生成动植物。"
     "只有最终投稿标题明确出现、且获得唯一匹配头像的其他主播，才可作为次要人物；"
     "简介、时间线或弹幕中顺带提及的人物一律不得出镜，不得替换主角或混合人脸。"
     "参考图只用于人物身份，不得复制其中的文字、水印、直播界面和无关背景。DOTA2 英雄和技能必须符合游戏原设；"
     "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备。"
-    "已确认装备可以像游戏切片封面一样自由融入构图：优先成为人物实际穿戴的服装、护甲或饰品，"
-    "由人物手持或挂在腰间、背部，也可作为与动作有联系的身旁道具或技能能量焦点。"
-    "不得把装备平均铺在人物外围，禁止环形、放射状、花环式、左右对称或物品栏插槽式的围人排列；"
-    "确实不适合穿戴或持握的剩余装备，应以不同大小和景深不对称地融入一处次要场景区域，不能沿四周边缘逐件悬浮。"
-    "人物身上、手中或身旁已经出现就算一次完整展示，"
-    "同一件不得再以悬浮图标、背景回声、镜像、倒影或装饰重复出现。允许随透视调整大小、角度和光效，"
-    "但必须保留每件装备可辨认的官方轮廓、主色、材质和标志性符号；自然穿戴或持握不能把装备"
-    "弱化成普通武器或泛化装饰，在缩略图中仍要逐件可辨。不得新增名单外装备、漏掉确认装备，"
-    "美观与识别度同等重要：不得为了露全装备而把它们做成生硬的大图标、贴纸或等尺寸陈列，"
-    "应使用合理透视、材质光影、前后景和人物动作，使装备像场景中的真实实体一样自然且清楚。"
-    "不得把两件装备融合为一件，也不要绘制呆板的游戏物品栏 UI。"
+    "已确认装备恢复为经典切片封面的独立官方图标展示：根据标题与主体空间，"
+    "可沿人物和英雄外围错落环绕，也可在画面最下方安全区整齐排成一排，"
+    "保持每件装备的 Valve 官方轮廓、主色、材质和标志性符号，在缩略图中也能逐件辨认。"
+    "装备不得穿到主播或英雄身上，不得变成人物服装、护甲、肢体、普通武器或技能光效，"
+    "也不得把两件装备融合为一件。每件装备只出现一次，使用透明背景、清晰描边和适度光效，"
+    "不带商店黑底、名称或物品栏边框；不得新增名单外装备或漏掉确认装备。"
     "游戏名、英雄、装备、人物动作、比赛结果和情绪方向只能来自最终标题与已核验事件上下文；"
     "讨论或观战内容缺少可靠游戏画面时使用人物反应和抽象氛围，不得补画具体英雄或胜负。"
     "画面不要出现日期、时间、房间号、平台界面、二维码或水印。16:9 与 4:3 必须独立构图，"
@@ -3106,6 +3101,7 @@ def dota2_gsi_equipment_prompt_instruction(
     main_items: list[str],
     neutral_item: str = "",
     upgrade_states: list[str] | None = None,
+    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
 ) -> str:
     """Describe GSI equipment without conflating slots and extra states."""
     main = [str(item).strip() for item in main_items[:6] if str(item).strip()]
@@ -3134,29 +3130,29 @@ def dota2_gsi_equipment_prompt_instruction(
             + ", ".join(upgrades)
             + "；这些状态不得重复算作第七件主装备。"
         )
+    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
+        sections.append(
+            "只能表现上述已确认的装备与状态，不得增加名单外装备。"
+            "装备名称只用于身份识别，必须依据随附的 Valve 官方装备图标参考和后续逐件位置计划，"
+            "优先将装备自然穿戴、手持、背负或腰挂到主播与英雄融合形成的同一个完整 Cos 人物上。"
+            "不适合穿戴或持握的物件可作为身旁道具或能量焦点，但不得沿外围排成图标圈或底部物品栏。"
+            "每件装备只能出现一次，必须保留官方轮廓、主色、材质和标志性符号；不得融合两件装备、"
+            "漏掉确认装备、增加名单外装备或绘制商店黑底和物品栏 UI。"
+        )
+        return "".join(sections)
     sections.append(
         "只能表现上述已确认的装备与状态，不得增加名单外装备。"
         "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
-        "图像模型可以依据随附的 Valve 官方装备图标参考丰富表现全部已确认装备，但必须服从后续逐件位置计划："
-        "优先把装备变成人物实际穿戴的服装、护甲或饰品，由人物手持或挂在腰间、背部，"
-        "也可作为与动作有联系的身旁道具或技能能量焦点。"
-        "不得把装备平均铺在人物外围，禁止环形、放射状、花环式、左右对称或物品栏插槽式的围人排列；"
-        "确实不适合穿戴或持握的剩余装备，应以不同大小和景深不对称地融入一处次要场景区域，"
-        "不能沿上缘、两侧或四周边缘逐件悬浮。人物身上、手中或身旁已经出现就算一次完整展示，"
-        "同一件不得再以悬浮图标、背景回声、镜像、倒影或装饰重复出现。"
-        "并随透视调整大小、角度与光效，但必须保留每件装备可辨认的官方轮廓、主色、材质和标志性符号；"
-        "自然穿戴或持握不能把装备弱化成普通武器或泛化装饰，在缩略图中仍要逐件可辨；"
-        "美观与识别度同等重要，禁止为露全装备而使用生硬的大图标、贴纸或等尺寸陈列；"
-        "必须用合理透视、材质光影、前后景和人物动作把装备自然融入场景。"
+        "图像模型必须依据随附的 Valve 官方装备图标参考表现全部已确认装备。"
+        "每件装备恢复为独立、清晰、接近官方图标造型的切片元素，使用透明背景、清晰描边和适度光效，"
+        "根据标题与主体空间，可沿主播人物和官方英雄外围错落环绕，也可在画面最下方安全区整齐排成一排；"
+        "允许标题点名的重点装备略大，其余仍须逐件可辨。"
+        "禁止把装备穿戴、手持、背负或嵌入主播与英雄身体，禁止把装备改成服装、护甲、普通武器或技能光球。"
         "最多六格主装备以及单独确认的中立物品、神杖或魔晶状态都不得只挑两件省略。"
-        "不得新增名单外装备、把两件装备融合为一件或绘制呆板的游戏物品栏 UI；"
-        "装备视觉应采用独立道具插画、清晰描边与光效层次，不得把商店图标原样贴成带黑底和名称的卡片；"
-        "Dota 2 封面优先采用不对称切片构图：有明确玩家或主播人物底稿时，只画该人物 Cos 已确认英雄作为唯一人物主视觉，"
-        "禁止在后方、侧面或背景再次绘制英雄本体、英雄脸、英雄剪影或第二个人物；没有可靠人物身份时才使用英雄本体。"
-        "标题放在另一侧或下方，按完整语义分成两至三行；标题直接点名的重点装备可以更大，"
-        "其余装备较小但仍须清楚可辨；所有由官方价格判定为高级装备的物品都必须获得高辨识优先，"
-        "不能只突出其中一两件。通过穿戴、持握、挂载和场景景深形成主次，不能退化成外围图标圈。"
-        "标题与唯一人物或英雄主体始终高于装备辅助层，装备不得遮脸、压字或贴边裁断。"
+        "每件装备只出现一次，不得融合、镜像、重复或新增名单外装备，也不得绘制商店黑底、名称和物品栏边框。"
+        "Dota 2 封面采用经典双主体切片构图：主播头像人物独立位于前景，已确认的 Valve 官方英雄独立位于侧后方；"
+        "标题放在另一侧或上方；装备图标可沿剩余安全区域环绕，也可统一放在最下方一排，"
+        "由实际布局选择，不能遮脸、压字或贴边裁断。"
     )
     return "".join(sections)
 
@@ -3340,20 +3336,26 @@ def download_recording_avatar_reference(url: str, cfg: dict[str, Any]) -> Path:
     return destination
 
 
-def recording_avatar_reference_instruction(streamer: str) -> str:
+def recording_avatar_reference_instruction(
+    streamer: str,
+    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
+) -> str:
+    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
+        return (
+            f"上传的参考图是主播 {streamer or '主播'} 当前直播间头像，也是本次封面的身份底稿。"
+            "必须保持原有脸部、发型、五官、配色和画风，不得换成无关人物。结构化数据确认主播"
+            "使用英雄时，将头像的脸、发型、帽子或标志头饰作为身份核心，自适应融合该英雄最有辨识度的"
+            "身体、服装、体态、元素效果和技能氛围，形成同一个完整 Cos 人物。"
+            "变化后仍须一眼认出原头像，不得直接替换成英雄原脸；真人底稿不得改变脸部骨相与五官关系。"
+        )
     return (
-        f"上传的参考图是主播 {streamer or '主播'} 当前直播间头像，也是本次封面必须直接沿用的身份底稿。"
+        f"上传的参考图是主播 {streamer or '主播'} 当前直播间头像，也是本次封面必须直接沿用的独立人物底稿。"
         "头像中的人物、角色、吉祥物或标志性形象必须保持原有脸部、发型、五官、配色和画风；"
-        "不得只提取特征后重新生成动漫版、Q版、真人版或另一张相似头像，也不得把原头像作为圆形贴纸"
-        "或悬浮头像贴在画面上。允许根据直播主题受控二创背景、服装、动作、光影和适度表情。"
-        "结构化数据确认主播亲自使用英雄时，可在保持帽子或标志头饰、发型、核心眼眉关系和原画风的前提下，"
-        "自适应融合该英雄最有辨识度的视觉特征；融合范围不限，可包含但不限于肤色与材质、面部或身体器官、"
-        "轮廓比例、体型姿态、服饰结构、元素效果和标志性能力特征，具体取舍必须服从英雄原设而不是套用固定清单；"
-        "变化后仍须一眼认出原头像，不能直接改成英雄原脸、无关人物或另一种真人/卡通类型。"
-        "总体上不要替换成无关人物或角色。"
-        "若底稿是真人，英雄化只使用妆效、假体、光影和非骨相皮肤特征，不改变脸部骨相与五官关系。"
-        "结构化数据确认主播亲自使用英雄时，应把头像的脸、发型、帽子或标志头饰作为身份核心，"
-        "自然结合到该英雄的身体、服装、体态和技能氛围中，形成同一个完整 Cos 人物。"
+        "不得只提取特征后重新生成动漫版、Q版、真人版或另一张相似头像。允许根据直播主题扩展背景、"
+        "动作、光影和适度表情，但不得把主播画成英雄 Cos，不得把头像的脸贴到英雄身体上，"
+        "也不得让英雄的肤色、器官、体型、护甲或武器改变主播形象。"
+        "不要替换成无关人物或角色。"
+        "若有已确认英雄，主播头像人物在前景独立出现，官方英雄在侧后方独立出现，两者轮廓不可融合。"
     )
 
 
@@ -3762,29 +3764,30 @@ def recording_cover_verified_hero_cosplay_instruction(
     hero: str,
     *,
     gameplay_verified: bool,
+    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
 ) -> str:
-    """Allow streamer-as-hero cosplay only for verified first-person gameplay."""
+    """Show a verified hero separately from the streamer's identity reference."""
     hero_name = str(hero or "").strip()
     if not hero_name or not gameplay_verified:
         return (
             "本段没有结构化数据确认当前主播亲自使用某个英雄；"
             "不得让主播穿成被观战、被讨论或仅由弹幕猜测的英雄。"
         )
+    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
+        return (
+            f"结构化游戏数据已确认当前主播亲自使用 {hero_name}。使用英雄融合构图：主播主视觉是“本人 Cos 本局英雄”。"
+            "人物底稿的脸、发型、帽子或标志头饰作为身份核心，英雄提供身体、服装、体态与技能氛围，"
+            "本局装备按逐件位置计划穿戴、手持、背负或腰挂到同一个完整人物上。"
+            "必须保留底稿核心眼眉关系和原画风，不得变成英雄原脸或陌生人物；真人底稿不得改变脸部骨相。"
+            f"该 Cos 主播就是画面中唯一的 {hero_name} 角色，禁止再生成英雄本体、英雄剪影、第二个人物或重复脸。"
+        )
     return (
-        f"结构化游戏数据已确认当前主播亲自使用 {hero_name}。主播主视觉应采用“本人 Cos 本局英雄”的表现："
-        "直接沿用封面人物底稿原有的脸部、发型、头饰、真人质感或卡通形象与画风，同时换上该英雄可辨认的服饰、"
-        "护甲、武器、主色与技能光效；不得把主播的脸直接替换成英雄原脸。"
-        "最终必须形成同一个完整 Cos 人物：人物底稿的脸、发型、帽子或标志头饰作为身份核心，英雄提供身体、"
-        "服装、体态与技能氛围，本局装备再按主手、副手、胸前、背部、腰间和双脚等计划装到同一人物上；"
-        "禁止头像贴纸感、只换头像不换身体，或把头像人物与英雄本体画成两个人。"
-        "允许自适应融合该英雄最有辨识度的视觉特征；融合范围不限，可包含但不限于肤色与材质、面部或身体器官、"
-        "轮廓比例、体型姿态、服饰结构、元素效果和标志性能力特征，具体取舍必须服从英雄原设而不是套用固定清单，"
-        "但必须保留底稿的帽子或标志头饰、发型、核心眼眉关系和原画风，变化后仍能一眼认出原人物。"
-        "真人底稿只允许妆效、假体、光影和非骨相皮肤特征，不改变脸部骨相与五官关系；卡通或吉祥物底稿"
-        "可以更明显地融合英雄形态，但不得直接替换成英雄原脸或另一种画风。两种画幅都必须锁定同一底稿形象。"
-        f"该 Cos 主播就是画面中唯一的 {hero_name} 角色；禁止在后方、侧面、背景或技能特效中"
-        "再次生成英雄本体、英雄原脸、英雄剪影、第二个人物或重复脸。气势背景只能使用不含人物轮廓的"
-        "战场环境、技能能量、光影和粒子。"
+        f"结构化游戏数据已确认当前主播亲自使用 {hero_name}。恢复经典双主体构图："
+        "主播人物底稿作为独立前景反应主体，保持原有脸部、发型、服装特征、真人或卡通属性与画风；"
+        f"{hero_name} 作为独立的官方游戏英雄出现在侧后方，完整保留 Valve 官方脸部、体型、护甲、"
+        "武器、轮廓、主色和技能特效。两者可以有前后景层次，但身体、脸部、服装和轮廓必须清楚分开。"
+        "禁止主播 Cos 英雄、禁止换脸、禁止把头像贴到英雄身体上，也禁止把英雄器官、肤色、体型或装备"
+        "融合进主播。英雄只出现一次，不得再生成第二个英雄、英雄剪影或重复脸。"
     )
 
 
@@ -4066,6 +4069,10 @@ def generate_recording_cover_with_ai(
 
     ai_cfg = load_app_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
+    cover_layout_mode = normalize_dota2_cover_layout_mode(
+        cfg.get("dota2_cover_layout_mode")
+        or ai_cfg.get("RECORDING_DOTA2_COVER_LAYOUT_MODE")
+    )
     cover_subject_name = recording_cover_subject_name(streamer, title)
     source_headline = recording_cover_headline(title, ai_topic, streamer)
     cover_event_context, cover_context_source = recording_cover_event_context(
@@ -4083,6 +4090,7 @@ def generate_recording_cover_with_ai(
     )
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
+        "ai_cover_dota2_layout_mode": cover_layout_mode,
         "ai_cover_headline": headline,
         "ai_cover_source_headline": source_headline,
         "ai_cover_text_length": len(headline),
@@ -4164,13 +4172,16 @@ def generate_recording_cover_with_ai(
     elif reference_kind == "custom":
         reference_instruction = (
             f"上传的参考图是用户为主播 {streamer or '主播'} 指定的人物形象底稿，"
-            "必须直接把图中的人物或角色作为封面唯一主角，严格保持原有脸部、发型、标志性配饰、"
+            "必须直接把图中的人物或角色作为主播人物的唯一身份原型，严格保持原有脸部、发型、标志性配饰、"
             "主色与画风。可以根据本段内容受控二创服装、适度表情、动作、光影和背景，"
             "但脸型比例、五官关系、发型和真人或卡通属性不能明显偏离；不得把底稿动漫化、"
             "Q版化、真人化、换脸或替换成其他角色。"
         )
     elif reference_kind == "avatar":
-        reference_instruction = recording_avatar_reference_instruction(streamer)
+        reference_instruction = recording_avatar_reference_instruction(
+            streamer,
+            cover_layout_mode,
+        )
     else:
         reference_instruction = ""
     subject_identity_instruction = recording_cover_subject_identity_instruction(
@@ -4315,6 +4326,7 @@ def generate_recording_cover_with_ai(
             tooltip_main_items,
             tooltip_neutral_item,
             tooltip_upgrade_states,
+            cover_layout_mode,
         )
         if tooltip_hero:
             identity_source = str(details.get("ai_cover_identity_source") or "")
@@ -4343,10 +4355,17 @@ def generate_recording_cover_with_ai(
                 + recording_cover_verified_hero_cosplay_instruction(
                     tooltip_hero,
                     gameplay_verified=verified_cosplay,
+                    layout_mode=cover_layout_mode,
                 )
             )
             details["ai_cover_dota2_streamer_cosplay"] = (
-                "verified_hero" if verified_cosplay else "disabled_unverified_gameplay"
+                (
+                    "verified_hero_fusion"
+                    if cover_layout_mode == DOTA2_COVER_LAYOUT_FUSION
+                    else "verified_hero_separate"
+                )
+                if verified_cosplay
+                else "disabled_unverified_gameplay"
             )
         details["ai_cover_tooltip_hero"] = tooltip_hero
         details["ai_cover_tooltip_items"] = tooltip_items
@@ -4367,7 +4386,10 @@ def generate_recording_cover_with_ai(
             ai_topic,
             cover_event_context,
         )
-        dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
+        dota2_item_instruction += dota2_item_prompt_instruction(
+            dota2_item_matches,
+            cover_layout_mode,
+        )
     elif game_context_locked:
         dota2_item_matches = (
             match_dota2_items(title, ai_topic, cover_event_context)
@@ -4388,7 +4410,7 @@ def generate_recording_cover_with_ai(
                 "虽然本段没有锁定当前主播使用的英雄，但第一核心事件已经明确点名以下装备。"
                 "装备事实独立于人物归属：必须按 Valve 官方参考将点名装备画入事件场景，"
                 "不得把它写成或画成当前主播的最终出装，也不得添加未点名装备。"
-                + dota2_item_prompt_instruction(dota2_item_matches)
+                + dota2_item_prompt_instruction(dota2_item_matches, cover_layout_mode)
             )
             details["ai_cover_dota2_source"] = "locked_text_match"
         else:
@@ -4408,14 +4430,18 @@ def generate_recording_cover_with_ai(
             )
             else []
         )
-        dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
+        dota2_item_instruction = dota2_item_prompt_instruction(
+            dota2_item_matches,
+            cover_layout_mode,
+        )
         details["ai_cover_dota2_source"] = "text_match"
     dota2_item_cache_dir = resolve_path(".dota2-item-cache", cfg)
     if dota2_item_matches:
         item_visual_contexts = load_dota2_item_visual_contexts(dota2_item_matches)
         details["ai_cover_dota2_item_visual_contexts"] = item_visual_contexts
         dota2_item_instruction += dota2_item_visual_context_prompt_instruction(
-            item_visual_contexts
+            item_visual_contexts,
+            cover_layout_mode,
         )
         placement_hero = (
             find_official_dota2_hero(tooltip_hero)
@@ -4433,7 +4459,8 @@ def generate_recording_cover_with_ai(
         )
         details["ai_cover_dota2_item_placement_plan"] = item_placement_plan
         dota2_item_instruction += dota2_item_placement_plan_prompt_instruction(
-            item_placement_plan
+            item_placement_plan,
+            cover_layout_mode,
         )
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
@@ -4587,18 +4614,32 @@ def generate_recording_cover_with_ai(
         else f"{target_width}:{target_height}"
     )
     if abs((target_width / target_height) - (16 / 9)) < 0.02:
-        composition_instruction = (
-            "这是个人空间横向封面。主体和唯一标题必须完整留在 16:9 横向安全区域，"
-            "左右保留呼吸空间，适合个人空间大图展示。"
-        )
+        if cover_layout_mode == DOTA2_COVER_LAYOUT_FUSION:
+            composition_instruction = (
+                "这是个人空间横向封面。融合后的唯一人物和标题必须完整留在 16:9 横向安全区域，"
+                "装备按逐件位置计划自然穿戴、手持、背负或腰挂，不得另排外围图标或底部物品栏。"
+            )
+        else:
+            composition_instruction = (
+                "这是个人空间横向封面。主体和唯一标题必须完整留在 16:9 横向安全区域，"
+                "左右保留呼吸空间，适合个人空间大图展示。装备图标可沿外围安全区域错落环绕，"
+                "也可根据标题和双主体占位统一放在最下方安全区一排。"
+            )
         cover_variant = "16x9"
     elif abs((target_width / target_height) - (4 / 3)) < 0.02:
-        composition_instruction = (
-            "这是首页推荐 4:3 卡片封面。重新采用更集中、更紧凑的独立构图，"
-            "主体和唯一标题靠近视觉中心，不能沿用或模拟 16:9 封面的裁切结果。"
-            "画幅变窄时也不得把装备改成围绕人物的一圈悬浮图标；继续优先穿戴、持握、挂载和场景化融入，"
-            "剩余装备只在一处次要区域形成不对称层次。"
-        )
+        if cover_layout_mode == DOTA2_COVER_LAYOUT_FUSION:
+            composition_instruction = (
+                "这是首页推荐 4:3 卡片封面。为融合后的唯一人物重新采用紧凑独立构图，"
+                "装备按逐件位置计划自然融入人物，不得另排外围图标或底部物品栏。"
+            )
+        else:
+            composition_instruction = (
+                "这是首页推荐 4:3 卡片封面。重新采用更集中、更紧凑的独立构图，"
+                "主体和唯一标题靠近视觉中心，不能沿用或模拟 16:9 封面的裁切结果。"
+                "画幅变窄时仍使用经典双主体构图：主播头像人物在前景、官方英雄在侧后方；"
+                "装备以清晰独立的官方图标沿安全区域外围错落环绕，或统一放在最下方安全区一排；"
+                "根据标题和双主体占位选择，不得遮脸、压字或贴边裁断。"
+            )
         cover_variant = "4x3"
     else:
         composition_instruction = "请针对目标画幅独立构图，主体和标题均保持完整。"
