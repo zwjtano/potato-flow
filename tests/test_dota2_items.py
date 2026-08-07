@@ -239,6 +239,19 @@ class Dota2ItemsTests(unittest.TestCase):
             1,
         )
 
+    def test_orb_items_hover_near_character_without_forming_a_ring(self):
+        matches = dota2_items.match_dota2_items("刷新球 玲珑心 林肯法球 血精石")
+        plans = dota2_items.dota2_item_placement_plan(matches)
+        by_slug = {plan["icon_slug"]: plan for plan in plans}
+
+        for slug in ("refresher", "octarine_core", "sphere", "bloodstone"):
+            self.assertEqual(by_slug[slug]["slot"], "floating_orb")
+            self.assertTrue(by_slug[slug]["floating_allowed"])
+            self.assertIn("手掌上方或单侧肩旁", by_slug[slug]["placement"])
+            self.assertIn("不得嵌进身体", by_slug[slug]["placement"])
+            self.assertIn("不得", by_slug[slug]["placement"])
+            self.assertIn("排成一圈", by_slug[slug]["placement"])
+
     def test_all_maintained_and_runtime_items_have_explicit_placement_presets(self):
         maintained = {item.icon_slug for item in dota2_items.DOTA2_ITEMS}
         runtime = set(dota2_items.DOTA2_KNOWN_RUNTIME_ITEM_SLUGS)
@@ -246,11 +259,17 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertEqual(maintained - presets, set())
         self.assertEqual(runtime - presets, set())
         self.assertEqual(len(maintained | runtime), len(presets))
-        self.assertTrue(
-            all(
-                preset["floating_allowed"] is False
-                for preset in dota2_items.DOTA2_ITEM_PLACEMENT_PRESETS.values()
-            )
+        floating = {
+            slug
+            for slug, preset in dota2_items.DOTA2_ITEM_PLACEMENT_PRESETS.items()
+            if preset["floating_allowed"]
+        }
+        self.assertEqual(
+            floating,
+            {
+                "refresher", "octarine_core", "lotus_orb", "sphere",
+                "bloodstone", "moon_shard", "gem", "refresher_shard",
+            },
         )
 
     def test_shape_specific_items_use_matching_physical_slots(self):

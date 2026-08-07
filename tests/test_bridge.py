@@ -4095,7 +4095,14 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("同一个完整 Cos 人物", instruction)
         self.assertIn("本局装备再按主手、副手、胸前、背部、腰间和双脚", instruction)
         self.assertIn("禁止头像贴纸感", instruction)
-        self.assertIn("人物脸部不得动漫化、Q版化、真人化", instruction)
+        self.assertIn("自适应融合该英雄最有辨识度的视觉特征", instruction)
+        self.assertIn("融合范围不限，可包含但不限于", instruction)
+        self.assertIn("面部或身体器官", instruction)
+        self.assertIn("具体取舍必须服从英雄原设而不是套用固定清单", instruction)
+        self.assertIn("保留底稿的帽子或标志头饰、发型、核心眼眉关系和原画风", instruction)
+        self.assertIn("真人底稿只允许妆效、假体、光影和非骨相皮肤特征", instruction)
+        self.assertIn("卡通或吉祥物底稿可以更明显地融合英雄形态", instruction)
+        self.assertIn("不得直接替换成英雄原脸", instruction)
         self.assertIn("两种画幅都必须锁定同一底稿形象", instruction)
         self.assertIn("该 Cos 主播就是画面中唯一的 光之守卫 角色", instruction)
         self.assertIn("禁止在后方、侧面、背景或技能特效中", instruction)
@@ -4115,7 +4122,7 @@ class BridgeTests(unittest.TestCase):
             "蓝猫关键失误后惨遭翻盘",
             "YYF 最后一波团战无奈落败。",
         )
-        self.assertIn("YYF 的表情与本段内容联动", instruction)
+        self.assertIn("YYF 的最终表情必须与标题对应的已核验对局情况联动", instruction)
         self.assertIn("先判断最终结果", instruction)
         self.assertIn("只选择一种占主导的情绪", instruction)
         self.assertIn("眉眼开合、嘴角、视线方向", instruction)
@@ -4130,6 +4137,23 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertIn("本段优先表情建议：如释重负后的兴奋", instruction)
         self.assertNotIn("本段优先表情建议：开心满足", instruction)
+
+    def test_cover_expression_prioritizes_title_event_over_conflicting_later_context(self):
+        instruction = bridge.recording_cover_streamer_expression_instruction(
+            "YYF",
+            "绝地翻盘成功拿下胜利",
+            "中途一度看起来可能被翻盘",
+        )
+        self.assertIn("本段优先表情建议：如释重负后的兴奋", instruction)
+        self.assertNotIn("本段优先表情建议：从错愕转为懊恼", instruction)
+
+    def test_cover_expression_does_not_treat_plain_game_end_as_a_loss(self):
+        instruction = bridge.recording_cover_streamer_expression_instruction(
+            "YYF",
+            "游戏结束后进入下一局",
+        )
+        self.assertIn("本段优先表情建议：专注自然", instruction)
+        self.assertNotIn("本段优先表情建议：疲惫无奈", instruction)
 
     def test_yyf_cover_expression_uses_neutral_fallback_without_result(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
@@ -4149,7 +4173,7 @@ class BridgeTests(unittest.TestCase):
             "果小果",
             "关键团极限反杀",
         )
-        self.assertIn("果小果 的表情与本段内容联动", instruction)
+        self.assertIn("果小果 的最终表情必须与标题对应的已核验对局情况联动", instruction)
         self.assertIn("本段优先表情建议：高度专注并带瞬间惊喜", instruction)
 
     def test_guoxiaoguo_reference_requires_fried_egg_hair_accessory(self):
@@ -4328,12 +4352,17 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(Path(edit_kwargs["image"].name), avatar)
         self.assertIn("直播间头像", edit_kwargs["prompt"])
         self.assertIn("允许根据直播主题受控二创", edit_kwargs["prompt"])
-        self.assertIn("真人或卡通属性不能明显偏离", edit_kwargs["prompt"])
+        self.assertIn("不能直接改成英雄原脸、无关人物或另一种真人/卡通类型", edit_kwargs["prompt"])
         self.assertIn("不得把原头像作为圆形贴纸", edit_kwargs["prompt"])
         self.assertIn("头像的脸、发型、帽子或标志头饰作为身份核心", edit_kwargs["prompt"])
         self.assertIn("形成同一个完整 Cos 人物", edit_kwargs["prompt"])
+        self.assertIn("自适应融合该英雄最有辨识度的视觉特征", edit_kwargs["prompt"])
+        self.assertIn("融合范围不限，可包含但不限于", edit_kwargs["prompt"])
+        self.assertIn("变化后仍须一眼认出原头像", edit_kwargs["prompt"])
+        self.assertIn("不改变脸部骨相与五官关系", edit_kwargs["prompt"])
         self.assertNotIn("蓝色鱼形头套", edit_kwargs["prompt"])
-        self.assertIn("YYF 的表情与本段内容联动", edit_kwargs["prompt"])
+        self.assertIn("YYF 的最终表情必须与标题对应的已核验对局情况联动", edit_kwargs["prompt"])
+        self.assertIn("不得根据零散弹幕猜测胜负", edit_kwargs["prompt"])
         self.assertIn("碾压或连胜", edit_kwargs["prompt"])
         self.assertIn("被翻盘用错愕后的懊恼", edit_kwargs["prompt"])
         self.assertNotIn("骇客徐杰", edit_kwargs["prompt"])
