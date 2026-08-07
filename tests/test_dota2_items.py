@@ -95,6 +95,8 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("主播与英雄一前一后构成主视觉", instruction)
         self.assertIn("重点装备可以更大", instruction)
         self.assertIn("装备不得遮脸、压字或贴边裁断", instruction)
+        self.assertNotIn("装备沿画面上缘和两侧错落分布", instruction)
+        self.assertIn("只有没有被人物穿戴、手持、背负或腰挂的身旁道具", instruction)
 
     def test_item_visual_context_prompt_supports_natural_wearing_without_duplicates(self):
         instruction = dota2_items.dota2_item_visual_context_prompt_instruction(
@@ -119,6 +121,22 @@ class Dota2ItemsTests(unittest.TestCase):
         self.assertIn("自然设计成人物已经穿戴的护甲、鞋、披风或饰品", instruction)
         self.assertIn("人物身上、手中或身旁已经出现的装备就算完成一次展示", instruction)
         self.assertIn("不得再在边缘、背景、倒影或装饰层复制同一件", instruction)
+
+    def test_item_placement_plan_assigns_one_manifestation_per_item(self):
+        matches = dota2_items.match_dota2_items(
+            "龙心 大跳 BKB 飞鞋 希瓦 克莱拉牧杖 咒术师触媒 A杖"
+        )
+        plans = dota2_items.dota2_item_placement_plan(matches)
+        by_slug = {plan["icon_slug"]: plan["placement"] for plan in plans}
+        self.assertIn("胸甲正中央", by_slug["heart"])
+        self.assertIn("手持、背负或腰挂三选一", by_slug["overwhelming_blink"])
+        self.assertIn("对应身体部位", by_slug["travel_boots"])
+        self.assertIn("随身能量核心", by_slug["conjurers_catalyst"])
+        instruction = dota2_items.dota2_item_placement_plan_prompt_instruction(plans)
+        self.assertIn("逐件单次实体分配", instruction)
+        self.assertIn("每个编号只能对应画面中的一个物理实体", instruction)
+        self.assertIn("禁止再沿画面边缘展示它的图标", instruction)
+        self.assertIn("泛化护甲、武器和装饰不得复刻名单内装备", instruction)
 
     def test_official_item_text_removes_html_and_template_tokens(self):
         cleaned = dota2_items._clean_official_item_text(

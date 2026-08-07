@@ -39,6 +39,8 @@ from dota2_abilities import (
 )
 from dota2_items import (
     build_dota2_item_reference_sheet,
+    dota2_item_placement_plan,
+    dota2_item_placement_plan_prompt_instruction,
     dota2_item_prompt_instruction,
     dota2_item_visual_context_prompt_instruction,
     load_dota2_item_visual_contexts,
@@ -4357,6 +4359,11 @@ def generate_recording_cover_with_ai(
         details["ai_cover_dota2_item_visual_contexts"] = item_visual_contexts
         dota2_item_instruction += dota2_item_visual_context_prompt_instruction(
             item_visual_contexts
+        )
+        item_placement_plan = dota2_item_placement_plan(dota2_item_matches)
+        details["ai_cover_dota2_item_placement_plan"] = item_placement_plan
+        dota2_item_instruction += dota2_item_placement_plan_prompt_instruction(
+            item_placement_plan
         )
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,

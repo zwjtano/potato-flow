@@ -337,6 +337,74 @@ def dota2_item_visual_context_prompt_instruction(
     )
 
 
+def dota2_item_placement_plan(
+    matches: Iterable[Dota2ItemMatch],
+) -> list[dict[str, str]]:
+    """Assign one physical manifestation to each item before image generation."""
+    plans: list[dict[str, str]] = []
+    worn_tokens = (
+        "boots", "greaves", "shoe", "cuirass", "guard", "mail", "armor",
+        "cloak", "cape", "hood", "helm", "mask", "coat", "shawl", "hat",
+        "wrap", "gauntlet", "bracer", "band", "armlet", "shroud", "crest",
+        "medallion", "talisman",
+    )
+    held_tokens = (
+        "blade", "sword", "rapier", "scepter", "staff", "crozier", "scythe",
+        "dagger", "blink", "pike", "halberd", "hammer", "bar", "gungir",
+        "axe", "lance", "wand", "rod", "sabre",
+    )
+    focus_tokens = (
+        "orb", "catalyst", "gem", "stone", "shard", "bottle", "sphere",
+        "lotus", "heart", "eye", "moon", "aegis", "cheese", "smoke",
+        "ward", "locket", "pendant", "ring",
+    )
+    def has_token(slug: str, tokens: tuple[str, ...]) -> bool:
+        parts = set(slug.split("_"))
+        return any(token in parts for token in tokens)
+
+    for match in matches:
+        slug = match.item.icon_slug.lower()
+        if slug == "heart":
+            placement = "嵌入胸甲正中央，作为唯一的红色心脏核心"
+        elif has_token(slug, worn_tokens):
+            placement = "按官方轮廓自然穿在对应身体部位，画面中不再出现同款漂浮图标"
+        elif has_token(slug, held_tokens):
+            placement = "只出现为一件实体武器或法器：手持、背负或腰挂三选一"
+        elif has_token(slug, focus_tokens):
+            placement = "只出现为一处随身能量核心、饰品或身旁实体道具"
+        else:
+            placement = "只出现为一件随身实体道具，可穿戴、手持或放在身旁，但不得另画图标副本"
+        plans.append(
+            {
+                "chinese_name": match.item.chinese_name,
+                "english_name": match.item.english_name,
+                "icon_slug": match.item.icon_slug,
+                "placement": placement,
+            }
+        )
+    return plans
+
+
+def dota2_item_placement_plan_prompt_instruction(
+    plans: Iterable[dict[str, str]],
+) -> str:
+    normalized = list(plans)
+    if not normalized:
+        return ""
+    rows = [
+        f"{index}. {plan['chinese_name']}：{plan['placement']}"
+        for index, plan in enumerate(normalized, start=1)
+    ]
+    return (
+        "生成前先锁定以下逐件单次实体分配，成图必须逐项执行："
+        + "；".join(rows)
+        + "。每个编号只能对应画面中的一个物理实体；穿在人物身上、拿在手里、固定在背部或腰间后，"
+        "禁止再沿画面边缘展示它的图标。只有分配为身旁实体道具的装备才可以独立悬浮，"
+        "而且只能一处。人物的泛化护甲、武器和装饰不得复刻名单内装备的核心轮廓、主色和符号，"
+        "避免形成视觉上的第二件同款。"
+    )
+
+
 def _all_dota2_items() -> tuple[Dota2Item, ...]:
     """Merge curated aliases with every unchanged/current official item."""
     merged = {item.icon_slug: item for item in _official_dota2_items()}
@@ -431,17 +499,18 @@ def dota2_item_prompt_instruction(matches: Iterable[Dota2ItemMatch]) -> str:
         "必须以参考板中的轮廓、主色、材质与核心符号为准，"
         "每件装备保持独立，不得把两件装备融合成一件。可以将图标风格转化为精致插画道具，"
         "但不能改变其身份特征；没有出现在识别结果中的装备不要擅自添加。"
-        "图像模型可以依据参考图自由表现全部已确认装备：可将装备集中或分散在画面边缘，"
-        "作为角色手持、穿戴、身旁道具或技能能量焦点，并随透视调整大小、角度与光效，"
-        "优先尝试把适合的装备自然穿戴或持握在人物身上；每件确认装备在整张图中必须恰好出现一次，"
+        "图像模型可以依据参考图自由表现全部已确认装备，但必须先为每件装备选择唯一的一种实体位置："
+        "角色穿戴、手持、背负、腰挂或身旁道具五选一，并随透视调整大小、角度与光效。"
+        "适合的装备应自然穿戴或持握在人物身上；每件确认装备在整张图中必须恰好出现一次，"
         "穿戴、手持或身旁出现都已经计数，不得再以悬浮图标、背景回声、镜像、倒影或装饰复制同一件。"
         "但必须保留每件装备可辨认的官方身份特征；最多六格主装备以及单独确认的中立物品、"
         "神杖或魔晶状态都不得只挑两件省略。不得新增名单外装备、把两件装备融合为一件，"
         "也不得绘制呆板的游戏物品栏 UI。装备视觉应采用独立道具插画、清晰描边与光效层次，"
         "不得把商店图标原样贴成带黑底和名称的卡片。Dota 2 封面优先采用不对称切片构图："
         "主播与英雄一前一后构成主视觉，标题放在另一侧或下方并按完整语义分成两至三行；"
-        "装备沿画面上缘和两侧错落分布，标题直接点名的重点装备可以更大，"
-        "其余装备较小但仍须清楚可辨。标题、人物与英雄始终高于装备辅助层，"
+        "只有没有被人物穿戴、手持、背负或腰挂的身旁道具，才可沿画面上缘和两侧错落分布；"
+        "标题直接点名的重点装备可以更大，其余装备较小但仍须清楚可辨。"
+        "标题、人物与英雄始终高于装备辅助层，"
         "装备不得遮脸、压字或贴边裁断。"
     )
 
