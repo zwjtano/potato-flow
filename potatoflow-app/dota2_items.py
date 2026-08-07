@@ -364,7 +364,13 @@ def dota2_item_placement_plan(
 
     for match in matches:
         slug = match.item.icon_slug.lower()
-        if slug == "heart":
+        if slug == "ultimate_scepter":
+            placement = "阿哈利姆神杖就是 A 杖；必须作为唯一一根 A 杖直接拿在人物手中"
+        elif slug == "black_king_bar":
+            placement = "固定在人物背部或侧后方，只出现这一根黑皇杖，不占用手持 A 杖的位置"
+        elif slug == "crellas_crozier":
+            placement = "固定在人物背部另一侧，只出现这一根牧杖，不占用手持 A 杖的位置"
+        elif slug == "heart":
             placement = "嵌入胸甲正中央，作为唯一的红色心脏核心"
         elif has_token(slug, worn_tokens):
             placement = "按官方轮廓自然穿在对应身体部位，画面中不再出现同款漂浮图标"
