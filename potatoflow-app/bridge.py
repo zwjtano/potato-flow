@@ -548,6 +548,14 @@ def _text_mentions_name(text: str, name: str) -> bool:
     return bool(_text_name_match_spans(text, name))
 
 
+def _guest_alias_is_numeric_value(text: str, end: int, alias: str) -> bool:
+    """Reject numeric nicknames when the match is plainly a measured value."""
+    if not re.fullmatch(r"[\d.]+", str(alias or "").strip()):
+        return False
+    suffix = str(text or "")[end:].lstrip()
+    return suffix.startswith(("%", "％"))
+
+
 def recording_cover_guest_candidates(
     streamer: str,
     *content: str,
@@ -561,6 +569,8 @@ def recording_cover_guest_candidates(
             continue
         for alias in aliases:
             for start, end in _text_name_match_spans(combined, alias):
+                if _guest_alias_is_numeric_value(combined, end, alias):
+                    continue
                 matches.append((start, end, canonical_name, alias))
 
     # Prefer the longest alias at an overlapping location. This keeps page names
