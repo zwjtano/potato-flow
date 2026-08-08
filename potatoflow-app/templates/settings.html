@@ -846,27 +846,6 @@
                                                                 </select>
                                                             </div>
                                                         </div>
-                                                        {% set dota2_cover_layout_mode = config.get('RECORDING_DOTA2_COVER_LAYOUT_MODE', 'classic') %}
-                                                        <div class="col-12">
-                                                            <div class="form-group">
-                                                                <label class="form-label">Dota 2 英雄与装备布局</label>
-                                                                <div class="btn-group w-100" role="group" aria-label="Dota 2 英雄与装备布局">
-                                                                    <input class="btn-check" type="radio" name="RECORDING_DOTA2_COVER_LAYOUT_MODE"
-                                                                           id="dota2-cover-layout-classic" value="classic"
-                                                                           {% if dota2_cover_layout_mode != 'fusion' %}checked{% endif %}>
-                                                                    <label class="btn btn-outline-primary" for="dota2-cover-layout-classic">
-                                                                        <i class="bi bi-people"></i> 经典分离
-                                                                    </label>
-                                                                    <input class="btn-check" type="radio" name="RECORDING_DOTA2_COVER_LAYOUT_MODE"
-                                                                           id="dota2-cover-layout-fusion" value="fusion"
-                                                                           {% if dota2_cover_layout_mode == 'fusion' %}checked{% endif %}>
-                                                                    <label class="btn btn-outline-primary" for="dota2-cover-layout-fusion">
-                                                                        <i class="bi bi-magic"></i> 英雄融合
-                                                                    </label>
-                                                                </div>
-                                                                <p class="help-text mb-0 mt-2">经典分离：主播头像与官方英雄分开，装备图标可外围环绕或底部一排；英雄融合：头像、英雄身体与装备合成一个 Cos 人物。两种模式同时作用于 16:9 和 4:3。</p>
-                                                            </div>
-                                                        </div>
                                                     </div>
                                                     <p class="help-text mt-2 mb-0">两种封面将分别调用图片模型生成。模型不提供精确 16:9 / 4:3 尺寸时，系统会按各自的构图提示生成后独立处理为投稿比例。接口地址、API 密钥留空时分别继承全局配置。</p>
                                                 </div>
