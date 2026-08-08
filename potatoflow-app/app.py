@@ -1219,14 +1219,6 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
                 )
             form_data[config_key] = prompt_text
 
-        if "RECORDING_DOTA2_COVER_LAYOUT_MODE" in form_data:
-            cover_layout_mode = str(
-                form_data.get("RECORDING_DOTA2_COVER_LAYOUT_MODE") or "classic"
-            ).strip().lower()
-            if cover_layout_mode not in {"classic", "fusion"}:
-                raise RecorderConfigError("Dota 2 封面布局只能选择经典分离或英雄融合")
-            form_data["RECORDING_DOTA2_COVER_LAYOUT_MODE"] = cover_layout_mode
-
         danmaku_ranges = {
             'DANMAKU_DURATION_SECONDS': (float, 1, 30, '弹幕飘屏时间'),
             'DANMAKU_FONT_SIZE': (int, 12, 120, '弹幕字号'),
@@ -1259,7 +1251,6 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
         recording_prompt_settings_changed = bool(
             (
                 set(RECORDING_AI_PROMPT_CONFIG_KEYS.values())
-                | {"RECORDING_DOTA2_COVER_LAYOUT_MODE"}
             )
             & set(form_data)
         )

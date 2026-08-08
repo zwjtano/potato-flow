@@ -38,17 +38,9 @@ from dota2_abilities import (
     match_dota2_abilities,
 )
 from dota2_items import (
-    DOTA2_COVER_LAYOUT_CLASSIC,
-    DOTA2_COVER_LAYOUT_FUSION,
     build_dota2_item_reference_sheet,
-    dota2_item_placement_plan,
-    dota2_item_placement_plan_prompt_instruction,
     dota2_item_prompt_instruction,
-    dota2_item_visual_context_prompt_instruction,
-    load_dota2_item_visual_contexts,
     match_dota2_items,
-    normalize_dota2_cover_layout_mode,
-    prioritize_dota2_item_matches,
 )
 from dota2_heroes import build_dota2_hero_reference, find_official_dota2_hero
 from runtime_environment import configure_linux_ca_environment
@@ -149,35 +141,11 @@ DOTA2_METADATA_DISAMBIGUATION = (
     "电炎绝手（Snapfire），不得理解为普通老年女性。"
 )
 DEFAULT_RECORDING_COVER_AI_PROMPT = (
-    "封面只围绕最终标题中排序第一的最重要事件构图，即使标题用分号写了第二个事件也不得画入封面。"
-    "保持单一场景、单一叙事焦点，不使用双场景、三场景、分屏或事件拼贴。标题已经包含当前主播时，"
-    "封面短文案才自然保留标题中的主角名；标题没有当前主播时不得强塞名字，不使用“主角名｜事件”"
-    "这种机械标签。封面文案允许比投稿标题短，只保留第一核心事件；证据充足时优先16至24字、最多28字，"
-    "保留人物或英雄、关键装备或阶段、核心动作、转折或结果中至少两类有区分度的信息，不要只剩一个泛化动作；"
-    "有效内容确实稀疏时可用8至15字。不得新增事实、"
-    "改写人物关系或删除中性消息的来源限定，负面未经证实的现实传言不得进入封面。主体醒目、对比清楚、"
-    "适合手机缩略图；短文案根据语义使用一至三行大字，证据充足的 Dota 2 事件优先两至三行，"
-    "最多占画面约四成，给人物和事件留出主要视觉空间。"
-    "当前主播出镜时必须直接使用已上传的封面人物底稿作为独立人物主体，保留底稿原有的脸部、发型和画风，"
-    "不得只提取特征后重新生成替代头像，也不得将主播头像的脸、身体、服装或皮肤与 Dota 2 英雄融合。"
-    "结构化数据确认主播使用某英雄时，主播人物与 Valve 官方英雄必须作为两个清楚分开的视觉主体："
-    "主播在前景表达反应，英雄在侧后方保持官方完整脸部、体型、护甲、武器、轮廓与主色；"
-    "禁止把主播画成英雄 Cos、把头像贴到英雄身体上，或让英雄特征覆盖主播身份。"
-    "所有主播别名都指向底稿中的同一人，不得根据昵称猜测长相、另画陌生人或按字面生成动植物。"
-    "只有最终投稿标题明确出现、且获得唯一匹配头像的其他主播，才可作为次要人物；"
-    "简介、时间线或弹幕中顺带提及的人物一律不得出镜，不得替换主角或混合人脸。"
-    "参考图只用于人物身份，不得复制其中的文字、水印、直播界面和无关背景。DOTA2 英雄和技能必须符合游戏原设；"
-    "装备只允许依据系统随附的 Valve 官方装备图标参考，缺少官方参考时不得表现具体装备。"
-    "已确认装备恢复为经典切片封面的独立官方图标展示：根据标题与主体空间，"
-    "可沿人物和英雄外围错落环绕，也可在画面最下方安全区整齐排成一排，"
-    "保持每件装备的 Valve 官方轮廓、主色、材质和标志性符号，在缩略图中也能逐件辨认。"
-    "装备不得穿到主播或英雄身上，不得变成人物服装、护甲、肢体、普通武器或技能光效，"
-    "也不得把两件装备融合为一件。每件装备只出现一次，使用透明背景、清晰描边和适度光效，"
-    "不带商店黑底、名称或物品栏边框；不得新增名单外装备或漏掉确认装备。"
-    "游戏名、英雄、装备、人物动作、比赛结果和情绪方向只能来自最终标题与已核验事件上下文；"
-    "讨论或观战内容缺少可靠游戏画面时使用人物反应和抽象氛围，不得补画具体英雄或胜负。"
-    "画面不要出现日期、时间、房间号、平台界面、二维码或水印。16:9 与 4:3 必须独立构图，"
-    "不得把一个画幅直接裁切或拉伸成另一个画幅。"
+    "画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。"
+    "将指定标题作为唯一封面短文案。必须逐字保留，不得改写、重复、漏字。"
+    "不得增加副标题、日期、栏目名或宣传语。根据标题长度使用一至三行。"
+    "文字区最多占画面约四成。文字不得遮挡人物、贴边或被裁切。"
+    "自定义要求可以补充画风、配色和氛围。"
 )
 APP_ROOT = Path(__file__).resolve().parent
 WORKSPACE_ROOT = APP_ROOT.parent
@@ -2934,8 +2902,6 @@ def recording_cover_headline(
     streamer: str = "",
 ) -> str:
     """Extract a cover-safe headline without dates, clocks or template chrome."""
-    title = strip_danmaku_edition_marker(title)
-    ai_topic = strip_danmaku_edition_marker(ai_topic)
     generic_topics = {"直播精彩内容", "精彩内容", "直播回放", "精彩直播", "直播录像"}
     candidate = str(ai_topic or "").strip()
     if candidate in generic_topics:
@@ -2963,17 +2929,11 @@ def recording_cover_headline(
     candidate = re.sub(r"(?:今天|今日|今晚|昨天|明天|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜)", "", candidate)
     candidate = re.sub(r"[\r\n｜|]+", " ", candidate)
     candidate = re.sub(r"\s{2,}", " ", candidate).strip(" -_｜|·")
-    candidate = candidate.split("；", 1)[0].strip()
     candidate = candidate or "直播精彩内容"
     subject_name = recording_cover_subject_name(streamer, title, ai_topic)
-    headline = candidate
-    if (
-        ai_topic
-        and subject_name
-        and topic_mentions_streamer(title, streamer)
-        and not topic_mentions_streamer(headline, streamer)
-    ):
-        headline = f"{subject_name}{candidate}"
+    headline = candidate[:24]
+    if subject_name and not topic_mentions_streamer(headline, streamer):
+        headline = f"{subject_name}{candidate}"[:24]
     return headline
 
 
@@ -3096,22 +3056,11 @@ def recording_cover_text_layout_instruction(
 
 
 def recording_cover_hero_matches_title(hero: str, title: str) -> bool:
-    """Reject telemetry only when the reviewed headline names another hero.
-
-    Event-timestamp-matched GSI is stronger than silence in a natural-language
-    title. Requiring every title to repeat the hero discarded valid hero and
-    equipment references for headlines such as "高地推进后基地爆炸".
-    """
+    """Only lock a gameplay hero when the reviewed headline names that hero."""
     hero_name = str(hero or "").strip().casefold()
     title_text = str(title or "").casefold()
     if not hero_name or not title_text:
         return False
-    title_hero_keys = _dota2_hero_identity_keys(title_text)
-    if not title_hero_keys:
-        return True
-    hero_keys = _dota2_hero_identity_keys(hero_name)
-    if hero_keys:
-        return bool(hero_keys & title_hero_keys)
     for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
         canonical_short = re.split(r"[（(]", canonical_name, maxsplit=1)[0].strip()
         names = {
@@ -3128,7 +3077,6 @@ def dota2_gsi_equipment_prompt_instruction(
     main_items: list[str],
     neutral_item: str = "",
     upgrade_states: list[str] | None = None,
-    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
 ) -> str:
     """Describe GSI equipment without conflating slots and extra states."""
     main = [str(item).strip() for item in main_items[:6] if str(item).strip()]
@@ -3157,29 +3105,10 @@ def dota2_gsi_equipment_prompt_instruction(
             + ", ".join(upgrades)
             + "；这些状态不得重复算作第七件主装备。"
         )
-    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
-        sections.append(
-            "只能表现上述已确认的装备与状态，不得增加名单外装备。"
-            "装备名称只用于身份识别，必须依据随附的 Valve 官方装备图标参考和后续逐件位置计划，"
-            "优先将装备自然穿戴、手持、背负或腰挂到主播与英雄融合形成的同一个完整 Cos 人物上。"
-            "不适合穿戴或持握的物件可作为身旁道具或能量焦点，但不得沿外围排成图标圈或底部物品栏。"
-            "每件装备只能出现一次，必须保留官方轮廓、主色、材质和标志性符号；不得融合两件装备、"
-            "漏掉确认装备、增加名单外装备或绘制商店黑底和物品栏 UI。"
-        )
-        return "".join(sections)
     sections.append(
         "只能表现上述已确认的装备与状态，不得增加名单外装备。"
         "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
-        "图像模型必须依据随附的 Valve 官方装备图标参考表现全部已确认装备。"
-        "每件装备恢复为独立、清晰、接近官方图标造型的切片元素，使用透明背景、清晰描边和适度光效，"
-        "根据标题与主体空间，可沿主播人物和官方英雄外围错落环绕，也可在画面最下方安全区整齐排成一排；"
-        "允许标题点名的重点装备略大，其余仍须逐件可辨。"
-        "禁止把装备穿戴、手持、背负或嵌入主播与英雄身体，禁止把装备改成服装、护甲、普通武器或技能光球。"
-        "最多六格主装备以及单独确认的中立物品、神杖或魔晶状态都不得只挑两件省略。"
-        "每件装备只出现一次，不得融合、镜像、重复或新增名单外装备，也不得绘制商店黑底、名称和物品栏边框。"
-        "Dota 2 封面采用经典双主体切片构图：主播头像人物独立位于前景，已确认的 Valve 官方英雄独立位于侧后方；"
-        "标题放在另一侧或上方；装备图标可沿剩余安全区域环绕，也可统一放在最下方一排，"
-        "由实际布局选择，不能遮脸、压字或贴边裁断。"
+        "只将随附的 Valve 官方装备图标作为物品外形参考，不指定装备在画面中的排列、穿戴或合成方式。"
     )
     return "".join(sections)
 
@@ -3198,56 +3127,22 @@ def require_dota2_item_reference(
     )
 
 
-def recording_cover_event_context(
-    description: str,
-    headline: str = "",
-) -> tuple[str, str]:
+def recording_cover_event_context(description: str) -> tuple[str, str]:
     """Return timestamp-free cover context, preferring verified timeline events."""
-    def relevant_events(events: list[str]) -> list[str]:
-        events = [event for event in events if event]
-        headline_key = _compact_alias(headline)
-        if not headline_key or len(headline_key) < 2:
-            return events
-        headline_pairs = {
-            headline_key[index:index + 2]
-            for index in range(len(headline_key) - 1)
-        }
-
-        def headline_overlap(event: str) -> int:
-            event_key = _compact_alias(event)
-            event_pairs = {
-                event_key[index:index + 2]
-                for index in range(max(0, len(event_key) - 1))
-            }
-            return len(headline_pairs & event_pairs)
-
-        ranked = sorted(
-            ((headline_overlap(event), index, event) for index, event in enumerate(events)),
-            key=lambda item: (-item[0], item[1]),
-        )
-        matched = [event for score, _, event in ranked if score > 0][:1]
-        return matched or events[:1]
-
     points = timeline_lines(description)
     if points:
         events = [
             re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", point).strip()
             for point in points
         ]
-        events = relevant_events(events)
-        return "；".join(events)[:700], "verified_timeline"
+        return "；".join(event for event in events if event)[:700], "verified_timeline"
     clean_lines = [
         line.strip()
         for line in str(description or "").splitlines()
         if line.strip()
         and not line.strip().startswith(("———", "🎮 ", "🎁 ", "💎 ", "💬 ", "👥 "))
     ]
-    sentences = [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[。！？!?；;])", " ".join(clean_lines))
-        if sentence.strip()
-    ]
-    return " ".join(relevant_events(sentences))[:700], "description"
+    return " ".join(clean_lines)[:700], "description"
 
 
 def recording_cover_event_timestamp_seconds(
@@ -3297,9 +3192,6 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     if normalized == "果小果":
         if GUOXIAOGUO_COVER_REFERENCE.is_file():
             return "果小果", GUOXIAOGUO_COVER_REFERENCE
-    if normalized == "DD":
-        if XIEBIN_DD_COVER_REFERENCE.is_file():
-            return "谢彬DD", XIEBIN_DD_COVER_REFERENCE
     return None
 
 
@@ -3310,20 +3202,13 @@ def recording_cover_reference_instruction(reference_name: str) -> str:
             "保留深棕色长发、红棕色星光大眼、脸颊红晕、两侧红色蝴蝶结和头顶荷包蛋发饰；"
             "头顶标志必须是荷包蛋发饰：不规则白色蛋白包住圆润的金黄色蛋黄，荷包蛋下方是"
             "醒目的红色大蝴蝶结；绝对不能画成蛋壳、破壳小鸡、普通帽子、花朵或只剩黄色圆点。"
-            "保持底稿原有的二次元 Q 版画风，禁止重绘成另一种动漫脸或改成真人，也不要生成成其他角色。"
-            "可以根据直播主题受控调整表情、背景、服装和姿势，但脸型比例、五官关系和标志发饰不能明显偏离。"
-        )
-    if reference_name == "谢彬DD":
-        return (
-            "上传的参考照片是主播谢彬 DD 本人经过裁切的固定人物底稿。必须以图中同一人为唯一人物原型，"
-            "保留短黑发、脸型、眉眼、鼻唇和整体身份辨识度；照片中的黑色夹克与胸前握拳手势只作为"
-            "体态参考，可以根据直播主题受控调整表情、服装、动作、光影和背景。人物脸部必须保留底稿的真人原貌与原始画风，"
-            "不得动漫化、Q版化、换脸或重新生成另一张相似但不同的脸；英雄服装和游戏背景可以插画化。"
+            "保持二次元 Q 版插画风格，禁止改成真人，也不要生成成其他角色。"
+            "可以根据直播主题更换背景、服装和姿势。"
         )
     return (
         f"上传的参考照片是主播 {reference_name} 本人。必须以照片中的人物为唯一人物原型，"
-        "直接保留其原有脸部、五官、发型和画风；可以根据直播主题受控调整适度表情、背景、服装和姿势，"
-        "但不得动漫化、Q版化、换脸或重新生成成另一个相似人物。"
+        "保持其脸型、五官、发型和身份辨识度；可以根据直播主题更换背景、服装和姿势，"
+        "但不要生成成其他人。"
     )
 
 
@@ -3363,26 +3248,11 @@ def download_recording_avatar_reference(url: str, cfg: dict[str, Any]) -> Path:
     return destination
 
 
-def recording_avatar_reference_instruction(
-    streamer: str,
-    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
-) -> str:
-    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
-        return (
-            f"上传的参考图是主播 {streamer or '主播'} 当前直播间头像，也是本次封面的身份底稿。"
-            "必须保持原有脸部、发型、五官、配色和画风，不得换成无关人物。结构化数据确认主播"
-            "使用英雄时，将头像的脸、发型、帽子或标志头饰作为身份核心，自适应融合该英雄最有辨识度的"
-            "身体、服装、体态、元素效果和技能氛围，形成同一个完整 Cos 人物。"
-            "变化后仍须一眼认出原头像，不得直接替换成英雄原脸；真人底稿不得改变脸部骨相与五官关系。"
-        )
+def recording_avatar_reference_instruction(streamer: str) -> str:
     return (
-        f"上传的参考图是主播 {streamer or '主播'} 当前直播间头像，也是本次封面必须直接沿用的独立人物底稿。"
-        "头像中的人物、角色、吉祥物或标志性形象必须保持原有脸部、发型、五官、配色和画风；"
-        "不得只提取特征后重新生成动漫版、Q版、真人版或另一张相似头像。允许根据直播主题扩展背景、"
-        "动作、光影和适度表情，但不得把主播画成英雄 Cos，不得把头像的脸贴到英雄身体上，"
-        "也不得让英雄的肤色、器官、体型、护甲或武器改变主播形象。"
-        "不要替换成无关人物或角色。"
-        "若有已确认英雄，主播头像人物在前景独立出现，官方英雄在侧后方独立出现，两者轮廓不可融合。"
+        f"上传的参考图是主播 {streamer or '主播'} 的直播间头像。请优先以头像中的人物、"
+        "角色、吉祥物或标志性形象作为封面主体底稿，保持发型、五官、配色、服装特征和"
+        "角色辨识度；可以根据直播主题扩展横向背景与动作，但不要替换成无关人物或角色。"
     )
 
 
@@ -3683,16 +3553,16 @@ _DOTA2_ITEM_CONTEXT_ALIASES = (
 
 def recording_cover_has_dota2_context(streamer: str, *content: str) -> bool:
     """Avoid treating ordinary words as Dota items on unrelated streams."""
+    normalized_streamer = normalize_dota2_streamer_name(streamer)
+    known_streamers = {
+        canonical_name
+        for canonical_name, _aliases in _all_dota2_streamer_alias_groups()
+    }
+    known_streamers.add("果小果")
+    if normalized_streamer in known_streamers:
+        return True
     combined = "\n".join(str(value or "") for value in content).casefold()
     if re.search(r"(?<![a-z0-9])dota\s*2?(?![a-z0-9])|刀塔", combined):
-        return True
-    # A streamer who usually plays Dota 2 can still switch to an unrelated
-    # RPG.  Room identity alone therefore cannot authorize item matching:
-    # generic words such as "刷新" and "宝石" otherwise become Refresh Orb
-    # and Gem of True Sight badges on a non-Dota cover.  Reliable GSI is
-    # handled before this fallback; without it, require an actual hero or a
-    # deliberately strong Dota item alias in the selected event text.
-    if _contains_unverified_dota2_hero(combined):
         return True
     return any(alias.casefold() in combined for alias in _DOTA2_ITEM_CONTEXT_ALIASES)
 
@@ -3717,16 +3587,11 @@ def recording_cover_dota2_instruction(*content: str) -> str:
                 break
 
     resolved = "；".join(matched) if matched else "本次未检出可确定的英雄俗称"
-    literal_cat_rules: list[str] = []
+    storm_spirit_rule = ""
     if any("Storm Spirit" in item for item in matched):
-        literal_cat_rules.append(
+        storm_spirit_rule = (
             "特别注意：蓝猫只能是风暴之灵（Storm Spirit）——蓝色皮肤、宽体型男性元素之灵、"
             "蓝色东方长袍与圆帽、环绕闪电能量；绝对不能画成蓝色猫、猫咪吉祥物或其他作品的猫。"
-        )
-    if any("Void Spirit" in item for item in matched):
-        literal_cat_rules.append(
-            "特别注意：紫猫只能是虚无之灵（Void Spirit）——紫色能量、白发白须、紫白护甲与双刃的"
-            "男性元素之灵；绝对不能画成紫色猫、猫咪吉祥物或其他作品的猫。"
         )
     return (
         "Dota 2 游戏角色消歧规则：如果标题或摘要涉及 DOTA、Dota 2、刀塔，或出现英雄俗称，"
@@ -3734,7 +3599,7 @@ def recording_cover_dota2_instruction(*content: str) -> str:
         "服装、主色、武器与技能特效来设计；禁止按词语字面画成动物、普通人物，也禁止混入"
         "《英雄联盟》、宝可梦或其他作品的角色。"
         f"本次识别结果：{resolved}。"
-        f"{''.join(literal_cat_rules)}"
+        f"{storm_spirit_rule}"
         "若摘要里还有未列出的 Dota 2 俗称，应先在语义上还原为该英雄的中英文正式名再作画；"
         "无法确定时宁可使用 Dota 2 对局氛围和技能特效，不要凭字面臆造角色。"
     )
@@ -3791,112 +3656,15 @@ def recording_cover_verified_hero_cosplay_instruction(
     hero: str,
     *,
     gameplay_verified: bool,
-    layout_mode: str = DOTA2_COVER_LAYOUT_CLASSIC,
 ) -> str:
-    """Show a verified hero separately from the streamer's identity reference."""
+    """Describe only the verified hero fact without imposing a composition mode."""
     hero_name = str(hero or "").strip()
     if not hero_name or not gameplay_verified:
         return (
             "本段没有结构化数据确认当前主播亲自使用某个英雄；"
             "不得让主播穿成被观战、被讨论或仅由弹幕猜测的英雄。"
         )
-    if normalize_dota2_cover_layout_mode(layout_mode) == DOTA2_COVER_LAYOUT_FUSION:
-        return (
-            f"结构化游戏数据已确认当前主播亲自使用 {hero_name}。使用英雄融合构图：主播主视觉是“本人 Cos 本局英雄”。"
-            "人物底稿的脸、发型、帽子或标志头饰作为身份核心，英雄提供身体、服装、体态与技能氛围，"
-            "本局装备按逐件位置计划穿戴、手持、背负或腰挂到同一个完整人物上。"
-            "必须保留底稿核心眼眉关系和原画风，不得变成英雄原脸或陌生人物；真人底稿不得改变脸部骨相。"
-            f"该 Cos 主播就是画面中唯一的 {hero_name} 角色，禁止再生成英雄本体、英雄剪影、第二个人物或重复脸。"
-        )
-    return (
-        f"结构化游戏数据已确认当前主播亲自使用 {hero_name}。恢复经典双主体构图："
-        "主播人物底稿作为独立前景反应主体，保持原有脸部、发型、服装特征、真人或卡通属性与画风；"
-        f"{hero_name} 作为独立的官方游戏英雄出现在侧后方，完整保留 Valve 官方脸部、体型、护甲、"
-        "武器、轮廓、主色和技能特效。两者可以有前后景层次，但身体、脸部、服装和轮廓必须清楚分开。"
-        "禁止主播 Cos 英雄、禁止换脸、禁止把头像贴到英雄身体上，也禁止把英雄器官、肤色、体型或装备"
-        "融合进主播。英雄只出现一次，不得再生成第二个英雄、英雄剪影或重复脸。"
-    )
-
-
-def recording_cover_subject_identity_instruction(
-    streamer: str,
-    subject_name: str,
-) -> str:
-    """Lock editorial aliases to the single character in the cover base image."""
-    canonical_name = normalize_dota2_streamer_name(streamer) or str(streamer or "主播")
-    labels = dedupe_recording_tags((subject_name, canonical_name, streamer))
-    if canonical_name == "川神":
-        labels = dedupe_recording_tags(
-            (*labels, "川神", "老菜", "叫我老陈就好了")
-        )
-    joined_labels = "、".join(f"“{label}”" for label in labels if label) or "“主播”"
-    return (
-        f"封面主角身份锁定：{joined_labels}都指当前直播间的同一位主播，不是多个人物。"
-        "画面中主播只能有一人，人物外观只能依据随请求上传的封面人物底稿；"
-        "昵称只用于标题文字和身份理解，不得根据“枫哥”、“胖头”、“老菜”等昵称猜测长相、"
-        "另画陌生人，也不得按字面画成枫叶、鱼、蔬菜或拟人形象。"
-    )
-
-
-def recording_cover_streamer_expression_instruction(
-    streamer: str,
-    *content: str,
-) -> str:
-    """Let every room reference react to the segment without losing identity."""
-    streamer_name = normalize_dota2_streamer_name(streamer) or str(streamer or "主播")
-    def safe_expression_context(value: str) -> str:
-        cleaned = re.sub(r"[【\[]?直播回放[】\]]?", "", str(value or ""))
-        cleaned = re.sub(
-            r"(?<!\d)20\d{2}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?(?!\d)",
-            "",
-            cleaned,
-        )
-        return re.sub(
-            r"(?<!\d)\d{1,2}:\d{2}(?::\d{2})?(?!\d)",
-            "",
-            cleaned,
-        )
-
-    safe_contexts = [safe_expression_context(str(value or "")) for value in content]
-    safe_context = "\n".join(safe_contexts)
-    compact_contexts = [re.sub(r"\s+", "", value) for value in safe_contexts]
-    expression_rules = (
-        (("被翻盘", "惨遭翻盘", "痛失好局", "葬送优势", "优势送完"), "从错愕转为懊恼，眉头紧锁、嘴角下压，带一点不甘"),
-        (("翻盘成功", "完成翻盘", "逆转取胜", "绝地翻盘"), "如释重负后的兴奋，眼神发亮、明显笑意，可带克制的庆祝动作"),
-        (("碾压", "打爆", "轻松取胜", "血虐", "连胜"), "自信得意，眉梢上扬、轻松微笑，姿态舒展但不要傲慢失真"),
-        (("极限反杀", "残血反杀", "关键团", "一打多", "抢盾", "偷家"), "高度专注并带瞬间惊喜，目光锐利、身体微微前倾"),
-        (("惨败", "落败", "输掉", "告负"), "疲惫无奈，眉眼下垂、轻叹或苦笑，不要夸张哭泣"),
-        (("暴毙", "被抓", "连死", "送人头", "白给"), "震惊夹杂烦躁，眼睛略睁大、眉头皱起，可有短暂摊手动作"),
-        (("失误", "空大", "出装争议", "加点争议", "被质疑"), "尴尬、心虚或不服气，使用克制苦笑、侧目或轻微撇嘴"),
-        (("破防", "红温", "气急", "上头", "怒了"), "明显恼火但保持人物美观，眉头紧皱、咬牙或抿嘴，禁止扭曲鬼脸"),
-        (("整活", "节目效果", "搞笑", "笑疯", "逗乐"), "开心大笑、憋笑或夸张惊讶，强化欢乐节目效果"),
-        (("逆风", "守高", "焦灼", "决胜团", "生死团"), "紧张坚定，目光集中、嘴唇微抿，呈现背水一战的压力"),
-        (("获胜", "赢下", "胜利", "拿下"), "开心满足，露出自然笑意和轻松神态"),
-    )
-    recommended_expression = next(
-        (
-            expression
-            for compact_context in compact_contexts
-            for keywords, expression in expression_rules
-            if any(keyword in compact_context for keyword in keywords)
-        ),
-        "专注自然，根据画面情境使用轻微的眉眼和嘴角变化",
-    )
-    return (
-        f"{streamer_name} 的最终表情必须与标题对应的已核验对局情况联动：先判断最终结果，再判断决定性事件，"
-        "最后才考虑节目效果；"
-        "只选择一种占主导的情绪，不要把兴奋、愤怒、懊恼等冲突表情混在一起。"
-        "可通过眉眼开合、嘴角、视线方向、头部角度、肩部姿态和轻微手势表现层次："
-        "翻盘成功用释然后的兴奋；被翻盘用错愕后的懊恼；碾压或连胜用自信得意；"
-        "极限操作或关键团用紧张专注后的惊喜；惨败用疲惫无奈或苦笑；"
-        "暴毙、被抓或连续失误用震惊烦躁；出装、加点争议用尴尬、心虚或不服气；"
-        "红温破防用克制的恼火；欢乐整活用大笑、憋笑或夸张惊讶。"
-        f"本段优先表情建议：{recommended_expression}。"
-        "只有结果或局势证据明确时才改变情绪；没有明确结果时使用专注、自然的情境表情，"
-        "不得根据零散弹幕猜测胜负；参考图不是人物或角色时不要强行添加表情。"
-        "表情强度要适合视频封面、清楚但不过度扭曲，并保持参考图原有的身份辨识度。"
-        f"本段判断依据：{safe_context[:600]}"
-    )
+    return f"结构化游戏数据已确认当前主播亲自使用 {hero_name}。"
 
 
 def recording_cover_streamer_role_instruction(
@@ -4089,11 +3857,6 @@ def generate_recording_cover_with_ai(
     shared_reference_cache: dict[str, Any] | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
     """Generate one independent AI cover for the requested Bilibili aspect ratio."""
-    reference_cache = shared_reference_cache if shared_reference_cache is not None else {}
-    reference_cache_hits: list[str] = []
-    cover_title = strip_danmaku_edition_marker(title)
-    cover_ai_topic = strip_danmaku_edition_marker(ai_topic)
-    cover_text = strip_danmaku_edition_marker(cover_text)
     root = resolve_app_root(cfg)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -4102,41 +3865,16 @@ def generate_recording_cover_with_ai(
 
     ai_cfg = load_app_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
-    cover_layout_mode = normalize_dota2_cover_layout_mode(
-        cfg.get("dota2_cover_layout_mode")
-        or ai_cfg.get("RECORDING_DOTA2_COVER_LAYOUT_MODE")
-    )
-    cover_subject_name = recording_cover_subject_name(streamer, cover_title)
-    source_headline = recording_cover_headline(
-        cover_title,
-        cover_ai_topic,
-        streamer,
-    )
-    cover_event_context, cover_context_source = recording_cover_event_context(
-        description,
-        source_headline,
-    )
-    cover_event_seconds = recording_cover_event_timestamp_seconds(
-        description,
-        cover_event_context,
-    )
-    headline = recording_cover_display_text(
-        source_headline,
-        cover_text,
-        streamer,
-    )
+    cover_event_context, cover_context_source = recording_cover_event_context(description)
+    cover_subject_name = recording_cover_subject_name(streamer, title)
+    headline = recording_cover_headline(title, "", streamer)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
-        "ai_cover_dota2_layout_mode": cover_layout_mode,
         "ai_cover_headline": headline,
-        "ai_cover_source_headline": source_headline,
-        "ai_cover_text_length": len(headline),
         "ai_cover_subject_name": cover_subject_name,
         "ai_cover_excludes_time": True,
         "ai_cover_context_source": cover_context_source,
         "ai_cover_event_context": cover_event_context,
-        "ai_cover_event_seconds": cover_event_seconds,
-        "ai_cover_submission_marker_removed": "弹幕版" in str(title or ""),
     }
     if not enabled:
         return None, details
@@ -4174,15 +3912,8 @@ def generate_recording_cover_with_ai(
                 f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
                 "且未获取到该直播间头像，无法生成 AI 封面"
             )
-        avatar_cache_key = f"streamer-avatar:{avatar_url}"
-        cached_avatar_path = Path(str(reference_cache.get(avatar_cache_key) or ""))
         try:
-            if cached_avatar_path.is_file():
-                avatar_reference = cached_avatar_path
-                reference_cache_hits.append("streamer_avatar")
-            else:
-                avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
-                reference_cache[avatar_cache_key] = str(avatar_reference)
+            avatar_reference = download_recording_avatar_reference(avatar_url, cfg)
         except Exception as exc:
             raise ValueError(
                 f"主播 {streamer or '未知主播'} 未配置封面人物底稿，"
@@ -4217,61 +3948,35 @@ def generate_recording_cover_with_ai(
     elif reference_kind == "custom":
         reference_instruction = (
             f"上传的参考图是用户为主播 {streamer or '主播'} 指定的人物形象底稿，"
-            "必须直接把图中的人物或角色作为主播人物的唯一身份原型，严格保持原有脸部、发型、标志性配饰、"
-            "主色与画风。可以根据本段内容受控二创服装、适度表情、动作、光影和背景，"
-            "但脸型比例、五官关系、发型和真人或卡通属性不能明显偏离；不得把底稿动漫化、"
-            "Q版化、真人化、换脸或替换成其他角色。"
+            "必须把图中的人物或角色作为封面唯一主角，严格保持脸部、发型、服装、"
+            "标志性配饰、主色与画风的辨识度。可以根据本段内容调整表情、动作和背景，"
+            "但不得换脸、真人化或替换成其他角色。"
         )
     elif reference_kind == "avatar":
-        reference_instruction = recording_avatar_reference_instruction(
-            streamer,
-            cover_layout_mode,
-        )
+        reference_instruction = recording_avatar_reference_instruction(streamer)
     else:
         reference_instruction = ""
-    subject_identity_instruction = recording_cover_subject_identity_instruction(
-        streamer,
-        cover_subject_name,
-    )
     # The current streamer's custom character reference or room avatar is the
     # primary identity source. Only people explicitly named in the final
     # submission title may add a guest reference. Timeline descriptions often
     # mention many players incidentally; attaching those avatars lets a clearer
     # guest photo override a stylized current-room reference.
-    guest_candidates = recording_cover_guest_candidates(streamer, cover_title)
+    guest_candidates = recording_cover_guest_candidates(streamer, title)
     guest_references: list[dict[str, str]] = []
     guest_reference_errors: list[dict[str, str]] = []
     for guest_candidate in guest_candidates:
         try:
-            guest_cache_key = (
-                "guest-avatar:"
-                + str(guest_candidate.get("name") or "")
-                + ":"
-                + str(guest_candidate.get("mentioned_as") or "")
+            resolved_guest = resolve_recording_guest_avatar(guest_candidate, cfg)
+            if resolved_guest is None:
+                guest_reference_errors.append({
+                    "name": guest_candidate["name"],
+                    "error": "斗鱼搜索未形成唯一精确匹配",
+                })
+                continue
+            guest_reference = download_recording_avatar_reference(
+                resolved_guest["avatar_url"],
+                cfg,
             )
-            cached_guest = reference_cache.get(guest_cache_key)
-            if isinstance(cached_guest, dict) and Path(
-                str(cached_guest.get("reference_path") or "")
-            ).is_file():
-                resolved_guest = dict(cached_guest)
-                guest_reference = Path(str(resolved_guest.pop("reference_path")))
-                reference_cache_hits.append("guest_avatar")
-            else:
-                resolved_guest = resolve_recording_guest_avatar(guest_candidate, cfg)
-                if resolved_guest is None:
-                    guest_reference_errors.append({
-                        "name": guest_candidate["name"],
-                        "error": "斗鱼搜索未形成唯一精确匹配",
-                    })
-                    continue
-                guest_reference = download_recording_avatar_reference(
-                    resolved_guest["avatar_url"],
-                    cfg,
-                )
-                reference_cache[guest_cache_key] = {
-                    **resolved_guest,
-                    "reference_path": str(guest_reference),
-                }
             reference_index = add_cover_reference(
                 guest_reference,
                 (
@@ -4313,21 +4018,14 @@ def generate_recording_cover_with_ai(
             "弹幕用户名或职业选手外号"
             "自行增加陌生人物。"
         )
-    # Cover art follows the first verified event only. Scanning the whole
-    # description here can leak a later game's hero or ability into the main
-    # scene even though the copy and composition intentionally exclude it.
     dota2_instruction = recording_cover_dota2_instruction(
-        cover_title,
-        cover_ai_topic,
-        cover_event_context,
+        title,
+        ai_topic,
+        description,
     )
-    details["ai_cover_visual_fact_scope"] = "primary_verified_event"
     # Prefer Douyu's explicit streamer-view hero and its final in-recording
     # equipment snapshot. XML identity is retained only for legacy snapshots.
     tooltip_hero = ""
-    tooltip_main_items: list[str] = []
-    tooltip_neutral_item = ""
-    tooltip_upgrade_states: list[str] = []
     tooltip_items: list[str] = []
     tooltip_kda_instruction = ""
     tooltip_context_enabled = bool(cfg.get("douyu_stats_enabled", True)) and bool(
@@ -4337,21 +4035,12 @@ def generate_recording_cover_with_ai(
     if tooltip_context_enabled and (game_context_locked or recording_dir is not None):
         try:
             anchor = game_context
-            if anchor is None and recording_dir is not None:
+            if not game_context_locked and recording_dir is not None:
                 from modules.douyu_stats_formatter import get_game_for_cover  # type: ignore
-                anchor = get_game_for_cover(
-                    recording_dir,
-                    event_seconds=cover_event_seconds,
-                )
-            if anchor and not streamer_gameplay_is_verified(anchor):
-                details["ai_cover_unverified_game_context_rejected"] = {
-                    "hero": str(anchor.get("hero") or ""),
-                    "identity_source": str(anchor.get("identity_source") or ""),
-                }
-                anchor = None
+                anchor = get_game_for_cover(recording_dir)
             if anchor and not recording_cover_hero_matches_title(
                 str(anchor.get("hero") or ""),
-                f"{cover_title}\n{cover_event_context}",
+                f"{title}\n{cover_event_context}",
             ):
                 details["ai_cover_hero_context_rejected"] = str(
                     anchor.get("hero") or ""
@@ -4359,18 +4048,15 @@ def generate_recording_cover_with_ai(
                 anchor = None
             if anchor:
                 tooltip_hero = str(anchor.get("hero") or "")
-                tooltip_main_items = [
+                tooltip_items = [
                     str(item) for item in anchor.get("items", [])[:6] if str(item)
                 ]
-                tooltip_items = list(tooltip_main_items)
                 if anchor.get("neutral"):
-                    tooltip_neutral_item = str(anchor["neutral"])
-                    tooltip_items.append(tooltip_neutral_item)
+                    tooltip_items.append(str(anchor["neutral"]))
                 if anchor.get("scepter"):
-                    tooltip_upgrade_states.append("A杖")
+                    tooltip_items.append("A杖")
                 if anchor.get("shard"):
-                    tooltip_upgrade_states.append("魔晶")
-                tooltip_items.extend(tooltip_upgrade_states)
+                    tooltip_items.append("魔晶")
                 if all(key in anchor for key in ("kills", "deaths", "assists")):
                     tooltip_kda_instruction = (
                         f"主播本局最终 K/D/A 为 {anchor['kills']}/{anchor['deaths']}/"
@@ -4389,12 +4075,17 @@ def generate_recording_cover_with_ai(
             details["ai_cover_tooltip_error"] = str(exc)
 
     if tooltip_hero or tooltip_items:
-        dota2_item_instruction = dota2_gsi_equipment_prompt_instruction(
-            tooltip_main_items,
-            tooltip_neutral_item,
-            tooltip_upgrade_states,
-            cover_layout_mode,
-        )
+        if tooltip_items:
+            dota2_item_instruction = (
+                f"主播本局最终六格主装备（最后一次有效阵容快照）："
+                f"{', '.join(tooltip_items)}。"
+                "只能表现这份列表中的主装备，数量不得超过列表数量；不得额外添加第七件装备。"
+                "装备名称只用于身份识别，禁止按中文或英文名称的字面含义自行设计外形。"
+                "禁止在封面底部或任何位置生成物品栏、装备卡槽、装备图标排布或游戏 UI；"
+                "装备只可作为角色造型与场景语义参考，不得绘制仿冒的装备图标。"
+            )
+        else:
+            dota2_item_instruction = ""
         if tooltip_hero:
             identity_source = str(details.get("ai_cover_identity_source") or "")
             hero_only_from_danmaku = identity_source in {
@@ -4408,7 +4099,6 @@ def generate_recording_cover_with_ai(
                 )
             else:
                 hero_source_instruction = "（来自斗鱼主播视角数据）"
-            verified_cosplay = not hero_only_from_danmaku
             dota2_instruction = (
                 f"主播本局使用的英雄为 {tooltip_hero}{hero_source_instruction}。"
                 + (
@@ -4419,26 +4109,9 @@ def generate_recording_cover_with_ai(
                 )
                 + tooltip_kda_instruction
                 + dota2_instruction
-                + recording_cover_verified_hero_cosplay_instruction(
-                    tooltip_hero,
-                    gameplay_verified=verified_cosplay,
-                    layout_mode=cover_layout_mode,
-                )
-            )
-            details["ai_cover_dota2_streamer_cosplay"] = (
-                (
-                    "verified_hero_fusion"
-                    if cover_layout_mode == DOTA2_COVER_LAYOUT_FUSION
-                    else "verified_hero_separate"
-                )
-                if verified_cosplay
-                else "disabled_unverified_gameplay"
             )
         details["ai_cover_tooltip_hero"] = tooltip_hero
         details["ai_cover_tooltip_items"] = tooltip_items
-        details["ai_cover_tooltip_main_items"] = tooltip_main_items
-        details["ai_cover_tooltip_neutral_item"] = tooltip_neutral_item
-        details["ai_cover_tooltip_upgrade_states"] = tooltip_upgrade_states
         details["ai_cover_dota2_source"] = (
             "danmaku_hero"
             if str(details.get("ai_cover_identity_source") or "") in {
@@ -4447,109 +4120,38 @@ def generate_recording_cover_with_ai(
             }
             else "tooltip"
         )
-        dota2_item_matches = prioritize_dota2_item_matches(
-            match_dota2_items(*tooltip_items),
-            cover_title,
-            cover_ai_topic,
-            cover_event_context,
-        )
-        dota2_item_instruction += dota2_item_prompt_instruction(
-            dota2_item_matches,
-            cover_layout_mode,
-        )
+        dota2_item_matches = match_dota2_items(*tooltip_items)
+        dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
     elif game_context_locked:
-        dota2_item_matches = (
-            match_dota2_items(cover_title, cover_ai_topic, cover_event_context)
-            if recording_cover_has_dota2_context(
-                streamer,
-                cover_title,
-                cover_ai_topic,
-                cover_event_context,
-            )
-            else []
-        )
+        dota2_item_matches = []
         dota2_instruction = (
             "本段没有可靠匹配到主播同一场对局。禁止展示、猜测或补画任何具体 "
             "DOTA 2 英雄；如需游戏氛围，只能使用不含角色身份的抽象场景。"
         )
-        if dota2_item_matches:
-            dota2_item_instruction = (
-                "虽然本段没有锁定当前主播使用的英雄，但第一核心事件已经明确点名以下装备。"
-                "装备事实独立于人物归属：必须按 Valve 官方参考将点名装备画入事件场景，"
-                "不得把它写成或画成当前主播的最终出装，也不得添加未点名装备。"
-                + dota2_item_prompt_instruction(dota2_item_matches, cover_layout_mode)
-            )
-            details["ai_cover_dota2_source"] = "locked_text_match"
-        else:
-            dota2_item_instruction = (
-                "本段没有可靠匹配到主播同一场对局的英雄与装备数据，第一核心事件也未点名装备。"
-                "禁止展示、猜测或补画任何具体 DOTA 2 英雄和装备。"
-            )
-            details["ai_cover_dota2_source"] = "locked_no_match"
+        dota2_item_instruction = (
+            "本段没有可靠匹配到主播同一场对局的英雄与装备数据。"
+            "禁止展示、猜测或补画任何具体 DOTA 2 英雄和装备图标。"
+        )
+        details["ai_cover_dota2_source"] = "locked_no_match"
     else:
         dota2_item_matches = (
-            match_dota2_items(cover_title, cover_ai_topic, cover_event_context)
+            match_dota2_items(title, ai_topic, description)
             if recording_cover_has_dota2_context(
                 streamer,
-                cover_title,
-                cover_ai_topic,
-                cover_event_context,
+                title,
+                ai_topic,
+                description,
             )
             else []
         )
-        dota2_item_instruction = dota2_item_prompt_instruction(
-            dota2_item_matches,
-            cover_layout_mode,
-        )
+        dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
         details["ai_cover_dota2_source"] = "text_match"
-    dota2_item_cache_dir = resolve_path(".dota2-item-cache", cfg)
     if dota2_item_matches:
-        item_visual_contexts = load_dota2_item_visual_contexts(dota2_item_matches)
-        details["ai_cover_dota2_item_visual_contexts"] = item_visual_contexts
-        dota2_item_instruction += dota2_item_visual_context_prompt_instruction(
-            item_visual_contexts,
-            cover_layout_mode,
-        )
-        placement_hero = (
-            find_official_dota2_hero(tooltip_hero)
-            if tooltip_hero
-            else None
-        )
-        hero_primary_attribute = str(
-            getattr(placement_hero, "primary_attribute", "") or ""
-        )
-        details["ai_cover_dota2_hero_primary_attribute"] = hero_primary_attribute
-        item_placement_plan = dota2_item_placement_plan(
+        item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
-            hero_primary_attribute=hero_primary_attribute,
-            item_visual_contexts=item_visual_contexts,
+            Path("/data/cache/dota2/items"),
+            work_dir / "dota2_item_references.png",
         )
-        details["ai_cover_dota2_item_placement_plan"] = item_placement_plan
-        dota2_item_instruction += dota2_item_placement_plan_prompt_instruction(
-            item_placement_plan,
-            cover_layout_mode,
-        )
-        item_reference_cache_key = "dota2-items:" + "|".join(
-            match.item.icon_slug for match in dota2_item_matches
-        )
-        cached_item_reference = reference_cache.get(item_reference_cache_key)
-        if isinstance(cached_item_reference, dict) and Path(
-            str(cached_item_reference.get("path") or "")
-        ).is_file():
-            item_reference_path = Path(str(cached_item_reference["path"]))
-            item_reference_errors = list(cached_item_reference.get("errors") or [])
-            reference_cache_hits.append("dota2_items")
-        else:
-            item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
-                dota2_item_matches,
-                dota2_item_cache_dir,
-                work_dir / "dota2_item_references.png",
-            )
-            if item_reference_path is not None:
-                reference_cache[item_reference_cache_key] = {
-                    "path": str(item_reference_path),
-                    "errors": list(item_reference_errors),
-                }
         details["ai_cover_dota2_items"] = [
             {
                 "alias": match.alias,
@@ -4569,34 +4171,17 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_item_reference_path"] = str(item_reference_path)
         else:
             details["ai_cover_dota2_item_reference_used"] = False
-            require_dota2_item_reference(
-                item_reference_path,
-                item_reference_errors,
+            dota2_item_instruction = (
+                "本局装备的官方图标参考不可用。为避免画错装备，禁止展示任何具体装备图标。"
             )
     if tooltip_hero:
-        hero_reference_cache_key = f"dota2-hero:{tooltip_hero}"
-        cached_hero_reference = reference_cache.get(hero_reference_cache_key)
-        if isinstance(cached_hero_reference, dict) and Path(
-            str(cached_hero_reference.get("path") or "")
-        ).is_file():
-            hero_reference_path = Path(str(cached_hero_reference["path"]))
-            official_hero = cached_hero_reference.get("hero")
-            hero_reference_error = str(cached_hero_reference.get("error") or "")
-            reference_cache_hits.append("dota2_hero")
-        else:
-            hero_reference_path, official_hero, hero_reference_error = (
-                build_dota2_hero_reference(
-                    tooltip_hero,
-                    Path("/data/cache/dota2/heroes"),
-                    work_dir / "dota2_hero_reference.png",
-                )
+        hero_reference_path, official_hero, hero_reference_error = (
+            build_dota2_hero_reference(
+                tooltip_hero,
+                Path("/data/cache/dota2/heroes"),
+                work_dir / "dota2_hero_reference.png",
             )
-            if hero_reference_path is not None:
-                reference_cache[hero_reference_cache_key] = {
-                    "path": str(hero_reference_path),
-                    "hero": official_hero,
-                    "error": hero_reference_error,
-                }
+        )
         details["ai_cover_dota2_official_hero"] = (
             {
                 "chinese_name": official_hero.chinese_name,
@@ -4629,12 +4214,12 @@ def generate_recording_cover_with_ai(
                 "本局英雄的官方参考图不可用。为避免画错英雄，禁止展示任何具体英雄。"
             )
     dota2_ability_matches = (
-        match_dota2_abilities(cover_title, cover_ai_topic, cover_event_context)
+        match_dota2_abilities(title, ai_topic, description)
         if recording_cover_has_dota2_context(
             streamer,
-            cover_title,
-            cover_ai_topic,
-            cover_event_context,
+            title,
+            ai_topic,
+            description,
         )
         else []
     )
@@ -4642,31 +4227,13 @@ def generate_recording_cover_with_ai(
         dota2_ability_matches
     )
     if dota2_ability_matches:
-        ability_reference_cache_key = "dota2-abilities:" + "|".join(
-            match.ability.icon_slug for match in dota2_ability_matches
+        ability_reference_path, ability_reference_errors = (
+            build_dota2_ability_reference_sheet(
+                dota2_ability_matches,
+                resolve_path(".dota2-ability-cache", cfg),
+                work_dir / "dota2_ability_references.png",
+            )
         )
-        cached_ability_reference = reference_cache.get(ability_reference_cache_key)
-        if isinstance(cached_ability_reference, dict) and Path(
-            str(cached_ability_reference.get("path") or "")
-        ).is_file():
-            ability_reference_path = Path(str(cached_ability_reference["path"]))
-            ability_reference_errors = list(
-                cached_ability_reference.get("errors") or []
-            )
-            reference_cache_hits.append("dota2_abilities")
-        else:
-            ability_reference_path, ability_reference_errors = (
-                build_dota2_ability_reference_sheet(
-                    dota2_ability_matches,
-                    resolve_path(".dota2-ability-cache", cfg),
-                    work_dir / "dota2_ability_references.png",
-                )
-            )
-            if ability_reference_path is not None:
-                reference_cache[ability_reference_cache_key] = {
-                    "path": str(ability_reference_path),
-                    "errors": list(ability_reference_errors),
-                }
         details["ai_cover_dota2_abilities"] = [
             {
                 "alias": match.alias,
@@ -4694,36 +4261,12 @@ def generate_recording_cover_with_ai(
             details["ai_cover_dota2_ability_reference_used"] = False
     dota2_streamer_instruction = recording_cover_dota2_streamer_instruction(
         streamer,
-        cover_title,
+        title,
     )
-    streamer_expression_instruction = recording_cover_streamer_expression_instruction(
-        streamer,
-        cover_title,
-        cover_ai_topic,
-        cover_event_context,
-    )
-    streamer_role, streamer_role_instruction = (
-        recording_cover_streamer_role_instruction(streamer, cover_title)
-    )
-    details["ai_cover_streamer_role"] = streamer_role
     reference_map_instruction = "\n".join(
         f"Image {index}: {role}。"
         for index, role in enumerate(reference_roles, start=1)
     )
-    allowed_people = [
-        normalize_dota2_streamer_name(streamer) or str(streamer or "主播"),
-        *(str(guest.get("name") or "").strip() for guest in guest_references),
-    ]
-    allowed_people_text = "、".join(
-        dedupe_recording_tags(name for name in allowed_people if name)
-    ) or "当前主播"
-    final_identity_instruction = (
-        f"人物出镜白名单：{allowed_people_text}。只有这个白名单中的真人主播或选手可以出镜；"
-        "最终投稿标题未出现、或没有唯一可靠身份参考的人物，即使在简介、完整时间线、弹幕、"
-        "昵称映射或房间自定义提示词中出现，也一律不得画进封面。Image 1 始终是当前主播的"
-        "唯一身份来源，其他图片不得改变、融合或替换 Image 1 的脸部与角色特征。"
-    )
-    details["ai_cover_shared_reference_cache_hits"] = list(reference_cache_hits)
     target_width, target_height = target_size or (1146, 717)
     orientation = "横向" if target_width >= target_height else "竖向"
     aspect_label = (
@@ -4732,105 +4275,41 @@ def generate_recording_cover_with_ai(
         else f"{target_width}:{target_height}"
     )
     if abs((target_width / target_height) - (16 / 9)) < 0.02:
-        if cover_layout_mode == DOTA2_COVER_LAYOUT_FUSION:
-            composition_instruction = (
-                "这是个人空间横向封面。融合后的唯一人物和标题必须完整留在 16:9 横向安全区域，"
-                "装备按逐件位置计划自然穿戴、手持、背负或腰挂，不得另排外围图标或底部物品栏。"
-            )
-        else:
-            composition_instruction = (
-                "这是个人空间横向封面。主体和唯一标题必须完整留在 16:9 横向安全区域，"
-                "左右保留呼吸空间，适合个人空间大图展示。装备图标可沿外围安全区域错落环绕，"
-                "也可根据标题和双主体占位统一放在最下方安全区一排。"
-            )
+        composition_instruction = (
+            "这是个人空间横向封面。主体和唯一标题必须完整留在 16:9 横向安全区域，"
+            "左右保留呼吸空间，适合个人空间大图展示。"
+        )
         cover_variant = "16x9"
     elif abs((target_width / target_height) - (4 / 3)) < 0.02:
-        if cover_layout_mode == DOTA2_COVER_LAYOUT_FUSION:
-            composition_instruction = (
-                "这是首页推荐 4:3 卡片封面。为融合后的唯一人物重新采用紧凑独立构图，"
-                "装备按逐件位置计划自然融入人物，不得另排外围图标或底部物品栏。"
-            )
-        else:
-            composition_instruction = (
-                "这是首页推荐 4:3 卡片封面。重新采用更集中、更紧凑的独立构图，"
-                "主体和唯一标题靠近视觉中心，不能沿用或模拟 16:9 封面的裁切结果。"
-                "画幅变窄时仍使用经典双主体构图：主播头像人物在前景、官方英雄在侧后方；"
-                "装备以清晰独立的官方图标沿安全区域外围错落环绕，或统一放在最下方安全区一排；"
-                "根据标题和双主体占位选择，不得遮脸、压字或贴边裁断。"
-            )
+        composition_instruction = (
+            "这是首页推荐 4:3 卡片封面。重新采用更集中、更紧凑的独立构图，"
+            "主体和唯一标题靠近视觉中心，不能沿用或模拟 16:9 封面的裁切结果。"
+        )
         cover_variant = "4x3"
     else:
         composition_instruction = "请针对目标画幅独立构图，主体和标题均保持完整。"
         cover_variant = aspect_label.replace(":", "x")
-    if topic_mentions_streamer(headline, streamer):
-        headline_identity_instruction = (
-            f"封面短文案已经包含主角称呼“{cover_subject_name or streamer or '主播'}”，必须完整保留，"
-            "称呼自然融入事件句，不得排成“主角｜主题”的固定栏目格式。"
-        )
-    else:
-        headline_identity_instruction = (
-            "封面短文案没有当前主播，因此封面文字不得为了统一格式强塞主播名；"
-            "只准确呈现短文案已有的人物和事件。当前主播只有在已核验上下文明示其观战、评价或参与时，"
-            "才能作为画面中的反应者或参与者。"
-        )
-    text_layout_instruction = recording_cover_text_layout_instruction(
-        headline,
-        (target_width, target_height),
-    )
-    custom_cover_style_prompt = str(cfg.get("ai_cover_prompt") or "").strip()
-    if headline:
-        cover_copy_instruction = (
-            f"将“{headline}”作为唯一封面短文案，必须逐字保留，不得改写、重复、漏字，"
-            "也不得添加副标题、日期、栏目名、引号或宣传语。"
-        )
-    else:
-        cover_copy_instruction = (
-            "本次没有可安全压缩的封面短文案，不得从完整投稿标题、简介、自定义要求或参考图中擅自生成文字。"
-        )
     prompt = f"""
 为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
-先按以下固定顺序完成设计，不得让后面的装饰要求覆盖前面的硬约束：
-1. 事实：只采用第一核心事件与已核验事件上下文，忽略简介中其他时间点的英雄、技能、装备和人物；
-2. 身份：先锁定 Image 1 的当前主播，再按人物白名单处理有独立身份参考的次要人物；
-3. 构图：按当前画幅和经典分离/英雄融合模式安排主体，并为完整文案预留安全区；
-4. 文案：只绘制给定封面短文案，逐字保留；无安全文案时保持无字；
-5. 装饰：最后才加入已附官方参考的英雄、装备、技能和氛围，不得新增名单外元素。
 主播：{streamer or "主播"}
 封面主角称呼：{cover_subject_name or streamer or "主播"}
-完整投稿标题中的第一核心事件（只用于事实边界，不要求全部写在封面上）：{source_headline}
-封面短文案：{headline or "无文字"}
-已核验事件上下文（只用于理解人物角色、动作归属和构图，不得作为额外封面文字）：
-{cover_event_context or "仅使用投稿标题，不补充未核验事实"}
+与投稿标题共用的核心事件：{headline}
 
-只围绕第一核心事件设计画面；封面短文案允许比完整投稿标题短，不要把完整投稿标题硬塞进画面。
-标题与已核验事件上下文冲突时，以已核验事件上下文的人物角色和动作归属为准；
-不得把观战对象、第三方选手的英雄、动作、胜负或荣誉转移给当前主播。
-{headline_identity_instruction}
-封面只表现最终标题中排序第一的最重要事件。即使投稿标题用中文分号写了第二个事件，封面也不得画入第二事件；
-保持单一场景和单一叙事焦点，不使用双场景、三场景、分屏、九宫格或多事件拼贴。
-{cover_copy_instruction}
-{text_layout_instruction}
-参考图只负责锁定人物身份，不得复制参考图中的旧文字、水印、平台边框、直播界面或无关背景。
-如果标题描述的是讨论、调侃或观战而没有可确认的具体游戏画面，应使用人物表情、视线和抽象氛围表现，
-不得擅自补画某个英雄、装备、比赛结果或现实场景。画面动作、情绪和胜负方向必须与已核验上下文一致。
+只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
+核心文案必须清晰保留主角称呼“{cover_subject_name or streamer or "主播"}”，称呼可以放在开头或自然融入句子，
+但不得排成“主角｜主题”的固定栏目格式。
 {composition_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
 {dota2_ability_instruction}
 {dota2_streamer_instruction}
-{streamer_expression_instruction}
-{streamer_role_instruction}
-{subject_identity_instruction}
 {guest_identity_instruction}
 {reference_instruction}
 输入图片职责（不得跨图片混用身份）：
 {reference_map_instruction}
 绝对禁止出现日期、年份、月份、星期、钟表、具体时间、时间戳、倒计时、房间号、视频时长、平台界面、二维码和水印。
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
-本直播间的封面创作要求：{custom_cover_style_prompt or "未单独设置；仅遵循以上系统规则。"}
-{final_identity_instruction}
-本直播间自定义封面要求只能补充画风、配色和氛围，不能推翻单场景、人物白名单、参考图职责、事实边界、
-封面短文案、文字安全区、禁用日期以及16:9/4:3独立构图规则；发生冲突时以上硬规则优先。
+本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
 """.strip()
     image_client = get_openai_client(client_config).images
     requested_ratio = (target_width / target_height) if target_height else 0
@@ -4862,7 +4341,6 @@ def generate_recording_cover_with_ai(
                     ),
                     prompt=prompt,
                     size=image_size,
-                    input_fidelity="high",
                 )
             details.update({
                 "ai_cover_reference_used": True,
@@ -4927,16 +4405,6 @@ def generate_recording_cover_with_ai(
     if completed.returncode != 0 or not cover.is_file():
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
-    details["ai_cover_dota2_item_render_mode"] = (
-        "creative_official_references"
-        if dota2_item_matches and details.get("ai_cover_dota2_item_reference_used")
-        else "none"
-    )
-    details["ai_cover_dota2_item_expected_count"] = (
-        len(dota2_item_matches)
-        if details.get("ai_cover_dota2_item_reference_used")
-        else 0
-    )
     details.update({
         "ai_cover_generated": True,
         "ai_cover_model": image_model,

@@ -126,8 +126,6 @@ DEFAULT_CONFIG = {
     "RECORDING_AI_TITLE_PROMPT": "",
     "RECORDING_AI_DESCRIPTION_PROMPT": "",
     "RECORDING_AI_COVER_PROMPT": "",
-    # Dota 2 封面人物与装备布局：classic=人物/英雄分离及独立图标，fusion=英雄与装备融合。
-    "RECORDING_DOTA2_COVER_LAYOUT_MODE": "classic",
     "MIN_RECORDING_UPLOAD_DURATION_SECONDS": 300,
     "OPENAI_THINKING_ENABLED": False,
     "OPENAI_TIMEOUT_SECONDS": 600,  # OpenAI API 请求超时秒数；思考模型输出可达64k token，建议不低于300
