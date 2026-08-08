@@ -4931,6 +4931,18 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("绝对不能画成蛋壳", instruction)
         self.assertIn("禁止重绘成另一种动漫脸或改成真人", instruction)
 
+    def test_guomin_dajiuge_reference_aliases_are_recognized(self):
+        self.assertTrue(bridge.GUOMIN_DAJIUGE_COVER_REFERENCE.is_file())
+        for alias in ("国民大舅哥", "大舅哥", "182102"):
+            with self.subTest(alias=alias):
+                reference = bridge.recording_cover_reference(alias)
+                self.assertIsNotNone(reference)
+                self.assertEqual(reference[0], "国民大舅哥")
+                self.assertEqual(
+                    reference[1],
+                    bridge.GUOMIN_DAJIUGE_COVER_REFERENCE,
+                )
+
     def test_xiebin_dd_reference_aliases_are_recognized(self):
         self.assertTrue(bridge.XIEBIN_DD_COVER_REFERENCE.is_file())
         for alias in ("DD", "谢彬DD", "谢彬", "谢斌", "奶哥", "奶D"):
