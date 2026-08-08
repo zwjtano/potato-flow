@@ -2902,6 +2902,8 @@ def recording_cover_headline(
     streamer: str = "",
 ) -> str:
     """Extract a cover-safe headline without dates, clocks or template chrome."""
+    title = strip_danmaku_edition_marker(title)
+    ai_topic = strip_danmaku_edition_marker(ai_topic)
     generic_topics = {"直播精彩内容", "精彩内容", "直播回放", "精彩直播", "直播录像"}
     candidate = str(ai_topic or "").strip()
     if candidate in generic_topics:
@@ -2929,11 +2931,17 @@ def recording_cover_headline(
     candidate = re.sub(r"(?:今天|今日|今晚|昨天|明天|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜)", "", candidate)
     candidate = re.sub(r"[\r\n｜|]+", " ", candidate)
     candidate = re.sub(r"\s{2,}", " ", candidate).strip(" -_｜|·")
+    candidate = candidate.split("；", 1)[0].strip()
     candidate = candidate or "直播精彩内容"
     subject_name = recording_cover_subject_name(streamer, title, ai_topic)
-    headline = candidate[:24]
-    if subject_name and not topic_mentions_streamer(headline, streamer):
-        headline = f"{subject_name}{candidate}"[:24]
+    headline = candidate
+    if (
+        ai_topic
+        and subject_name
+        and topic_mentions_streamer(title, streamer)
+        and not topic_mentions_streamer(headline, streamer)
+    ):
+        headline = f"{subject_name}{candidate}"
     return headline
 
 
@@ -3056,11 +3064,22 @@ def recording_cover_text_layout_instruction(
 
 
 def recording_cover_hero_matches_title(hero: str, title: str) -> bool:
-    """Only lock a gameplay hero when the reviewed headline names that hero."""
+    """Reject telemetry only when the reviewed headline names another hero.
+
+    Event-timestamp-matched GSI is stronger than silence in a natural-language
+    title. Requiring every title to repeat the hero discarded valid hero and
+    equipment references for headlines such as "高地推进后基地爆炸".
+    """
     hero_name = str(hero or "").strip().casefold()
     title_text = str(title or "").casefold()
     if not hero_name or not title_text:
         return False
+    title_hero_keys = _dota2_hero_identity_keys(title_text)
+    if not title_hero_keys:
+        return True
+    hero_keys = _dota2_hero_identity_keys(hero_name)
+    if hero_keys:
+        return bool(hero_keys & title_hero_keys)
     for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
         canonical_short = re.split(r"[（(]", canonical_name, maxsplit=1)[0].strip()
         names = {
@@ -3127,22 +3146,56 @@ def require_dota2_item_reference(
     )
 
 
-def recording_cover_event_context(description: str) -> tuple[str, str]:
+def recording_cover_event_context(
+    description: str,
+    headline: str = "",
+) -> tuple[str, str]:
     """Return timestamp-free cover context, preferring verified timeline events."""
+    def relevant_events(events: list[str]) -> list[str]:
+        events = [event for event in events if event]
+        headline_key = _compact_alias(headline)
+        if not headline_key or len(headline_key) < 2:
+            return events
+        headline_pairs = {
+            headline_key[index:index + 2]
+            for index in range(len(headline_key) - 1)
+        }
+
+        def headline_overlap(event: str) -> int:
+            event_key = _compact_alias(event)
+            event_pairs = {
+                event_key[index:index + 2]
+                for index in range(max(0, len(event_key) - 1))
+            }
+            return len(headline_pairs & event_pairs)
+
+        ranked = sorted(
+            ((headline_overlap(event), index, event) for index, event in enumerate(events)),
+            key=lambda item: (-item[0], item[1]),
+        )
+        matched = [event for score, _, event in ranked if score > 0][:1]
+        return matched or events[:1]
+
     points = timeline_lines(description)
     if points:
         events = [
             re.sub(r"^\d{1,2}:\d{2}(?::\d{2})?\s+", "", point).strip()
             for point in points
         ]
-        return "；".join(event for event in events if event)[:700], "verified_timeline"
+        events = relevant_events(events)
+        return "；".join(events)[:700], "verified_timeline"
     clean_lines = [
         line.strip()
         for line in str(description or "").splitlines()
         if line.strip()
         and not line.strip().startswith(("———", "🎮 ", "🎁 ", "💎 ", "💬 ", "👥 "))
     ]
-    return " ".join(clean_lines)[:700], "description"
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[。！？!?；;])", " ".join(clean_lines))
+        if sentence.strip()
+    ]
+    return " ".join(relevant_events(sentences))[:700], "description"
 
 
 def recording_cover_event_timestamp_seconds(
@@ -3192,6 +3245,9 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     if normalized == "果小果":
         if GUOXIAOGUO_COVER_REFERENCE.is_file():
             return "果小果", GUOXIAOGUO_COVER_REFERENCE
+    if normalized == "DD":
+        if XIEBIN_DD_COVER_REFERENCE.is_file():
+            return "谢彬DD", XIEBIN_DD_COVER_REFERENCE
     return None
 
 
@@ -3202,13 +3258,20 @@ def recording_cover_reference_instruction(reference_name: str) -> str:
             "保留深棕色长发、红棕色星光大眼、脸颊红晕、两侧红色蝴蝶结和头顶荷包蛋发饰；"
             "头顶标志必须是荷包蛋发饰：不规则白色蛋白包住圆润的金黄色蛋黄，荷包蛋下方是"
             "醒目的红色大蝴蝶结；绝对不能画成蛋壳、破壳小鸡、普通帽子、花朵或只剩黄色圆点。"
-            "保持二次元 Q 版插画风格，禁止改成真人，也不要生成成其他角色。"
-            "可以根据直播主题更换背景、服装和姿势。"
+            "保持底稿原有的二次元 Q 版画风，禁止重绘成另一种动漫脸或改成真人，也不要生成成其他角色。"
+            "可以根据直播主题受控调整表情、背景、服装和姿势，但脸型比例、五官关系和标志发饰不能明显偏离。"
+        )
+    if reference_name == "谢彬DD":
+        return (
+            "上传的参考照片是主播谢彬 DD 本人经过裁切的固定人物底稿。必须以图中同一人为唯一人物原型，"
+            "保留短黑发、脸型、眉眼、鼻唇和整体身份辨识度；照片中的黑色夹克与胸前握拳手势只作为"
+            "体态参考，可以根据直播主题受控调整表情、服装、动作、光影和背景。人物脸部必须保留底稿的真人原貌与原始画风，"
+            "不得动漫化、Q版化、换脸或重新生成另一张相似但不同的脸；英雄服装和游戏背景可以插画化。"
         )
     return (
         f"上传的参考照片是主播 {reference_name} 本人。必须以照片中的人物为唯一人物原型，"
-        "保持其脸型、五官、发型和身份辨识度；可以根据直播主题更换背景、服装和姿势，"
-        "但不要生成成其他人。"
+        "直接保留其原有脸部、五官、发型和画风；可以根据直播主题受控调整适度表情、背景、服装和姿势，"
+        "但不得动漫化、Q版化、换脸或重新生成成另一个相似人物。"
     )
 
 
@@ -3248,7 +3311,9 @@ def download_recording_avatar_reference(url: str, cfg: dict[str, Any]) -> Path:
     return destination
 
 
-def recording_avatar_reference_instruction(streamer: str) -> str:
+def recording_avatar_reference_instruction(
+    streamer: str,
+) -> str:
     return (
         f"上传的参考图是主播 {streamer or '主播'} 的直播间头像。请优先以头像中的人物、"
         "角色、吉祥物或标志性形象作为封面主体底稿，保持发型、五官、配色、服装特征和"
@@ -3553,16 +3618,16 @@ _DOTA2_ITEM_CONTEXT_ALIASES = (
 
 def recording_cover_has_dota2_context(streamer: str, *content: str) -> bool:
     """Avoid treating ordinary words as Dota items on unrelated streams."""
-    normalized_streamer = normalize_dota2_streamer_name(streamer)
-    known_streamers = {
-        canonical_name
-        for canonical_name, _aliases in _all_dota2_streamer_alias_groups()
-    }
-    known_streamers.add("果小果")
-    if normalized_streamer in known_streamers:
-        return True
     combined = "\n".join(str(value or "") for value in content).casefold()
     if re.search(r"(?<![a-z0-9])dota\s*2?(?![a-z0-9])|刀塔", combined):
+        return True
+    # A streamer who usually plays Dota 2 can still switch to an unrelated
+    # RPG.  Room identity alone therefore cannot authorize item matching:
+    # generic words such as "刷新" and "宝石" otherwise become Refresh Orb
+    # and Gem of True Sight badges on a non-Dota cover.  Reliable GSI is
+    # handled before this fallback; without it, require an actual hero or a
+    # deliberately strong Dota item alias in the selected event text.
+    if _contains_unverified_dota2_hero(combined):
         return True
     return any(alias.casefold() in combined for alias in _DOTA2_ITEM_CONTEXT_ALIASES)
 
@@ -3587,11 +3652,16 @@ def recording_cover_dota2_instruction(*content: str) -> str:
                 break
 
     resolved = "；".join(matched) if matched else "本次未检出可确定的英雄俗称"
-    storm_spirit_rule = ""
+    literal_cat_rules: list[str] = []
     if any("Storm Spirit" in item for item in matched):
-        storm_spirit_rule = (
+        literal_cat_rules.append(
             "特别注意：蓝猫只能是风暴之灵（Storm Spirit）——蓝色皮肤、宽体型男性元素之灵、"
             "蓝色东方长袍与圆帽、环绕闪电能量；绝对不能画成蓝色猫、猫咪吉祥物或其他作品的猫。"
+        )
+    if any("Void Spirit" in item for item in matched):
+        literal_cat_rules.append(
+            "特别注意：紫猫只能是虚无之灵（Void Spirit）——紫色能量、白发白须、紫白护甲与双刃的"
+            "男性元素之灵；绝对不能画成紫色猫、猫咪吉祥物或其他作品的猫。"
         )
     return (
         "Dota 2 游戏角色消歧规则：如果标题或摘要涉及 DOTA、Dota 2、刀塔，或出现英雄俗称，"
@@ -3599,7 +3669,7 @@ def recording_cover_dota2_instruction(*content: str) -> str:
         "服装、主色、武器与技能特效来设计；禁止按词语字面画成动物、普通人物，也禁止混入"
         "《英雄联盟》、宝可梦或其他作品的角色。"
         f"本次识别结果：{resolved}。"
-        f"{storm_spirit_rule}"
+        f"{''.join(literal_cat_rules)}"
         "若摘要里还有未列出的 Dota 2 俗称，应先在语义上还原为该英雄的中英文正式名再作画；"
         "无法确定时宁可使用 Dota 2 对局氛围和技能特效，不要凭字面臆造角色。"
     )

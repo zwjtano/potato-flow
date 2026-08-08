@@ -1086,10 +1086,11 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(set(defaults), {"title", "description", "cover"})
         self.assertIn("默认选择一个最强事件", defaults["title"])
         self.assertIn("时间点式中文简介", defaults["description"])
-        self.assertIn("DOTA2", defaults["cover"])
+        self.assertIn("画面精致、主体明确、对比强烈", defaults["cover"])
+        self.assertNotIn("DOTA2", defaults["cover"])
         self.assertIn("语义完整", defaults["title"])
         self.assertIn("完整 XML", defaults["description"])
-        self.assertIn("封面人物底稿", defaults["cover"])
+        self.assertNotIn("封面人物底稿", defaults["cover"])
 
     def test_global_recording_prompts_fall_back_to_builtin_per_field(self):
         builtins = LiveRecorderManager.recording_prompt_defaults()

@@ -333,6 +333,7 @@ class SecurityBoundaryTests(unittest.TestCase):
         sync.assert_called_once_with()
         refresh.assert_not_called()
 
+    @unittest.skip("v1.6.59 removed the Dota 2 cover layout setting")
     def test_saving_dota2_cover_layout_mode_syncs_bridge_config(self):
         updated = {
             "RECORDINGS_PATH": "docker-data/recordings",
