@@ -159,6 +159,10 @@ GUOXIAOGUO_STREAMER_ALIASES = {"果小果", "果小果是个弟弟"}
 XIEBIN_DD_COVER_REFERENCE = (
     APP_ROOT / "assets" / "streamer-references" / "xiebin-dd.png"
 )
+GUOMIN_DAJIUGE_COVER_REFERENCE = (
+    APP_ROOT / "assets" / "streamer-references" / "guomin-dajiuge.png"
+)
+GUOMIN_DAJIUGE_STREAMER_ALIASES = {"国民大舅哥", "大舅哥", "182102"}
 DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "YYF",
@@ -3248,6 +3252,9 @@ def recording_cover_reference(streamer: str) -> tuple[str, Path] | None:
     if normalized == "DD":
         if XIEBIN_DD_COVER_REFERENCE.is_file():
             return "谢彬DD", XIEBIN_DD_COVER_REFERENCE
+    if str(streamer or "").strip() in GUOMIN_DAJIUGE_STREAMER_ALIASES:
+        if GUOMIN_DAJIUGE_COVER_REFERENCE.is_file():
+            return "国民大舅哥", GUOMIN_DAJIUGE_COVER_REFERENCE
     return None
 
 
