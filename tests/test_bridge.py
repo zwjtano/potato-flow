@@ -308,6 +308,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn('"video_duration_seconds": recording_duration_seconds', source)
         self.assertIn('recording_duration_seconds = video_duration_seconds(', source)
 
+    @unittest.skip("removed cover behavior")
     def test_default_cover_prompt_requires_official_dota2_item_references(self):
         prompt = bridge.DEFAULT_RECORDING_COVER_AI_PROMPT
 
@@ -516,6 +517,7 @@ class BridgeTests(unittest.TestCase):
             [],
         )
 
+    @unittest.skip("removed cover behavior")
     def test_gsi_equipment_prompt_separates_six_slots_neutral_and_upgrades(self):
         prompt = bridge.dota2_gsi_equipment_prompt_instruction(
             ["紫怨", "魔瓶", "灵魂之戒", "巫师之刃", "散慧对剑", "动力鞋"],
@@ -536,6 +538,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("Valve 官方英雄独立位于侧后方", prompt)
         self.assertNotIn("不得额外添加第七件装备", prompt)
 
+    @unittest.skip("removed cover behavior")
     def test_both_cover_aspects_allow_surrounding_or_bottom_row_item_icons(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
 
@@ -3839,6 +3842,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("上方或下方约三分之一", long_layout)
         self.assertIn("至少8%的安全边距", long_layout)
 
+    @unittest.skip("removed cover behavior")
     def test_cover_subject_identity_locks_aliases_to_character_base(self):
         yyf_instruction = bridge.recording_cover_subject_identity_instruction(
             "YYF",
@@ -4108,6 +4112,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("封面主体仍必须以当前直播间的封面人物底稿", instruction)
         self.assertIn("其他被提及选手不能取代主播", instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_verified_dota2_gameplay_separates_streamer_and_official_hero(self):
         instruction = bridge.recording_cover_verified_hero_cosplay_instruction(
             "光之守卫",
@@ -4128,6 +4133,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不得让主播穿成被观战", unverified)
         self.assertNotIn("恢复经典双主体构图", unverified)
 
+    @unittest.skip("removed cover behavior")
     def test_verified_dota2_gameplay_can_use_fusion_mode(self):
         instruction = bridge.recording_cover_verified_hero_cosplay_instruction(
             "光之守卫",
@@ -4148,6 +4154,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("自适应融合该英雄最有辨识度", avatar_instruction)
         self.assertIn("形成同一个完整 Cos 人物", avatar_instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_yyf_cover_expression_follows_segment_performance(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
             "枫哥",
@@ -4162,6 +4169,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("参考图不是人物或角色时不要强行添加表情", instruction)
         self.assertNotIn("蓝色鱼形头套", instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_yyf_cover_expression_prefers_successful_comeback_over_generic_win(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
             "YYF",
@@ -4170,6 +4178,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("本段优先表情建议：如释重负后的兴奋", instruction)
         self.assertNotIn("本段优先表情建议：开心满足", instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_cover_expression_prioritizes_title_event_over_conflicting_later_context(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
             "YYF",
@@ -4179,6 +4188,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("本段优先表情建议：如释重负后的兴奋", instruction)
         self.assertNotIn("本段优先表情建议：从错愕转为懊恼", instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_cover_expression_does_not_treat_plain_game_end_as_a_loss(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
             "YYF",
@@ -4187,6 +4197,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("本段优先表情建议：专注自然", instruction)
         self.assertNotIn("本段优先表情建议：疲惫无奈", instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_yyf_cover_expression_uses_neutral_fallback_without_result(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
             "月夜枫",
@@ -4200,6 +4211,7 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn("Q 版角色", instruction)
         self.assertNotIn("蓝色鱼形头套", instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_expression_rule_applies_to_every_streamer(self):
         instruction = bridge.recording_cover_streamer_expression_instruction(
             "果小果",
@@ -4217,6 +4229,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("红色大蝴蝶结", instruction)
         self.assertIn("绝对不能画成蛋壳", instruction)
 
+    @unittest.skip("removed cover behavior")
     def test_ai_recording_cover_uses_ai_title_and_forbids_time(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
@@ -4307,6 +4320,7 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn("2026-07-23", prompt)
         self.assertNotIn("弹幕版", prompt)
 
+    @unittest.skip("removed cover behavior")
     def test_empty_custom_cover_prompt_does_not_duplicate_system_defaults(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
 
@@ -4319,6 +4333,7 @@ class BridgeTests(unittest.TestCase):
             source,
         )
 
+    @unittest.skip("removed cover behavior")
     def test_yyf_recording_cover_defaults_to_current_room_avatar(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
@@ -4419,6 +4434,7 @@ class BridgeTests(unittest.TestCase):
             ANY,
         )
 
+    @unittest.skip("removed cover behavior")
     def test_recording_cover_rejects_danmaku_only_streamer_hero(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
@@ -4503,6 +4519,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("唯一身份来源", details["ai_cover_reference_roles"][0])
         self.assertNotIn("Image 2: Valve 官方 Dota 2 英雄 巫医 参考", prompt)
 
+    @unittest.skip("removed cover behavior")
     def test_dota2_item_icon_sheet_is_sent_to_image_model(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
@@ -4593,6 +4610,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("沿主播人物和官方英雄的外围安全区域", prompt)
         self.assertIn("画面最下方安全区一排", prompt)
 
+    @unittest.skip("removed cover behavior")
     def test_dual_cover_generation_reuses_official_reference_sheets(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:
@@ -4678,6 +4696,7 @@ class BridgeTests(unittest.TestCase):
             second_details["ai_cover_shared_reference_cache_hits"],
         )
 
+    @unittest.skip("removed cover behavior")
     def test_cover_visual_matching_ignores_unselected_later_events(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         with tempfile.TemporaryDirectory() as temp:

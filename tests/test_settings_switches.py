@@ -96,12 +96,11 @@ class SettingsSwitchTests(unittest.TestCase):
         self.assertIn("查看三个系统内置提示词", template)
         self.assertIn("recording_prompt_inherited.title", live_template)
         self.assertIn("留空继承全局设置", live_template)
-        self.assertIn('name="RECORDING_DOTA2_COVER_LAYOUT_MODE"', template)
-        self.assertIn('value="classic"', template)
-        self.assertIn('value="fusion"', template)
-        self.assertIn("经典分离", template)
-        self.assertIn("英雄融合", template)
-        self.assertIn('"RECORDING_DOTA2_COVER_LAYOUT_MODE": "classic"', config_source)
+        self.assertNotIn('name="RECORDING_DOTA2_COVER_LAYOUT_MODE"', template)
+        self.assertNotIn('value="fusion"', template)
+        self.assertNotIn("经典分离", template)
+        self.assertNotIn("英雄融合", template)
+        self.assertNotIn('"RECORDING_DOTA2_COVER_LAYOUT_MODE": "classic"', config_source)
 
     def test_mobile_settings_navigation_uses_a_wrapping_grid(self):
         css = SETTINGS_REDESIGN_STYLE_FILE.read_text(encoding="utf-8")
