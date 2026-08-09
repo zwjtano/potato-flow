@@ -1,5 +1,7 @@
 import io
 import json
+import multiprocessing
+import os
 import re
 import subprocess
 import tempfile
@@ -37,6 +39,14 @@ SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
   <d p="3.750,4,25,65280,0,0,3,0">底部弹幕</d>
 </i>
 """
+
+
+def _process_burn_slot(lock_path, result_queue, hold_seconds):
+    os.environ["POTATO_DANMAKU_BURN_LOCK"] = lock_path
+    with danmaku_burn_slot():
+        started = time.monotonic()
+        time.sleep(hold_seconds)
+        result_queue.put((started, time.monotonic()))
 
 
 class DanmakuPipelineTests(unittest.TestCase):
@@ -278,6 +288,30 @@ class DanmakuPipelineTests(unittest.TestCase):
             thread.join()
 
         self.assertEqual(maximum, 1)
+
+    def test_burn_queue_serializes_multiple_processes(self):
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = str(Path(temp_dir) / "burn.lock")
+            result_queue = context.Queue()
+            workers = [
+                context.Process(
+                    target=_process_burn_slot,
+                    args=(lock_path, result_queue, 0.2),
+                )
+                for _ in range(2)
+            ]
+            for worker in workers:
+                worker.start()
+            intervals = sorted(
+                (result_queue.get(timeout=10), result_queue.get(timeout=10)),
+                key=lambda interval: interval[0],
+            )
+            for worker in workers:
+                worker.join(timeout=10)
+
+        self.assertEqual([worker.exitcode for worker in workers], [0, 0])
+        self.assertLessEqual(intervals[0][1], intervals[1][0])
 
     def test_parse_and_build_ass(self):
         with tempfile.TemporaryDirectory() as temp:

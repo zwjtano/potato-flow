@@ -4,17 +4,55 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
 
 try:
     import fcntl
-except ImportError:  # pragma: no cover - PotatoFlow officially runs on Linux
+except ImportError:  # pragma: no cover - unavailable on Windows
     fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - unavailable on Linux and macOS
+    msvcrt = None
 
 
 _THREAD_LOCK = threading.Lock()
+
+
+def _acquire_process_lock(lock_handle) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        return
+    if msvcrt is None:
+        return
+
+    # msvcrt locks a byte range starting at the current file position. Ensure
+    # that byte zero exists, then wait without the ten-second LK_LOCK timeout.
+    lock_handle.seek(0, os.SEEK_END)
+    if lock_handle.tell() == 0:
+        lock_handle.write(b"\0")
+        lock_handle.flush()
+    while True:
+        lock_handle.seek(0)
+        try:
+            msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno not in {11, 13, 36} and getattr(exc, "winerror", None) not in {33, 36}:
+                raise
+            time.sleep(0.1)
+
+
+def _release_process_lock(lock_handle) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        lock_handle.seek(0)
+        msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 @contextmanager
@@ -37,14 +75,12 @@ def bilibili_upload_slot(
     report("queued")
     with _THREAD_LOCK:
         with path.open("a+b") as lock_handle:
-            if fcntl is not None:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            _acquire_process_lock(lock_handle)
             try:
                 report("uploading")
                 yield
             finally:
-                if fcntl is not None:
-                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                _release_process_lock(lock_handle)
 
 
 def default_bilibili_upload_lock(temp_dir: str | Path) -> Path:
