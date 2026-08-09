@@ -117,6 +117,25 @@ def test_version_key_rejects_non_release_tags():
     assert launcher._version_key("nightly") == ()
 
 
+def test_windows_awake_request_keeps_display_power_policy_unchanged():
+    launcher = _load_launcher()
+    kernel32 = mock.Mock()
+    kernel32.SetThreadExecutionState.return_value = 1
+
+    with mock.patch.object(launcher.os, "name", "nt"):
+        assert launcher._set_windows_system_awake(True, kernel32) is True
+        assert launcher._set_windows_system_awake(False, kernel32) is True
+
+    assert kernel32.SetThreadExecutionState.call_args_list == [
+        mock.call(0x80000001),  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+        mock.call(0x80000000),  # restore the default power policy
+    ]
+    assert all(
+        not (call.args[0] & 0x00000002)  # ES_DISPLAY_REQUIRED must stay disabled
+        for call in kernel32.SetThreadExecutionState.call_args_list
+    )
+
+
 def test_tray_exit_runs_off_the_pystray_callback_thread():
     source = (
         Path(__file__).resolve().parents[1] / "build-tools" / "setup_app.py"

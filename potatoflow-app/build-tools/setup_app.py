@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -26,6 +27,31 @@ CHECK_DESKTOP_ASSETS_FLAG = "--check-desktop-assets"
 ACTIVATION_PORT = 45160
 LATEST_RELEASE_API = "https://api.github.com/repos/zwjtano/potato-flow/releases/latest"
 RELEASES_URL = "https://github.com/zwjtano/potato-flow/releases/latest"
+
+
+def _set_windows_system_awake(enabled: bool, kernel32=None) -> bool:
+    """Keep Windows awake without forcing the display to remain on."""
+    if os.name != "nt" and kernel32 is None:
+        return True
+    if kernel32 is None:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+    es_continuous = 0x80000000
+    es_system_required = 0x00000001
+    flags = es_continuous | es_system_required if enabled else es_continuous
+    return bool(kernel32.SetThreadExecutionState(flags))
+
+
+@contextmanager
+def keep_windows_system_awake():
+    """Prevent automatic sleep while the desktop launcher remains open."""
+    enabled = _set_windows_system_awake(True)
+    try:
+        yield
+    finally:
+        if enabled:
+            _set_windows_system_awake(False)
 
 
 def assign_kill_on_close_job(process: subprocess.Popen) -> object | None:
@@ -493,7 +519,8 @@ def main() -> int:
         return 0
     if SERVER_ONLY_FLAG in args:
         return run_server()
-    return run_desktop(data_root)
+    with keep_windows_system_awake():
+        return run_desktop(data_root)
 
 
 if __name__ == "__main__":
