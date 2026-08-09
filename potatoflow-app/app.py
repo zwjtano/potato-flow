@@ -706,16 +706,28 @@ def _start_monitor_run_operation(config_id: int):
     if not config:
         return None, None, "监控配置不存在"
 
-    operation_id = str(uuid.uuid4())
-    _update_monitor_run_progress(
-        operation_id,
-        config_id,
-        message=f"已启动监控任务：{config['name']}",
-        detail='正在后台执行 YouTube 监控，请稍候。',
-        done=False,
-        level='info',
-        success=None,
-    )
+    _cleanup_monitor_run_operations()
+    with _MONITOR_RUN_LOCK:
+        existing = next(
+            (
+                state for state in _MONITOR_RUN_OPERATIONS.values()
+                if int(state.get('config_id') or 0) == int(config_id)
+                and not state.get('done', False)
+            ),
+            None,
+        )
+        if existing:
+            return existing['operation_id'], config, None
+        operation_id = str(uuid.uuid4())
+        state = _new_monitor_run_state(operation_id, config_id)
+        state.update({
+            'message': f"已启动监控任务：{config['name']}",
+            'detail': '正在后台执行 YouTube 监控，请稍候。',
+            'done': False,
+            'level': 'info',
+            'success': None,
+        })
+        _MONITOR_RUN_OPERATIONS[operation_id] = state
 
     monitor_thread = threading.Thread(
         target=_run_monitor_operation,
@@ -4932,7 +4944,7 @@ def reset_settings():
 def cleanup_logs_route():
     """手动触发日志清理"""
     config = load_config()
-    hours = int(request.form.get('hours', config.get('LOG_CLEANUP_HOURS', 168)))
+    hours = request.form.get('hours', config.get('LOG_CLEANUP_HOURS', 168))
     
     result = cleanup_logs(hours)
     
@@ -4962,7 +4974,7 @@ def clear_logs_route():
 def cleanup_downloads_route():
     """手动触发下载内容清理"""
     config = load_config()
-    hours = int(request.form.get('hours', config.get('DOWNLOAD_CLEANUP_HOURS', 72)))
+    hours = request.form.get('hours', config.get('DOWNLOAD_CLEANUP_HOURS', 72))
     
     result = cleanup_downloads(hours)
     
@@ -4987,16 +4999,28 @@ def _human_readable_size(num_bytes: float) -> str:
     return f"{num_bytes:.2f}PB"
 
 
+def _validated_cleanup_hours(hours, *, maximum: int) -> float:
+    try:
+        value = float(hours)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("保留时长必须是数字") from exc
+    if not 1 <= value <= maximum:
+        raise ValueError(f"保留时长必须在 1 到 {maximum} 小时之间")
+    return value
+
+
 def cleanup_logs(hours: int):
     """删除logs目录下指定小时之前的日志文件（不包括当前运行日志）"""
     try:
+        retention_hours = _validated_cleanup_hours(hours, maximum=8760)
         logs_dir = get_app_subdir('logs')
         if not os.path.exists(logs_dir):
             return {'success': True, 'files_removed': 0, 'bytes_freed': 0, 'bytes_freed_readable': '0B'}
 
-        cutoff = time.time() - float(hours) * 3600
+        cutoff = time.time() - retention_hours * 3600
         files_removed = 0
         bytes_freed = 0
+        failures = []
 
         for filename in os.listdir(logs_dir):
             path = os.path.join(logs_dir, filename)
@@ -5020,10 +5044,19 @@ def cleanup_logs(hours: int):
                                     pass
                                 files_removed += 1
                         shutil.rmtree(path)
-            except Exception:
-                continue
+            except Exception as exc:
+                failures.append(filename)
+                logger.warning("清理日志项失败 %s: %s", filename, exc)
 
-        return {'success': True, 'files_removed': files_removed, 'bytes_freed': bytes_freed, 'bytes_freed_readable': _human_readable_size(bytes_freed)}
+        result = {
+            'success': not failures,
+            'files_removed': files_removed,
+            'bytes_freed': bytes_freed,
+            'bytes_freed_readable': _human_readable_size(bytes_freed),
+        }
+        if failures:
+            result['error'] = f"有 {len(failures)} 个日志项未能删除"
+        return result
     except Exception as e:
         logger.warning(f"日志清理失败: {e}")
         return {'success': False, 'error': str(e)}
@@ -5067,11 +5100,12 @@ def clear_specific_logs():
 def cleanup_downloads(hours: int):
     """清理下载目录中指定hours之前的任务目录"""
     try:
+        retention_hours = _validated_cleanup_hours(hours, maximum=17520)
         downloads_dir = get_app_subdir('downloads')
         if not os.path.exists(downloads_dir):
             return {'success': True, 'dirs_removed': 0, 'files_removed': 0, 'bytes_freed': 0, 'bytes_freed_readable': '0B'}
 
-        cutoff = time.time() - float(hours) * 3600
+        cutoff = time.time() - retention_hours * 3600
         dirs_removed = 0
         files_removed = 0
         bytes_freed = 0
@@ -5082,6 +5116,7 @@ def cleanup_downloads(hours: int):
             if task.get('id')
         }
         skipped_protected = 0
+        failures = []
 
         for entry in os.listdir(downloads_dir):
             path = os.path.join(downloads_dir, entry)
@@ -5103,17 +5138,21 @@ def cleanup_downloads(hours: int):
                                     files_removed += 1
                         shutil.rmtree(path)
                         dirs_removed += 1
-            except Exception:
-                continue
+            except Exception as exc:
+                failures.append(entry)
+                logger.warning("清理下载项失败 %s: %s", entry, exc)
 
-        return {
-            'success': True,
+        result = {
+            'success': not failures,
             'dirs_removed': dirs_removed,
             'files_removed': files_removed,
             'skipped_protected': skipped_protected,
             'bytes_freed': bytes_freed,
             'bytes_freed_readable': _human_readable_size(bytes_freed),
         }
+        if failures:
+            result['error'] = f"有 {len(failures)} 个下载目录未能删除"
+        return result
     except Exception as e:
         logger.warning(f"下载内容清理失败: {e}")
         return {'success': False, 'error': str(e)}

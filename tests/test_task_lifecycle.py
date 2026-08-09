@@ -91,6 +91,20 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         delete_files.assert_not_called()
         get_connection.assert_not_called()
 
+    def test_task_record_is_preserved_when_file_deletion_fails(self):
+        task = {"id": "task-id", "status": "failed"}
+        with (
+            patch.object(task_manager, "get_task", return_value=task),
+            patch.object(task_manager, "request_task_cancel"),
+            patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+            patch.object(task_manager, "delete_task_files", return_value=False),
+            patch.object(task_manager, "get_db_connection") as get_connection,
+        ):
+            result = task_manager.delete_task("task-id", delete_files=True)
+
+        self.assertFalse(result)
+        get_connection.assert_not_called()
+
     def test_pause_requests_stop_and_preserves_files(self):
         task = {"id": "task-id", "status": "uploading"}
         with (
@@ -152,6 +166,35 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
 
 
 class DownloadCleanupLifecycleTests(unittest.TestCase):
+    def test_negative_retention_is_rejected_without_deleting(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            downloads = Path(temp_dir)
+            task_dir = downloads / "11111111-1111-1111-1111-111111111111"
+            task_dir.mkdir()
+            with patch.object(app_module, "get_app_subdir", return_value=str(downloads)):
+                result = app_module.cleanup_downloads(-1)
+
+            self.assertFalse(result["success"])
+            self.assertTrue(task_dir.exists())
+
+    def test_partial_cleanup_failure_is_reported(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            downloads = Path(temp_dir)
+            task_dir = downloads / "11111111-1111-1111-1111-111111111111"
+            task_dir.mkdir()
+            old = time.time() - 7200
+            import os
+            os.utime(task_dir, (old, old))
+            with (
+                patch.object(app_module, "get_app_subdir", return_value=str(downloads)),
+                patch.object(app_module, "get_all_tasks", return_value=[]),
+                patch.object(app_module.shutil, "rmtree", side_effect=PermissionError("busy")),
+            ):
+                result = app_module.cleanup_downloads(1)
+
+            self.assertFalse(result["success"])
+            self.assertIn("1 个下载目录", result["error"])
+
     def test_age_cleanup_preserves_active_and_failed_task_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             downloads = Path(temp_dir)
