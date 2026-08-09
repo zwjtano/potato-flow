@@ -104,6 +104,33 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn("./ops/test-all.ps1", application_workflow)
         self.assertIn("Run all test suites before packaging", workflow)
 
+    def test_release_build_requires_tag_source_and_version_to_match(self):
+        workflow = (ROOT / ".github" / "workflows" / "windows-release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        target = "github.event.release.tag_name || inputs.release_tag"
+        self.assertIn(f"ref: ${{{{ {target} || github.ref }}}}", workflow)
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn('$expectedTag = "v$version"', workflow)
+        self.assertIn("does not match source version", workflow)
+        self.assertIn('git rev-parse --verify "refs/tags/$releaseTag^{commit}"', workflow)
+        self.assertIn("does not match $releaseTag commit", workflow)
+
+    def test_release_build_rejects_assets_from_another_version(self):
+        workflow = (ROOT / ".github" / "workflows" / "windows-release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Validate existing Release assets", workflow)
+        self.assertIn("Unable to inspect existing assets", workflow)
+        self.assertIn("contains Windows assets for another version", workflow)
+        self.assertIn("RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}", workflow)
+        self.assertIn(
+            "group: windows-installer-${{ github.event.release.tag_name || inputs.release_tag || github.ref }}",
+            workflow,
+        )
+
     def test_desktop_tray_uses_decodable_png_icon(self):
         launcher_path = APP_ROOT / "build-tools" / "setup_app.py"
         launcher = launcher_path.read_text(encoding="utf-8")

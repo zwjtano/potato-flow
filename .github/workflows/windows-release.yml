@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag to receive the Windows installer
+        description: Existing release tag to build from and receive the Windows installer
         required: false
         type: string
 
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-installer-${{ github.ref }}
+  group: windows-installer-${{ github.event.release.tag_name || inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -27,6 +27,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag || github.ref }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,11 +41,57 @@ jobs:
       - name: Read release metadata
         id: release_meta
         shell: pwsh
+        env:
+          TARGET_RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $version = python -c "import sys; sys.path.insert(0, 'potatoflow-app'); from version import __version__; print(__version__)"
+          $releaseTag = "$env:TARGET_RELEASE_TAG".Trim()
+          if ($releaseTag) {
+            if ($releaseTag -notmatch '^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+              throw "Invalid release tag format: $releaseTag"
+            }
+            $expectedTag = "v$version"
+            if ($releaseTag -ne $expectedTag) {
+              throw "Release tag $releaseTag does not match source version $version (expected $expectedTag)."
+            }
+            $headCommit = (git rev-parse HEAD).Trim()
+            $tagCommit = (git rev-parse --verify "refs/tags/$releaseTag^{commit}").Trim()
+            if ($headCommit -ne $tagCommit) {
+              throw "Checked-out commit $headCommit does not match $releaseTag commit $tagCommit."
+            }
+          }
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "installer=PotatoFlow-v$version-Windows-x64-Setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "portable=PotatoFlow-v$version-Windows-x64-Portable.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Validate existing Release assets
+        if: steps.release_meta.outputs.release_tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $allowed = @(
+            "PotatoFlow-v$env:RELEASE_VERSION-Windows-x64-Setup.exe",
+            "PotatoFlow-v$env:RELEASE_VERSION-Windows-x64-Setup.exe.sha256",
+            "PotatoFlow-v$env:RELEASE_VERSION-Windows-x64-Portable.zip",
+            "PotatoFlow-v$env:RELEASE_VERSION-Windows-x64-Portable.zip.sha256"
+          )
+          $assetNames = @(gh release view $env:RELEASE_TAG --json assets --jq '.assets[].name')
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to inspect existing assets for Release $env:RELEASE_TAG."
+          }
+          $windowsAssets = @($assetNames | Where-Object {
+            $_ -match '^PotatoFlow-v.+-Windows-x64-(?:Setup\.exe|Portable\.zip)(?:\.sha256)?$'
+          })
+          $unexpected = @($windowsAssets | Where-Object { $_ -notin $allowed })
+          if ($unexpected.Count -gt 0) {
+            throw "Release $env:RELEASE_TAG contains Windows assets for another version: $($unexpected -join ', ')"
+          }
 
       - name: Set up Rust MSVC
         uses: dtolnay/rust-toolchain@stable
@@ -171,11 +220,11 @@ jobs:
           retention-days: 14
 
       - name: Upload installer to GitHub Release
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: steps.release_meta.outputs.release_tag != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
         run: |
           gh release upload $env:RELEASE_TAG `
             potatoflow-app/build-tools/dist/${{ steps.release_meta.outputs.installer }} `
