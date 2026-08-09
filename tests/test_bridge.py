@@ -303,6 +303,38 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("Role 编号", prompt)
         self.assertIn("不要一律退化成", prompt)
 
+    def test_stage_prompts_share_one_dota2_evidence_policy(self):
+        bridge_source = Path(bridge.__file__).read_text(encoding="utf-8")
+        manager_source = (
+            Path(bridge.__file__).parent / "modules" / "live_recorder_manager.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("多条原始 XML\n直接人物—英雄绑定形成保守共识", bridge_source)
+        self.assertIn("最终持有的装备、KDA\n只能使用其中已经确认的数据", bridge_source)
+        self.assertIn("已通过完整 XML 核验的人物—英雄直接关系可以原样用于标题", bridge_source)
+        self.assertIn("已通过完整 XML 核验的人物—英雄直接关系可以原样用于标题", manager_source)
+        self.assertNotIn("英雄、装备和 KDA\n只能使用其中已经确认的数据", bridge_source)
+        self.assertNotIn("不得猜测主播、英雄、装备", bridge_source)
+        self.assertNotIn("mode=unknown 时不得声称主播参赛或观战", bridge_source)
+        self.assertNotIn("unknown 不得声称当前主播参赛或观战", manager_source)
+
+    def test_cover_copy_only_requires_owner_name_when_verified_headline_has_it(self):
+        with_owner = bridge.recording_cover_subject_copy_instruction(
+            "谢彬DD",
+            "奶哥NEC中路压制",
+            "奶哥",
+        )
+        without_owner = bridge.recording_cover_subject_copy_instruction(
+            "谢彬DD",
+            "顶上战争决赛进入决胜局",
+            "奶哥",
+        )
+
+        self.assertIn("必须清晰保留", with_owner)
+        self.assertIn("奶哥", with_owner)
+        self.assertIn("不得为了房间归属强塞主播名", without_owner)
+        self.assertNotIn("必须清晰保留", without_owner)
+
     def test_upload_pipeline_persists_duration_before_optional_ass_stage(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
         self.assertIn('"video_duration_seconds": recording_duration_seconds', source)
@@ -408,6 +440,113 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(tags, ["YYF", "DOTA2"])
         self.assertEqual(details["hero_evidence_source"], "none")
         self.assertEqual(details["verified_timeline_hero_evidence"], [])
+
+    def test_repeated_raw_danmaku_owner_alias_validates_hero(self):
+        comments = [
+            types.SimpleNamespace(time=1655.5, text="奶哥这么肥的NEC"),
+            types.SimpleNamespace(time=1972.7, text="奶哥开局说他的NEC不一样"),
+            types.SimpleNamespace(time=2421.8, text="奶哥NEC中路压制"),
+        ]
+        topic, description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "奶哥的NEC中路压制",
+            "27:35 奶哥这么肥的NEC开始发力。",
+            ["谢彬DD", "NEC", "DOTA2"],
+            streamer="谢彬DD",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(topic, "奶哥的NEC中路压制")
+        self.assertEqual(description, "27:35 奶哥这么肥的NEC开始发力。")
+        self.assertEqual(tags, ["谢彬DD", "NEC", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "danmaku_owner_hero_consensus")
+        self.assertEqual(details["verified_timeline_hero_evidence"], ["瘟疫法师（Necrophos）"])
+
+    def test_raw_danmaku_owner_hero_consensus_is_generic(self):
+        comments = [
+            types.SimpleNamespace(time=100.0, text="枫哥虚空这波空大"),
+            types.SimpleNamespace(time=460.0, text="YYF的虚空假面开始出装"),
+        ]
+        topic, _description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "枫哥虚空假面出装复盘",
+            "",
+            ["YYF", "虚空假面", "DOTA2"],
+            streamer="yyfyyf",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(topic, "枫哥虚空假面出装复盘")
+        self.assertEqual(tags, ["YYF", "虚空假面", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "danmaku_owner_hero_consensus")
+
+    def test_raw_danmaku_consensus_keeps_hero_that_only_appears_in_tags(self):
+        comments = [
+            types.SimpleNamespace(time=100.0, text="枫哥虚空这波空大"),
+            types.SimpleNamespace(time=460.0, text="YYF的虚空假面开始出装"),
+        ]
+        _topic, _description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "赛后出装复盘",
+            "05:00 赛后开始复盘。",
+            ["YYF", "虚空假面", "DOTA2"],
+            streamer="yyfyyf",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(tags, ["YYF", "虚空假面", "DOTA2"])
+        self.assertEqual(details["verified_timeline_hero_evidence"], ["虚空假面（Faceless Void）"])
+
+    def test_danmaku_owner_hero_consensus_reaches_cover_without_items(self):
+        context = bridge.recording_cover_danmaku_game_context(
+            {
+                "hero_evidence_source": "danmaku_owner_hero_consensus",
+                "verified_timeline_hero_evidence": ["瘟疫法师（Necrophos）"],
+            },
+            "奶哥NEC中路压制",
+            "27:35 奶哥的NEC开始发力。",
+        )
+
+        self.assertEqual(context["hero"], "瘟疫法师")
+        self.assertEqual(context["items"], [])
+        self.assertEqual(
+            context["identity_source"],
+            "xml_repeated_owner_hero_relation",
+        )
+        self.assertIsNone(bridge.recording_cover_danmaku_game_context(
+            {
+                "hero_evidence_source": "danmaku_owner_hero_consensus",
+                "verified_timeline_hero_evidence": [
+                    "瘟疫法师（Necrophos）",
+                    "死亡先知（Death Prophet）",
+                ],
+            },
+            "多英雄对局复盘",
+        ))
+
+    def test_complete_dota2_hero_roster_and_one_character_names_are_safe(self):
+        self.assertEqual(len(bridge._DOTA2_HERO_ALIAS_GROUPS), 127)
+        for hero in ("百戏大王", "朗戈", "森海飞霞", "祸乱之源", "凯"):
+            with self.subTest(hero=hero):
+                self.assertTrue(bridge._dota2_hero_identity_keys(hero))
+        self.assertEqual(bridge._dota2_hero_identity_keys("陈述比赛过程"), set())
+        self.assertEqual(bridge._dota2_hero_identity_keys("慷慨发言"), set())
+
+    def test_raw_hero_chatter_without_repeated_owner_binding_is_not_evidence(self):
+        comments = [
+            types.SimpleNamespace(time=10.0, text="NEC太肥了"),
+            types.SimpleNamespace(time=20.0, text="NEC出了辉耀"),
+            types.SimpleNamespace(time=30.0, text="奶哥在看比赛"),
+        ]
+        topic, description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "奶哥NEC辉耀成型",
+            "00:20 奶哥NEC辉耀成型。",
+            ["谢彬DD", "NEC", "DOTA2"],
+            streamer="谢彬DD",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(topic, "")
+        self.assertEqual(description, "")
+        self.assertEqual(tags, ["谢彬DD", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "none")
 
     def test_other_streamer_timeline_does_not_validate_owner_hero_title(self):
         timeline = "43:17 查理斯虚空假面出装成型，YYF在旁观赛"
@@ -2610,7 +2749,7 @@ class BridgeTests(unittest.TestCase):
                 set(stages),
                 {
                     "detect", "record", "ass", "burn", "ai", "xml_identity", "live_stats",
-                    "cover_16x9", "cover_4x3", "upload", "collection", "cleanup",
+                    "cover_16x9", "cover_4x3", "upload", "collection", "comment", "cleanup",
                 },
             )
             self.assertEqual(stages["record"]["status"], "completed")
@@ -2718,11 +2857,27 @@ class BridgeTests(unittest.TestCase):
             store = bridge.StateStore(root / "state.sqlite3")
             key = bridge.fingerprint(video)
             store.claim(key, video, "bilibili")
-            store.finish(key, "failed", {"bilibili": {"bvid": "BV1existing"}}, "dm failed")
+            store.finish(key, "failed", {
+                "bilibili": {"bvid": "BV1existing"},
+                "description_comment": {
+                    "enabled": True,
+                    "posted": False,
+                    "error": "temporary comment failure",
+                },
+            }, "dm failed")
+
+            comment_calls = []
 
             class MustNotUpload:
                 def __init__(self, **_kwargs):
-                    raise AssertionError("retry must not instantiate uploader")
+                    pass
+
+                def upload_video(self, **_kwargs):
+                    raise AssertionError("retry must not upload video again")
+
+                def publish_description_comment(self, **kwargs):
+                    comment_calls.append(kwargs)
+                    return {"enabled": True, "posted": True, "pinned": True}
 
             cleanup_observations = []
             real_cleanup = bridge.cleanup_uploaded_recording
@@ -2761,6 +2916,8 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(status, "completed")
             self.assertEqual(store.stage_state(key, "cleanup")["status"], "completed")
             self.assertEqual(result["bilibili"]["bvid"], "BV1existing")
+            self.assertEqual(len(comment_calls), 1)
+            self.assertEqual(store.stage_state(key, "comment")["status"], "completed")
             self.assertFalse(video.exists())
             self.assertEqual(result["source_cleanup"]["deleted"], [str(video.resolve())])
 
@@ -3148,6 +3305,13 @@ class BridgeTests(unittest.TestCase):
             store = bridge.StateStore(root / "state.sqlite3")
             key = bridge.fingerprint(video)
             store.claim(key, video, "bilibili")
+            store.stage(
+                key,
+                "ai",
+                "failed",
+                {"manual_review_required": True},
+                error="AI unavailable",
+            )
             store.finish(key, "failed", error="ready for review")
             store.save_review_override(key, {
                 "title": "主播高地三杀带队逆转",
@@ -3200,6 +3364,11 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(store.stage_state(key, "upload")["status"], "completed")
                 self.assertEqual(store.stage_state(key, "collection")["status"], "failed")
                 self.assertEqual(store.results(key)["bilibili"]["bvid"], "BV1collection")
+                self.assertTrue(
+                    store.stage_state(key, "ai")["details"][
+                        "manual_review_bypassed_failed_ai"
+                    ]
+                )
 
                 self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
 
@@ -3207,6 +3376,150 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(len(collection_calls), 2)
             self.assertEqual(store.stage_state(key, "collection")["status"], "completed")
             self.assertTrue(store.results(key)["bilibili"]["collection"]["added"])
+
+    def test_description_comment_failure_retries_without_reuploading_video(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_录播_2026-08-09_12-00.flv"
+            cover = root / "cover.jpg"
+            cookie = root / "cookie.json"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cookie.write_text("[]", encoding="utf-8")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "ai_danmaku_summary_enabled": False,
+                "post_description_comment": True,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.claim(key, video, "bilibili")
+            store.stage(key, "ai", "failed", {}, error="AI unavailable")
+            store.finish(key, "failed", error="ready for review")
+            store.save_review_override(key, {
+                "title": "人工标题",
+                "description": "人工简介",
+                "tags": ["录播"],
+                "partition_id": "171",
+                "cover_path": str(cover),
+                "hold_before_cover": False,
+            })
+            upload_calls = []
+            comment_calls = []
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **kwargs):
+                    upload_calls.append(kwargs)
+                    return True, {"aid": 456, "bvid": "BV1comment"}
+
+                def publish_description_comment(self, **kwargs):
+                    comment_calls.append(kwargs)
+                    if len(comment_calls) == 1:
+                        return {
+                            "enabled": True,
+                            "posted": False,
+                            "pinned": False,
+                            "error": "temporary comment failure",
+                        }
+                    return {"enabled": True, "posted": True, "pinned": True}
+
+            with patch.object(
+                bridge, "video_duration_seconds", return_value=600.0
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                return_value=(None, {"ai_cover_generated": False}),
+            ), patch.object(bridge, "import_app", return_value=(FakeUploader, None)):
+                self.assertFalse(bridge.upload_one(video, cfg, store, retry=True))
+                self.assertEqual(store.stage_state(key, "comment")["status"], "failed")
+                self.assertEqual(store.results(key)["bilibili"]["bvid"], "BV1comment")
+
+                self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
+
+            self.assertEqual(len(upload_calls), 1)
+            self.assertEqual(len(comment_calls), 2)
+            self.assertEqual(store.stage_state(key, "comment")["status"], "completed")
+            self.assertEqual(store.results(key)["bilibili"]["bvid"], "BV1comment")
+
+    def test_cleanup_failure_keeps_published_task_failed_and_retryable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_录播_2026-08-09_13-00.flv"
+            cover = root / "cover.jpg"
+            cookie = root / "cookie.json"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cookie.write_text("[]", encoding="utf-8")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "ai_danmaku_summary_enabled": False,
+                "post_description_comment": False,
+                "delete_recording_after_upload": True,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.claim(key, video, "bilibili")
+            store.stage(key, "ai", "failed", {}, error="AI unavailable")
+            store.finish(key, "failed", error="ready for review")
+            store.save_review_override(key, {
+                "title": "人工标题",
+                "description": "人工简介",
+                "tags": ["录播"],
+                "partition_id": "171",
+                "cover_path": str(cover),
+                "hold_before_cover": False,
+            })
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **_kwargs):
+                    return True, {"aid": 789, "bvid": "BV1cleanup"}
+
+            cleanup_result = {
+                "deleted": [],
+                "retained": [],
+                "failed": [{
+                    "kind": "video",
+                    "path": str(video),
+                    "error": "permission denied",
+                }],
+            }
+            with patch.object(
+                bridge, "video_duration_seconds", return_value=600.0
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                return_value=(None, {"ai_cover_generated": False}),
+            ), patch.object(
+                bridge, "cleanup_uploaded_recording", return_value=cleanup_result
+            ), patch.object(bridge, "import_app", return_value=(FakeUploader, None)):
+                self.assertFalse(bridge.upload_one(video, cfg, store, retry=True))
+
+            self.assertEqual(store.stage_state(key, "cleanup")["status"], "failed")
+            with store.connect() as db:
+                status = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?", (key,)
+                ).fetchone()["status"]
+            self.assertEqual(status, "failed")
+            self.assertEqual(store.results(key)["bilibili"]["bvid"], "BV1cleanup")
 
     def test_persist_pipeline_cover_survives_disposable_artifact_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:

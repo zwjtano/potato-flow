@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{% set published_editor = job.status == 'completed' and job.bvid %}
+{% set published_editor = job.bvid %}
 {% set pre_upload_editor = not published_editor and not job.record_only %}
 
 {% block title %}PotatoFlow - {{ '编辑已上传稿件' if published_editor else '投稿前 AI 编辑' }}{% endblock %}

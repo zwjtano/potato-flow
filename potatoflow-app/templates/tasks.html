@@ -279,7 +279,7 @@
                                     {% if job.status == 'failed' and not job.record_only %}
                                     <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>
                                     {% endif %}
-                                    {% if job.status == 'completed' and job.bvid %}
+                                    {% if job.bvid %}
                                     <a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-stars"></i> AI 编辑稿件
                                     </a>
@@ -370,7 +370,7 @@
                     </button>
                     <div class="d-flex flex-wrap gap-2 mt-3">
                         {% if job.status == 'failed' and not job.record_only %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-warning"><i class="bi bi-pencil-square"></i> 人工审核</a>{% endif %}
-                        {% if job.status == 'completed' and job.bvid %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-stars"></i> AI 编辑稿件</a>{% endif %}
+                        {% if job.bvid %}<a href="{{ url_for('live_recording_job_review', fingerprint=job.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-stars"></i> AI 编辑稿件</a>{% endif %}
                         {% if job.retryable %}<button type="button" class="btn btn-sm btn-outline-primary recording-retry-btn" data-job-id="{{ job.id }}"><i class="bi bi-arrow-repeat"></i> {{ '恢复' if job.paused else '重试' }}</button>{% endif %}
                         {% if job.pausable %}<button type="button" class="btn btn-sm btn-outline-secondary recording-pause-btn" data-job-id="{{ job.id }}"><i class="bi bi-pause-fill"></i> 暂停</button>{% endif %}
                         {% if job.bvid %}<a href="{{ job.bilibili_url or ('https://www.bilibili.com/video/' ~ job.bvid) }}" target="_blank" rel="noopener" class="recording-bvid-link"><span>BV号</span>{{ job.bvid }}</a>{% endif %}
@@ -1571,6 +1571,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         cover_16x9: {name: '16:9 个人空间封面', description: '独立生成并保存 B站个人空间封面', icon: 'bi-aspect-ratio'},
         cover_4x3: {name: '4:3 首页推荐封面', description: '独立生成 B站首页推荐封面，失败不阻断投稿', icon: 'bi-grid'},
         collection: {name: '加入 B站合集', description: '投稿成功后独立加入直播间配置的合集，失败可单独重试', icon: 'bi-collection-play'},
+        comment: {name: '发布简介评论', description: '投稿成功后发布并按配置置顶简介评论，失败时只重试评论', icon: 'bi-chat-left-text'},
         remux: {name: '无损封装 MP4', description: '使用 -c copy 转封装，不重新编码视频', icon: 'bi-file-earmark-play'},
         verify: {name: '检查 MP4 内嵌封面', description: '确认生成的 MP4 包含可识别的封面流', icon: 'bi-patch-check'},
         cleanup: {name: '清理录播源文件', description: '仅在投稿成功进入终态后删除原始 FLV/XML 和临时文件', icon: 'bi-trash3'},
@@ -1970,7 +1971,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
     function recordingAiReviewMarkup(job, stageStatus) {
         if (job.record_only) return '';
         const reviewUrl = `/live-recording/jobs/${encodeURIComponent(job.id)}/review`;
-        if (job.status === 'completed' && job.bvid) {
+        if (job.bvid) {
             return `<div class="recording-detail-ai-review">
                 <div><strong>AI 内容不满意？</strong><span>可以再次生成简介和标题，预览后才同步到 B站。</span></div>
                 <a class="btn btn-sm btn-outline-primary" href="${reviewUrl}"><i class="bi bi-stars"></i> AI 编辑稿件</a>
