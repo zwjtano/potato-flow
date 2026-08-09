@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import socket
 import ssl
 import threading
+from contextlib import contextmanager
 from typing import Optional, Dict, List, Any, Tuple
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -65,6 +66,17 @@ API_INIT_STATUS_DIRECT_READY = 'direct_ready'
 API_INIT_STATUS_PROXY_READY = 'proxy_ready'
 API_INIT_STATUS_MISSING_API_KEY = 'missing_api_key'
 API_INIT_STATUS_INIT_FAILED = 'init_failed'
+
+
+@contextmanager
+def _database_connection(db_path):
+    """提供事务上下文，并确保 Windows 上的 SQLite 文件句柄及时释放。"""
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def get_api_init_status_message(status_code: Optional[str]) -> str:
@@ -139,7 +151,7 @@ class YouTubeMonitor:
         # 检查数据库是否为新建
         is_new_database = not os.path.exists(self.db_path)
         
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             
             # 监控配置表
@@ -323,7 +335,7 @@ class YouTubeMonitor:
                 return
             
             # 检查数据库中是否已有配置
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('SELECT COUNT(*) FROM monitor_configs')
                 existing_count = cursor.fetchone()[0]
@@ -385,7 +397,7 @@ class YouTubeMonitor:
     def _restore_single_config(self, config_data, target_id):
         """恢复单个配置到数据库，尝试保持原有ID"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 # 检查目标ID是否可用
@@ -610,7 +622,7 @@ class YouTubeMonitor:
         logger.info(f"开始创建监控配置: {config_data.get('name', '未命名')}")
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
 
                 config_id = self._insert_monitor_config_record(cursor, config_data)
@@ -712,7 +724,7 @@ class YouTubeMonitor:
 
     def get_monitor_configs(self):
         """获取所有监控配置"""
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM monitor_configs ORDER BY created_time DESC')
 
@@ -726,7 +738,7 @@ class YouTubeMonitor:
 
     def get_monitor_config(self, config_id):
         """获取指定监控配置"""
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM monitor_configs WHERE id = ?', (config_id,))
 
@@ -744,7 +756,7 @@ class YouTubeMonitor:
             # 获取原有配置
             old_config = self.get_monitor_config(config_id)
             
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 # 检查历史搬运模式下时间范围是否发生变化
@@ -821,7 +833,7 @@ class YouTubeMonitor:
             # 删除配置文件
             self._delete_config_file(config_id)
             
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 # 获取历史记录数量
@@ -1614,7 +1626,7 @@ class YouTubeMonitor:
         require_added_to_tasks=False,
     ):
         """检查视频是否已经处理过"""
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 'SELECT added_to_tasks FROM monitor_history WHERE video_id = ? AND config_id = ?',
@@ -1629,7 +1641,7 @@ class YouTubeMonitor:
     
     def _save_video_history(self, video_info, config_id, auto_add_to_tasks=False):
         """保存视频到历史记录"""
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -1709,7 +1721,7 @@ class YouTubeMonitor:
         """手动将视频添加到任务队列"""
         logger.info(f"手动添加视频到任务队列: {video_id}, 配置ID: {config_id}")
         
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT video_id, video_title, channel_title, view_count, like_count, 
@@ -1778,7 +1790,7 @@ class YouTubeMonitor:
     
     def _mark_video_added_to_tasks(self, video_id, config_id):
         """标记视频已添加到任务队列"""
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 'UPDATE monitor_history SET added_to_tasks = 1 WHERE video_id = ? AND config_id = ?',
@@ -1835,7 +1847,7 @@ class YouTubeMonitor:
             # 更新偏移量
             new_offset = current_offset + added_count
             
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     'UPDATE monitor_configs SET historical_offset = ? WHERE id = ?',
@@ -1854,7 +1866,7 @@ class YouTubeMonitor:
     
     def _update_last_run_time(self, config_id):
         """更新最后运行时间"""
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 'UPDATE monitor_configs SET last_run_time = CURRENT_TIMESTAMP WHERE id = ?',
@@ -1911,7 +1923,7 @@ class YouTubeMonitor:
     
     def get_monitor_history(self, config_id=None, limit=100):
         """获取监控历史记录"""
-        with sqlite3.connect(self.db_path) as conn:
+        with _database_connection(self.db_path) as conn:
             cursor = conn.cursor()
             
             if config_id:
@@ -1949,7 +1961,7 @@ class YouTubeMonitor:
             config = self.get_monitor_config(config_id)
             config_name = config['name'] if config else f"ID-{config_id}"
             
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 # 获取要删除的记录数
@@ -1973,7 +1985,7 @@ class YouTubeMonitor:
     def clear_all_monitor_history(self):
         """清除所有监控历史记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 # 获取要删除的记录数
@@ -2056,7 +2068,7 @@ class YouTubeMonitor:
             config_name = config['name']
             current_offset = config.get('historical_offset', 0)
             
-            with sqlite3.connect(self.db_path) as conn:
+            with _database_connection(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     'UPDATE monitor_configs SET historical_offset = 0 WHERE id = ?',
