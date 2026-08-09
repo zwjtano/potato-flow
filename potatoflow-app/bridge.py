@@ -1716,9 +1716,7 @@ def _relation_supported_by_comments(
         text = str(getattr(comment, "text", "") or "")
         has_person = any(_text_mentions_name(text, name) for name in person_names)
         has_hero = any(
-            _text_mentions_name(text, term)
-            if re.fullmatch(r"[a-z][a-z0-9' -]*", term.casefold())
-            else term.casefold() in text.casefold()
+            _text_mentions_dota2_hero_term(text, term)
             for term in hero_terms
             if term
         )
@@ -2561,6 +2559,7 @@ class StateStore:
                 ("xml_identity", "pending"), ("ai", "pending"),
                 ("cover_16x9", "pending"), ("cover_4x3", "pending"),
                 ("upload", "pending"), ("collection", "pending"),
+                ("comment", "pending"),
                 ("cleanup", "pending"),
             ):
                 db.execute(
@@ -3328,6 +3327,24 @@ def recording_avatar_reference_instruction(
     )
 
 
+def recording_cover_subject_copy_instruction(
+    streamer: str,
+    headline: str,
+    cover_subject_name: str,
+) -> str:
+    """Keep owner copy only when the verified headline already names the owner."""
+    subject = cover_subject_name or streamer or "主播"
+    if topic_mentions_streamer(headline, streamer):
+        return (
+            f"核心文案已经包含当前主播称呼“{subject}”，必须清晰保留；"
+            "称呼可以放在开头或自然融入句子，但不得排成“主角｜主题”的固定栏目格式。"
+        )
+    return (
+        "核心文案没有当前主播称呼，不得为了房间归属强塞主播名、外号或实名；"
+        "只能逐字使用已经核验的核心文案。"
+    )
+
+
 _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("电炎绝手（Snapfire）", ("老奶奶", "电炎绝手", "snapfire")),
     ("风暴之灵（Storm Spirit）", ("蓝猫", "storm spirit")),
@@ -3363,7 +3380,7 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("修补匠（Tinker）", ("tk", "修补匠", "tinker")),
     ("死亡先知（Death Prophet）", ("死亡先知", "dp", "death prophet")),
     ("帕克（Puck）", ("仙女龙", "puck")),
-    ("莱席拉克（Leshrac）", ("老鹿", "leshrac")),
+    ("莱席拉克（Leshrac）", ("拉席克", "老鹿", "leshrac")),
     ("食人魔魔法师（Ogre Magi）", ("蓝胖", "ogre magi")),
     ("光之守卫（Keeper of the Light）", ("光法", "kotl", "keeper of the light")),
     ("瘟疫法师（Necrophos）", ("瘟疫法师", "死灵法", "死灵法师", "nec", "necrophos")),
@@ -3397,13 +3414,68 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("发条技师（Clockwerk）", ("发条", "clockwerk")),
     ("炼金术士（Alchemist）", ("炼金", "alchemist")),
     ("沙王（Sand King）", ("沙王", "sk", "sand king")),
-    ("剃刀（Razor）", ("电魂", "电棍", "razor")),
+    ("剃刀（Razor）", ("雷泽", "电魂", "电棍", "razor")),
     ("哈斯卡（Huskar）", ("神灵", "huskar")),
     ("蝙蝠骑士（Batrider）", ("蝙蝠", "batrider")),
     ("兽王（Beastmaster）", ("兽王", "beastmaster")),
     ("斧王（Axe）", ("斧王", "axe")),
     ("帕吉（Pudge）", ("屠夫", "胖子", "pudge")),
     ("巫医（Witch Doctor）", ("巫医", "witch doctor", "wd")),
+    # Valve's complete hero roster snapshot. Common community aliases stay in
+    # the groups above; these entries keep less frequently discussed heroes
+    # from disappearing when GSI is unavailable.
+    ("祸乱之源（Bane）", ("祸乱之源", "bane")),
+    ("血魔（Bloodseeker）", ("血魔", "bloodseeker")),
+    ("米拉娜（Mirana）", ("米拉娜", "mirana")),
+    ("斯温（Sven）", ("斯温", "sven")),
+    ("小小（Tiny）", ("小小", "tiny")),
+    ("复仇之魂（Vengeful Spirit）", ("复仇之魂", "vengeful spirit", "vengefulspirit")),
+    ("风行者（Windranger）", ("风行者", "windranger", "windrunner")),
+    ("宙斯（Zeus）", ("宙斯", "zeus", "zuus")),
+    ("巫妖（Lich）", ("巫妖", "lich")),
+    ("莱恩（Lion）", ("莱恩", "lion")),
+    ("谜团（Enigma）", ("谜团", "enigma")),
+    ("术士（Warlock）", ("术士", "warlock")),
+    ("剧毒术士（Venomancer）", ("剧毒术士", "venomancer")),
+    ("冥界亚龙（Viper）", ("冥界亚龙", "viper")),
+    ("黑暗贤者（Dark Seer）", ("黑暗贤者", "dark seer", "dark_seer")),
+    ("全能骑士（Omniknight）", ("全能骑士", "omniknight")),
+    ("魅惑魔女（Enchantress）", ("魅惑魔女", "enchantress")),
+    ("暗夜魔王（Night Stalker）", ("暗夜魔王", "night stalker", "night_stalker")),
+    ("育母蜘蛛（Broodmother）", ("育母蜘蛛", "broodmother")),
+    ("杰奇洛（Jakiro）", ("杰奇洛", "jakiro")),
+    ("陈（Chen）", ("chen",)),
+    ("幽鬼（Spectre）", ("幽鬼", "spectre")),
+    ("远古冰魄（Ancient Apparition）", ("远古冰魄", "ancient apparition", "ancient_apparition")),
+    ("沉默术士（Silencer）", ("沉默术士", "silencer")),
+    ("狼人（Lycan）", ("狼人", "lycan")),
+    ("酒仙（Brewmaster）", ("酒仙", "brewmaster")),
+    ("暗影恶魔（Shadow Demon）", ("暗影恶魔", "shadow demon", "shadow_demon")),
+    ("独行德鲁伊（Lone Druid）", ("独行德鲁伊", "lone druid", "lone_druid")),
+    ("米波（Meepo）", ("米波", "meepo")),
+    ("树精卫士（Treant Protector）", ("树精卫士", "treant protector", "treant")),
+    ("不朽尸王（Undying）", ("不朽尸王", "undying")),
+    ("拉比克（Rubick）", ("拉比克", "rubick")),
+    ("司夜刺客（Nyx Assassin）", ("司夜刺客", "nyx assassin", "nyx_assassin")),
+    ("艾欧（Io）", ("艾欧", "io", "wisp")),
+    ("维萨吉（Visage）", ("维萨吉", "visage")),
+    ("巨牙海民（Tusk）", ("巨牙海民", "tusk")),
+    ("天怒法师（Skywrath Mage）", ("天怒法师", "skywrath mage", "skywrath_mage")),
+    ("亚巴顿（Abaddon）", ("亚巴顿", "abaddon")),
+    ("凤凰（Phoenix）", ("凤凰", "phoenix")),
+    ("神谕者（Oracle）", ("神谕者", "oracle")),
+    ("寒冬飞龙（Winter Wyvern）", ("寒冬飞龙", "winter wyvern", "winter_wyvern")),
+    ("邪影芳灵（Dark Willow）", ("邪影芳灵", "dark willow", "dark_willow")),
+    ("天涯墨客（Grimstroke）", ("天涯墨客", "grimstroke")),
+    ("玛尔斯（Mars）", ("玛尔斯", "mars")),
+    ("森海飞霞（Hoodwink）", ("森海飞霞", "小松鼠", "hoodwink")),
+    ("破晓辰星（Dawnbreaker）", ("破晓辰星", "dawnbreaker")),
+    ("玛西（Marci）", ("玛西", "marci")),
+    ("獸（Primal Beast）", ("原始兽", "primal beast", "primal_beast")),
+    ("琼英碧灵（Muerta）", ("琼英碧灵", "muerta")),
+    ("百戏大王（Ringmaster）", ("百戏大王", "ringmaster")),
+    ("凯（Kez）", ("凯", "kez")),
+    ("朗戈（Largo）", ("朗戈", "largo")),
 )
 
 
@@ -3432,26 +3504,35 @@ def dedupe_recording_tags(tags: Iterable[object], limit: int | None = None) -> l
     return result
 
 
+def _text_mentions_dota2_hero_term(text: object, term: object) -> bool:
+    """Match one hero term while rejecting dangerously ambiguous one-char names."""
+    folded = str(text or "").casefold()
+    candidate = str(term or "").strip().casefold()
+    if not folded or not candidate:
+        return False
+    if re.fullmatch(r"[a-z][a-z0-9' -]*", candidate):
+        return len(candidate) >= 3 and bool(re.search(
+            rf"(?<![a-z0-9]){re.escape(candidate)}(?![a-z0-9])",
+            folded,
+        ))
+    compact = _compact_alias(candidate)
+    if len(compact) <= 1:
+        # Chen/Primal Beast/Kez currently have one-character localized names.
+        # Accept those only as an exact field (for example, a structured tag),
+        # never as a substring of ordinary Chinese prose such as “陈述”.
+        return _compact_alias(folded) == compact
+    if candidate == "人马":
+        return candidate in folded.replace("原班人马", "")
+    return compact in _compact_alias(folded)
+
+
 def _dota2_hero_identity_keys(value: object) -> set[str]:
     folded = str(value or "").casefold()
     matched: set[str] = set()
     for hero_index, (canonical_name, aliases) in enumerate(_DOTA2_HERO_ALIAS_GROUPS):
         terms = (canonical_name.split("（", 1)[0], *aliases)
         for term in terms:
-            candidate = str(term or "").strip().casefold()
-            if not candidate:
-                continue
-            if re.fullmatch(r"[a-z][a-z0-9' -]*", candidate):
-                if len(candidate) >= 3 and re.search(
-                    rf"(?<![a-z0-9]){re.escape(candidate)}(?![a-z0-9])",
-                    folded,
-                ):
-                    matched.add(str(hero_index))
-                    break
-            elif candidate == "人马" and candidate in folded.replace("原班人马", ""):
-                matched.add(str(hero_index))
-                break
-            elif candidate != "人马" and candidate in folded:
+            if _text_mentions_dota2_hero_term(folded, term):
                 matched.add(str(hero_index))
                 break
     return matched
@@ -3465,7 +3546,7 @@ def recording_text_mentions_specific_dota2_hero(value: object, hero: object) -> 
         return False
     normalized_text = _compact_alias(text)
     normalized_hero = _compact_alias(hero_name)
-    if normalized_hero and normalized_hero in normalized_text:
+    if len(normalized_hero) > 1 and normalized_hero in normalized_text:
         return True
     for canonical_name, aliases in _DOTA2_HERO_ALIAS_GROUPS:
         terms = (canonical_name.split("（", 1)[0], *aliases)
@@ -3477,16 +3558,7 @@ def recording_text_mentions_specific_dota2_hero(value: object, hero: object) -> 
         if normalized_hero not in normalized_terms:
             continue
         for term in terms:
-            candidate = str(term or "").strip().casefold()
-            if not candidate:
-                continue
-            if re.fullmatch(r"[a-z][a-z0-9' -]*", candidate):
-                if len(candidate) >= 3 and re.search(
-                    rf"(?<![a-z0-9]){re.escape(candidate)}(?![a-z0-9])",
-                    text,
-                ):
-                    return True
-            elif _compact_alias(candidate) in normalized_text:
+            if _text_mentions_dota2_hero_term(text, term):
                 return True
     return False
 
@@ -3515,10 +3587,53 @@ def _timeline_claims_streamer_hero(line: str, streamer: str, hero_key: str) -> b
             continue
         owner_end += len(owner_key)
         for hero_term in hero_terms:
-            hero_position = line_key.find(_compact_alias(hero_term), owner_end)
+            hero_key_value = _compact_alias(hero_term)
+            if len(hero_key_value) <= 1:
+                continue
+            hero_position = line_key.find(hero_key_value, owner_end)
             if 0 <= hero_position - owner_end <= 16:
                 return True
     return False
+
+
+def _danmaku_owner_hero_evidence(
+    streamer: str,
+    hero_keys: set[str],
+    comments: Iterable[Any],
+) -> dict[str, list[str]]:
+    """Return heroes repeatedly and directly bound to the owner in raw XML."""
+    evidence: dict[str, list[str]] = {}
+    for hero_key in hero_keys:
+        distinct_mentions: dict[str, tuple[float, str]] = {}
+        for comment in comments:
+            text = str(getattr(comment, "text", "") or "").strip()
+            if not text or not _timeline_claims_streamer_hero(
+                text,
+                streamer,
+                hero_key,
+            ):
+                continue
+            normalized = _compact_alias(text)
+            if normalized:
+                try:
+                    timestamp = float(getattr(comment, "time", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    timestamp = 0.0
+                distinct_mentions.setdefault(normalized, (timestamp, text))
+        # One isolated claim is not enough to turn chat into a player identity.
+        # Two independently worded direct bindings within one gameplay-sized
+        # window provide a conservative fallback when GSI was unavailable.
+        mentions = sorted(distinct_mentions.values())
+        for index, (timestamp, _text) in enumerate(mentions):
+            nearby = [
+                text
+                for other_time, text in mentions[index:]
+                if other_time - timestamp <= 900
+            ]
+            if len(nearby) >= 2:
+                evidence[hero_key] = nearby[:5]
+                break
+    return evidence
 
 
 def filter_unverified_dota2_metadata(
@@ -3528,17 +3643,30 @@ def filter_unverified_dota2_metadata(
     *,
     streamer: str = "",
     verified_timeline: str = "",
+    raw_comments: Iterable[Any] = (),
 ) -> tuple[str, str, list[str], dict[str, Any]]:
     """Remove unsupported owner-hero claims without deleting ordinary discussion."""
+    original_tags = [
+        str(tag or "").strip()
+        for tag in tags
+        if str(tag or "").strip()
+    ]
     title_hero_keys = _dota2_hero_identity_keys(title_topic)
     description_hero_keys = _dota2_hero_identity_keys(description)
-    # The timeline is generated by the same model as the title and therefore
-    # cannot independently prove that the room owner controlled a hero. Using
-    # it as its own evidence allowed observer streams to turn a camera target
-    # into a false owner -> hero relationship. Reliable GSI/XML identity skips
-    # this filter entirely; without it, owner-hero claims stay unsupported.
-    supported_hero_keys: set[str] = set()
-    metadata_hero_keys = title_hero_keys | description_hero_keys
+    tag_hero_keys = set().union(*(
+        _dota2_hero_identity_keys(tag)
+        for tag in original_tags
+    )) if original_tags else set()
+    metadata_hero_keys = title_hero_keys | description_hero_keys | tag_hero_keys
+    # The model-generated timeline cannot prove itself. Raw XML may provide an
+    # independent fallback, but only when multiple distinct comments directly
+    # bind a known owner alias to the same hero.
+    danmaku_evidence = _danmaku_owner_hero_evidence(
+        streamer,
+        metadata_hero_keys,
+        raw_comments,
+    )
+    supported_hero_keys = set(danmaku_evidence)
 
     unsupported_title_hero_keys = title_hero_keys - supported_hero_keys
     title_claims_owner_hero = any(
@@ -3571,7 +3699,6 @@ def filter_unverified_dota2_metadata(
             continue
         filtered_lines.append(filtered_line)
     filtered_description = "\n".join(filtered_lines).strip()
-    original_tags = [str(tag or "").strip() for tag in tags if str(tag or "").strip()]
     hero_tags = [
         tag for tag in original_tags
         if (
@@ -3588,9 +3715,47 @@ def filter_unverified_dota2_metadata(
             _DOTA2_HERO_ALIAS_GROUPS[int(key)][0]
             for key in sorted(supported_hero_keys, key=int)
         ],
-        "hero_evidence_source": "structured_game_identity" if supported_hero_keys else "none",
+        "hero_evidence_source": (
+            "danmaku_owner_hero_consensus" if supported_hero_keys else "none"
+        ),
+        "danmaku_owner_hero_evidence": {
+            _DOTA2_HERO_ALIAS_GROUPS[int(key)][0]: values
+            for key, values in danmaku_evidence.items()
+        },
     }
     return filtered_topic, filtered_description, filtered_tags, details
+
+
+def recording_cover_danmaku_game_context(
+    evidence_details: dict[str, Any],
+    *verified_content: str,
+) -> dict[str, Any] | None:
+    """Build a hero-only cover context from the XML owner/hero consensus."""
+    if evidence_details.get("hero_evidence_source") != "danmaku_owner_hero_consensus":
+        return None
+    heroes = list(dict.fromkeys(
+        str(value or "").split("（", 1)[0].strip()
+        for value in evidence_details.get("verified_timeline_hero_evidence", [])
+        if str(value or "").strip()
+    ))
+    matching = [
+        hero
+        for hero in heroes
+        if any(
+            recording_text_mentions_specific_dota2_hero(content, hero)
+            for content in verified_content
+        )
+    ]
+    if len(matching) != 1:
+        return None
+    return {
+        "hero": matching[0],
+        "items": [],
+        "neutral": "",
+        "scepter": False,
+        "shard": False,
+        "identity_source": "xml_repeated_owner_hero_relation",
+    }
 
 
 _DOTA2_ITEM_CONTEXT_ALIASES = (
@@ -4168,6 +4333,7 @@ def generate_recording_cover_with_ai(
             hero_only_from_danmaku = identity_source in {
                 "xml_repeated_hero_only",
                 "xml_dominant_hero_only",
+                "xml_repeated_owner_hero_relation",
             }
             if hero_only_from_danmaku:
                 hero_source_instruction = (
@@ -4194,6 +4360,7 @@ def generate_recording_cover_with_ai(
             if str(details.get("ai_cover_identity_source") or "") in {
                 "xml_repeated_hero_only",
                 "xml_dominant_hero_only",
+                "xml_repeated_owner_hero_relation",
             }
             else "tooltip"
         )
@@ -4366,6 +4533,11 @@ def generate_recording_cover_with_ai(
     else:
         composition_instruction = "请针对目标画幅独立构图，主体和标题均保持完整。"
         cover_variant = aspect_label.replace(":", "x")
+    cover_subject_copy_instruction = recording_cover_subject_copy_instruction(
+        streamer,
+        headline,
+        cover_subject_name,
+    )
     prompt = f"""
 为直播录播生成一张{orientation} {aspect_label} 视频封面，画面精致、主体明确、对比强烈，在缩略图尺寸下仍清晰。
 主播：{streamer or "主播"}
@@ -4373,8 +4545,7 @@ def generate_recording_cover_with_ai(
 与投稿标题共用的核心事件：{headline}
 
 只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
-核心文案必须清晰保留主角称呼“{cover_subject_name or streamer or "主播"}”，称呼可以放在开头或自然融入句子，
-但不得排成“主角｜主题”的固定栏目格式。
+{cover_subject_copy_instruction}
 {composition_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
@@ -5106,8 +5277,11 @@ def _generate_danmaku_metadata_with_ai(
         system_prompt = f"""
 你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成内容充实的中文简介。
 只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
-verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；英雄、装备和 KDA
+verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；主播最终持有的装备、KDA
 只能使用其中已经确认的数据，禁止从弹幕、标题或常识猜测，且不得把其他对局的数据混入本段。
+英雄身份优先使用 verified_live_context；结构化身份缺失时，允许按下述严格规则由多条原始 XML
+直接人物—英雄绑定形成保守共识。弹幕明确讨论购买、未购买、替换或使用某件装备时可以忠实写入事件，
+但不能把讨论内容改写成主播最终物品栏，也不能把归属不明的装备强行绑定给当前主播。
 verified_live_context.game 表示整段录播只有一场可确认的主播对局；
 verified_live_context.game_segments 表示一小时录播内按 GSI 时间切开的多场主播对局，每段的
 start_seconds/end_seconds 都是相对录播开头的秒数。生成某个 timeline 事件时只能使用覆盖该事件时间的
@@ -5382,8 +5556,10 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
 description 中的每个关键事件都要在 timeline 中有对应证据，timeline 尽量覆盖开头、中段和结尾，
 不得复述同一事件凑数。目标数量只是帮助检查遗漏：若输入确有更多独立且可靠的看点，应尽量详细收录；
 若证据不足则允许少于目标，禁止使用问候、持续过程、普通闲聊或“继续游戏/继续聊天”补齐。
-	每条必须写清可确认的主语、具体动作或讨论对象，以及变化、结果或观众反应；无法确认人物时使用中性主语，
-	不得猜测主播、英雄、装备、游戏名或胜负。仅由弹幕支持的中性现实消息必须保留来源限定；
+	每条必须写清可确认的主语、具体动作或讨论对象，以及变化、结果或观众反应；无法确认人物时使用中性主语。
+	英雄优先使用 verified_live_context；缺失时，只有多条原始 XML 直接、重复且无冲突地绑定人物与同一英雄才可写入。
+	装备讨论可按原文忠实保留，但最终持有装备与 KDA 只能来自 verified_live_context；不得猜测游戏名或胜负。
+	仅由弹幕支持的中性现实消息必须保留来源限定；
 	较负面、未经证实、可能损害人物名誉的现实传言必须整条删除，不得用“弹幕称”包装后保留。
 相邻候选如果是同一人物、同一动作和同一结果的延续，应合并；只有新阶段、新决定、转折或结果才能拆开。
 每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，
@@ -5573,9 +5749,10 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
 你是哔哩哔哩直播录播标题编辑。简介已经生成并通过时间点校验，现在只能根据 final_description
 和 verified_timeline 拟定标题，不得使用首稿、直播间默认标题或输入外的信息。
 必须遵守 streamer_participation：mode=spectating 时，只有标题核心事件确实来自主播的观看、解说或
-点评视角，才把当前主播写成观战、观赛、解说或点评者；mode=unknown 时不得声称主播参赛或观战，
-应直接描述已核验的具体事件、其他明确人物、英雄或比赛，不得补“主播直播间热议/讨论/调侃”等模板前缀。
-这两种模式都禁止写成当前主播正在操刀任何英雄。其他选手与英雄仅可沿用 final_description 中由多条连续、明确且
+点评视角，才把当前主播写成观战、观赛、解说或点评者；mode=unknown 时不得凭房间归属声称主播参赛或观战，
+但 final_description/verified_timeline 已通过完整 XML 核验的人物—英雄直接关系可以原样用于标题。
+除此之外应直接描述已核验的具体事件、其他明确人物、英雄或比赛，不得补“主播直播间热议/讨论/调侃”等模板前缀。
+spectating 禁止写成当前主播正在操刀任何英雄；unknown 也不得新增已核验时间线之外的主播英雄关系。其他选手与英雄仅可沿用 final_description 中由多条连续、明确且
 无冲突上下文确认的关系；若只知道两个英雄出现在对局中，只能写“英雄甲对阵英雄乙”，不得猜成
 “主播操刀英雄甲”或“某人使用英雄乙”。
 当 mode=playing 且标题选中的时间点能唯一落入 verified_live_context.game_segments 时，该段英雄是当前主播
@@ -6334,26 +6511,45 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             if isinstance(prior_ai_stage.get("details"), dict)
             else {}
         )
+        manual_review_metadata_ready = bool(
+            retry
+            and str(review_override.get("title") or "").strip()
+            and "description" in review_override
+            and str(review_override.get("partition_id") or "").strip().isdigit()
+            and not review_override.get("hold_before_cover")
+        )
         reuse_ai = bool(
             retry
-            and prior_ai_stage.get("status") in {"completed", "skipped"}
-            and prior_ai_details.get("title")
             and (
-                prior_ai_details.get("description_body")
-                or prior_ai_details.get("description")
+                manual_review_metadata_ready
+                or (
+                    prior_ai_stage.get("status") in {"completed", "skipped"}
+                    and prior_ai_details.get("title")
+                    and (
+                        prior_ai_details.get("description_body")
+                        or prior_ai_details.get("description")
+                    )
+                )
             )
         )
         partition = str(cfg.get("bilibili_partition_id", "")).strip()
         metadata_automation: dict[str, Any] = {}
         if reuse_ai:
             ai_details = dict(prior_ai_details)
-            title = str(ai_details.get("title") or title)
+            title = str(
+                review_override.get("title")
+                if manual_review_metadata_ready
+                else ai_details.get("title")
+                or title
+            ).strip()
             # New tasks persist the editorial body separately. For old tasks,
             # migrate the previously composed description back to a clean body
             # before the one and only submission composition step below.
             description = strip_live_stats_from_description(
                 str(
-                    ai_details.get("description_body")
+                    review_override.get("description")
+                    if manual_review_metadata_ready
+                    else ai_details.get("description_body")
                     or ai_details.get("description")
                     or description
                 ),
@@ -6361,7 +6557,11 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             )
             ai_details["description_body"] = description
             ai_topic = str(ai_details.get("title_topic") or "")
-            previous_tags = ai_details.get("final_tags")
+            previous_tags = (
+                review_override.get("tags")
+                if manual_review_metadata_ready
+                else ai_details.get("final_tags")
+            )
             if isinstance(previous_tags, list):
                 tags = [
                     str(tag).strip()
@@ -6369,7 +6569,9 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     if str(tag).strip()
                 ]
             partition = str(
-                ai_details.get("selected_partition_id")
+                review_override.get("partition_id")
+                if manual_review_metadata_ready
+                else ai_details.get("selected_partition_id")
                 or prior_result.get("partition_id")
                 or partition
             ).strip()
@@ -6377,10 +6579,27 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             if isinstance(previous_automation, dict):
                 metadata_automation = dict(previous_automation)
             ai_details["reused_on_retry"] = True
+            if manual_review_metadata_ready:
+                ai_details.update({
+                    "manual_review_override": True,
+                    "manual_review_bypassed_failed_ai": (
+                        bool(prior_ai_details.get("manual_review_bypassed_failed_ai"))
+                        or prior_ai_stage.get("status") == "failed"
+                    ),
+                    "title": title,
+                    "description": description,
+                    "description_body": description,
+                    "final_tags": tags,
+                    "selected_partition_id": partition,
+                })
             store.stage(
                 key,
                 "ai",
-                str(prior_ai_stage.get("status") or "completed"),
+                (
+                    "completed"
+                    if manual_review_metadata_ready
+                    else str(prior_ai_stage.get("status") or "completed")
+                ),
                 ai_details,
             )
         else:
@@ -6494,6 +6713,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     tags,
                     streamer=metadata_values_for_evidence["streamer"],
                     verified_timeline=description,
+                    raw_comments=comments,
                 )
             )
             ai_topic = filtered_topic
@@ -6789,14 +7009,13 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         ai_details["description"] = description
         store.stage(key, "ai", ai_stage_status, ai_details)
 
-        # A review request can be armed while AI is still running. Re-read it
-        # only after the final AI details are durable, then stop before either
-        # cover model is called. The retry path reuses this completed AI stage
-        # and applies the editor override before generating fresh covers.
-        latest_review_override = store.review_override(key)
-        if not dry_run and latest_review_override.get("hold_before_cover"):
-            store.finish(key, "paused", {
-                **prior_result,
+        def pause_for_review_if_requested() -> bool:
+            """Honor a durable review request at every external-side-effect boundary."""
+            latest_review_override = store.review_override(key)
+            if dry_run or not latest_review_override.get("hold_before_cover"):
+                return False
+            paused_result = store.results(key)
+            paused_result.update({
                 "video_path": str(video),
                 "final_video_path": str(upload_video),
                 "danmaku_xml": str(danmaku_xml) if danmaku_xml else None,
@@ -6810,10 +7029,25 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 "bilibili_account_name": str(cfg.get("bilibili_account_name") or ""),
                 "pre_upload_review": True,
             })
+            store.finish(key, "paused", paused_result)
             print("PAUSED AI 投稿信息已生成，等待人工确认后再生成封面")
             return True
 
+        # Re-read the durable stop flag after AI and again before each model or
+        # upload boundary. A request arriving during a cover call may terminate
+        # that worker, while a request arriving before upload is observed here.
+        if pause_for_review_if_requested():
+            return True
+
         cover_game_context = locked_game_context if locked_gameplay_verified else None
+        if cover_game_context is None:
+            cover_game_context = recording_cover_danmaku_game_context(
+                ai_details,
+                title,
+                description_body,
+            )
+            if cover_game_context:
+                ai_details["cover_danmaku_hero_context"] = dict(cover_game_context)
         if cover_game_context and not recording_cover_hero_matches_title(
             str(cover_game_context.get("hero") or ""),
             f"{title}\n{description_body}",
@@ -6893,6 +7127,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             })
             cover16_status = "completed"
         elif not dry_run and not existing_submission:
+            if pause_for_review_if_requested():
+                return True
             store.stage(key, "cover_16x9", "running", {
                 "title": title,
                 "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
@@ -6959,6 +7195,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         # optional for upload and is never synthesized from the 16:9 image.
         current_stage = "cover_4x3"
         cover43_generation: dict[str, Any] = {}
+        if pause_for_review_if_requested():
+            return True
         if manual_cover43_path and Path(manual_cover43_path).is_file():
             cover43 = Path(manual_cover43_path)
             cover43_status = "completed"
@@ -7071,6 +7309,8 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                    "multipart_session": session_key or None, "part_number": part_number,
                    "page_title": page_title, "part_title": part_generated_title,
                    "part_description": part_description}
+        if pause_for_review_if_requested():
+            return True
         if dry_run:
             store.stage(key, "upload", "skipped", {"reason": "试运行未投稿"})
             store.stage(key, "collection", "skipped", {"reason": "试运行未处理合集"})
@@ -7167,36 +7407,6 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
             uploaded_now = True
             # Persist the BVID immediately so a process restart cannot create a
             # duplicate video submission.
-            store.finish(key, "video_uploaded", previous)
-
-        description_comment = previous.get("description_comment")
-        if (
-            uploaded_now
-            and not (
-                isinstance(existing_submission, dict)
-                and existing_submission.get("bvid")
-            )
-            and bool(cfg.get("post_description_comment", True))
-            and not (
-                isinstance(description_comment, dict)
-                and description_comment.get("posted")
-            )
-        ):
-            if hasattr(uploader, "publish_description_comment"):
-                description_comment = uploader.publish_description_comment(
-                    result=previous.get("bilibili") or {},
-                    description=description,
-                    pin=bool(cfg.get("pin_description_comment", True)),
-                )
-            else:
-                description_comment = {
-                    "enabled": True,
-                    "posted": False,
-                    "pinned": False,
-                    "error": "当前上传器不支持简介评论",
-                }
-            previous["description_comment"] = description_comment
-            # 评论失败不回滚已经成功的投稿，但保留原因供任务详情查看。
             store.finish(key, "video_uploaded", previous)
 
         if session_key:
@@ -7331,6 +7541,74 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     status=session_status if retry else "open",
                 )
 
+        current_stage = "comment"
+        description_comment = previous.get("description_comment")
+        comment_enabled = bool(cfg.get("post_description_comment", True))
+        comment_skipped_for_multipart = bool(
+            isinstance(existing_submission, dict)
+            and existing_submission.get("bvid")
+        )
+        comment_retry_pending = bool(
+            isinstance(description_comment, dict)
+            and description_comment.get("enabled", True)
+            and not description_comment.get("posted")
+        )
+        if not comment_enabled:
+            store.stage(key, "comment", "skipped", {"reason": "配置为不发布简介评论"})
+        elif comment_skipped_for_multipart:
+            store.stage(key, "comment", "skipped", {"reason": "后续分P沿用当前稿件评论"})
+        elif not uploaded_now and not comment_retry_pending:
+            store.stage(key, "comment", "skipped", {"reason": "没有待补偿的简介评论"})
+        else:
+            if not (
+                isinstance(description_comment, dict)
+                and description_comment.get("posted")
+            ):
+                store.stage(key, "comment", "running", {
+                    "pin_requested": bool(cfg.get("pin_description_comment", True)),
+                })
+                if uploader is None:
+                    uploader = BilibiliUploader(cookie_file=str(cookie))
+                if not hasattr(uploader, "publish_description_comment"):
+                    store.stage(
+                        key,
+                        "comment",
+                        "skipped",
+                        {"reason": "当前上传器不支持简介评论"},
+                    )
+                    description_comment = None
+                else:
+                    description_comment = uploader.publish_description_comment(
+                        result=previous.get("bilibili") or {},
+                        description=description,
+                        pin=bool(cfg.get("pin_description_comment", True)),
+                    )
+                    if isinstance(description_comment, dict):
+                        description_comment.setdefault("enabled", True)
+                previous["description_comment"] = description_comment
+                store.finish(key, "video_uploaded", previous)
+            if description_comment is None:
+                pass
+            elif not (
+                isinstance(description_comment, dict)
+                and description_comment.get("posted")
+            ):
+                comment_error = str(
+                    (description_comment or {}).get("error")
+                    if isinstance(description_comment, dict)
+                    else ""
+                ) or "简介评论发布失败"
+                store.stage(
+                    key,
+                    "comment",
+                    "failed",
+                    description_comment if isinstance(description_comment, dict) else {},
+                    error=comment_error,
+                )
+                raise RuntimeError(f"B站简介评论处理失败：{comment_error}")
+            else:
+                store.stage(key, "comment", "completed", description_comment)
+
         if bool(cfg.get("delete_recording_after_upload", True)):
             current_stage = "cleanup"
             store.stage(key, "cleanup", "running", {
@@ -7358,6 +7636,18 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 ),
                 xml_retention_hours=xml_retention_hours,
             )
+            cleanup_failures = previous["source_cleanup"].get("failed") or []
+            if cleanup_failures:
+                cleanup_error = f"有 {len(cleanup_failures)} 个录播源文件或临时产物清理失败"
+                store.stage(
+                    key,
+                    "cleanup",
+                    "failed",
+                    previous["source_cleanup"],
+                    error=cleanup_error,
+                )
+                store.finish(key, "failed", previous, error=cleanup_error)
+                raise RuntimeError(cleanup_error)
             store.stage(
                 key,
                 "cleanup",

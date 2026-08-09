@@ -170,6 +170,7 @@ RECORDING_STAGE_LABELS = {
     "cover_16x9": "生成 16:9 个人空间封面",
     "cover_4x3": "生成 4:3 首页推荐封面",
     "collection": "加入 B站合集",
+    "comment": "发布简介评论",
     "remux": "FLV 转 MP4",
     "verify": "验证内嵌封面",
     "cleanup": "清理原 FLV",
@@ -3364,7 +3365,7 @@ class LiveRecorderManager:
             ),
             "bilibili": (
                 "detect", "record", "ass", "burn", "live_stats", "xml_identity", "ai",
-                "cover", "cover_16x9", "cover_4x3", "upload", "collection", "cleanup",
+                "cover", "cover_16x9", "cover_4x3", "upload", "collection", "comment", "cleanup",
             ),
         }
         from .bilibili_accounts import resolve_account
@@ -3596,7 +3597,7 @@ class LiveRecorderManager:
             auto_retry_scheduled = bool(
                 job_status == "failed"
                 and row["platform"] == "bilibili"
-                and failed_stage in {"upload", "collection"}
+                and failed_stage in {"upload", "collection", "comment", "cleanup"}
                 and automatic_retries_used < AUTO_UPLOAD_RETRY_MAX_RETRIES
             )
             retry_base = self._state_datetime(row["updated_at"])
@@ -3710,7 +3711,7 @@ class LiveRecorderManager:
                 "auto_retry_exhausted": bool(
                     job_status == "failed"
                     and row["platform"] == "bilibili"
-                    and failed_stage in {"upload", "collection"}
+                    and failed_stage in {"upload", "collection", "comment", "cleanup"}
                     and automatic_retries_used >= AUTO_UPLOAD_RETRY_MAX_RETRIES
                 ),
                 **capabilities,
@@ -3776,7 +3777,10 @@ class LiveRecorderManager:
         cover_path = save_cover(cover_file, "manual-review-cover-16x9") or cover_path
         cover43_path = save_cover(cover43_file, "manual-review-cover-4x3") or cover43_path
 
-        published = job.get("status") == "completed" and bool(job.get("bvid"))
+        # A durable BVID is the publication boundary. Post-upload stages such as
+        # comments, collections, or cleanup may fail after Bilibili has already
+        # accepted the archive, so the top-level task status is not authoritative.
+        published = bool(job.get("bvid"))
         metadata_changed_for_cover = bool(
             not published
             and (
@@ -3842,7 +3846,7 @@ class LiveRecorderManager:
             raise RecorderConfigError("没有找到该录播任务")
         if job.get("record_only"):
             raise RecorderConfigError("仅录制任务不包含 AI 投稿信息步骤")
-        if job.get("status") == "completed":
+        if job.get("bvid"):
             return {"mode": "published", "paused": False, "armed": False}
 
         stages = {
@@ -3853,6 +3857,20 @@ class LiveRecorderManager:
         ai_status = str((stages.get("ai") or {}).get("status") or "pending")
         if ai_status not in {"completed", "skipped"}:
             raise RecorderConfigError("AI 投稿信息尚未完成，完成后才能直接介入")
+        upload_status = str((stages.get("upload") or {}).get("status") or "pending")
+        if upload_status in {"queued", "running", "completed"} or job.get("status") == "video_uploaded":
+            raise RecorderConfigError("B站投稿已经开始，不能再按投稿前任务介入；请等待投稿结果")
+        review_override = job.get("review_override")
+        review_override = review_override if isinstance(review_override, dict) else {}
+        if job.get("status") == "paused" and bool(
+            review_override.get("hold_before_cover")
+        ):
+            return {
+                "mode": "pre_upload",
+                "paused": True,
+                "armed": False,
+                "ai_status": ai_status,
+            }
         if not recording_task_capabilities(job.get("status")).get("pausable"):
             raise RecorderConfigError("当前任务已不在可介入的处理阶段，请刷新任务状态")
 
@@ -3883,7 +3901,7 @@ class LiveRecorderManager:
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        if job.get("status") == "completed":
+        if job.get("bvid"):
             raise RecorderConfigError("稿件已上传完成，请使用线上稿件同步")
         previous = job.get("review_override")
         previous = previous if isinstance(previous, dict) else {}
@@ -3918,7 +3936,7 @@ class LiveRecorderManager:
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        published = job.get("status") == "completed" and bool(job.get("bvid"))
+        published = bool(job.get("bvid"))
         review_preview = job.get("review_override")
         review_preview = review_preview if isinstance(review_preview, dict) else {}
         pre_upload_review = bool(
@@ -4114,9 +4132,10 @@ verified_timeline 按0开始编号；重新生成标题时必须返回 selected_
 至少两个跨阶段的直接证据，不能只引用单个瞬间。
 重新生成标题时必须选择与 current_title 实质不同的事件焦点或表达，不得原样返回、仅调整标点，
 也不得只增删主播名；如果 payload 含 rejected_title_topic，严禁再次返回该主题或同义改写。
-必须遵守 streamer_participation：playing 才能把结构化身份记录中的英雄与当前主播绑定；spectating
-只能把当前主播写成观战、观赛、解说或点评；unknown 不得声称当前主播参赛或观战。spectating 和
-unknown 都不得把当前主播写成操刀、使用或操作任何英雄。其他选手与英雄只有在 current_description
+必须遵守 streamer_participation：playing 可以把结构化身份记录中的英雄与当前主播绑定；spectating
+只能把当前主播写成观战、观赛、解说或点评；unknown 不得凭房间归属声称当前主播参赛或观战，但
+current_description/verified_timeline 已通过完整 XML 核验的人物—英雄直接关系可以原样用于标题。
+spectating 不得把当前主播写成操刀、使用或操作任何英雄；unknown 不得新增已核验时间线之外的主播英雄关系。其他选手与英雄只有在 current_description
 存在多条连续、明确且不冲突的上下文证据时才能绑定；姓名和英雄仅仅同时出现不能证明关系。
 description 是可直接用于B站投稿的完整中文简介，保留有价值的事件脉络和观众反应，不出现文件名、任务编号或内部路径，不超过1800字。
 按5W1H检查每个关键事件：时间由 verified_timeline 提供；尽量交代谁、做了什么、哪一局/地图/阶段或场景、
@@ -4710,7 +4729,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        if job.get("status") != "completed" or not job.get("bvid"):
+        if not job.get("bvid"):
             raise RecorderConfigError("只有已成功上传的 B站稿件可以更新")
         review = job.get("review_override")
         review = review if isinstance(review, dict) else {}
@@ -4798,7 +4817,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
-        if job.get("status") != "completed" or not job.get("bvid"):
+        if not job.get("bvid"):
             raise RecorderConfigError("只有已成功上传的 B站稿件可以同步置顶评论")
         bilibili_result = (job.get("result") or {}).get("bilibili")
         if not isinstance(bilibili_result, dict):
@@ -5618,6 +5637,8 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         job = self.pipeline_job(fingerprint)
         if not job:
             raise RecorderConfigError("没有找到该录播任务")
+        if job.get("status") == "paused":
+            return True
         if not recording_task_capabilities(job.get("status")).get("pausable"):
             raise RecorderConfigError("只有正在处理的任务可以暂停")
 
@@ -5632,6 +5653,8 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             ).fetchone()
             if not current:
                 raise RecorderConfigError("没有找到该录播任务")
+            if current[0] == "paused":
+                return True
             if current[0] == "completed":
                 raise RecorderConfigError("任务已经完成，无法暂停")
             db.execute(
@@ -5884,6 +5907,8 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             raise RecorderConfigError("没有找到该录播任务")
         if not recording_task_capabilities(job.get("status")).get("retryable"):
             raise RecorderConfigError("只有失败、试运行或已暂停任务可以重试")
+        if job.get("failed_stage") == "cleanup" and job.get("bvid"):
+            return self._retry_pipeline_cleanup(job, automatic=automatic)
         video = Path(job["video_path"])
         if not video.is_file():
             raise RecorderConfigError("原始录播文件已不存在，无法重试")
@@ -5942,6 +5967,108 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         (f"自动重试启动失败：{exc}", now, fingerprint),
                     )
             raise
+        return True
+
+    def _retry_pipeline_cleanup(
+        self,
+        job: dict[str, Any],
+        *,
+        automatic: bool = False,
+    ) -> bool:
+        """Retry only paths that the already-published task failed to clean."""
+        fingerprint = str(job.get("id") or "")
+        result = dict(job.get("result") or {})
+        cleanup = dict(result.get("source_cleanup") or {})
+        previous_failures = [
+            dict(item)
+            for item in (cleanup.get("failed") or [])
+            if isinstance(item, dict) and str(item.get("path") or "").strip()
+        ]
+        if not previous_failures:
+            raise RecorderConfigError("该任务没有可重试的清理失败路径")
+
+        roots_by_name = self._recording_file_roots()
+        allowed_roots = tuple(path.resolve() for path in roots_by_name.values())
+        artifact_root = roots_by_name["artifacts"].resolve()
+        state_path = self._pipeline_state_path()
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
+            cursor = db.execute(
+                """UPDATE uploads
+                   SET status='processing', attempts=attempts+1, error=NULL, updated_at=?
+                   WHERE fingerprint=? AND status='failed'""",
+                (now, fingerprint),
+            )
+            if cursor.rowcount != 1:
+                return False if automatic else True
+            db.execute(
+                """UPDATE upload_stages
+                   SET status='running', error=NULL, started_at=?, finished_at=NULL, updated_at=?
+                   WHERE fingerprint=? AND stage='cleanup'""",
+                (now, now, fingerprint),
+            )
+
+        deleted = [str(item) for item in (cleanup.get("deleted") or []) if str(item)]
+        remaining: list[dict[str, str]] = []
+        for item in previous_failures:
+            path = Path(str(item["path"])).expanduser().resolve()
+            if not any(path == root or root in path.parents for root in allowed_roots):
+                remaining.append({
+                    **item,
+                    "error": "清理路径不在允许的录播产物目录中",
+                })
+                continue
+            try:
+                existed = path.exists() or path.is_symlink()
+                if path.is_symlink() or path.is_file():
+                    path.unlink(missing_ok=True)
+                elif path.is_dir() and (
+                    path == artifact_root or artifact_root in path.parents
+                ):
+                    shutil.rmtree(path)
+                elif path.exists():
+                    raise OSError("拒绝删除非产物目录")
+                if existed and not path.exists() and not path.is_symlink():
+                    deleted.append(str(path))
+            except OSError as exc:
+                remaining.append({**item, "error": str(exc)})
+
+        cleanup["deleted"] = list(dict.fromkeys(deleted))
+        cleanup["failed"] = remaining
+        cleanup["retried_at"] = datetime.now(timezone.utc).isoformat()
+        result["source_cleanup"] = cleanup
+        finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        error = (
+            f"仍有 {len(remaining)} 个录播源文件或临时产物清理失败"
+            if remaining
+            else None
+        )
+        with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
+            db.execute(
+                """UPDATE upload_stages
+                   SET status=?, details_json=?, error=?, finished_at=?, updated_at=?
+                   WHERE fingerprint=? AND stage='cleanup'""",
+                (
+                    "failed" if remaining else "completed",
+                    json.dumps(cleanup, ensure_ascii=False),
+                    error,
+                    finished_at,
+                    finished_at,
+                    fingerprint,
+                ),
+            )
+            db.execute(
+                """UPDATE uploads
+                   SET status=?, result_json=?, error=?, updated_at=?
+                   WHERE fingerprint=?""",
+                (
+                    "failed" if remaining else "completed",
+                    json.dumps(result, ensure_ascii=False),
+                    error,
+                    finished_at,
+                    fingerprint,
+                ),
+            )
         return True
 
     def pipeline_log(self, fingerprint: str, lines: int = 200) -> str:

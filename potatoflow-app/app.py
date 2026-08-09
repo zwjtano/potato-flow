@@ -1740,7 +1740,7 @@ def live_recording_job_review(fingerprint):
                 cover_file=request.files.get('cover_file'),
                 cover43_file=request.files.get('cover43_file'),
             )
-            published = job.get('status') == 'completed' and bool(job.get('bvid'))
+            published = bool(job.get('bvid'))
             regenerate_fields = {
                 'regenerate_title': {'title'},
                 'regenerate_description': {'description'},

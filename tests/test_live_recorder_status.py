@@ -158,6 +158,62 @@ class LiveRecorderStatusTests(unittest.TestCase):
         pause.assert_called_once_with("b" * 64)
         self.assertEqual(events, ["hold", "pause"])
 
+    def test_ai_review_request_rejects_task_after_upload_has_started(self):
+        manager = LiveRecorderManager()
+        job = {
+            "status": "processing",
+            "record_only": False,
+            "review_override": {},
+            "stages": [
+                {"key": "ai", "status": "completed"},
+                {"key": "upload", "status": "running"},
+            ],
+        }
+        with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+            manager, "_store_pipeline_review_override"
+        ) as store, mock.patch.object(manager, "pause_pipeline_job") as pause:
+            with self.assertRaisesRegex(RecorderConfigError, "投稿已经开始"):
+                manager.request_pipeline_ai_review("b" * 64)
+
+        store.assert_not_called()
+        pause.assert_not_called()
+
+    def test_pause_pipeline_job_is_idempotent_after_worker_observes_review_hold(self):
+        manager = LiveRecorderManager()
+        with mock.patch.object(
+            manager,
+            "pipeline_job",
+            return_value={"status": "paused"},
+        ), mock.patch.object(manager, "_terminate_pipeline_worker") as terminate:
+            self.assertTrue(manager.pause_pipeline_job("c" * 64))
+        terminate.assert_not_called()
+
+    def test_failed_task_with_bvid_is_saved_as_published_preview(self):
+        manager = LiveRecorderManager()
+        job = {
+            "status": "failed",
+            "bvid": "BV1published",
+            "record_only": False,
+            "title": "原标题",
+            "description": "原简介",
+            "review_override": {},
+        }
+        with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+            manager,
+            "_store_pipeline_review_override",
+        ) as store:
+            result = manager.save_pipeline_review(
+                "d" * 64,
+                title="修改后的标题",
+                description="修改后的简介",
+                tags=["录播"],
+                partition_id="171",
+            )
+
+        self.assertTrue(result["pending_published_update"])
+        self.assertFalse(result["hold_before_cover"])
+        store.assert_called_once_with("d" * 64, result)
+
     def test_pre_upload_review_rejects_cover_generation(self):
         manager = LiveRecorderManager()
         job = {
@@ -3426,6 +3482,92 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(job["auto_retry_max_retries"], 3)
         self.assertGreater(job["auto_retry_remaining_seconds"], 150)
         self.assertLessEqual(job["auto_retry_remaining_seconds"], 180)
+
+    def test_cleanup_retry_deletes_only_recorded_failure_without_reupload(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            recordings = root / "recordings"
+            artifacts = root / "artifacts"
+            recordings.mkdir()
+            artifacts.mkdir()
+            leftover = recordings / "leftover.flv"
+            leftover.write_bytes(b"video")
+            state_path = root / "state.sqlite3"
+            fingerprint = "e" * 64
+            cleanup = {
+                "deleted": [],
+                "retained": [],
+                "failed": [{
+                    "kind": "video",
+                    "path": str(leftover),
+                    "error": "permission denied",
+                }],
+            }
+            result = {
+                "bilibili": {"bvid": "BV1cleanup"},
+                "source_cleanup": cleanup,
+            }
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'failed', 1, ?, ?, ?, ?)",
+                    (
+                        fingerprint,
+                        str(leftover),
+                        json.dumps(result),
+                        "cleanup failed",
+                        now,
+                        now,
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'cleanup', 'failed', ?, ?, ?, ?, ?)",
+                    (
+                        fingerprint,
+                        json.dumps(cleanup),
+                        "cleanup failed",
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+            job = {"id": fingerprint, "result": result}
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(
+                manager,
+                "_recording_file_roots",
+                return_value={"recordings": recordings, "artifacts": artifacts},
+            ):
+                self.assertTrue(manager._retry_pipeline_cleanup(job))
+
+            self.assertFalse(leftover.exists())
+            with closing(sqlite3.connect(state_path)) as db:
+                upload_status, stored_result = db.execute(
+                    "SELECT status, result_json FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                cleanup_status = db.execute(
+                    "SELECT status FROM upload_stages WHERE fingerprint=? AND stage='cleanup'",
+                    (fingerprint,),
+                ).fetchone()[0]
+            self.assertEqual(upload_status, "completed")
+            self.assertEqual(cleanup_status, "completed")
+            self.assertEqual(json.loads(stored_result)["source_cleanup"]["failed"], [])
 
     def test_only_due_bilibili_upload_failure_is_automatically_retried(self):
         manager = LiveRecorderManager()
