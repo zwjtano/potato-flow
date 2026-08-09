@@ -323,6 +323,12 @@ def _prune_unknown_config_keys(config_data):
     return clean_config, removed_keys
 
 
+def _read_config_file(config_path):
+    """读取并关闭配置文件后再执行可能触发原子替换的迁移。"""
+    with open(config_path, 'r', encoding='utf-8') as config_file:
+        return json.load(config_file)
+
+
 @_with_config_lock
 def load_config():
     """
@@ -339,8 +345,7 @@ def load_config():
     try:
         # 尝试读取配置文件
         if os.path.exists(config_path) and os.path.getsize(config_path) > 2:  # 文件存在且不为空
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            if (config := _read_config_file(config_path)) is not None:
                 logger.info("成功加载配置文件")
 
                 config, migrated_legacy_speech = migrate_legacy_speech_pipeline_config(config)
