@@ -529,6 +529,97 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(bridge._dota2_hero_identity_keys("陈述比赛过程"), set())
         self.assertEqual(bridge._dota2_hero_identity_keys("慷慨发言"), set())
 
+    def test_two_letter_dota2_hero_aliases_are_token_matched(self):
+        for alias in ("DP", "SF", "PA", "AM", "TB", "WK", "LC"):
+            with self.subTest(alias=alias):
+                self.assertTrue(bridge._dota2_hero_identity_keys(alias))
+                self.assertTrue(bridge._dota2_hero_identity_keys(f"奶哥{alias}这局"))
+        self.assertEqual(bridge._dota2_hero_identity_keys("DPS统计"), set())
+        self.assertEqual(bridge._dota2_hero_identity_keys("template"), set())
+
+    def test_common_chinese_hero_aliases_cover_the_complete_roster(self):
+        for alias in (
+            "剧毒", "毒龙", "黑贤", "全能", "小鹿", "夜魔", "蜘蛛",
+            "双头龙", "冰魂", "毒狗", "熊德", "大树", "尸王", "小强",
+            "小精灵", "死灵龙", "海民", "天怒", "死骑", "冰龙", "墨客",
+        ):
+            with self.subTest(alias=alias):
+                self.assertTrue(bridge._dota2_hero_identity_keys(alias))
+
+    def test_repeated_two_letter_owner_hero_alias_validates_metadata(self):
+        comments = [
+            types.SimpleNamespace(time=100.0, text="奶哥DP中路压制"),
+            types.SimpleNamespace(time=420.0, text="谢彬的DP准备推高地"),
+        ]
+        topic, description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "奶哥DP中路压制后推上高地",
+            "07:00 谢彬的DP准备推上高地。",
+            ["谢彬DD", "DP", "DOTA2"],
+            streamer="谢彬DD",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(topic, "奶哥DP中路压制后推上高地")
+        self.assertEqual(description, "07:00 谢彬的DP准备推上高地。")
+        self.assertEqual(tags, ["谢彬DD", "DP", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "danmaku_owner_hero_consensus")
+        self.assertEqual(details["verified_timeline_hero_evidence"], ["死亡先知（Death Prophet）"])
+
+    def test_reversed_owner_hero_word_order_can_form_consensus(self):
+        comments = [
+            types.SimpleNamespace(time=100.0, text="DP才是谢彬这局玩的"),
+            types.SimpleNamespace(time=420.0, text="这DP奶哥玩得真肥"),
+        ]
+        topic, _description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "谢彬的DP中路压制",
+            "",
+            ["谢彬DD", "DP", "DOTA2"],
+            streamer="谢彬DD",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(topic, "谢彬的DP中路压制")
+        self.assertEqual(tags, ["谢彬DD", "DP", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "danmaku_owner_hero_consensus")
+
+    def test_combat_relation_does_not_become_owner_hero_consensus(self):
+        comments = [
+            types.SimpleNamespace(time=100.0, text="DP击杀了谢彬"),
+            types.SimpleNamespace(time=420.0, text="奶哥被DP追杀"),
+        ]
+        topic, _description, tags, details = bridge.filter_unverified_dota2_metadata(
+            "谢彬的DP中路压制",
+            "",
+            ["谢彬DD", "DP", "DOTA2"],
+            streamer="谢彬DD",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(topic, "")
+        self.assertEqual(tags, ["谢彬DD", "DP", "DOTA2"])
+        self.assertEqual(details["hero_evidence_source"], "none")
+
+    def test_latest_xiebin_nec_title_keeps_opponent_hero_separate(self):
+        comments = [
+            types.SimpleNamespace(time=1655.5, text="奶哥这么肥的NEC"),
+            types.SimpleNamespace(time=1972.7, text="奶哥开局说他的NEC不一样"),
+            types.SimpleNamespace(time=2250.0, text="对面剧毒军团，你的NEC怎么玩"),
+            types.SimpleNamespace(time=2420.0, text="杀个剧毒把自己高地杀没了"),
+        ]
+        expected = "奶哥的NEC以3-0开局，四打一剧毒反被击杀丢高地"
+        topic, _description, tags, details = bridge.filter_unverified_dota2_metadata(
+            expected,
+            "",
+            ["谢彬DD", "NEC", "剧毒", "DOTA2"],
+            streamer="谢彬DD",
+            raw_comments=comments,
+        )
+
+        self.assertEqual(topic, expected)
+        self.assertEqual(tags, ["谢彬DD", "NEC", "剧毒", "DOTA2"])
+        self.assertEqual(details["verified_timeline_hero_evidence"], ["瘟疫法师（Necrophos）"])
+        self.assertIn("剧毒术士（Venomancer）", details["danmaku_hero_presence_evidence"])
+
     def test_raw_hero_chatter_without_repeated_owner_binding_is_not_evidence(self):
         comments = [
             types.SimpleNamespace(time=10.0, text="NEC太肥了"),
@@ -545,7 +636,7 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(topic, "")
         self.assertEqual(description, "")
-        self.assertEqual(tags, ["谢彬DD", "DOTA2"])
+        self.assertEqual(tags, ["谢彬DD", "NEC", "DOTA2"])
         self.assertEqual(details["hero_evidence_source"], "none")
 
     def test_other_streamer_timeline_does_not_validate_owner_hero_title(self):
