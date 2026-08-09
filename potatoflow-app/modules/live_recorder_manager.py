@@ -3789,6 +3789,38 @@ class LiveRecorderManager:
                 != str(previous.get("description") or job.get("description") or "").strip()
             )
         )
+        manual_review_fields = {
+            str(field).strip()
+            for field in (previous.get("manual_review_fields") or [])
+            if str(field).strip()
+        }
+        previous_or_job_values = {
+            "title": str(previous.get("title") or job.get("title") or "").strip(),
+            "description": str(
+                previous.get("description") or job.get("description") or ""
+            ).strip(),
+            "tags": [
+                str(tag).strip()
+                for tag in (previous.get("tags") or job.get("tags") or [])
+                if str(tag).strip()
+            ],
+            "partition_id": str(
+                previous.get("partition_id") or job.get("partition_id") or ""
+            ).strip(),
+        }
+        submitted_values = {
+            "title": clean_title,
+            "description": clean_description,
+            "tags": clean_tags,
+            "partition_id": clean_partition,
+        }
+        for field, submitted_value in submitted_values.items():
+            if submitted_value != previous_or_job_values[field]:
+                manual_review_fields.add(field)
+        if cover_path != str(previous.get("cover_path") or "").strip():
+            manual_review_fields.add("cover_path")
+        if cover43_path != str(previous.get("cover43_path") or "").strip():
+            manual_review_fields.add("cover43_path")
         now = datetime.now(timezone.utc).isoformat()
         metadata = {
             **previous,
@@ -3800,8 +3832,9 @@ class LiveRecorderManager:
             "cover43_path": cover43_path or None,
             "pending_published_update": published,
             "hold_before_cover": bool(
-                not published and previous.get("hold_before_cover", True)
+                not published and previous.get("hold_before_cover", False)
             ),
+            "manual_review_fields": sorted(manual_review_fields),
             "regenerate_covers_on_resume": bool(
                 previous.get("regenerate_covers_on_resume")
                 or metadata_changed_for_cover
