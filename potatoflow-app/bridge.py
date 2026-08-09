@@ -3426,54 +3426,54 @@ _DOTA2_HERO_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # from disappearing when GSI is unavailable.
     ("祸乱之源（Bane）", ("祸乱之源", "bane")),
     ("血魔（Bloodseeker）", ("血魔", "bloodseeker")),
-    ("米拉娜（Mirana）", ("米拉娜", "mirana")),
-    ("斯温（Sven）", ("斯温", "sven")),
+    ("米拉娜（Mirana）", ("米拉娜", "白虎", "pom", "mirana")),
+    ("斯温（Sven）", ("斯温", "流浪", "流浪剑客", "sven")),
     ("小小（Tiny）", ("小小", "tiny")),
-    ("复仇之魂（Vengeful Spirit）", ("复仇之魂", "vengeful spirit", "vengefulspirit")),
-    ("风行者（Windranger）", ("风行者", "windranger", "windrunner")),
+    ("复仇之魂（Vengeful Spirit）", ("复仇之魂", "复仇", "vs", "vengeful spirit", "vengefulspirit")),
+    ("风行者（Windranger）", ("风行者", "风行", "windranger", "windrunner")),
     ("宙斯（Zeus）", ("宙斯", "zeus", "zuus")),
     ("巫妖（Lich）", ("巫妖", "lich")),
     ("莱恩（Lion）", ("莱恩", "lion")),
     ("谜团（Enigma）", ("谜团", "enigma")),
     ("术士（Warlock）", ("术士", "warlock")),
-    ("剧毒术士（Venomancer）", ("剧毒术士", "venomancer")),
-    ("冥界亚龙（Viper）", ("冥界亚龙", "viper")),
-    ("黑暗贤者（Dark Seer）", ("黑暗贤者", "dark seer", "dark_seer")),
-    ("全能骑士（Omniknight）", ("全能骑士", "omniknight")),
-    ("魅惑魔女（Enchantress）", ("魅惑魔女", "enchantress")),
-    ("暗夜魔王（Night Stalker）", ("暗夜魔王", "night stalker", "night_stalker")),
-    ("育母蜘蛛（Broodmother）", ("育母蜘蛛", "broodmother")),
-    ("杰奇洛（Jakiro）", ("杰奇洛", "jakiro")),
+    ("剧毒术士（Venomancer）", ("剧毒术士", "剧毒", "venomancer")),
+    ("冥界亚龙（Viper）", ("冥界亚龙", "毒龙", "viper")),
+    ("黑暗贤者（Dark Seer）", ("黑暗贤者", "黑贤", "dark seer", "dark_seer")),
+    ("全能骑士（Omniknight）", ("全能骑士", "全能", "omniknight")),
+    ("魅惑魔女（Enchantress）", ("魅惑魔女", "小鹿", "enchantress")),
+    ("暗夜魔王（Night Stalker）", ("暗夜魔王", "夜魔", "night stalker", "night_stalker")),
+    ("育母蜘蛛（Broodmother）", ("育母蜘蛛", "蜘蛛", "broodmother")),
+    ("杰奇洛（Jakiro）", ("杰奇洛", "双头龙", "jakiro")),
     ("陈（Chen）", ("chen",)),
     ("幽鬼（Spectre）", ("幽鬼", "spectre")),
-    ("远古冰魄（Ancient Apparition）", ("远古冰魄", "ancient apparition", "ancient_apparition")),
-    ("沉默术士（Silencer）", ("沉默术士", "silencer")),
+    ("远古冰魄（Ancient Apparition）", ("远古冰魄", "冰魂", "aa", "ancient apparition", "ancient_apparition")),
+    ("沉默术士（Silencer）", ("沉默术士", "沉默", "silencer")),
     ("狼人（Lycan）", ("狼人", "lycan")),
-    ("酒仙（Brewmaster）", ("酒仙", "brewmaster")),
-    ("暗影恶魔（Shadow Demon）", ("暗影恶魔", "shadow demon", "shadow_demon")),
-    ("独行德鲁伊（Lone Druid）", ("独行德鲁伊", "lone druid", "lone_druid")),
-    ("米波（Meepo）", ("米波", "meepo")),
-    ("树精卫士（Treant Protector）", ("树精卫士", "treant protector", "treant")),
-    ("不朽尸王（Undying）", ("不朽尸王", "undying")),
+    ("酒仙（Brewmaster）", ("酒仙", "熊猫", "brewmaster")),
+    ("暗影恶魔（Shadow Demon）", ("暗影恶魔", "毒狗", "sd", "shadow demon", "shadow_demon")),
+    ("独行德鲁伊（Lone Druid）", ("独行德鲁伊", "德鲁伊", "熊德", "ld", "lone druid", "lone_druid")),
+    ("米波（Meepo）", ("米波", "地卜师", "meepo")),
+    ("树精卫士（Treant Protector）", ("树精卫士", "大树", "treant protector", "treant")),
+    ("不朽尸王（Undying）", ("不朽尸王", "尸王", "undying")),
     ("拉比克（Rubick）", ("拉比克", "rubick")),
-    ("司夜刺客（Nyx Assassin）", ("司夜刺客", "nyx assassin", "nyx_assassin")),
-    ("艾欧（Io）", ("艾欧", "io", "wisp")),
-    ("维萨吉（Visage）", ("维萨吉", "visage")),
-    ("巨牙海民（Tusk）", ("巨牙海民", "tusk")),
-    ("天怒法师（Skywrath Mage）", ("天怒法师", "skywrath mage", "skywrath_mage")),
-    ("亚巴顿（Abaddon）", ("亚巴顿", "abaddon")),
+    ("司夜刺客（Nyx Assassin）", ("司夜刺客", "小强", "na", "nyx assassin", "nyx_assassin")),
+    ("艾欧（Io）", ("艾欧", "小精灵", "io", "wisp")),
+    ("维萨吉（Visage）", ("维萨吉", "死灵龙", "visage")),
+    ("巨牙海民（Tusk）", ("巨牙海民", "海民", "tusk")),
+    ("天怒法师（Skywrath Mage）", ("天怒法师", "天怒", "skywrath mage", "skywrath_mage")),
+    ("亚巴顿（Abaddon）", ("亚巴顿", "死骑", "abaddon")),
     ("凤凰（Phoenix）", ("凤凰", "phoenix")),
     ("神谕者（Oracle）", ("神谕者", "oracle")),
-    ("寒冬飞龙（Winter Wyvern）", ("寒冬飞龙", "winter wyvern", "winter_wyvern")),
-    ("邪影芳灵（Dark Willow）", ("邪影芳灵", "dark willow", "dark_willow")),
-    ("天涯墨客（Grimstroke）", ("天涯墨客", "grimstroke")),
+    ("寒冬飞龙（Winter Wyvern）", ("寒冬飞龙", "冰龙", "winter wyvern", "winter_wyvern")),
+    ("邪影芳灵（Dark Willow）", ("邪影芳灵", "小仙女", "花仙子", "dark willow", "dark_willow")),
+    ("天涯墨客（Grimstroke）", ("天涯墨客", "墨客", "grimstroke")),
     ("玛尔斯（Mars）", ("玛尔斯", "mars")),
     ("森海飞霞（Hoodwink）", ("森海飞霞", "小松鼠", "hoodwink")),
-    ("破晓辰星（Dawnbreaker）", ("破晓辰星", "dawnbreaker")),
+    ("破晓辰星（Dawnbreaker）", ("破晓辰星", "大锤", "锤妹", "dawnbreaker")),
     ("玛西（Marci）", ("玛西", "marci")),
     ("獸（Primal Beast）", ("原始兽", "primal beast", "primal_beast")),
-    ("琼英碧灵（Muerta）", ("琼英碧灵", "muerta")),
-    ("百戏大王（Ringmaster）", ("百戏大王", "ringmaster")),
+    ("琼英碧灵（Muerta）", ("琼英碧灵", "奶绿", "muerta")),
+    ("百戏大王（Ringmaster）", ("百戏大王", "马戏团", "ringmaster")),
     ("凯（Kez）", ("凯", "kez")),
     ("朗戈（Largo）", ("朗戈", "largo")),
 )
@@ -3511,7 +3511,11 @@ def _text_mentions_dota2_hero_term(text: object, term: object) -> bool:
     if not folded or not candidate:
         return False
     if re.fullmatch(r"[a-z][a-z0-9' -]*", candidate):
-        return len(candidate) >= 3 and bool(re.search(
+        # Dota has many established two-letter hero aliases (DP, SF, PA,
+        # AM, TB, and others). ASCII token boundaries already keep these from
+        # matching inside ordinary words such as "dps" or "template", so only
+        # one-letter candidates need to remain disabled.
+        return len(candidate) >= 2 and bool(re.search(
             rf"(?<![a-z0-9]){re.escape(candidate)}(?![a-z0-9])",
             folded,
         ))
@@ -3569,7 +3573,6 @@ def _contains_unverified_dota2_hero(value: object) -> bool:
 
 def _timeline_claims_streamer_hero(line: str, streamer: str, hero_key: str) -> bool:
     """Require the room owner to be the nearby subject before a hero mention."""
-    line_key = _compact_alias(line)
     normalized_streamer = normalize_dota2_streamer_name(streamer)
     owner_aliases = {str(streamer or ""), normalized_streamer}
     for canonical_name, aliases in _all_dota2_streamer_alias_groups():
@@ -3578,21 +3581,70 @@ def _timeline_claims_streamer_hero(line: str, streamer: str, hero_key: str) -> b
             break
     hero_name, hero_aliases = _DOTA2_HERO_ALIAS_GROUPS[int(hero_key)]
     hero_terms = {hero_name.split("（", 1)[0], *hero_aliases}
+    opposing_relation = re.compile(
+        r"(?:被|击杀|杀(?:了|掉)?|追杀|对阵|对面|面对|克制|输给|战胜|"
+        r"围攻|抓(?:死|到)?|切(?:死|入)?|秒(?:了|掉)?|躲(?:开|过)?|逃(?:走|跑)?)",
+        re.IGNORECASE,
+    )
+    reverse_binding = re.compile(
+        r"(?:是|才是|就是|给|由|归|属于|的|玩|使用|操刀|选择|选的|拿的|这局|本局)",
+        re.IGNORECASE,
+    )
+    all_hero_spans: list[tuple[int, int, str]] | None = None
+
+    def hero_spans_in_line() -> list[tuple[int, int, str]]:
+        nonlocal all_hero_spans
+        if all_hero_spans is not None:
+            return all_hero_spans
+        all_hero_spans = []
+        for other_key, (other_name, other_aliases) in enumerate(_DOTA2_HERO_ALIAS_GROUPS):
+            for other_term in {other_name.split("（", 1)[0], *other_aliases}:
+                if len(_compact_alias(other_term)) <= 1:
+                    continue
+                all_hero_spans.extend(
+                    (start, end, str(other_key))
+                    for start, end in _text_name_match_spans(line, other_term)
+                )
+        return all_hero_spans
     for owner_alias in owner_aliases:
-        owner_key = _compact_alias(owner_alias)
-        if not owner_key:
-            continue
-        owner_end = line_key.find(owner_key)
-        if owner_end < 0:
-            continue
-        owner_end += len(owner_key)
+        owner_spans = _text_name_match_spans(line, owner_alias)
         for hero_term in hero_terms:
-            hero_key_value = _compact_alias(hero_term)
-            if len(hero_key_value) <= 1:
+            if len(_compact_alias(hero_term)) <= 1:
                 continue
-            hero_position = line_key.find(hero_key_value, owner_end)
-            if 0 <= hero_position - owner_end <= 16:
-                return True
+            hero_spans = _text_name_match_spans(line, hero_term)
+            for owner_start, owner_end in owner_spans:
+                for hero_start, hero_end in hero_spans:
+                    if owner_end <= hero_start:
+                        gap = line[owner_end:hero_start]
+                        intervening_hero = any(
+                            other_key != str(hero_key)
+                            and owner_end <= other_start
+                            and other_end <= hero_start
+                            for other_start, other_end, other_key in hero_spans_in_line()
+                        )
+                        if (
+                            len(gap) <= 16
+                            and not intervening_hero
+                            and not opposing_relation.search(gap)
+                        ):
+                            return True
+                    elif hero_end <= owner_start:
+                        gap = line[hero_end:owner_start]
+                        owner_tail = line[owner_end:owner_end + 6]
+                        relation = f"{gap}{owner_tail}"
+                        intervening_hero = any(
+                            other_key != str(hero_key)
+                            and hero_end <= other_start
+                            and other_end <= owner_start
+                            for other_start, other_end, other_key in hero_spans_in_line()
+                        )
+                        if (
+                            len(gap) <= 16
+                            and not intervening_hero
+                            and not opposing_relation.search(gap)
+                            and reverse_binding.search(relation)
+                        ):
+                            return True
     return False
 
 
@@ -3636,6 +3688,44 @@ def _danmaku_owner_hero_evidence(
     return evidence
 
 
+def _danmaku_hero_presence_evidence(
+    hero_keys: set[str],
+    comments: Iterable[Any],
+) -> dict[str, list[str]]:
+    """Return heroes independently repeated in raw XML, regardless of player."""
+    evidence: dict[str, list[str]] = {}
+    comment_list = list(comments)
+    for hero_key in hero_keys:
+        hero_name, hero_aliases = _DOTA2_HERO_ALIAS_GROUPS[int(hero_key)]
+        hero_terms = {hero_name.split("（", 1)[0], *hero_aliases}
+        distinct_mentions: dict[str, tuple[float, str]] = {}
+        for comment in comment_list:
+            text = str(getattr(comment, "text", "") or "").strip()
+            if not text or not any(
+                _text_mentions_dota2_hero_term(text, term)
+                for term in hero_terms
+            ):
+                continue
+            normalized = _compact_alias(text)
+            if normalized:
+                try:
+                    timestamp = float(getattr(comment, "time", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    timestamp = 0.0
+                distinct_mentions.setdefault(normalized, (timestamp, text))
+        mentions = sorted(distinct_mentions.values())
+        for index, (timestamp, _text) in enumerate(mentions):
+            nearby = [
+                text
+                for other_time, text in mentions[index:]
+                if other_time - timestamp <= 900
+            ]
+            if len(nearby) >= 2:
+                evidence[hero_key] = nearby[:5]
+                break
+    return evidence
+
+
 def filter_unverified_dota2_metadata(
     title_topic: str,
     description: str,
@@ -3661,12 +3751,18 @@ def filter_unverified_dota2_metadata(
     # The model-generated timeline cannot prove itself. Raw XML may provide an
     # independent fallback, but only when multiple distinct comments directly
     # bind a known owner alias to the same hero.
+    raw_comment_list = list(raw_comments)
     danmaku_evidence = _danmaku_owner_hero_evidence(
         streamer,
         metadata_hero_keys,
-        raw_comments,
+        raw_comment_list,
+    )
+    hero_presence_evidence = _danmaku_hero_presence_evidence(
+        metadata_hero_keys,
+        raw_comment_list,
     )
     supported_hero_keys = set(danmaku_evidence)
+    present_hero_keys = set(hero_presence_evidence)
 
     unsupported_title_hero_keys = title_hero_keys - supported_hero_keys
     title_claims_owner_hero = any(
@@ -3703,7 +3799,7 @@ def filter_unverified_dota2_metadata(
         tag for tag in original_tags
         if (
             (tag_hero_keys := _dota2_hero_identity_keys(tag))
-            and not tag_hero_keys <= supported_hero_keys
+            and not tag_hero_keys <= (supported_hero_keys | present_hero_keys)
         )
     ]
     filtered_tags = dedupe_recording_tags(tag for tag in original_tags if tag not in hero_tags)
@@ -3721,6 +3817,10 @@ def filter_unverified_dota2_metadata(
         "danmaku_owner_hero_evidence": {
             _DOTA2_HERO_ALIAS_GROUPS[int(key)][0]: values
             for key, values in danmaku_evidence.items()
+        },
+        "danmaku_hero_presence_evidence": {
+            _DOTA2_HERO_ALIAS_GROUPS[int(key)][0]: values
+            for key, values in hero_presence_evidence.items()
         },
     }
     return filtered_topic, filtered_description, filtered_tags, details
