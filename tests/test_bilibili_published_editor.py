@@ -133,6 +133,20 @@ class _FakeApi:
     "本机未安装完整 Bilibili SDK 运行依赖",
 )
 class BilibiliUploadProgressTests(unittest.TestCase):
+    def test_sync_auth_runner_does_not_retry_business_runtime_errors(self):
+        from modules import bilibili_auth
+
+        calls = []
+
+        async def fail_once():
+            calls.append("called")
+            raise RuntimeError("business failure")
+
+        with self.assertRaisesRegex(RuntimeError, "business failure"):
+            bilibili_auth._run_async(fail_once())
+
+        self.assertEqual(calls, ["called"])
+
     def test_chunk_progress_reports_bytes_speed_and_eta(self):
         class Page:
             def get_size(self):

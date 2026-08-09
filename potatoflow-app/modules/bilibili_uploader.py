@@ -658,8 +658,10 @@ class BilibiliUploader:
                 return str(rpid), pinned, pin_error, pin_attempts
 
             try:
-                rpid, pinned, pin_error, pin_attempts = asyncio.run(_publish())
+                asyncio.get_running_loop()
             except RuntimeError:
+                rpid, pinned, pin_error, pin_attempts = asyncio.run(_publish())
+            else:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     rpid, pinned, pin_error, pin_attempts = pool.submit(
@@ -682,6 +684,85 @@ class BilibiliUploader:
         except Exception as exc:
             details["error"] = _compact_exception_text(str(exc))
             self.log(f"Bilibili 简介评论发布失败（不影响投稿）: {details['error']}")
+        return details
+
+    def retry_description_comment_pin(
+        self,
+        result: dict,
+        comment: dict,
+    ) -> dict:
+        """Retry only the pin step for an already published description comment."""
+        details = dict(comment or {})
+        aid = result.get("aid") if isinstance(result, dict) else None
+        aid = aid or details.get("aid")
+        bvid = str(
+            (result.get("bvid") if isinstance(result, dict) else "")
+            or details.get("bvid")
+            or ""
+        )
+        rpid = details.get("rpid")
+        details.update({
+            "enabled": True,
+            "posted": True,
+            "pinned": False,
+            "aid": aid,
+            "bvid": bvid,
+        })
+        details.pop("error", None)
+        if not aid or not rpid:
+            details["pin_error"] = "已发布评论缺少 aid 或 rpid，无法重试置顶"
+            return details
+
+        try:
+            credential = load_credential_from_file(self.cookie_file)
+            pin_headers = {
+                **HEADERS,
+                "Origin": "https://www.bilibili.com",
+                "Referer": (
+                    f"https://www.bilibili.com/video/{bvid}/"
+                    if bvid
+                    else f"https://www.bilibili.com/video/av{aid}/"
+                ),
+            }
+
+            async def _pin() -> int:
+                attempts = 0
+                last_error = ""
+                for attempt, delay_seconds in enumerate((0, 1, 2), start=1):
+                    attempts = attempt
+                    if delay_seconds:
+                        await asyncio.sleep(delay_seconds)
+                    try:
+                        await Api(
+                            url="https://api.bilibili.com/x/v2/reply/top",
+                            method="POST",
+                            verify=True,
+                            credential=credential,
+                        ).update_headers(**pin_headers).update_data(
+                            type=1,
+                            oid=int(aid),
+                            rpid=int(rpid),
+                            action=1,
+                        ).request()
+                        return attempts
+                    except Exception as exc:
+                        last_error = _compact_exception_text(str(exc))
+                raise RuntimeError(last_error or "B站评论置顶失败")
+
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pin_attempts = asyncio.run(_pin())
+            else:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pin_attempts = pool.submit(asyncio.run, _pin()).result()
+            details.update({"pinned": True, "pin_attempts": pin_attempts})
+            details.pop("pin_error", None)
+            self.log("Bilibili 简介评论置顶重试成功")
+        except Exception as exc:
+            details["pin_error"] = _compact_exception_text(str(exc))
+            self.log(f"Bilibili 简介评论置顶重试失败: {details['pin_error']}")
         return details
 
     def sync_description_comment(
@@ -2208,8 +2289,10 @@ class BilibiliUploader:
                 return merged
 
             try:
-                result = asyncio.run(_run_upload())
+                asyncio.get_running_loop()
             except RuntimeError:
+                result = asyncio.run(_run_upload())
+            else:
                 # 已有事件循环时，在新线程中运行
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:

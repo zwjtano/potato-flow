@@ -1,5 +1,6 @@
 import io
 import json
+import multiprocessing
 import os
 import re
 import sqlite3
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from contextlib import closing
@@ -19,6 +21,14 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 import bridge
+
+
+def _process_multipart_session_slot(state_db, session_key, result_queue, hold_seconds):
+    cfg = {"state_db": state_db}
+    with bridge.multipart_session_queue(cfg, session_key):
+        started = time.monotonic()
+        time.sleep(hold_seconds)
+        result_queue.put((started, time.monotonic()))
 
 
 class BridgeTests(unittest.TestCase):
@@ -199,6 +209,11 @@ class BridgeTests(unittest.TestCase):
                 thread.join(2)
             self.assertTrue(entered[1].is_set())
 
+    def test_ai_queue_retries_only_real_lock_contention(self):
+        self.assertTrue(bridge._queue_lock_is_busy(OSError(11, "busy")))
+        self.assertTrue(bridge._queue_lock_is_busy(OSError(13, "locked")))
+        self.assertFalse(bridge._queue_lock_is_busy(OSError(5, "io failure")))
+
     def test_windows_bridge_media_helpers_never_open_a_console(self):
         expected = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with patch.object(bridge.os, "name", "nt"):
@@ -231,6 +246,55 @@ class BridgeTests(unittest.TestCase):
             for thread in threads:
                 thread.join(2)
             self.assertTrue(entered[3].is_set())
+
+    def test_multipart_session_queue_serializes_the_entire_part_flow(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cfg = {"state_db": str(Path(temp) / "state.sqlite3")}
+            active = 0
+            maximum = 0
+            guard = threading.Lock()
+
+            def worker():
+                nonlocal active, maximum
+                with bridge.multipart_session_queue(cfg, "room-1:2026-08-09"):
+                    with guard:
+                        active += 1
+                        maximum = max(maximum, active)
+                    time.sleep(0.03)
+                    with guard:
+                        active -= 1
+
+            threads = [threading.Thread(target=worker) for _ in range(3)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=2)
+
+        self.assertEqual(maximum, 1)
+
+    def test_multipart_session_queue_serializes_processes(self):
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as temp:
+            state_db = str(Path(temp) / "state.sqlite3")
+            result_queue = context.Queue()
+            processes = [
+                context.Process(
+                    target=_process_multipart_session_slot,
+                    args=(state_db, "room-1:2026-08-09", result_queue, 0.2),
+                )
+                for _ in range(2)
+            ]
+            for process in processes:
+                process.start()
+            intervals = sorted(
+                (result_queue.get(timeout=10), result_queue.get(timeout=10)),
+                key=lambda interval: interval[0],
+            )
+            for process in processes:
+                process.join(timeout=10)
+
+        self.assertTrue(all(process.exitcode == 0 for process in processes))
+        self.assertLessEqual(intervals[0][1], intervals[1][0])
 
     def test_ai_metadata_generation_records_queue_wait_and_callback(self):
         diagnostics = {}
@@ -3541,6 +3605,86 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(len(comment_calls), 2)
             self.assertEqual(store.stage_state(key, "comment")["status"], "completed")
             self.assertEqual(store.results(key)["bilibili"]["bvid"], "BV1comment")
+
+    def test_description_comment_pin_failure_retries_without_duplicate_comment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_录播_2026-08-09_12-30.flv"
+            cover = root / "cover.jpg"
+            cookie = root / "cookie.json"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            cookie.write_text("[]", encoding="utf-8")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "bilibili_cookies": str(cookie),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "ai_danmaku_summary_enabled": False,
+                "post_description_comment": True,
+                "pin_description_comment": True,
+                "delete_recording_after_upload": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video)
+            store.claim(key, video, "bilibili")
+            store.stage(key, "ai", "failed", {}, error="AI unavailable")
+            store.finish(key, "failed", error="ready for review")
+            store.save_review_override(key, {
+                "title": "人工标题",
+                "description": "人工简介",
+                "tags": ["录播"],
+                "partition_id": "171",
+                "cover_path": str(cover),
+                "hold_before_cover": False,
+            })
+            upload_calls = []
+            publish_calls = []
+            pin_calls = []
+
+            class FakeUploader:
+                def __init__(self, **_kwargs):
+                    pass
+
+                def upload_video(self, **kwargs):
+                    upload_calls.append(kwargs)
+                    return True, {"aid": 789, "bvid": "BV1pinretry"}
+
+                def publish_description_comment(self, **kwargs):
+                    publish_calls.append(kwargs)
+                    return {
+                        "enabled": True,
+                        "posted": True,
+                        "pinned": False,
+                        "aid": 789,
+                        "bvid": "BV1pinretry",
+                        "rpid": "9001",
+                        "pin_error": "temporary pin failure",
+                    }
+
+                def retry_description_comment_pin(self, **kwargs):
+                    pin_calls.append(kwargs)
+                    return {**kwargs["comment"], "pinned": True, "pin_error": ""}
+
+            with patch.object(
+                bridge, "video_duration_seconds", return_value=600.0
+            ), patch.object(
+                bridge,
+                "generate_recording_cover_with_ai",
+                return_value=(None, {"ai_cover_generated": False}),
+            ), patch.object(bridge, "import_app", return_value=(FakeUploader, None)):
+                self.assertFalse(bridge.upload_one(video, cfg, store, retry=True))
+                self.assertEqual(store.stage_state(key, "comment")["status"], "failed")
+                self.assertTrue(bridge.upload_one(video, cfg, store, retry=True))
+
+            self.assertEqual(len(upload_calls), 1)
+            self.assertEqual(len(publish_calls), 1)
+            self.assertEqual(len(pin_calls), 1)
+            self.assertEqual(pin_calls[0]["comment"]["rpid"], "9001")
+            self.assertEqual(store.stage_state(key, "comment")["status"], "completed")
 
     def test_cleanup_failure_keeps_published_task_failed_and_retryable(self):
         with tempfile.TemporaryDirectory() as temp:
