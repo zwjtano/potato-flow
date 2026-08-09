@@ -2176,8 +2176,9 @@
                                                     <input type="number" id="max-concurrent-tasks" name="MAX_CONCURRENT_TASKS" value="{{ config.get('MAX_CONCURRENT_TASKS', 2) }}" min="1" max="10" class="form-control">
                                                 </div>
                                                 <div class="form-group mb-0">
-                                                    <label for="max-concurrent-uploads" class="form-label">最大并发上传数</label>
-                                                    <input type="number" id="max-concurrent-uploads" name="MAX_CONCURRENT_UPLOADS" value="{{ config.get('MAX_CONCURRENT_UPLOADS', 1) }}" min="1" max="5" class="form-control">
+                                                    <label for="max-concurrent-uploads" class="form-label">B站上传并发数</label>
+                                                    <input type="number" id="max-concurrent-uploads" name="MAX_CONCURRENT_UPLOADS" value="1" min="1" max="1" readonly class="form-control">
+                                                    <p class="help-text mb-0">固定为 1。普通投稿、录播投稿、换源和永久删除共用全局串行队列。</p>
                                                 </div>
                                             </div>
                                         </article>

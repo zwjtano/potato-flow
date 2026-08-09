@@ -47,6 +47,15 @@ from runtime_environment import configure_linux_ca_environment
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 _IMAGE_GENERATION_THREAD_LOCK = threading.Lock()
+_MULTIPART_SESSION_THREAD_LOCKS = tuple(threading.Lock() for _ in range(64))
+
+
+def _queue_lock_is_busy(exc: OSError) -> bool:
+    """Return true only for the lock-contention errors worth retrying."""
+    return (
+        exc.errno in {11, 13, 35, 36}
+        or getattr(exc, "winerror", None) in {33, 36}
+    )
 
 
 def _hidden_subprocess_kwargs() -> dict[str, Any]:
@@ -4064,7 +4073,9 @@ def image_generation_queue(cfg: dict[str, Any]):
                     handle.seek(0)
                     msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
                     break
-                except OSError:
+                except OSError as exc:
+                    if not _queue_lock_is_busy(exc):
+                        raise
                     time.sleep(0.1)
         else:
             import fcntl
@@ -4108,8 +4119,10 @@ def ai_metadata_queue(cfg: dict[str, Any]):
                     fcntl.flock(candidate.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 handle = candidate
                 break
-            except OSError:
+            except OSError as exc:
                 candidate.close()
+                if not _queue_lock_is_busy(exc):
+                    raise
         if handle is None:
             time.sleep(0.1)
     try:
@@ -4161,8 +4174,10 @@ def ai_metadata_request_slot(cfg: dict[str, Any]):
                     fcntl.flock(candidate.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 handle = candidate
                 break
-            except OSError:
+            except OSError as exc:
                 candidate.close()
+                if not _queue_lock_is_busy(exc):
+                    raise
         if handle is None:
             time.sleep(0.05)
     try:
@@ -4181,6 +4196,47 @@ def ai_metadata_request_slot(cfg: dict[str, Any]):
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         handle.close()
+
+
+@contextmanager
+def multipart_session_queue(cfg: dict[str, Any], session_key: str):
+    """Serialize every state read and submission belonging to one multipart session."""
+    state_path = resolve_path(str(cfg.get("state_db", ".bridge/state.sqlite3")), cfg)
+    digest = hashlib.sha256(str(session_key).encode("utf-8")).hexdigest()[:20]
+    lock_path = state_path.parent / f"multipart-session-{digest}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    thread_lock = _MULTIPART_SESSION_THREAD_LOCKS[
+        int(digest[:8], 16) % len(_MULTIPART_SESSION_THREAD_LOCKS)
+    ]
+    with thread_lock, lock_path.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            while True:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if not _queue_lock_is_busy(exc):
+                        raise
+                    time.sleep(0.1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def generate_recording_cover_with_ai(
@@ -6247,6 +6303,33 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                dry_run: bool = False, retry: bool = False,
                danmaku_xml: Path | None = None,
                session_key: str = "") -> bool:
+    if session_key:
+        cfg = effective_config(base_cfg, video)
+        with multipart_session_queue(cfg, session_key):
+            return _upload_one_unlocked(
+                video,
+                base_cfg,
+                store,
+                dry_run=dry_run,
+                retry=retry,
+                danmaku_xml=danmaku_xml,
+                session_key=session_key,
+            )
+    return _upload_one_unlocked(
+        video,
+        base_cfg,
+        store,
+        dry_run=dry_run,
+        retry=retry,
+        danmaku_xml=danmaku_xml,
+        session_key=session_key,
+    )
+
+
+def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStore,
+                         dry_run: bool = False, retry: bool = False,
+                         danmaku_xml: Path | None = None,
+                         session_key: str = "") -> bool:
     cfg = effective_config(base_cfg, video)
     platform = "bilibili"
     wait_until_stable(video, int(cfg.get("stable_checks", 2)), float(cfg.get("stable_interval_seconds", 2)))
@@ -7644,6 +7727,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         current_stage = "comment"
         description_comment = previous.get("description_comment")
         comment_enabled = bool(cfg.get("post_description_comment", True))
+        pin_comment_enabled = bool(cfg.get("pin_description_comment", True))
         comment_skipped_for_multipart = bool(
             isinstance(existing_submission, dict)
             and existing_submission.get("bvid")
@@ -7651,7 +7735,13 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
         comment_retry_pending = bool(
             isinstance(description_comment, dict)
             and description_comment.get("enabled", True)
-            and not description_comment.get("posted")
+            and (
+                not description_comment.get("posted")
+                or (
+                    pin_comment_enabled
+                    and not description_comment.get("pinned")
+                )
+            )
         )
         if not comment_enabled:
             store.stage(key, "comment", "skipped", {"reason": "配置为不发布简介评论"})
@@ -7665,7 +7755,7 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                 and description_comment.get("posted")
             ):
                 store.stage(key, "comment", "running", {
-                    "pin_requested": bool(cfg.get("pin_description_comment", True)),
+                    "pin_requested": pin_comment_enabled,
                 })
                 if uploader is None:
                     uploader = BilibiliUploader(cookie_file=str(cookie))
@@ -7681,10 +7771,30 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     description_comment = uploader.publish_description_comment(
                         result=previous.get("bilibili") or {},
                         description=description,
-                        pin=bool(cfg.get("pin_description_comment", True)),
+                        pin=pin_comment_enabled,
                     )
                     if isinstance(description_comment, dict):
                         description_comment.setdefault("enabled", True)
+                previous["description_comment"] = description_comment
+                store.finish(key, "video_uploaded", previous)
+            elif pin_comment_enabled and not description_comment.get("pinned"):
+                store.stage(key, "comment", "running", {
+                    **description_comment,
+                    "pin_requested": True,
+                    "retry_pin_only": True,
+                })
+                if uploader is None:
+                    uploader = BilibiliUploader(cookie_file=str(cookie))
+                if not hasattr(uploader, "retry_description_comment_pin"):
+                    description_comment = {
+                        **description_comment,
+                        "pin_error": "当前上传器不支持仅重试评论置顶",
+                    }
+                else:
+                    description_comment = uploader.retry_description_comment_pin(
+                        result=previous.get("bilibili") or {},
+                        comment=description_comment,
+                    )
                 previous["description_comment"] = description_comment
                 store.finish(key, "video_uploaded", previous)
             if description_comment is None:
@@ -7706,6 +7816,19 @@ def upload_one(video: Path, base_cfg: dict[str, Any], store: StateStore,
                     error=comment_error,
                 )
                 raise RuntimeError(f"B站简介评论处理失败：{comment_error}")
+            elif pin_comment_enabled and not description_comment.get("pinned"):
+                pin_error = str(
+                    description_comment.get("pin_error")
+                    or "简介评论已发布，但置顶失败"
+                )
+                store.stage(
+                    key,
+                    "comment",
+                    "failed",
+                    description_comment,
+                    error=pin_error,
+                )
+                raise RuntimeError(f"B站简介评论处理失败：{pin_error}")
             else:
                 store.stage(key, "comment", "completed", description_comment)
 

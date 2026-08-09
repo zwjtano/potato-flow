@@ -5162,6 +5162,54 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             jobs.append(item)
         return jobs
 
+    def _reserve_archive_replacement(
+        self,
+        *,
+        account_id: str,
+        bvid: str,
+        page_number: int,
+        page_title: str,
+        file_id: str,
+        video_name: str,
+        video_path: str,
+    ) -> str:
+        """Atomically reject or reserve one active replacement for an archive page."""
+        self._ensure_archive_replacement_table()
+        replacement_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(sqlite3.connect(self._pipeline_state_path(), timeout=30)) as db, db:
+            # A deferred SQLite transaction leaves a race between SELECT and
+            # INSERT. BEGIN IMMEDIATE makes every competing web request re-read
+            # the active row only after the previous reservation commits.
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute(
+                """SELECT id FROM bilibili_source_replacements
+                   WHERE bvid=? AND page_number=? AND status IN ('queued','uploading','submitting')""",
+                (bvid, page_number),
+            ).fetchone()
+            if active:
+                raise RecorderConfigError("该稿件的目标分P已有换源任务在队列中")
+            db.execute(
+                """INSERT INTO bilibili_source_replacements
+                   (id, account_id, bvid, page_number, page_title, file_id,
+                    video_name, video_path, status, progress_json, result_json,
+                    error, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', '{}', '{}', NULL, ?, ?)""",
+                (
+                    replacement_id,
+                    str(account_id or ""),
+                    bvid,
+                    page_number,
+                    page_title,
+                    file_id,
+                    video_name,
+                    video_path,
+                    now,
+                    now,
+                ),
+            )
+        return replacement_id
+
     def start_archive_source_replacement(
         self,
         *,
@@ -5187,36 +5235,15 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         allowed_ids = {item["id"] for item in self.burned_replacement_videos(500)}
         if file_id not in allowed_ids:
             raise RecorderConfigError("只能选择已完成 ASS 烧录且当前未被占用的视频")
-        self._ensure_archive_replacement_table()
-        with closing(sqlite3.connect(self._pipeline_state_path(), timeout=30)) as db, db:
-            active = db.execute(
-                """SELECT id FROM bilibili_source_replacements
-                   WHERE bvid=? AND page_number=? AND status IN ('queued','uploading','submitting')""",
-                (clean_bvid, target_page),
-            ).fetchone()
-            if active:
-                raise RecorderConfigError("该稿件的目标分P已有换源任务在队列中")
-            replacement_id = uuid.uuid4().hex
-            now = datetime.now(timezone.utc).isoformat()
-            db.execute(
-                """INSERT INTO bilibili_source_replacements
-                   (id, account_id, bvid, page_number, page_title, file_id,
-                    video_name, video_path, status, progress_json, result_json,
-                    error, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', '{}', '{}', NULL, ?, ?)""",
-                (
-                    replacement_id,
-                    str(account_id or ""),
-                    clean_bvid,
-                    target_page,
-                    str(selected_page.get("title") or f"P{target_page}"),
-                    file_id,
-                    str(video_info.get("name") or video_path.name),
-                    str(video_path),
-                    now,
-                    now,
-                ),
-            )
+        replacement_id = self._reserve_archive_replacement(
+            account_id=account_id,
+            bvid=clean_bvid,
+            page_number=target_page,
+            page_title=str(selected_page.get("title") or f"P{target_page}"),
+            file_id=file_id,
+            video_name=str(video_info.get("name") or video_path.name),
+            video_path=str(video_path),
+        )
 
         def worker() -> None:
             try:

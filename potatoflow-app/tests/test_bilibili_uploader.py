@@ -631,6 +631,66 @@ class BilibiliCollectionTests(unittest.TestCase):
         self.assertEqual(edit_calls[0]["cover_url"], "https://example.com/cover.jpg")
         self.assertEqual([item["filename"] for item in edit_calls[0]["videos"]], ["part-1", "new-part"])
 
+    def test_upload_runtime_error_does_not_repeat_the_submission(self):
+        starts = []
+
+        class FakePage:
+            def __init__(self, path, title):
+                self.path = path
+                self.title = title
+
+        class FakeUploader(AsyncEvent):
+            def __init__(self, pages, meta, credential, cover):
+                super().__init__()
+                self.pages = pages
+
+            async def start(self):
+                starts.append("start")
+                raise RuntimeError("submission response parsing failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video_path = os.path.join(temp_dir, "video.mp4")
+            cover_path = os.path.join(temp_dir, "cover.jpg")
+            with open(video_path, "wb") as stream:
+                stream.write(b"test")
+            Image.new("RGB", (640, 400), (20, 40, 60)).save(cover_path)
+
+            with patch(
+                "modules.bilibili_uploader.setup_task_logger", return_value=Mock()
+            ), patch(
+                "modules.bilibili_uploader.load_config",
+                return_value={"BILIBILI_UPLOAD_ENGINE": "internal"},
+            ), patch(
+                "modules.bilibili_uploader.configure_bilibili_runtime"
+            ), patch(
+                "modules.bilibili_uploader.load_credential_from_file",
+                return_value=object(),
+            ), patch(
+                "modules.bilibili_uploader.validate_credential_remote",
+                return_value=(True, "ok"),
+            ), patch(
+                "modules.bilibili_uploader.video_uploader.VideoMeta",
+                return_value=object(),
+            ), patch(
+                "modules.bilibili_uploader.video_uploader.VideoUploaderPage",
+                FakePage,
+            ), patch(
+                "modules.bilibili_uploader.video_uploader.VideoUploader",
+                FakeUploader,
+            ):
+                success, result = BilibiliUploader("cookies.json").upload_video(
+                    video_path,
+                    cover_path,
+                    "标题",
+                    "简介",
+                    ["标签"],
+                    21,
+                )
+
+        self.assertFalse(success)
+        self.assertIn("submission response parsing failed", str(result))
+        self.assertEqual(starts, ["start"])
+
     def test_publish_description_comment_and_pin(self):
         calls = []
 
@@ -731,6 +791,73 @@ class BilibiliCollectionTests(unittest.TestCase):
         self.assertEqual(details["pin_attempts"], 3)
         self.assertEqual(sum(url.endswith("/add") for url in calls), 1)
         self.assertEqual(sum(url.endswith("/top") for url in calls), 3)
+
+    def test_publish_comment_runtime_error_does_not_post_twice(self):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+
+            def update_data(self, **_kwargs):
+                return self
+
+            async def request(self):
+                calls.append(self.url)
+                return {"reply": {}}
+
+        with patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=object(),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ):
+            details = BilibiliUploader("cookies.json").publish_description_comment(
+                {"aid": 123, "bvid": "BV1test"},
+                "简介",
+                pin=True,
+            )
+
+        self.assertFalse(details["posted"])
+        self.assertIn("未返回 rpid", details["error"])
+        self.assertEqual(calls, ["https://api.bilibili.com/x/v2/reply/add"])
+
+    def test_retry_comment_pin_from_running_event_loop_does_not_repost(self):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, **kwargs):
+                self.url = kwargs["url"]
+
+            def update_headers(self, **_kwargs):
+                return self
+
+            def update_data(self, **_kwargs):
+                return self
+
+            async def request(self):
+                calls.append(self.url)
+                return {}
+
+        async def invoke():
+            return BilibiliUploader("cookies.json").retry_description_comment_pin(
+                {"aid": 123, "bvid": "BV1test"},
+                {"posted": True, "pinned": False, "rpid": "987654"},
+            )
+
+        with patch(
+            "modules.bilibili_uploader.load_credential_from_file",
+            return_value=object(),
+        ), patch(
+            "modules.bilibili_uploader.Api",
+            FakeApi,
+        ):
+            details = asyncio.run(invoke())
+
+        self.assertTrue(details["posted"])
+        self.assertTrue(details["pinned"])
+        self.assertEqual(calls, ["https://api.bilibili.com/x/v2/reply/top"])
 
     def test_sync_description_comment_replaces_existing_uploader_pin(self):
         calls = []

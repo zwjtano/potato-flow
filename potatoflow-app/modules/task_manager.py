@@ -1933,10 +1933,12 @@ upload_semaphore = None
 task_semaphore = None
 
 def init_upload_semaphore(max_concurrent_uploads=1):
-    """初始化上传信号量"""
+    """初始化上传信号量；B站变更操作必须全局串行。"""
     global upload_semaphore
-    logger.info(f"初始化上传信号量，最大并发上传数: {max_concurrent_uploads}")
-    upload_semaphore = threading.Semaphore(max_concurrent_uploads)
+    requested = _as_int(max_concurrent_uploads, 1, minimum=1)
+    if requested != 1:
+        logger.warning("B站上传使用全局串行队列，已忽略并发上传配置: %s", requested)
+    upload_semaphore = threading.Semaphore(1)
     logger.info(f"上传信号量初始化完成: {upload_semaphore}")
 
 def init_task_semaphore(max_concurrent_tasks=3):
@@ -2061,7 +2063,7 @@ class TaskProcessor:
         """
         self.config = dict(config or {})
         self._current_max_concurrent_tasks = _as_int(self.config.get('MAX_CONCURRENT_TASKS', 2), 2, minimum=1)
-        self._current_max_concurrent_uploads = _as_int(self.config.get('MAX_CONCURRENT_UPLOADS', 1), 1, minimum=1)
+        self._current_max_concurrent_uploads = 1
         self._runtime_limit_refresh_pending = False
         self._last_deferred_limit_signature = None
         self._shutting_down = False
@@ -2155,7 +2157,7 @@ class TaskProcessor:
     def _refresh_runtime_limits(self, force=False):
         """按当前配置刷新并发上限；运行中有活动任务时延后生效。"""
         desired_tasks = _as_int(self.config.get('MAX_CONCURRENT_TASKS', 2), 2, minimum=1)
-        desired_uploads = _as_int(self.config.get('MAX_CONCURRENT_UPLOADS', 1), 1, minimum=1)
+        desired_uploads = 1
 
         if (
             desired_tasks == self._current_max_concurrent_tasks
