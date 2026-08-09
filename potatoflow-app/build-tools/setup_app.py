@@ -22,6 +22,7 @@ from pathlib import Path
 
 INTERNAL_YT_DLP_FLAG = "--potatoflow-internal-yt-dlp"
 INTERNAL_BRIDGE_FLAG = "--potatoflow-internal-bridge"
+INTERNAL_DOUYU_STATS_FLAG = "--potatoflow-internal-douyu-stats"
 SERVER_ONLY_FLAG = "--server-only"
 CHECK_DESKTOP_ASSETS_FLAG = "--check-desktop-assets"
 ACTIVATION_PORT = 45160
@@ -138,6 +139,11 @@ def run_internal_cli(args: list[str]) -> int | None:
             return int(bridge.main())
         finally:
             sys.argv = previous
+    if args[0] == INTERNAL_DOUYU_STATS_FLAG:
+        from modules import douyu_stats_daemon
+
+        douyu_stats_daemon.run()
+        return 0
     return None
 
 
@@ -153,6 +159,32 @@ def run_server() -> int:
     os.environ["POTATOFLOW_DESKTOP_MODE"] = "1"
     runpy.run_module("app", run_name="__main__")
     return 0
+
+
+def start_douyu_stats_process(data_root: Path, child_env: dict[str, str], creationflags: int):
+    """Start the singleton live-statistics collector for the desktop lifetime."""
+    log_path = data_root / "logs" / "douyu-stats.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as log_file:
+        return subprocess.Popen(
+            [sys.executable, INTERNAL_DOUYU_STATS_FLAG],
+            cwd=data_root,
+            env=child_env,
+            creationflags=creationflags,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+
+
+def stop_child_process(process: subprocess.Popen | None, timeout: float = 10) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=timeout)
 
 
 def load_tray_icon():
@@ -316,10 +348,19 @@ def run_desktop(data_root: Path) -> int:
         creationflags=creationflags,
     )
     process_job = assign_kill_on_close_job(process)
+    stats_process = None
+    stats_process_job = None
     try:
+        stats_process = start_douyu_stats_process(data_root, child_env, creationflags)
+        stats_process_job = assign_kill_on_close_job(stats_process)
         _wait_for_health(process, url, token=token, instance_id=instance_id)
+        if stats_process.poll() is not None:
+            raise RuntimeError(
+                "斗鱼直播数据采集进程启动失败，请查看 logs\\douyu-stats.log"
+            )
     except Exception:
-        process.terminate()
+        stop_child_process(stats_process)
+        stop_child_process(process)
         raise
 
     initial_html = "<html><body style='font-family:Segoe UI;padding:32px'><h2>PotatoFlow</h2><p>正在准备桌面界面……</p></body></html>"
@@ -502,9 +543,13 @@ def run_desktop(data_root: Path) -> int:
                 process.wait(timeout=15)
             except Exception:
                 process.terminate()
+        stop_child_process(stats_process)
         if process_job and os.name == "nt":
             import ctypes
             ctypes.windll.kernel32.CloseHandle(process_job)
+        if stats_process_job and os.name == "nt":
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(stats_process_job)
     return 0
 
 
