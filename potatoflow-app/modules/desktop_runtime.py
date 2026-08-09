@@ -115,6 +115,11 @@ def ensure_windows_layout(layout: WindowsRuntimeLayout) -> WindowsRuntimeLayout:
 def configure_runtime_environment(layout: WindowsRuntimeLayout) -> None:
     os.environ["POTATOFLOW_DATA_DIR"] = str(layout.data_root)
     os.environ["POTATOFLOW_RECORDINGS_DIR"] = str(layout.recordings_root)
+    # The Douyu statistics collector predates the desktop runtime and reads
+    # RECORDINGS_DIR/BRIDGE_CONFIG directly. Keep both contracts pointed at
+    # the same writable Windows data layout.
+    os.environ["RECORDINGS_DIR"] = str(layout.recordings_root)
+    os.environ["BRIDGE_CONFIG"] = str(layout.data_root / "bridge.config.json")
     os.environ["POTATOFLOW_EXPORTS_DIR"] = str(layout.exports_root)
     os.environ["POTATOFLOW_RUNTIME_MODE"] = layout.mode
     os.environ["PATH"] = str(layout.bin_root) + os.pathsep + os.environ.get("PATH", "")

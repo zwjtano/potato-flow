@@ -58,6 +58,7 @@ datas = [
 ] + curl_datas
 hiddenimports = [
     "app", "bridge", "danmaku_pipeline", "Cryptodome", "curl_cffi",
+    "modules.douyu_stats_daemon",
     "googleapiclient.discovery", "PIL", "pystray", "webview",
     "webview.platforms.edgechromium", "qrcode.image.pil",
 ] + collect_submodules('yt_dlp') + curl_hiddenimports

@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -82,6 +83,14 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
                 str((root / "recordings").resolve()),
             )
             self.assertEqual(
+                os.environ["RECORDINGS_DIR"],
+                str((root / "recordings").resolve()),
+            )
+            self.assertEqual(
+                os.environ["BRIDGE_CONFIG"],
+                str((root / "data" / "bridge.config.json").resolve()),
+            )
+            self.assertEqual(
                 os.environ["RECORDER_BIN"],
                 str((root / "bin" / "biliup.exe").resolve()),
             )
@@ -99,6 +108,8 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn("build_portable", builder)
         self.assertIn("runtime-manifest.json", builder)
         self.assertIn('SERVER_ONLY_FLAG = "--server-only"', launcher)
+        self.assertIn('INTERNAL_DOUYU_STATS_FLAG = "--potatoflow-internal-douyu-stats"', launcher)
+        self.assertIn('"modules.douyu_stats_daemon"', builder)
         self.assertIn("POTATOFLOW_DATA_DIR", launcher)
         self.assertIn("windows-tests:", application_workflow)
         self.assertIn("./ops/test-all.ps1", application_workflow)
@@ -140,6 +151,42 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn('CHECK_DESKTOP_ASSETS_FLAG = "--check-desktop-assets"', launcher)
         with namespace["load_tray_icon"]() as icon:
             self.assertEqual(icon.size, (128, 128))
+
+    def test_desktop_starts_stats_collector_with_shared_runtime_environment(self):
+        launcher_path = APP_ROOT / "build-tools" / "setup_app.py"
+        namespace = {"__file__": str(launcher_path), "__name__": "setup_app_test"}
+        exec(compile(launcher_path.read_text(encoding="utf-8"), str(launcher_path), "exec"), namespace)
+
+        with tempfile.TemporaryDirectory() as temp:
+            data_root = Path(temp)
+            child_env = {"RECORDINGS_DIR": "C:/PotatoFlow/recordings"}
+            fake_process = mock.Mock()
+            with mock.patch.object(subprocess, "Popen", return_value=fake_process) as popen:
+                result = namespace["start_douyu_stats_process"](data_root, child_env, 123)
+
+            self.assertIs(result, fake_process)
+            popen.assert_called_once_with(
+                [sys.executable, namespace["INTERNAL_DOUYU_STATS_FLAG"]],
+                cwd=data_root,
+                env=child_env,
+                creationflags=123,
+                stdout=mock.ANY,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertTrue((data_root / "logs" / "douyu-stats.log").is_file())
+
+    def test_internal_stats_command_runs_bundled_collector(self):
+        launcher_path = APP_ROOT / "build-tools" / "setup_app.py"
+        namespace = {"__file__": str(launcher_path), "__name__": "setup_app_test"}
+        exec(compile(launcher_path.read_text(encoding="utf-8"), str(launcher_path), "exec"), namespace)
+
+        with mock.patch("modules.douyu_stats_daemon.run") as run:
+            result = namespace["run_internal_cli"](
+                [namespace["INTERNAL_DOUYU_STATS_FLAG"]]
+            )
+
+        self.assertEqual(result, 0)
+        run.assert_called_once_with()
 
     def test_desktop_shell_is_adaptive_and_supports_saved_theme(self):
         base = (APP_ROOT / "templates" / "base.html").read_text(encoding="utf-8")
