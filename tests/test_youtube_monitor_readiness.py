@@ -7,6 +7,28 @@ from tests.test_security_boundaries import app_module
 
 
 class YouTubeMonitorReadinessTests(unittest.TestCase):
+    def test_duplicate_manual_run_reuses_active_operation(self):
+        with app_module._MONITOR_RUN_LOCK:
+            app_module._MONITOR_RUN_OPERATIONS.clear()
+        with (
+            patch.object(
+                app_module.youtube_monitor,
+                "get_monitor_config",
+                return_value={"name": "monitor"},
+            ),
+            patch.object(app_module.threading, "Thread") as thread_class,
+        ):
+            first_id, _, first_error = app_module._start_monitor_run_operation(9)
+            second_id, _, second_error = app_module._start_monitor_run_operation(9)
+
+        self.assertIsNone(first_error)
+        self.assertIsNone(second_error)
+        self.assertEqual(first_id, second_id)
+        thread_class.assert_called_once()
+        thread_class.return_value.start.assert_called_once()
+        with app_module._MONITOR_RUN_LOCK:
+            app_module._MONITOR_RUN_OPERATIONS.clear()
+
     def test_missing_api_and_cookie_are_explicit(self):
         with app_module.app.test_request_context("/youtube_monitor"):
             with patch.object(app_module.youtube_monitor, "youtube", None):

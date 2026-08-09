@@ -9,6 +9,7 @@ import datetime
 from datetime import datetime, timedelta
 import socket
 import ssl
+import threading
 from typing import Optional, Dict, List, Any, Tuple
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -126,6 +127,8 @@ class YouTubeMonitor:
         self._last_fetch_had_errors = False
         self._api_proxy_enabled = False
         self._last_api_init_error: Optional[str] = None
+        self._run_locks_guard = threading.Lock()
+        self._run_locks: Dict[int, threading.Lock] = {}
         self._init_database()
         self._init_youtube_api()
         
@@ -276,6 +279,34 @@ class YouTubeMonitor:
                 cursor.execute("ALTER TABLE monitor_history ADD COLUMN video_type TEXT")
             except sqlite3.OperationalError:
                 pass
+
+            # 旧版允许同一配置重复写入同一视频。迁移时保留最早的
+            # 记录和已入队状态，然后用唯一索引作为跨线程的最后防线。
+            cursor.execute('''
+                UPDATE monitor_history
+                SET added_to_tasks = (
+                    SELECT MAX(duplicate.added_to_tasks)
+                    FROM monitor_history AS duplicate
+                    WHERE duplicate.config_id = monitor_history.config_id
+                      AND duplicate.video_id = monitor_history.video_id
+                )
+                WHERE id IN (
+                    SELECT MIN(id) FROM monitor_history
+                    GROUP BY config_id, video_id
+                )
+            ''')
+            cursor.execute('''
+                DELETE FROM monitor_history
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM monitor_history
+                    GROUP BY config_id, video_id
+                )
+            ''')
+            cursor.execute('''
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                ux_monitor_history_config_video
+                ON monitor_history(config_id, video_id)
+            ''')
             
             conn.commit()
         
@@ -808,6 +839,21 @@ class YouTubeMonitor:
             raise
     
     def run_monitor(self, config_id: int) -> Tuple[bool, str]:
+        """执行单个配置，同一配置在一个进程内只允许一次运行。"""
+        # 部分单元测试会用 __new__ 构造对象，因此保留惰性初始化。
+        if not hasattr(self, '_run_locks_guard'):
+            self._run_locks_guard = threading.Lock()
+            self._run_locks = {}
+        with self._run_locks_guard:
+            run_lock = self._run_locks.setdefault(int(config_id), threading.Lock())
+        if not run_lock.acquire(blocking=False):
+            return False, "该 YouTube 监控配置正在执行，请稍候"
+        try:
+            return self._run_monitor_once(config_id)
+        finally:
+            run_lock.release()
+
+    def _run_monitor_once(self, config_id: int) -> Tuple[bool, str]:
         """执行监控任务"""
         logger.info(f"开始执行监控任务，配置ID: {config_id}")
         
@@ -869,17 +915,27 @@ class YouTubeMonitor:
             
             for video in filtered_videos:
                 # 检查是否已经处理过
-                if not self._is_video_processed(video['id'], config_id):
+                if not self._is_video_processed(
+                    video['id'],
+                    config_id,
+                    require_added_to_tasks=auto_add_enabled,
+                ):
                     # 检查是否还能添加到任务队列
                     should_add_to_tasks = auto_add_enabled and added_count < max_add_to_tasks
                     
                     # 始终保存到历史记录，但是否添加到任务队列由auto_add_enabled控制
-                    self._save_video_history(video, config_id, auto_add_to_tasks=should_add_to_tasks)
+                    _history_saved, task_added = self._save_video_history(
+                        video,
+                        config_id,
+                        auto_add_to_tasks=should_add_to_tasks,
+                    )
                     processed_count += 1
                     
-                    if should_add_to_tasks:
+                    if should_add_to_tasks and task_added:
                         added_count += 1
                         logger.info(f"视频已添加到任务队列 ({added_count}/{max_add_to_tasks}): {video['title']}")
+                    elif should_add_to_tasks:
+                        logger.warning(f"视频保存到历史记录，但添加任务失败，下次将重试: {video['title']}")
                     else:
                         if auto_add_enabled:
                             logger.info(f"视频已保存到历史记录: {video['title']}")
@@ -1551,15 +1607,25 @@ class YouTubeMonitor:
         
         return hours * 3600 + minutes * 60 + seconds
     
-    def _is_video_processed(self, video_id, config_id):
+    def _is_video_processed(
+        self,
+        video_id,
+        config_id,
+        require_added_to_tasks=False,
+    ):
         """检查视频是否已经处理过"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                'SELECT id FROM monitor_history WHERE video_id = ? AND config_id = ?',
+                'SELECT added_to_tasks FROM monitor_history WHERE video_id = ? AND config_id = ?',
                 (video_id, config_id)
             )
-            return cursor.fetchone() is not None
+            row = cursor.fetchone()
+            if row is None:
+                return False
+            if require_added_to_tasks:
+                return bool(row[0])
+            return True
     
     def _save_video_history(self, video_info, config_id, auto_add_to_tasks=False):
         """保存视频到历史记录"""
@@ -1567,7 +1633,7 @@ class YouTubeMonitor:
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT INTO monitor_history (
+                INSERT OR IGNORE INTO monitor_history (
                     config_id, video_id, video_type, video_title, channel_title,
                     view_count, like_count, comment_count, duration,
                     published_at, added_to_tasks
@@ -1583,13 +1649,14 @@ class YouTubeMonitor:
                 video_info['comment_count'],
                 video_info['duration'],
                 video_info['published_at'],
-                1 if auto_add_to_tasks else 0
+                0
             ))
             
             conn.commit()
             logger.info(f"视频已保存到历史记录: {video_info['title']}")
             
             # 如果启用自动添加到任务队列，直接添加
+            task_added = False
             if auto_add_to_tasks:
                 monitor_config = self.get_monitor_config(config_id) or {}
                 task_id = self._add_video_to_tasks(
@@ -1603,6 +1670,10 @@ class YouTubeMonitor:
                         'UPDATE monitor_history SET added_to_tasks = 1 WHERE video_id = ? AND config_id = ?',
                         (video_info['id'], config_id)
                     )
+                    conn.commit()
+                    task_added = True
+
+            return cursor.rowcount > 0, task_added
     
     def _add_video_to_tasks(
         self,

@@ -4,6 +4,11 @@
 import os
 import json
 import logging
+import copy
+import functools
+import threading
+from pathlib import Path
+from .path_policy import atomic_write_text
 from .utils import get_app_subdir
 from .speech_pipeline_settings import (
     inject_speech_pipeline_defaults,
@@ -13,6 +18,16 @@ from .prompt_manager import get_default_config_entries as _get_prompt_default_en
 
 # 获取日志记录器
 logger = logging.getLogger('config_manager')
+
+_CONFIG_LOCK = threading.RLock()
+
+
+def _with_config_lock(func):
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        with _CONFIG_LOCK:
+            return func(*args, **kwargs)
+    return wrapped
 
 _YOUTUBE_DOWNLOAD_QUALITY_MODES = ('highest', 'manual')
 _YOUTUBE_DOWNLOAD_MAX_HEIGHT_VALUES = ('2160', '1440', '1080', '720', '480', '360')
@@ -308,6 +323,7 @@ def _prune_unknown_config_keys(config_data):
     return clean_config, removed_keys
 
 
+@_with_config_lock
 def load_config():
     """
     加载配置文件，如果不存在则创建默认配置
@@ -428,14 +444,24 @@ def load_config():
                         logger.info("已清理过期配置项: %s", ', '.join(sorted(removed_keys)))
                     save_config(config, config_path)
                 return config
-    except (json.JSONDecodeError, FileNotFoundError, PermissionError) as e:
+    except json.JSONDecodeError as e:
         logger.warning(f"读取配置文件时出错: {str(e)}")
+        logger.error("配置文件格式损坏，已保留原文件并临时使用默认配置")
+        return copy.deepcopy(DEFAULT_CONFIG)
+    except PermissionError as e:
+        logger.warning(f"读取配置文件时出错: {str(e)}")
+        return copy.deepcopy(DEFAULT_CONFIG)
+    except FileNotFoundError:
+        pass
     
     # 如果配置文件不存在或读取失败，创建默认配置
     logger.info("使用默认配置并创建配置文件")
-    save_config(DEFAULT_CONFIG, config_path)
-    return DEFAULT_CONFIG
+    default_config = copy.deepcopy(DEFAULT_CONFIG)
+    if not save_config(default_config, config_path):
+        logger.error("创建默认配置文件失败")
+    return default_config
 
+@_with_config_lock
 def save_config(config, config_path=None):
     """
     保存配置到文件
@@ -454,14 +480,15 @@ def save_config(config, config_path=None):
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     
     try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, ensure_ascii=False, indent=4)
+        payload = json.dumps(config, ensure_ascii=False, indent=4)
+        atomic_write_text(Path(config_path), payload, private=True)
         logger.info("配置已保存到文件")
         return True
     except Exception as e:
         logger.error(f"保存配置文件时出错: {str(e)}")
         return False
 
+@_with_config_lock
 def update_config(new_config):
     """
     更新配置
@@ -521,6 +548,17 @@ def update_config(new_config):
                 current_config[key] = normalize_youtube_download_max_height(new_config[key])
             elif key == 'LOGIN_SESSION_TIMEOUT_MINUTES':
                 current_config[key] = normalize_login_session_timeout_minutes(new_config[key])
+            elif key in ('LOG_CLEANUP_HOURS', 'DOWNLOAD_CLEANUP_HOURS'):
+                cleanup_hours = int(new_config[key])
+                maximum = 8760 if key == 'LOG_CLEANUP_HOURS' else 17520
+                if not 1 <= cleanup_hours <= maximum:
+                    raise ValueError(f'{key} 必须在 1 到 {maximum} 之间')
+                current_config[key] = cleanup_hours
+            elif key in ('LOG_CLEANUP_INTERVAL', 'DOWNLOAD_CLEANUP_INTERVAL'):
+                cleanup_interval = int(new_config[key])
+                if not 1 <= cleanup_interval <= 8760:
+                    raise ValueError(f'{key} 必须在 1 到 8760 之间')
+                current_config[key] = cleanup_interval
             elif key.endswith('_MODE') and key.startswith(('SUBTITLE_', 'METADATA_')):
                 # Prompt 中心模式值标准化
                 try:
@@ -534,10 +572,12 @@ def update_config(new_config):
     current_config, _ = _prune_unknown_config_keys(current_config)
 
     # 保存更新后的配置
-    save_config(current_config, config_path)
+    if not save_config(current_config, config_path):
+        raise OSError("保存配置文件失败")
     
     return current_config
 
+@_with_config_lock
 def reset_specific_config(keys):
     """
     重置指定的配置项为默认值
@@ -558,7 +598,8 @@ def reset_specific_config(keys):
             updated = True
             
     if updated:
-        save_config(current_config, config_path)
+        if not save_config(current_config, config_path):
+            raise OSError("保存配置文件失败")
         
     return current_config
 

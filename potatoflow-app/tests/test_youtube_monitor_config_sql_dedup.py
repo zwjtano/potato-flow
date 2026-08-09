@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from unittest.mock import patch
@@ -180,6 +181,110 @@ class YouTubeMonitorConfigSqlDedupTests(unittest.TestCase):
         self.assertEqual(config["schedule_type"], "manual")
         self.assertEqual(config["rate_limit_requests"], 100)
         self.assertEqual(config["video_types"], "video,short,live")
+
+    def test_failed_auto_add_stays_retryable_until_task_is_created(self):
+        video = {
+            "id": "retry-video",
+            "title": "retry title",
+            "channel_title": "channel",
+            "view_count": 1,
+            "like_count": 1,
+            "comment_count": 1,
+            "duration": "PT1M",
+            "published_at": "2026-08-09T00:00:00Z",
+        }
+        with (
+            patch.object(self.monitor, "get_monitor_config", return_value={}),
+            patch.object(self.monitor, "_add_video_to_tasks", return_value=None),
+        ):
+            _, task_added = self.monitor._save_video_history(video, 1, auto_add_to_tasks=True)
+
+        self.assertFalse(task_added)
+        self.assertFalse(
+            self.monitor._is_video_processed(
+                video["id"], 1, require_added_to_tasks=True
+            )
+        )
+
+        with (
+            patch.object(self.monitor, "get_monitor_config", return_value={}),
+            patch.object(self.monitor, "_add_video_to_tasks", return_value="task-id"),
+        ):
+            _, task_added = self.monitor._save_video_history(video, 1, auto_add_to_tasks=True)
+
+        self.assertTrue(task_added)
+        self.assertTrue(
+            self.monitor._is_video_processed(
+                video["id"], 1, require_added_to_tasks=True
+            )
+        )
+
+    def test_history_has_unique_config_video_index(self):
+        import sqlite3
+
+        with sqlite3.connect(self.monitor.db_path) as conn:
+            indexes = conn.execute("PRAGMA index_list(monitor_history)").fetchall()
+
+        self.assertTrue(any(row[1] == "ux_monitor_history_config_video" for row in indexes))
+
+    def test_database_migration_deduplicates_existing_history(self):
+        import sqlite3
+
+        os.remove(self.monitor.db_path)
+        with sqlite3.connect(self.monitor.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE monitor_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    config_id INTEGER,
+                    video_id TEXT NOT NULL,
+                    video_type TEXT,
+                    video_title TEXT,
+                    channel_title TEXT,
+                    view_count INTEGER,
+                    like_count INTEGER,
+                    comment_count INTEGER,
+                    duration TEXT,
+                    published_at TEXT,
+                    added_to_tasks BOOLEAN DEFAULT 0,
+                    run_time TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute(
+                "INSERT INTO monitor_history(config_id, video_id, added_to_tasks) VALUES (1, 'same', 0)"
+            )
+            conn.execute(
+                "INSERT INTO monitor_history(config_id, video_id, added_to_tasks) VALUES (1, 'same', 1)"
+            )
+
+        migrated = YouTubeMonitor()
+        with sqlite3.connect(migrated.db_path) as conn:
+            rows = conn.execute(
+                "SELECT added_to_tasks FROM monitor_history WHERE config_id = 1 AND video_id = 'same'"
+            ).fetchall()
+
+        self.assertEqual(rows, [(1,)])
+
+    def test_same_config_cannot_run_twice_concurrently(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_run(_config_id):
+            entered.set()
+            release.wait(timeout=2)
+            return True, "done"
+
+        first_result = []
+        with patch.object(self.monitor, "_run_monitor_once", side_effect=blocking_run):
+            thread = threading.Thread(target=lambda: first_result.append(self.monitor.run_monitor(7)))
+            thread.start()
+            self.assertTrue(entered.wait(timeout=1))
+            second = self.monitor.run_monitor(7)
+            release.set()
+            thread.join(timeout=2)
+
+        self.assertFalse(second[0])
+        self.assertIn("正在执行", second[1])
+        self.assertEqual(first_result, [(True, "done")])
 
 
 if __name__ == "__main__":

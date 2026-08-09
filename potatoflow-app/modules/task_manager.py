@@ -1651,8 +1651,9 @@ def delete_task(task_id, delete_files=True):
         return False
 
     # 删除任务文件
-    if delete_files:
-        delete_task_files(task_id)
+    if delete_files and not delete_task_files(task_id):
+        logger.error(f"任务 {task_id} 的文件未能完整删除，已保留任务记录")
+        return False
     
     # 删除任务记录
     conn = get_db_connection()
@@ -1693,8 +1694,17 @@ def clear_all_tasks(delete_files=True):
         return False
 
     if delete_files:
+        failed_file_deletions = []
         for task in tasks:
-            delete_task_files(task['id'])
+            if not delete_task_files(task['id']):
+                failed_file_deletions.append(task['id'])
+        if failed_file_deletions:
+            logger.error(
+                "有 %s 个任务的文件删除失败，已取消清空数据库: %s",
+                len(failed_file_deletions),
+                failed_file_deletions,
+            )
+            return False
     
     # 清空任务表
     conn = get_db_connection()
@@ -1911,7 +1921,7 @@ def delete_task_files(task_id):
             logger.info(f"任务 {task_id} 的下载目录已删除: {task_dir_real}")
         except Exception as e:
             logger.error(f"删除任务 {task_id} 的下载目录失败: {str(e)}")
-            # 不直接返回False，尝试继续删除其他文件
+            return False
 
     # 封面图片现在保存在downloads目录中，无需单独删除
 
