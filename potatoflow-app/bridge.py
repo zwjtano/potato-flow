@@ -6403,6 +6403,37 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         and not multipart.get("bilibili")
     )
     existing_submission = multipart.get("bilibili") if multipart else None
+    explicit_review_hold = bool(
+        review_override.get("hold_before_cover")
+        and review_override.get("pre_upload_review_requested_at")
+    )
+    review_confirmed = bool(
+        review_override.get("pre_upload_review_confirmed_at")
+    )
+    raw_manual_review_fields = review_override.get("manual_review_fields")
+    manual_review_fields = (
+        {
+            str(field).strip()
+            for field in raw_manual_review_fields
+            if str(field).strip()
+        }
+        if isinstance(raw_manual_review_fields, list)
+        else None
+    )
+
+    def review_field_applies(field: str) -> bool:
+        """Apply only explicit/confirmed edits, never an implicit stale snapshot."""
+        if field not in review_override:
+            return False
+        if isinstance(existing_submission, dict) or explicit_review_hold or review_confirmed:
+            return True
+        if manual_review_fields is not None:
+            return field in manual_review_fields
+        # Compatibility for reviews saved before field provenance existed. The
+        # old save path accidentally set hold_before_cover without recording an
+        # explicit review request; that exact shape must not override a retry.
+        return not bool(review_override.get("hold_before_cover"))
+
     prior_bilibili = prior_result.get("bilibili")
     resuming_uploaded_part = bool(
         retry
@@ -6696,10 +6727,12 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         )
         manual_review_metadata_ready = bool(
             retry
+            and review_field_applies("title")
             and str(review_override.get("title") or "").strip()
-            and "description" in review_override
+            and review_field_applies("description")
+            and review_field_applies("partition_id")
             and str(review_override.get("partition_id") or "").strip().isdigit()
-            and not review_override.get("hold_before_cover")
+            and not explicit_review_hold
         )
         reuse_ai = bool(
             retry
@@ -6863,8 +6896,11 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 not dry_run
                 and not existing_submission
                 and not isinstance(prior_result.get("bilibili"), dict)
-                and not str(review_override.get("title") or "").strip()
-                and not review_override.get("hold_before_cover")
+                and not (
+                    review_field_applies("title")
+                    and str(review_override.get("title") or "").strip()
+                )
+                and not explicit_review_hold
                 and (
                     title_topic_is_fallback
                     or recording_title_topic_is_vague(ai_topic)
@@ -6943,8 +6979,11 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             not dry_run
             and not existing_submission
             and not isinstance(prior_result.get("bilibili"), dict)
-            and not str(review_override.get("title") or "").strip()
-            and not review_override.get("hold_before_cover")
+            and not (
+                review_field_applies("title")
+                and str(review_override.get("title") or "").strip()
+            )
+            and not explicit_review_hold
             and (
                 post_filter_title_is_fallback
                 or recording_title_topic_is_vague(ai_topic)
@@ -6975,17 +7014,24 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 metadata_automation = dict(multipart["metadata_automation"])
                 ai_details.update(metadata_automation)
 
-        if review_override:
+        applied_review_fields: list[str] = []
+        if review_field_applies("title"):
             title = str(review_override.get("title") or title).strip()
+            applied_review_fields.append("title")
+        if review_field_applies("description"):
             description = strip_live_stats_from_description(
                 str(review_override.get("description") or description),
                 stats_text,
             )
             part_description = description
-            override_tags = review_override.get("tags")
-            if isinstance(override_tags, list):
-                tags = dedupe_recording_tags(override_tags, limit=6)
+            applied_review_fields.append("description")
+        override_tags = review_override.get("tags")
+        if review_field_applies("tags") and isinstance(override_tags, list):
+            tags = dedupe_recording_tags(override_tags, limit=6)
+            applied_review_fields.append("tags")
+        if review_field_applies("partition_id"):
             partition = str(review_override.get("partition_id") or partition).strip()
+            applied_review_fields.append("partition_id")
 
         if danmaku_burned_for_upload:
             title = recording_danmaku_edition_title(title)
@@ -7047,9 +7093,10 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             "selected_partition_id": partition or None,
         })
 
-        if review_override:
+        if applied_review_fields:
             ai_details.update({
                 "manual_review_applied": True,
+                "manual_review_applied_fields": applied_review_fields,
                 "manual_review_updated_at": review_override.get("updated_at"),
             })
         ai_was_used = bool(
@@ -7195,7 +7242,11 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         def pause_for_review_if_requested() -> bool:
             """Honor a durable review request at every external-side-effect boundary."""
             latest_review_override = store.review_override(key)
-            if dry_run or not latest_review_override.get("hold_before_cover"):
+            latest_explicit_hold = bool(
+                latest_review_override.get("hold_before_cover")
+                and latest_review_override.get("pre_upload_review_requested_at")
+            )
+            if dry_run or not latest_explicit_hold:
                 return False
             paused_result = store.results(key)
             paused_result.update({

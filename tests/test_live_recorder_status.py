@@ -216,6 +216,61 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(result["hold_before_cover"])
         store.assert_called_once_with("d" * 64, result)
 
+    def test_saving_failed_review_does_not_implicitly_pause_future_retry(self):
+        manager = LiveRecorderManager()
+        job = {
+            "status": "failed",
+            "bvid": "",
+            "record_only": False,
+            "title": "直播间回退标题",
+            "description": "已有简介",
+            "tags": ["录播"],
+            "partition_id": "171",
+            "review_override": {},
+        }
+        with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+            manager,
+            "_store_pipeline_review_override",
+        ) as store:
+            result = manager.save_pipeline_review(
+                "e" * 64,
+                title="直播间回退标题",
+                description="已有简介",
+                tags=["录播"],
+                partition_id="171",
+            )
+
+        self.assertFalse(result["hold_before_cover"])
+        self.assertEqual(result["manual_review_fields"], [])
+        store.assert_called_once_with("e" * 64, result)
+
+    def test_saving_changed_title_records_only_explicitly_edited_field(self):
+        manager = LiveRecorderManager()
+        job = {
+            "status": "failed",
+            "bvid": "",
+            "record_only": False,
+            "title": "直播间回退标题",
+            "description": "已有简介",
+            "tags": ["录播"],
+            "partition_id": "171",
+            "review_override": {},
+        }
+        with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+            manager,
+            "_store_pipeline_review_override",
+        ):
+            result = manager.save_pipeline_review(
+                "f" * 64,
+                title="人工修改标题",
+                description="已有简介",
+                tags=["录播"],
+                partition_id="171",
+            )
+
+        self.assertFalse(result["hold_before_cover"])
+        self.assertEqual(result["manual_review_fields"], ["title"])
+
     def test_pre_upload_review_rejects_cover_generation(self):
         manager = LiveRecorderManager()
         job = {

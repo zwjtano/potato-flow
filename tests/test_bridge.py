@@ -2959,6 +2959,7 @@ class BridgeTests(unittest.TestCase):
             key = bridge.fingerprint(video)
             store.save_review_override(key, {
                 "hold_before_cover": True,
+                "pre_upload_review_requested_at": "2026-08-02T12:00:00+00:00",
                 "updated_at": "2026-08-02T12:00:00+00:00",
             })
 
