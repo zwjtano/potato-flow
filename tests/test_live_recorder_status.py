@@ -1,8 +1,10 @@
+import concurrent.futures
 import json
 import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import closing
@@ -3874,6 +3876,53 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("message_overview", app_source)
         self.assertIn("https://member.bilibili.com/x/web/archives", uploader_source)
         self.assertIn("https://member.bilibili.com/x/vu/web/edit", uploader_source)
+
+    def test_archive_replacement_reservation_rejects_concurrent_duplicates(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.sqlite3"
+            barrier = threading.Barrier(2)
+
+            def reserve():
+                barrier.wait(timeout=2)
+                try:
+                    return manager._reserve_archive_replacement(
+                        account_id="main",
+                        bvid="BV1queue000",
+                        page_number=1,
+                        page_title="P1",
+                        file_id="video-id",
+                        video_name="burned.mp4",
+                        video_path=str(Path(temp) / "burned.mp4"),
+                    )
+                except RecorderConfigError as exc:
+                    return exc
+
+            with mock.patch.object(
+                manager,
+                "_pipeline_state_path",
+                return_value=state_path,
+            ):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    results = list(pool.map(lambda _item: reserve(), range(2)))
+
+            successful = [item for item in results if isinstance(item, str)]
+            rejected = [item for item in results if isinstance(item, RecorderConfigError)]
+            self.assertEqual(len(successful), 1)
+            self.assertEqual(len(rejected), 1)
+            with closing(sqlite3.connect(state_path)) as db:
+                count = db.execute(
+                    "SELECT COUNT(*) FROM bilibili_source_replacements"
+                ).fetchone()[0]
+            self.assertEqual(count, 1)
+
+    def test_settings_exposes_the_real_single_upload_queue_limit(self):
+        settings = (APP_ROOT / "templates" / "settings.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('name="MAX_CONCURRENT_UPLOADS" value="1"', settings)
+        self.assertIn('min="1" max="1" readonly', settings)
+        self.assertIn("普通投稿、录播投稿、换源和永久删除共用全局串行队列", settings)
 
     def test_recording_stage_order_matches_real_burn_pipeline(self):
         source = (APP_ROOT / "modules" / "live_recorder_manager.py").read_text(

@@ -201,6 +201,86 @@ class BilibiliUploadProgressTests(unittest.TestCase):
         self.assertEqual(statuses["two"], ["queued", "uploading"])
         self.assertTrue(all(result[0] for result in results))
 
+    def test_archive_deletion_waits_for_the_global_upload_queue(self):
+        upload_entered = threading.Event()
+        release_upload = threading.Event()
+        order = []
+        delete_statuses = []
+
+        def fake_upload(**_kwargs):
+            order.append("upload-start")
+            upload_entered.set()
+            self.assertTrue(release_upload.wait(timeout=2))
+            order.append("upload-end")
+            return True, {"bvid": "BV1queue000"}
+
+        class DeleteApi:
+            def __init__(self, **_kwargs):
+                pass
+
+            def update_headers(self, **_kwargs):
+                return self
+
+            def update_data(self, **_kwargs):
+                return self
+
+            async def request(self):
+                order.append("delete")
+                return {"code": 0}
+
+        with TemporaryDirectory() as temp_dir, patch.object(
+            bilibili_uploader,
+            "get_app_subdir",
+            return_value=temp_dir,
+        ), patch.object(
+            bilibili_uploader.BilibiliUploader,
+            "_upload_video_unlocked",
+            side_effect=fake_upload,
+        ), patch.object(
+            bilibili_uploader,
+            "configure_bilibili_runtime",
+        ), patch.object(
+            bilibili_uploader,
+            "load_credential_from_file",
+            return_value=_Credential(),
+        ), patch.object(
+            bilibili_uploader,
+            "validate_credential_remote",
+            return_value=(True, "ok"),
+        ), patch.object(
+            bilibili_uploader,
+            "Api",
+            DeleteApi,
+        ):
+            uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                upload_future = pool.submit(
+                    uploader.upload_video,
+                    video_file_path="video.flv",
+                    cover_file_path="cover.jpg",
+                    title="title",
+                    description="description",
+                    tags=[],
+                    partition_id=171,
+                )
+                self.assertTrue(upload_entered.wait(timeout=2))
+                delete_future = pool.submit(
+                    uploader.delete_archive,
+                    aid=123,
+                    bvid="BV1queue000",
+                    queue_status_callback=delete_statuses.append,
+                )
+                time.sleep(0.05)
+                self.assertFalse(delete_future.done())
+                release_upload.set()
+                upload_result = upload_future.result(timeout=2)
+                delete_result = delete_future.result(timeout=2)
+
+        self.assertTrue(upload_result[0])
+        self.assertTrue(delete_result[0])
+        self.assertEqual(order, ["upload-start", "upload-end", "delete"])
+        self.assertEqual(delete_statuses, ["queued", "uploading"])
+
 
 @unittest.skipIf(
     bilibili_uploader is None,

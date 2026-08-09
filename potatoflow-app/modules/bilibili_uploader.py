@@ -1020,46 +1020,55 @@ class BilibiliUploader:
         *,
         aid: int,
         bvid: str,
+        queue_status_callback: Optional[Callable[[str], None]] = None,
     ) -> Tuple[bool, Union[dict, str]]:
-        """Permanently delete one archive already verified as owned by this account."""
+        """Permanently delete one owned archive through the global mutation queue."""
         clean_bvid = str(bvid or "").strip()
         if int(aid or 0) <= 0:
             return False, "稿件缺少 aid，无法删除"
         if not re.fullmatch(r"(?i)BV[0-9A-Za-z]{8,20}", clean_bvid):
             return False, "BVID 格式无效"
+
+        def report_queue(status: str) -> None:
+            if queue_status_callback:
+                try:
+                    queue_status_callback(status)
+                except Exception:
+                    pass
+
         try:
-            configure_bilibili_runtime()
-            credential = load_credential_from_file(self.cookie_file)
-            credential_ok, credential_msg = validate_credential_remote(credential)
-            if not credential_ok:
-                return False, f"Bilibili登录态无效: {credential_msg}"
-
-            request_headers = {
-                **HEADERS,
-                "Origin": "https://member.bilibili.com",
-                "Referer": "https://member.bilibili.com/platform/upload-manager/article",
-            }
-
-            async def _delete():
-                return await (
-                    Api(
-                        url="https://member.bilibili.com/x/web/archive/delete",
-                        method="POST",
-                        verify=True,
-                        credential=credential,
+            lock_path = default_bilibili_upload_lock(get_app_subdir("temp"))
+            with bilibili_upload_slot(lock_path, report_queue):
+                configure_bilibili_runtime()
+                credential = load_credential_from_file(self.cookie_file)
+                credential_ok, credential_msg = validate_credential_remote(credential)
+                if not credential_ok:
+                    return False, f"Bilibili登录态无效: {credential_msg}"
+                request_headers = {
+                    **HEADERS,
+                    "Origin": "https://member.bilibili.com",
+                    "Referer": "https://member.bilibili.com/platform/upload-manager/article",
+                }
+                async def _delete():
+                    return await (
+                        Api(
+                            url="https://member.bilibili.com/x/web/archive/delete",
+                            method="POST",
+                            verify=True,
+                            credential=credential,
+                        )
+                        .update_headers(**request_headers)
+                        .update_data(aid=int(aid))
+                        .request()
                     )
-                    .update_headers(**request_headers)
-                    .update_data(aid=int(aid))
-                    .request()
-                )
 
-            try:
-                asyncio.run(_delete())
-            except RuntimeError as exc:
-                if "cannot be called from a running event loop" not in str(exc):
-                    raise
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(asyncio.run, _delete()).result()
+                try:
+                    asyncio.run(_delete())
+                except RuntimeError as exc:
+                    if "cannot be called from a running event loop" not in str(exc):
+                        raise
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(asyncio.run, _delete()).result()
             return True, {"aid": int(aid), "bvid": clean_bvid, "deleted": True}
         except Exception as exc:
             return False, f"删除 B站稿件失败: {_compact_exception_text(str(exc))}"
