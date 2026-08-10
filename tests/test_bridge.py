@@ -402,7 +402,10 @@ class BridgeTests(unittest.TestCase):
     def test_upload_pipeline_persists_duration_before_optional_ass_stage(self):
         source = Path(bridge.__file__).read_text(encoding="utf-8")
         self.assertIn('"video_duration_seconds": recording_duration_seconds', source)
-        self.assertIn('recording_duration_seconds = video_duration_seconds(', source)
+        self.assertIn(
+            'recording_duration_seconds = recording_effective_duration_seconds(',
+            source,
+        )
 
     @unittest.skip("removed cover behavior")
     def test_default_cover_prompt_requires_official_dota2_item_references(self):
@@ -2451,6 +2454,55 @@ class BridgeTests(unittest.TestCase):
                     db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0],
                     0,
                 )
+
+    def test_effective_recording_duration_caps_false_segment_duration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "主播_标题_2026-08-10_09-45.flv"
+            video.write_bytes(b"video")
+            finished_at = datetime(2026, 8, 10, 9, 53, 45).timestamp()
+            os.utime(video, (finished_at, finished_at))
+
+            with patch.object(
+                bridge,
+                "video_duration_seconds",
+                return_value=3600.0,
+            ):
+                duration = bridge.recording_effective_duration_seconds(video)
+
+            self.assertEqual(duration, 525.0)
+
+    def test_burn_reuse_uses_effective_recording_duration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "主播_标题_2026-08-10_09-45.flv"
+            burned = root / "主播_标题_2026-08-10_09-45.danmaku.mp4"
+            source.write_bytes(b"source")
+            burned.write_bytes(b"burned")
+            finished_at = datetime(2026, 8, 10, 9, 53, 45).timestamp()
+            os.utime(source, (finished_at, finished_at))
+            probe = types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({
+                    "streams": [{"codec_type": "video"}],
+                    "format": {"duration": "525.1"},
+                }),
+            )
+
+            with patch.object(
+                bridge.subprocess,
+                "run",
+                return_value=probe,
+            ), patch.object(
+                bridge,
+                "video_duration_seconds",
+                return_value=3600.0,
+            ):
+                valid, details = bridge.reusable_burned_video(burned, source)
+
+            self.assertTrue(valid)
+            self.assertTrue(details["burned_video_reuse_validated"])
+            self.assertEqual(details["source_video_duration_seconds"], 525.0)
 
     def test_danmaku_xml_falls_back_to_same_session_stop_timestamp(self):
         with tempfile.TemporaryDirectory() as temp:
