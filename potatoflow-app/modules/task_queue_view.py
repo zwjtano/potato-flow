@@ -144,6 +144,8 @@ def youtube_queue_bucket(task: dict) -> str:
 
 def recording_queue_bucket(job: dict) -> str:
     status = str(job.get("status") or "").strip().lower()
+    if job.get("ai_queued") or job.get("upload_queued"):
+        return "queued"
     if status in {"processing", "video_uploaded"}:
         return "active"
     if status == "failed":

@@ -3545,6 +3545,7 @@ class LiveRecorderManager:
                 None,
             )
             upload_queued = upload_stage.get("status") == "queued"
+            ai_queued = ai_stage.get("status") == "queued"
             stage_label = RECORDING_STAGE_LABELS.get(
                 str(failed_stage or active_stage or ""),
                 str(failed_stage or active_stage or "处理任务"),
@@ -3556,6 +3557,8 @@ class LiveRecorderManager:
                     f"等待投稿队列（第 "
                     f"{queued_upload_positions.get(row['fingerprint'], 1)} 位）"
                 )
+            elif ai_queued:
+                progress_label = "AI 简介排队中"
             elif active_stage:
                 progress_label = f"正在{stage_label}"
             elif job_status == "paused":
@@ -3700,6 +3703,7 @@ class LiveRecorderManager:
                 "active_stage": active_stage,
                 "upload_queued": upload_queued,
                 "upload_queue_position": queued_upload_positions.get(row["fingerprint"]),
+                "ai_queued": ai_queued,
                 "upload_progress": upload_progress,
                 "upload_progress_text": upload_progress_text,
                 "processing_duration_text": processing_duration_text,

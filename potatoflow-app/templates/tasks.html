@@ -228,7 +228,9 @@
                                 {% endif %}
                             </td>
                             <td class="text-center" data-recording-status>
-                                {% if job.status == 'completed' %}
+                                {% if job.ai_queued %}
+                                <span class="badge rounded-pill text-bg-warning">AI 简介排队中</span>
+                                {% elif job.status == 'completed' %}
                                 <span class="badge rounded-pill text-bg-success">已完成</span>
                                 {% elif job.status == 'failed' %}
                                 <span class="badge rounded-pill text-bg-danger">{{ '本地处理失败' if job.record_only else '投稿失败 · 待人工审核' }}</span>
@@ -344,7 +346,8 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <span data-recording-status>{% if job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
+                        <span data-recording-status>{% if job.ai_queued %}<span class="badge rounded-pill text-bg-warning">AI 简介排队中</span>
+                        {% elif job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
                         {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-danger">{{ '本地处理失败' if job.record_only else '投稿失败 · 待人工审核' }}</span>
                         {% elif job.status == 'dry_run' %}<span class="badge rounded-pill text-bg-warning">待投稿</span>
                         {% elif job.status == 'video_uploaded' %}<span class="badge rounded-pill text-bg-info">导入弹幕中</span>
@@ -2302,6 +2305,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
 
     function recordingStatusMarkup(job) {
         const status = String(job?.status || 'processing');
+        if (job?.ai_queued) return '<span class="badge rounded-pill text-bg-warning">AI 简介排队中</span>';
         if (status === 'completed') return '<span class="badge rounded-pill text-bg-success">已完成</span>';
         if (status === 'failed') {
             return `<span class="badge rounded-pill text-bg-danger">${job?.record_only ? '本地处理失败' : '投稿失败 · 待人工审核'}</span>`;

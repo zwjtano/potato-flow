@@ -104,6 +104,16 @@ class TaskQueueViewTests(unittest.TestCase):
             "failed",
         )
 
+    def test_recording_ai_queue_is_reported_as_queued(self):
+        self.assertEqual(
+            recording_queue_bucket({"status": "processing", "ai_queued": True}),
+            "queued",
+        )
+        self.assertEqual(
+            recording_queue_bucket({"status": "processing", "ai_queued": False}),
+            "active",
+        )
+
     def test_summary_combines_both_sources_without_double_counting(self):
         summary = build_queue_summary(
             [
