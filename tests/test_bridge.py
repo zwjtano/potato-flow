@@ -4641,6 +4641,104 @@ class BridgeTests(unittest.TestCase):
             "448014",
         )
 
+    def test_guomin_dajiuge_s105_participants_are_room_scoped(self):
+        identities = bridge.recording_room_participant_identity_map("国民大舅哥")
+
+        self.assertEqual(len(identities), 93)
+        by_name = {item["name"]: item for item in identities}
+        self.assertEqual(by_name["小欣欣7v7"]["douyu_room_id"], "12174524")
+        self.assertIn("小欣欣", by_name["小欣欣7v7"]["aliases"])
+        self.assertEqual(by_name["蛋饼pp"]["douyu_room_id"], "12543616")
+        self.assertIn("蛋饼", by_name["蛋饼pp"]["aliases"])
+        self.assertIn("小胖", by_name["徐不快乐"]["aliases"])
+        self.assertIn("栗子", by_name["是个好栗子"]["aliases"])
+        self.assertIn("瑶瑶", by_name["一凹瑶wa"]["aliases"])
+        self.assertIn("七安", by_name["TiAmo七安"]["aliases"])
+        self.assertIn("北极星", by_name["北极昕"]["aliases"])
+        self.assertEqual(
+            bridge.recording_room_participant_identity_map("YYF"),
+            [],
+        )
+
+    def test_guomin_dajiuge_guest_alias_prefers_current_activity_room(self):
+        guests = bridge.recording_cover_guest_candidates(
+            "国民大舅哥",
+            "蛋饼和暖妹进入下一轮，小欣欣也来集合",
+        )
+
+        self.assertEqual(
+            [(guest["name"], guest["mentioned_as"]) for guest in guests],
+            [
+                ("蛋饼pp", "蛋饼"),
+                ("暖妹QWQ", "暖妹"),
+                ("小欣欣7v7", "小欣欣"),
+            ],
+        )
+        self.assertEqual(
+            bridge.recording_cover_guest_candidates("YYF", "暖妹和小欣欣来集合"),
+            [],
+        )
+
+    def test_guomin_dajiuge_title_nickname_avatar_rule_is_room_scoped(self):
+        title = "小胖携手栗子、瑶瑶拿下关键一局"
+
+        guests = bridge.recording_cover_guest_candidates("国民大舅哥", title)
+
+        self.assertEqual(
+            [(guest["name"], guest["mentioned_as"]) for guest in guests],
+            [
+                ("徐不快乐", "小胖"),
+                ("是个好栗子", "栗子"),
+                ("一凹瑶wa", "瑶瑶"),
+            ],
+        )
+        self.assertEqual(
+            bridge.recording_cover_guest_candidates("YYF", title),
+            [],
+        )
+
+    def test_guomin_dajiuge_251_title_uses_yixiweno_room(self):
+        guests = bridge.recording_cover_guest_candidates(
+            "国民大舅哥",
+            "251完成翻盘",
+        )
+
+        self.assertEqual(
+            guests,
+            [{"name": "易惜文O", "mentioned_as": "251"}],
+        )
+        self.assertEqual(
+            bridge.GUOMIN_DAJIUGE_S105_PARTICIPANT_ROOM_IDS["易惜文O"],
+            # 77251 is the public short room number; Douyu's search API
+            # resolves it to this canonical room ID for avatar retrieval.
+            "11518380",
+        )
+        self.assertEqual(
+            bridge.recording_cover_guest_candidates("YYF", "251完成翻盘"),
+            [],
+        )
+
+    def test_guomin_dajiuge_guest_avatar_uses_activity_room_id(self):
+        from modules import live_recorder_manager as manager_module
+
+        with patch.object(
+            manager_module.live_recorder_manager,
+            "_search_douyu_rooms",
+            return_value=[{
+                "room_id": "12174524",
+                "name": "小欣欣7v7",
+                "avatar_url": "https://apic.douyucdn.cn/xinxin.jpg",
+            }],
+        ) as search:
+            resolved = bridge.resolve_recording_guest_avatar(
+                {"name": "小欣欣7v7", "mentioned_as": "小欣欣"},
+                {"streamer_name": "国民大舅哥", "_recording_profiles": []},
+            )
+
+        self.assertEqual(resolved["room_id"], "12174524")
+        self.assertEqual(resolved["source"], "douyu_event_room")
+        search.assert_called_once_with("12174524", 1)
+
     def test_guest_avatar_uses_unique_exact_douyu_search_result(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         if str(app_root) not in sys.path:
@@ -5713,6 +5811,55 @@ class BridgeTests(unittest.TestCase):
             result = json.loads(row["result_json"])
             self.assertEqual(result["danmaku_count"], 1)
             self.assertTrue(Path(result["ass_path"]).is_file())
+
+    def test_ass_stage_completes_before_burn_stage_starts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "alice.mp4"
+            xml = root / "alice.xml"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            xml.write_text(
+                '<i><d p="1.0,1,25,16777215,0,0,1,0">测试弹幕</d></i>',
+                encoding="utf-8",
+            )
+            cover.write_bytes(b"cover")
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "cover_path": str(cover),
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": True,
+                "danmaku_burn_in": True,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+            key = bridge.fingerprint(video, xml)
+
+            def fail_after_checking_ass(*_args, **_kwargs):
+                self.assertEqual(store.stage_state(key, "ass")["status"], "completed")
+                raise RuntimeError("test burn failure")
+
+            with patch.object(
+                bridge,
+                "probe_video_size",
+                return_value=(1920, 1080),
+            ), patch.object(
+                bridge,
+                "recording_effective_duration_seconds",
+                return_value=60.0,
+            ), patch.object(
+                bridge,
+                "burn_ass",
+                side_effect=fail_after_checking_ass,
+            ):
+                self.assertFalse(
+                    bridge.upload_one(video, cfg, store, danmaku_xml=xml)
+                )
+
+            self.assertEqual(store.stage_state(key, "ass")["status"], "completed")
+            self.assertEqual(store.stage_state(key, "burn")["status"], "failed")
 
     def test_find_cover_retries_earlier_timestamps_for_truncated_recording(self):
         with tempfile.TemporaryDirectory() as temp:
