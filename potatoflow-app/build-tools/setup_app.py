@@ -187,6 +187,17 @@ def stop_child_process(process: subprocess.Popen | None, timeout: float = 10) ->
         process.wait(timeout=timeout)
 
 
+def _log_desktop_shutdown_warning(data_root: Path, step: str, exc: BaseException) -> None:
+    """Record best-effort shutdown failures without turning them into startup errors."""
+    try:
+        log_path = data_root / "logs" / "desktop-shutdown.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{step}: {type(exc).__name__}: {exc}\n")
+    except Exception:
+        pass
+
+
 def load_tray_icon():
     """Load the bundled tray icon completely before pystray uses it."""
     from PIL import Image
@@ -527,7 +538,15 @@ def run_desktop(data_root: Path) -> int:
         check_updates(manual=False)
 
     try:
-        webview.start(on_started, gui="edgechromium", debug=False)
+        try:
+            webview.start(on_started, gui="edgechromium", debug=False)
+        except BaseException as exc:
+            # pywebview/Edge may report a late native `kill` exception after
+            # window.destroy() has already completed. During an intentional
+            # exit this is a cleanup warning, not an application startup error.
+            if not (state["exiting"] or state["exit_requested"]):
+                raise
+            _log_desktop_shutdown_warning(data_root, "webview", exc)
     finally:
         state["exiting"] = True
         force_exit_timer = state.get("force_exit_timer")
@@ -541,15 +560,32 @@ def run_desktop(data_root: Path) -> int:
             try:
                 _http_json(f"{url}/api/desktop/shutdown", token=token, method="POST", timeout=5)
                 process.wait(timeout=15)
-            except Exception:
-                process.terminate()
-        stop_child_process(stats_process)
+            except Exception as exc:
+                _log_desktop_shutdown_warning(data_root, "server-graceful-stop", exc)
+                try:
+                    process.terminate()
+                except Exception as terminate_exc:
+                    _log_desktop_shutdown_warning(
+                        data_root,
+                        "server-terminate",
+                        terminate_exc,
+                    )
+        try:
+            stop_child_process(stats_process)
+        except Exception as exc:
+            _log_desktop_shutdown_warning(data_root, "stats-stop", exc)
         if process_job and os.name == "nt":
-            import ctypes
-            ctypes.windll.kernel32.CloseHandle(process_job)
+            try:
+                import ctypes
+                ctypes.windll.kernel32.CloseHandle(process_job)
+            except Exception as exc:
+                _log_desktop_shutdown_warning(data_root, "server-job-close", exc)
         if stats_process_job and os.name == "nt":
-            import ctypes
-            ctypes.windll.kernel32.CloseHandle(stats_process_job)
+            try:
+                import ctypes
+                ctypes.windll.kernel32.CloseHandle(stats_process_job)
+            except Exception as exc:
+                _log_desktop_shutdown_warning(data_root, "stats-job-close", exc)
     return 0
 
 

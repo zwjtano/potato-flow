@@ -2,6 +2,7 @@ import importlib.util
 import socket
 import unittest
 import urllib.error
+import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -147,6 +148,33 @@ def test_tray_exit_runs_off_the_pystray_callback_thread():
     assert "check_updates(manual=False)" in source
     assert 'getattr(subprocess, "CREATE_NO_WINDOW", 0)' in source
     assert source.index('name="desktop-exit"') < source.index("webview.start(")
+
+
+def test_expected_webview_shutdown_error_is_logged_instead_of_reclassified():
+    launcher = _load_launcher()
+    with tempfile.TemporaryDirectory() as temp:
+        data_root = Path(temp)
+        launcher._log_desktop_shutdown_warning(
+            data_root,
+            "webview",
+            SystemError("native kill returned an exception"),
+        )
+        text = (data_root / "logs" / "desktop-shutdown.log").read_text(
+            encoding="utf-8"
+        )
+
+    assert "webview: SystemError" in text
+    assert "native kill returned an exception" in text
+
+
+def test_intentional_exit_suppresses_late_native_webview_error():
+    source = (
+        Path(__file__).resolve().parents[1] / "build-tools" / "setup_app.py"
+    ).read_text(encoding="utf-8")
+
+    assert "except BaseException as exc:" in source
+    assert 'if not (state["exiting"] or state["exit_requested"]):' in source
+    assert '_log_desktop_shutdown_warning(data_root, "webview", exc)' in source
 
 
 def test_installer_stops_processes_and_never_deletes_documents_root():

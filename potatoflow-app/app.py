@@ -2249,9 +2249,13 @@ def live_recording_delete_room(room_id):
             flash('没有找到该直播间。', 'warning')
     except RecorderConfigError as exc:
         flash(str(exc), 'warning')
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, SystemError, subprocess.SubprocessError):
         app.logger.exception('删除直播间时发生系统错误：room_id=%s', room_id)
-        flash('删除直播间失败，请稍后重试；已有录播文件和上传任务未删除。', 'danger')
+        flash('删除直播间时录制进程清理失败，请重试；已有录播文件和上传任务未删除。', 'danger')
+    except Exception as exc:
+        app.logger.exception('删除直播间时发生未预期错误：room_id=%s', room_id)
+        detail = str(exc).strip() or type(exc).__name__
+        flash(f'删除直播间失败：{detail}', 'danger')
     return redirect(url_for('live_recording'))
 
 

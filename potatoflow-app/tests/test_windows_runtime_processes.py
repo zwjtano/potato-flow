@@ -203,6 +203,15 @@ def test_file_library_stays_in_live_room_without_sidebar_navigation():
     assert "bootstrap.Modal.getOrCreateInstance(filesModal).show()" in live_recording
 
 
+def test_windows_invalid_process_handles_are_treated_as_stopped():
+    source = Path(live_recorder_manager.__file__).read_text(encoding="utf-8")
+
+    assert "except (OSError, SystemError):" in source
+    assert "except (OSError, SystemError, subprocess.TimeoutExpired):" in source
+    assert "except (OSError, SystemError, TimeoutError):" in source
+    assert "except (OSError, SystemError, subprocess.SubprocessError) as exc:" in source
+
+
 def load_tests(_loader, _tests, _pattern):
     """Expose the module's function-style Windows checks to unittest discovery."""
     fixture_tests = {

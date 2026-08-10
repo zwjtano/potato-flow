@@ -1131,7 +1131,14 @@ class LiveRecorderManager:
             if time.time() - float(payload.get("updated_at") or 0) > 5:
                 return {}
             return payload
-        except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        except (
+            FileNotFoundError,
+            json.JSONDecodeError,
+            OSError,
+            SystemError,
+            TypeError,
+            ValueError,
+        ):
             return {}
 
     @staticmethod
@@ -2081,7 +2088,7 @@ class LiveRecorderManager:
                     return "pending"
                 self.stop()
                 self.start()
-            except (OSError, subprocess.SubprocessError) as exc:
+            except (OSError, SystemError, subprocess.SubprocessError) as exc:
                 raise RecorderConfigError(
                     "直播间已删除，但录制 worker 重载失败，请在录制页面重新启动录制引擎"
                 ) from exc
@@ -2575,8 +2582,14 @@ class LiveRecorderManager:
         _atomic_json(BRIDGE_CONFIG_PATH, config)
 
     def _pid(self) -> int | None:
-        if self._process is not None and self._process.poll() is None:
-            return self._process.pid
+        if self._process is not None:
+            try:
+                if self._process.poll() is None:
+                    return self._process.pid
+            except (OSError, SystemError):
+                # Windows may invalidate the native child handle before
+                # Python observes the worker exit.
+                self._process = None
         try:
             pid = int(PID_PATH.read_text(encoding="utf-8").strip())
             payload = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
@@ -2589,7 +2602,14 @@ class LiveRecorderManager:
             except PermissionError:
                 return pid
             return pid
-        except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        except (
+            FileNotFoundError,
+            json.JSONDecodeError,
+            OSError,
+            SystemError,
+            TypeError,
+            ValueError,
+        ):
             PID_PATH.unlink(missing_ok=True)
         return None
 
@@ -2688,7 +2708,7 @@ class LiveRecorderManager:
                         try:
                             self._process.send_signal(signal.CTRL_BREAK_EVENT)
                             self._process.wait(timeout=15)
-                        except (OSError, subprocess.TimeoutExpired):
+                        except (OSError, SystemError, subprocess.TimeoutExpired):
                             subprocess.run(
                                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                                 capture_output=True, text=True, timeout=15, check=False,
@@ -2701,12 +2721,12 @@ class LiveRecorderManager:
                             while time.monotonic() < deadline:
                                 try:
                                     os.kill(pid, 0)
-                                except OSError:
+                                except (OSError, SystemError):
                                     break
                                 time.sleep(.25)
                             else:
                                 raise TimeoutError
-                        except (OSError, TimeoutError):
+                        except (OSError, SystemError, TimeoutError):
                             subprocess.run(
                                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                                 capture_output=True, text=True, timeout=15, check=False,
