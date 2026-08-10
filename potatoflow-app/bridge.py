@@ -456,6 +456,199 @@ DOTA2_POKEMON_PARTICIPANT_ROOM_IDS: dict[str, str] = {
     "小琳达Linda": "6188551",
 }
 
+# 国民大舅哥房间 182102 的“224 团播 S10.5”活动页（pageId 58488）公开名单。
+# 这些身份只在该直播间生效，避免“蛋饼、茶茶、暖妹”等常见称呼污染其他录播。
+GUOMIN_DAJIUGE_S105_PARTICIPANT_ROOM_IDS: dict[str, str] = {
+    "国民大舅哥": "182102",
+    "苏阿灿户外": "3903192",
+    "宁波小骚骚0oO": "796449",
+    "暖妹QWQ": "8727436",
+    "易惜文O": "11518380",
+    "豌豆仙仙儿": "12282113",
+    "徐不快乐": "7300160",
+    "一凹瑶wa": "11492116",
+    "可可or": "12767534",
+    "蔓越莓很甜i": "11778421",
+    "大琳dalin呀": "1965453",
+    "小哈尼yo": "11328146",
+    "亿口甜筒": "12195609",
+    "李李超欧": "12485490",
+    "迪士尼o-O": "12157371",
+    "美伢Mya": "12870978",
+    "苏袜酱": "12866270",
+    "糯糯p": "12598324",
+    "电饭宝OoO": "9046690",
+    "小宁oni": "9388639",
+    "涂涂吃饱了": "10952213",
+    "一颗豆豆iu": "11969714",
+    "晚安小aa": "734648",
+    "安然Aqr": "12001938",
+    "兔小蕾丶": "12163259",
+    "林饭儿r": "12739646",
+    "小欣欣7v7": "12174524",
+    "小冉xoxo": "12869858",
+    "蘭七o": "2622942",
+    "羊驼tt": "12465482",
+    "小静choc": "11418893",
+    "醋醋呀i": "10399680",
+    "小田大王0125": "12846805",
+    "少施施": "12860332",
+    "ii车厘子": "12805686",
+    "程程程一榭": "12803643",
+    "雪糕123123": "12697879",
+    "是小晴ya": "12828296",
+    "ss不吃胡萝卜": "12063011",
+    "是个好栗子": "12500663",
+    "姜允真": "12281372",
+    "小卡比ovo": "12244277",
+    "梦泥泥": "12668179",
+    "TiAmo七安": "11747071",
+    "我是理理y": "9184805",
+    "汉堡mini": "12697808",
+    "一诺25O": "12869557",
+    "北漂小李": "11862656",
+    "绮漫-稚夏yo": "12618651",
+    "陈知含or": "12832995",
+    "玩蛇姐姐": "8458376",
+    "茶茶candy": "12064581",
+    "七七不熬夜a": "12118254",
+    "毛毛ma": "12875865",
+    "青允o": "12743086",
+    "啵啵发财咯": "7983087",
+    "淦饭团子": "12694712",
+    "蛋饼pp": "12543616",
+    "苏晚星ion": "12808349",
+    "牛肉嘎嘎酱": "12836474",
+    "北极昕": "11942374",
+    "麦小麦u": "12671327",
+    "小喵干脆面": "12742373",
+    "欧气小熊": "12555783",
+    "楚楚-": "12842732",
+    "姜江江江姜": "12858414",
+    "绮漫-忆幽幽幽幽": "12739861",
+    "拾壹大王": "12804285",
+    "Reign阿狸": "12878475",
+    "x绮漫-情系小怡": "12858541",
+    "下小雨TwT": "12867398",
+    "绮漫-小丸子": "12834168",
+    "uu鱼吖": "12865305",
+    "福福yeee": "12641916",
+    "小禾苗ovo": "12848608",
+    "婷婷Gain": "12845996",
+    "猫猫大王oi": "12828787",
+    "o姜柠o": "12192999",
+    "幸运小茵": "12332904",
+    "林三QWQ": "12803780",
+    "攸子柔": "12071020",
+    "S绮漫-小冻梨": "12828016",
+    "下周六ovo": "12867461",
+    "胡兔兔two": "12814148",
+    "江琪琦": "12817503",
+    "绮漫-茶冻": "12834114",
+    "帅气螺蛳粉大王": "12855348",
+    "乌梅酱酱0o0": "12842675",
+    "小怡Ying": "12859423",
+    "Super理理": "12877364",
+    "晴雨ooc": "12867077",
+    "小七火鸡面": "12863562",
+    "水牛户外": "9314167",
+}
+
+
+# Only aliases observed in room 182102's production XML or explicitly confirmed
+# by the user are admitted.
+# Do not derive aliases mechanically from decorated nicknames: stripping Latin
+# suffixes produced plausible-looking but unverified identities.
+GUOMIN_DAJIUGE_S105_CONFIRMED_ALIASES: dict[str, tuple[str, ...]] = {
+    "苏阿灿户外": ("苏阿灿",),
+    "宁波小骚骚0oO": ("宁波小骚骚",),
+    "暖妹QWQ": ("暖妹",),
+    "易惜文O": ("易惜文", "251"),
+    "徐不快乐": ("小胖",),
+    "一凹瑶wa": ("一凹瑶", "瑶瑶"),
+    "可可or": ("可可",),
+    "美伢Mya": ("美伢",),
+    "糯糯p": ("糯糯",),
+    "电饭宝OoO": ("电饭宝",),
+    "小宁oni": ("小宁",),
+    "晚安小aa": ("晚安小",),
+    "安然Aqr": ("安然",),
+    "林饭儿r": ("林饭儿",),
+    "小欣欣7v7": ("小欣欣",),
+    "小冉xoxo": ("小冉",),
+    "羊驼tt": ("羊驼",),
+    "小静choc": ("小静",),
+    "小田大王0125": ("小田大王",),
+    "雪糕123123": ("雪糕",),
+    "是小晴ya": ("是小晴",),
+    "小卡比ovo": ("小卡比",),
+    "汉堡mini": ("汉堡",),
+    "是个好栗子": ("栗子",),
+    "一诺25O": ("一诺",),
+    "绮漫-稚夏yo": ("稚夏",),
+    "陈知含or": ("陈知含",),
+    "TiAmo七安": ("七安",),
+    "茶茶candy": ("茶茶",),
+    "七七不熬夜a": ("七七不熬夜",),
+    "毛毛ma": ("毛毛",),
+    "青允o": ("青允",),
+    "北极昕": ("北极星",),
+    "蛋饼pp": ("蛋饼",),
+    "苏晚星ion": ("苏晚星",),
+    "麦小麦u": ("麦小麦",),
+    "楚楚-": ("楚楚",),
+    "绮漫-忆幽幽幽幽": ("忆幽幽幽幽",),
+    "下小雨TwT": ("下小雨",),
+    "绮漫-小丸子": ("小丸子",),
+    "福福yeee": ("福福",),
+    "小禾苗ovo": ("小禾苗",),
+    "婷婷Gain": ("婷婷",),
+    "猫猫大王oi": ("猫猫大王",),
+    "林三QWQ": ("林三",),
+    "S绮漫-小冻梨": ("小冻梨",),
+    "下周六ovo": ("下周六",),
+    "胡兔兔two": ("胡兔兔",),
+    "绮漫-茶冻": ("茶冻",),
+    "乌梅酱酱0o0": ("乌梅酱酱",),
+    "小怡Ying": ("小怡",),
+    "晴雨ooc": ("晴雨",),
+    "水牛户外": ("水牛",),
+}
+
+
+GUOMIN_DAJIUGE_S105_PARTICIPANT_ALIAS_GROUPS: tuple[
+    tuple[str, tuple[str, ...]], ...
+] = tuple(
+    (
+        name,
+        (name, *GUOMIN_DAJIUGE_S105_CONFIRMED_ALIASES.get(name, ())),
+    )
+    for name in GUOMIN_DAJIUGE_S105_PARTICIPANT_ROOM_IDS
+)
+
+
+def recording_room_participant_alias_groups(
+    streamer: str,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    if _compact_alias(streamer) == _compact_alias("国民大舅哥"):
+        return GUOMIN_DAJIUGE_S105_PARTICIPANT_ALIAS_GROUPS
+    return ()
+
+
+def recording_room_participant_identity_map(streamer: str) -> list[dict[str, Any]]:
+    """Expose authoritative room-scoped participant identities to metadata AI."""
+    groups = recording_room_participant_alias_groups(streamer)
+    if not groups:
+        return []
+    return [
+        {
+            "name": name,
+            "aliases": list(aliases),
+            "douyu_room_id": GUOMIN_DAJIUGE_S105_PARTICIPANT_ROOM_IDS[name],
+        }
+        for name, aliases in groups
+    ]
+
 
 def _all_dota2_streamer_alias_groups() -> tuple[
     tuple[str, tuple[str, ...]], ...
@@ -591,7 +784,11 @@ def recording_cover_guest_candidates(
     current_name = normalize_dota2_streamer_name(streamer)
     combined = "\n".join(str(value or "") for value in content)
     matches: list[tuple[int, int, str, str]] = []
-    for canonical_name, aliases in _all_dota2_streamer_alias_groups():
+    alias_groups = (
+        recording_room_participant_alias_groups(streamer)
+        + _all_dota2_streamer_alias_groups()
+    )
+    for canonical_name, aliases in alias_groups:
         if canonical_name == current_name:
             continue
         for alias in aliases:
@@ -649,7 +846,16 @@ def resolve_recording_guest_avatar(
         live_recorder_manager,
     )
 
-    event_room_id = DOTA2_POKEMON_PARTICIPANT_ROOM_IDS.get(guest_name)
+    current_streamer = str(cfg.get("streamer_name") or "").strip()
+    room_scoped_ids = (
+        GUOMIN_DAJIUGE_S105_PARTICIPANT_ROOM_IDS
+        if recording_room_participant_alias_groups(current_streamer)
+        else {}
+    )
+    event_room_id = (
+        room_scoped_ids.get(guest_name)
+        or DOTA2_POKEMON_PARTICIPANT_ROOM_IDS.get(guest_name)
+    )
     if event_room_id:
         try:
             event_rooms = live_recorder_manager._search_douyu_rooms(event_room_id, 1)
@@ -5431,6 +5637,9 @@ def _generate_danmaku_metadata_with_ai(
                     for alias in (canonical_name, *aliases)
                 )),
             },
+            "room_participant_identity_map": recording_room_participant_identity_map(
+                str(cfg.get("streamer_name") or "").strip()
+            ),
             "comment_count": len(comments),
             "sampled_comments": "",
             "sampled_comment_evidence": [],
@@ -5499,6 +5708,10 @@ preferred_description_name（例如谢彬/谢彬DD统一写“奶哥”，YYF默
 交替使用房间名、实名和多个外号。editorial_names 是同一主播可用的可靠名称，只能用于身份消歧，
 不得将这些别名当成多个人。昵称只改变公开文案，不改变人物身份和动作归属；不能因为昵称带有贬义或玩梗含义，
 就自行补充失误、情绪或结果。
+room_participant_identity_map 是当前直播间专属活动的可靠参赛昵称与斗鱼房间映射；非空时，弹幕中出现
+其中 name 或 aliases 可确定为对应参赛主播，并在文案中统一使用 name。该表只能证明人物身份，不能单独证明
+人物执行了某动作、与谁对阵或获得何种结果；动作和关系仍须由同一事件窗口的原始弹幕明确支持。不得把表外的
+弹幕用户名或相似称呼强行匹配为参赛主播。
 弹幕中确实提到的其他主播、选手或嘉宾可以写入，但必须有能明确指向该人物的原文证据；
 不得把弹幕用户名、模糊外号、英雄名或同名对象当成真实人物。涉及人物的句子必须写清“谁做了什么”。
 对每个关键事件按5W1H检查：When 由程序回到 XML 自动定位；event 尽量交代 Who（谁）、What（做了什么）、
@@ -5611,6 +5824,15 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
                     "text": str(comment.text),
                 }
                 for comment in batch
+            ]
+            batch_text = "\n".join(str(comment.text) for comment in batch)
+            batch_payload["room_participant_identity_map"] = [
+                identity
+                for identity in payload.get("room_participant_identity_map", [])
+                if any(
+                    _text_mentions_name(batch_text, alias)
+                    for alias in identity.get("aliases", [])
+                )
             ]
             batch_payload["batch_context"] = {
                 "index": batch_index,
@@ -6563,6 +6785,23 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     duration=float(cfg.get("danmaku_duration_seconds", 10)),
                     opacity=float(cfg.get("danmaku_opacity", 0.92)),
                 )
+                # ASS generation is complete as soon as the subtitle artifact
+                # exists. Burn-in is a separate, optionally queued stage and
+                # must not keep the ASS stage in a running state.
+                ass_details = danmaku_stage_details(video, danmaku_xml, comments, cfg)
+                ass_details.update({
+                    "danmaku_xml": str(danmaku_xml),
+                    "ass_path": str(ass_path),
+                    "burn_in": bool(cfg.get("danmaku_burn_in", False)),
+                })
+                store.stage(
+                    key,
+                    "ass",
+                    "warning"
+                    if ass_details["danmaku_integrity"] == "suspected_incomplete"
+                    else "completed",
+                    ass_details,
+                )
                 if bool(cfg.get("danmaku_burn_in", False)) and not dry_run:
                     current_stage = "burn"
                     burned_output = video.with_name(f"{video.stem}.danmaku.mp4")
@@ -6633,21 +6872,6 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                         ),
                         "burn_in": bool(cfg.get("danmaku_burn_in", False)),
                     })
-                current_stage = "ass"
-                ass_details = danmaku_stage_details(video, danmaku_xml, comments, cfg)
-                ass_details.update({
-                    "danmaku_xml": str(danmaku_xml),
-                    "ass_path": str(ass_path),
-                    "burn_in": bool(cfg.get("danmaku_burn_in", False)),
-                })
-                store.stage(
-                    key,
-                    "ass",
-                    "warning"
-                    if ass_details["danmaku_integrity"] == "suspected_incomplete"
-                    else "completed",
-                    ass_details,
-                )
             else:
                 print(f"WARN 弹幕 XML 中没有可用弹幕: {danmaku_xml}", file=sys.stderr)
                 ass_details = danmaku_stage_details(video, danmaku_xml, comments, cfg)
