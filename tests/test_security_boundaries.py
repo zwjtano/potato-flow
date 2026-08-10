@@ -116,7 +116,7 @@ class SecurityBoundaryTests(unittest.TestCase):
         with self.client.session_transaction() as session_state:
             flashes = session_state.get("_flashes", [])
         self.assertIn(
-            ("danger", "删除直播间失败，请稍后重试；已有录播文件和上传任务未删除。"),
+            ("danger", "删除直播间时录制进程清理失败，请重试；已有录播文件和上传任务未删除。"),
             flashes,
         )
 
