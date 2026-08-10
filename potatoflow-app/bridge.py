@@ -6017,18 +6017,31 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
         try:
             title_topic = ""
             for title_attempt in range(3):
-                with ai_metadata_request_slot(cfg):
-                    title_result = _request_json_object(
-                        client=ai_client,
-                        model_name=model_name,
-                        system_prompt=title_system_prompt,
-                        payload=title_payload,
-                        max_tokens=300,
-                        temperature=0.25,
-                        thinking_enabled=thinking_enabled,
-                        logger_obj=None,
-                        scene_name="recording_danmaku_title_from_description",
-                    )
+                diagnostics["title_generation_attempt_count"] = title_attempt + 1
+                diagnostics["title_generation_retry_count"] = title_attempt
+                try:
+                    with ai_metadata_request_slot(cfg):
+                        title_result = _request_json_object(
+                            client=ai_client,
+                            model_name=model_name,
+                            system_prompt=title_system_prompt,
+                            payload=title_payload,
+                            max_tokens=300,
+                            temperature=0.25,
+                            thinking_enabled=thinking_enabled,
+                            logger_obj=None,
+                            scene_name="recording_danmaku_title_from_description",
+                        )
+                except Exception as exc:
+                    title_error = safe_task_error_detail(exc)
+                    diagnostics.setdefault("title_generation_errors", []).append({
+                        "attempt": title_attempt + 1,
+                        "error": title_error,
+                    })
+                    diagnostics["title_topic_retry_reason"] = title_error
+                    if title_attempt >= 2:
+                        diagnostics["title_generation_error"] = title_error
+                    continue
                 candidate_topic = normalize_recording_title_filler(
                     str((title_result or {}).get("title_topic", "")).strip()
                 )
@@ -6142,6 +6155,9 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
                 title_payload["rejected_title_topic"] = candidate_topic
                 title_payload["rejected_title_reason"] = rejection_reason
                 diagnostics["title_topic_retry_reason"] = rejection_reason
+            diagnostics["title_generation_retries_exhausted"] = bool(
+                not title_generation_validated
+            )
             diagnostics["title_topic_source"] = "final_description"
         except Exception as exc:
             diagnostics["title_generation_error"] = str(exc)[:240]
@@ -6764,6 +6780,8 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         current_stage = "ai"
         ai_topic = ""
         ai_details: dict[str, Any] = {}
+        ai_generation_exhausted = False
+        ai_stage_error = ""
         prior_ai_details = (
             prior_ai_stage.get("details")
             if isinstance(prior_ai_stage.get("details"), dict)
@@ -6783,7 +6801,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             and (
                 manual_review_metadata_ready
                 or (
-                    prior_ai_stage.get("status") in {"completed", "skipped"}
+                    prior_ai_stage.get("status") in {"completed", "skipped", "warning"}
                     and prior_ai_details.get("title")
                     and (
                         prior_ai_details.get("description_body")
@@ -6865,27 +6883,92 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         else:
             timeline_details: dict[str, Any] = {}
             if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
-                queued_ai_details = {"comment_count": len(comments)}
-                store.stage(key, "ai", "queued", queued_ai_details)
+                base_ai_description = description
+                best_ai_description = description
+                description_attempts: list[dict[str, Any]] = []
+                candidate_failed = True
+                for attempt_index in range(3):
+                    attempt_number = attempt_index + 1
+                    queued_ai_details = {
+                        "comment_count": len(comments),
+                        "ai_generation_attempt": attempt_number,
+                        "ai_generation_max_attempts": 3,
+                    }
+                    store.stage(key, "ai", "queued", queued_ai_details)
 
-                def mark_ai_metadata_running(queue_wait_seconds: float) -> None:
-                    store.stage(key, "ai", "running", {
-                        **queued_ai_details,
-                        "ai_metadata_queue_wait_seconds": round(
-                            queue_wait_seconds,
-                            3,
+                    def mark_ai_metadata_running(
+                        queue_wait_seconds: float,
+                        details: dict[str, Any] = queued_ai_details,
+                    ) -> None:
+                        store.stage(key, "ai", "running", {
+                            **details,
+                            "ai_metadata_queue_wait_seconds": round(
+                                queue_wait_seconds,
+                                3,
+                            ),
+                        })
+
+                    attempt_timeline_details: dict[str, Any] = {}
+                    candidate_description, candidate_topic = (
+                        generate_danmaku_metadata_with_ai(
+                            comments,
+                            base_ai_description,
+                            cfg,
+                            verified_live_context,
+                            recording_duration_seconds,
+                            attempt_timeline_details,
+                            mark_ai_metadata_running,
+                        )
+                    )
+                    candidate_fallback = str(
+                        recording_metadata_values(video, cfg)["ai_topic"] or ""
+                    ).strip()
+                    candidate_failed = bool(
+                        not str(candidate_topic or "").strip()
+                        or recording_title_topic_is_vague(candidate_topic)
+                        or (
+                            candidate_fallback
+                            and _compact_alias(candidate_topic)
+                            == _compact_alias(candidate_fallback)
+                        )
+                    )
+                    description_failed = bool(
+                        attempt_timeline_details.get("ai_metadata_error")
+                    )
+                    description_attempts.append({
+                        "attempt": attempt_number,
+                        "succeeded": not description_failed,
+                        "error": safe_task_error_detail(
+                            attempt_timeline_details.get("ai_metadata_error")
                         ),
                     })
-
-                description, ai_topic = generate_danmaku_metadata_with_ai(
-                    comments,
-                    description,
-                    cfg,
-                    verified_live_context,
-                    recording_duration_seconds,
-                    timeline_details,
-                    mark_ai_metadata_running,
-                )
+                    if candidate_description and candidate_description != base_ai_description:
+                        best_ai_description = candidate_description
+                    description = candidate_description or best_ai_description
+                    ai_topic = candidate_topic
+                    timeline_details = attempt_timeline_details
+                    # Title generation already owns its own three-attempt loop.
+                    # Once the description phase succeeds, never regenerate it
+                    # merely because the independently generated title failed.
+                    if not description_failed:
+                        break
+                    if attempt_number < 3:
+                        print(
+                            f"WARN AI 简介生成失败，准备第 {attempt_number + 1}/3 次尝试",
+                            file=sys.stderr,
+                        )
+                if candidate_failed:
+                    description = best_ai_description
+                    ai_generation_exhausted = True
+                timeline_details.update({
+                    "description_generation_attempts": description_attempts,
+                    "description_generation_attempt_count": len(description_attempts),
+                    "description_generation_retry_count": max(0, len(description_attempts) - 1),
+                    "description_generation_retries_exhausted": bool(
+                        description_attempts
+                        and not description_attempts[-1]["succeeded"]
+                    ),
+                })
                 title, _, _ = render_metadata(video, cfg, ai_topic=ai_topic)
                 ai_details.update({
                     "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
@@ -6956,19 +7039,20 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     else ""
                 )
                 review_error = (
-                    f"AI 简介/标题生成失败：{metadata_error}；任务已终止，需要人工审核"
+                    f"AI 简介/标题生成失败：{metadata_error}；已自动重试 2 次，使用默认信息继续后续流程"
                     if metadata_error
-                    else "AI 标题为空、空泛或回退到直播间默认标题，任务已终止，需要人工审核"
+                    else "AI 标题为空、空泛或回退到直播间默认标题；已自动重试 2 次，使用默认信息继续后续流程"
                 )
                 ai_details.update({
-                    "manual_review_required": True,
-                    "manual_review_reason": review_error,
+                    "continued_with_fallback": True,
+                    "fallback_reason": review_error,
                     "title_topic": str(ai_topic or ""),
                     "fallback_title_topic": fallback_title_topic,
                     "title_topic_is_fallback": title_topic_is_fallback,
                 })
-                store.stage(key, "ai", "failed", ai_details, error=review_error)
-                raise RuntimeError(review_error)
+                ai_generation_exhausted = True
+                ai_stage_error = review_error
+                print(f"WARN {review_error}", file=sys.stderr)
 
         metadata_values_for_evidence = recording_metadata_values(video, cfg)
         if not locked_gameplay_verified and recording_cover_has_dota2_context(
@@ -7042,17 +7126,18 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 or recording_title_topic_is_vague(ai_topic)
             )
         ):
-            review_error = "标题经证据过滤后为空、空泛或回退到直播间默认标题，任务已终止，需要人工审核"
+            review_error = "标题经证据过滤后为空、空泛或回退到直播间默认标题，使用默认信息继续后续流程"
             ai_details.update({
-                "manual_review_required": True,
-                "manual_review_reason": review_error,
+                "continued_with_fallback": True,
+                "fallback_reason": review_error,
                 "title_topic": str(ai_topic or ""),
                 "fallback_title_topic": post_filter_fallback_topic,
                 "title_topic_is_fallback": post_filter_title_is_fallback,
                 "title_topic_rejected_after_evidence_filter": True,
             })
-            store.stage(key, "ai", "failed", ai_details, error=review_error)
-            raise RuntimeError(review_error)
+            ai_generation_exhausted = True
+            ai_stage_error = review_error
+            print(f"WARN {review_error}", file=sys.stderr)
 
         part_values = recording_metadata_values(video, cfg, ai_topic=ai_topic)
         part_topic = str(ai_topic or part_values["ai_topic"]).strip()
@@ -7159,8 +7244,18 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             or metadata_automation.get("partition_recommendation_enabled")
             or metadata_automation.get("metadata_automation_error")
         )
-        ai_stage_status = "completed" if ai_was_used else "skipped"
-        store.stage(key, "ai", ai_stage_status, ai_details)
+        ai_stage_status = (
+            "warning"
+            if ai_generation_exhausted
+            else ("completed" if ai_was_used else "skipped")
+        )
+        store.stage(
+            key,
+            "ai",
+            ai_stage_status,
+            ai_details,
+            error=ai_stage_error or None,
+        )
 
         app_root = resolve_app_root(cfg)
         if str(app_root) not in sys.path:
@@ -7290,7 +7385,13 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         # description is the exact value sent to Bilibili and shown in details.
         ai_details["description_body"] = description_body
         ai_details["description"] = description
-        store.stage(key, "ai", ai_stage_status, ai_details)
+        store.stage(
+            key,
+            "ai",
+            ai_stage_status,
+            ai_details,
+            error=ai_stage_error or None,
+        )
 
         def pause_for_review_if_requested() -> bool:
             """Honor a durable review request at every external-side-effect boundary."""

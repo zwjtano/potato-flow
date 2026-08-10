@@ -5786,7 +5786,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(result["partition_id"], override["partition_id"])
             self.assertEqual(result["cover"], str(manual_cover))
 
-    def test_default_ai_title_recommends_partition_before_manual_review(self):
+    def test_default_ai_title_does_not_regenerate_successful_description(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "主播_abcdef2026-07-23_09-00-00.flv"
@@ -5816,7 +5816,7 @@ class BridgeTests(unittest.TestCase):
                 bridge,
                 "generate_danmaku_metadata_with_ai",
                 return_value=("简介正文", "直播精彩内容"),
-            ), patch.object(
+            ) as generate_metadata, patch.object(
                 bridge,
                 "enhance_recording_metadata",
                 return_value=(
@@ -5843,22 +5843,30 @@ class BridgeTests(unittest.TestCase):
                 )
 
             ai_stage = store.stage_state(key, "ai")
-            self.assertEqual(ai_stage["status"], "failed")
-            self.assertTrue(ai_stage["details"]["manual_review_required"])
+            self.assertEqual(generate_metadata.call_count, 1)
+            self.assertEqual(ai_stage["status"], "warning")
+            self.assertTrue(ai_stage["details"]["continued_with_fallback"])
+            self.assertEqual(
+                ai_stage["details"]["description_generation_retry_count"],
+                0,
+            )
+            self.assertFalse(
+                ai_stage["details"]["description_generation_retries_exhausted"]
+            )
             self.assertEqual(ai_stage["details"]["recommended_partition_id"], "65")
             self.assertEqual(ai_stage["details"]["selected_partition_id"], "65")
             self.assertEqual(ai_stage["details"]["partition_source"], "ai")
             self.assertIn("默认标题", ai_stage["error"])
-            self.assertIn("人工审核", ai_stage["error"])
+            self.assertIn("继续后续流程", ai_stage["error"])
+            self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "warning")
             with store.connect() as db:
                 upload_status = db.execute(
                     "SELECT status FROM uploads WHERE fingerprint=?",
                     (key,),
                 ).fetchone()["status"]
             self.assertEqual(upload_status, "failed")
-            self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "pending")
 
-    def test_live_room_title_fallback_requires_manual_review(self):
+    def test_live_room_title_fallback_after_evidence_filter_continues_pipeline(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "yyfyyf_陪伴每一天_2026-08-01_23-07.flv"
@@ -5916,14 +5924,15 @@ class BridgeTests(unittest.TestCase):
                 )
 
             ai_stage = store.stage_state(key, "ai")
-            self.assertEqual(ai_stage["status"], "failed")
-            self.assertTrue(ai_stage["details"]["manual_review_required"])
+            self.assertEqual(ai_stage["status"], "warning")
+            self.assertTrue(ai_stage["details"]["continued_with_fallback"])
             self.assertTrue(ai_stage["details"]["title_topic_is_fallback"])
             self.assertEqual(ai_stage["details"]["fallback_title_topic"], "陪伴每一天")
             self.assertTrue(
                 ai_stage["details"]["title_topic_rejected_after_evidence_filter"]
             )
             self.assertIn("证据过滤后", ai_stage["error"])
+            self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "warning")
 
     def test_evidence_filter_recovers_title_from_verified_description(self):
         with tempfile.TemporaryDirectory() as temp:
