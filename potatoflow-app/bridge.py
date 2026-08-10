@@ -58,6 +58,34 @@ def _queue_lock_is_busy(exc: OSError) -> bool:
     )
 
 
+def safe_task_error_detail(error: Any, limit: int = 800) -> str:
+    """Keep actionable provider errors while redacting credentials."""
+    text = re.sub(r"\s+", " ", str(error or "")).strip()
+    if not text:
+        return "未知错误"
+    redactions = (
+        (r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+", r"\1[redacted]"),
+        (r"(?i)((?:api[_ -]?key|token|cookie)\s*[:=]\s*)[^\s,;]+", r"\1[redacted]"),
+        (r"\bsk-[A-Za-z0-9_-]{8,}\b", "[redacted]"),
+    )
+    for pattern, replacement in redactions:
+        text = re.sub(pattern, replacement, text)
+    return text[: max(80, int(limit))]
+
+
+def ai_batch_error_summary(errors: Any) -> str:
+    """Format every failed AI batch for task details without exposing secrets."""
+    items = errors if isinstance(errors, list) else []
+    summaries = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index")
+        prefix = f"批次 {index}" if index not in (None, "") else "批次"
+        summaries.append(f"{prefix}: {safe_task_error_detail(item.get('error'), 320)}")
+    return "；".join(summaries)[:800]
+
+
 def _hidden_subprocess_kwargs() -> dict[str, Any]:
     """Prevent FFmpeg/ffprobe helper consoles in the Windows desktop build."""
     if os.name != "nt":
@@ -5655,7 +5683,13 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
             ),
         })
         if not batch_results:
-            raise RuntimeError("全部弹幕分析批次均失败")
+            batch_error = ai_batch_error_summary(
+                diagnostics.get("discovery_batch_errors")
+            )
+            raise RuntimeError(
+                "全部弹幕分析批次均失败"
+                + (f"：{batch_error}" if batch_error else "")
+            )
         generated_description = "\n".join(
             str(result.get("description") or "").strip()
             for result in batch_results
@@ -6268,7 +6302,14 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
         })
         return final_description, title_topic
     except Exception as exc:
-        print(f"WARN 弹幕 AI 简介生成失败，使用原简介: {exc}", file=sys.stderr)
+        error_detail = safe_task_error_detail(exc)
+        diagnostics = timeline_diagnostics if timeline_diagnostics is not None else {}
+        diagnostics["ai_metadata_error"] = error_detail
+        diagnostics["ai_metadata_error_type"] = exc.__class__.__name__
+        print(
+            f"WARN 弹幕 AI 简介生成失败，使用原简介: {error_detail}",
+            file=sys.stderr,
+        )
         return base_description, ""
 
 
@@ -6909,7 +6950,16 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     or recording_title_topic_is_vague(ai_topic)
                 )
             ):
-                review_error = "AI 标题为空、空泛或回退到直播间默认标题，任务已终止，需要人工审核"
+                metadata_error = (
+                    safe_task_error_detail(timeline_details.get("ai_metadata_error"))
+                    if timeline_details.get("ai_metadata_error")
+                    else ""
+                )
+                review_error = (
+                    f"AI 简介/标题生成失败：{metadata_error}；任务已终止，需要人工审核"
+                    if metadata_error
+                    else "AI 标题为空、空泛或回退到直播间默认标题，任务已终止，需要人工审核"
+                )
                 ai_details.update({
                     "manual_review_required": True,
                     "manual_review_reason": review_error,

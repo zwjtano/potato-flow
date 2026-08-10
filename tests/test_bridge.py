@@ -214,6 +214,26 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(bridge._queue_lock_is_busy(OSError(13, "locked")))
         self.assertFalse(bridge._queue_lock_is_busy(OSError(5, "io failure")))
 
+    def test_task_error_detail_preserves_reason_and_redacts_credentials(self):
+        detail = bridge.safe_task_error_detail(
+            "HTTP 401 Invalid token; Authorization: Bearer secret-value; "
+            "api_key=sk-example-secret"
+        )
+
+        self.assertIn("HTTP 401 Invalid token", detail)
+        self.assertNotIn("secret-value", detail)
+        self.assertNotIn("sk-example-secret", detail)
+        self.assertIn("[redacted]", detail)
+
+    def test_ai_batch_error_summary_includes_each_failed_batch(self):
+        summary = bridge.ai_batch_error_summary([
+            {"index": 1, "error": "Your request was blocked."},
+            {"index": 2, "error": "502 Bad Gateway"},
+        ])
+
+        self.assertIn("批次 1: Your request was blocked.", summary)
+        self.assertIn("批次 2: 502 Bad Gateway", summary)
+
     def test_windows_bridge_media_helpers_never_open_a_console(self):
         expected = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with patch.object(bridge.os, "name", "nt"):

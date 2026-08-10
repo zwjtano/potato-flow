@@ -4251,8 +4251,15 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     r"(?m)^\d{1,2}:\d{2}(?::\d{2})?\s+\S",
                     generated_description,
                 ):
+                    actual_error = str(
+                        timeline_diagnostics.get("ai_metadata_error") or ""
+                    ).strip()
                     raise RecorderConfigError(
-                        "AI 未生成任何通过 XML 校验的可点击时间点，已保留原简介"
+                        (
+                            f"AI 简介生成失败：{actual_error}；已保留原简介"
+                            if actual_error
+                            else "AI 未生成任何通过 XML 校验的可点击时间点，已保留原简介"
+                        )
                     )
                 generated = {
                     "title_topic": grounded_title_topic,
