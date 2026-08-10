@@ -1029,7 +1029,7 @@ def reusable_burned_video(
         burned_duration = float((payload.get("format") or {}).get("duration") or 0)
     except (AttributeError, TypeError, ValueError):
         burned_duration = 0.0
-    source_duration = video_duration_seconds(source_video, ffprobe)
+    source_duration = recording_effective_duration_seconds(source_video, ffprobe)
     details.update({
         "burned_video_duration_seconds": burned_duration,
         "source_video_duration_seconds": source_duration,
@@ -2347,7 +2347,10 @@ def danmaku_stage_details(
 ) -> dict[str, Any]:
     """Describe XML coverage and flag implausibly sparse long recordings."""
     details = inspect_danmaku_xml(danmaku_xml, comments)
-    duration = video_duration_seconds(video, str(cfg.get("ffprobe", "ffprobe")))
+    duration = recording_effective_duration_seconds(
+        video,
+        str(cfg.get("ffprobe", "ffprobe")),
+    )
     duration_minutes = max(0.0, float(duration or 0.0) / 60.0)
     rate = len(comments) / duration_minutes if duration_minutes > 0 else 0.0
     minimum_duration = max(
@@ -6448,7 +6451,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             if isinstance(existing_submission, dict)
             else 1
         )
-    recording_duration_seconds = video_duration_seconds(
+    recording_duration_seconds = recording_effective_duration_seconds(
         video,
         str(cfg.get("ffprobe", "ffprobe")),
     )
@@ -8249,6 +8252,22 @@ def recording_wall_clock_upper_bound_seconds(path: Path) -> float | None:
     return seconds
 
 
+def recording_effective_duration_seconds(
+    path: Path,
+    ffprobe: str = "ffprobe",
+) -> float | None:
+    """Return recorder duration capped by its observed wall-clock lifetime."""
+    duration = video_duration_seconds(path, ffprobe)
+    wall_clock_duration = recording_wall_clock_upper_bound_seconds(path)
+    if wall_clock_duration is None:
+        return duration
+    return (
+        min(duration, wall_clock_duration)
+        if duration is not None
+        else wall_clock_duration
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     ensure_pipeline_process_group()
     configure_linux_ca_environment()
@@ -8295,17 +8314,10 @@ def main(argv: list[str] | None = None) -> int:
                     or 300
                 ),
             )
-            duration = video_duration_seconds(
+            duration = recording_effective_duration_seconds(
                 path,
                 str(record_cfg.get("ffprobe", "ffprobe")),
             )
-            wall_clock_duration = recording_wall_clock_upper_bound_seconds(path)
-            if wall_clock_duration is not None:
-                duration = (
-                    min(duration, wall_clock_duration)
-                    if duration is not None
-                    else wall_clock_duration
-                )
             if duration is not None and duration < minimum_duration:
                 print(
                     f"SKIP 视频时长 {duration:.1f} 秒，小于 {minimum_duration:.0f} 秒："
@@ -8606,14 +8618,10 @@ def main(argv: list[str] | None = None) -> int:
             300.0,
             float(cfg.get("MIN_RECORDING_UPLOAD_DURATION_SECONDS", 300) or 300),
         )
-        duration = video_duration_seconds(path, str(cfg.get("ffprobe", "ffprobe")))
-        wall_clock_duration = recording_wall_clock_upper_bound_seconds(path)
-        if wall_clock_duration is not None:
-            duration = (
-                min(duration, wall_clock_duration)
-                if duration is not None
-                else wall_clock_duration
-            )
+        duration = recording_effective_duration_seconds(
+            path,
+            str(cfg.get("ffprobe", "ffprobe")),
+        )
         if duration is not None and duration < minimum_duration:
             print(
                 f"SKIP 视频时长 {duration:.1f} 秒，小于 {minimum_duration:.0f} 秒："
