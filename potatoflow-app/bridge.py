@@ -256,6 +256,7 @@ DOTA2_STREAMER_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "蔡哥",
             "菜哥",
             "老陈",
+            "勇哥",
             "叫我老陈就好了",
         ),
     ),
