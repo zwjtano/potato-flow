@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -124,7 +125,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             task_dir = root / task_id
             task_dir.mkdir()
             (task_dir / "video.mp4").write_bytes(b"video")
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY)")
                 connection.execute("INSERT INTO tasks VALUES (?)", (task_id,))
             with (
@@ -139,7 +140,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             self.assertTrue(result)
             self.assertFalse(task_dir.exists())
             self.assertEqual(list(root.glob(".*.deleting-*")), [])
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 self.assertEqual(
                     connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0],
                     0,
@@ -211,7 +212,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
                 task_dir = root / task_id
                 task_dir.mkdir()
                 (task_dir / "video.mp4").write_bytes(b"video")
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute(
                     "CREATE TABLE tasks (id TEXT PRIMARY KEY, created_at TEXT)"
                 )
@@ -231,7 +232,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             self.assertTrue(result)
             self.assertTrue(all(not (root / task_id).exists() for task_id in task_ids))
             self.assertEqual(list(root.glob(".*.deleting-*")), [])
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 count = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
             self.assertEqual(count, 0)
             publish.assert_called_once_with("tasks_cleared", {})
@@ -271,7 +272,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             task_dir = root / task_id
             task_dir.mkdir()
             (task_dir / "video.mp4").write_bytes(b"video")
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute(
                     "CREATE TABLE tasks (id TEXT PRIMARY KEY, created_at TEXT)"
                 )
@@ -295,7 +296,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             self.assertTrue(result)
             self.assertFalse(task_dir.exists())
             self.assertEqual(list(root.glob(".*.deleting-*")), [])
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 count = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
             self.assertEqual(count, 0)
 
@@ -304,7 +305,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         new_id = "22222222-2222-2222-2222-222222222222"
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "tasks.db"
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY)")
                 connection.executemany(
                     "INSERT INTO tasks VALUES (?)",
@@ -319,7 +320,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
                 result = task_manager.clear_all_tasks(delete_files=False)
 
             self.assertTrue(result)
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 remaining = [row[0] for row in connection.execute("SELECT id FROM tasks")]
             self.assertEqual(remaining, [new_id])
 
@@ -486,7 +487,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
     def test_concurrent_terminal_updates_emit_one_notification(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "tasks.db"
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute(
                     """CREATE TABLE tasks (
                         id TEXT PRIMARY KEY,
@@ -525,7 +526,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
     def test_update_missing_task_returns_false(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "tasks.db"
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute(
                     """CREATE TABLE tasks (
                         id TEXT PRIMARY KEY,
@@ -547,7 +548,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
     def test_committed_update_stays_successful_when_event_listener_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "tasks.db"
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute(
                     "CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT, updated_at TEXT)"
                 )
@@ -566,7 +567,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
                 result = task_manager.update_task("task-id", status="downloading")
 
             self.assertTrue(result)
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 status = connection.execute(
                     "SELECT status FROM tasks WHERE id='task-id'"
                 ).fetchone()[0]
@@ -575,7 +576,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
     def test_expected_status_allows_only_one_concurrent_retry_claim(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "tasks.db"
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.execute(
                     """CREATE TABLE tasks (
                         id TEXT PRIMARY KEY,
@@ -614,7 +615,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
                     worker.join(timeout=5)
 
             self.assertCountEqual(results, [True, False])
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 status = connection.execute(
                     "SELECT status FROM tasks WHERE id='task-id'"
                 ).fetchone()[0]
@@ -780,7 +781,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
     def test_interrupted_recovery_sql_guard_preserves_new_live_lease(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "tasks.db"
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.executescript(
                     """
                     CREATE TABLE tasks (
@@ -809,7 +810,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
                 recovered = task_manager.recover_interrupted_tasks_to_pending()
 
             self.assertEqual(recovered, 0)
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 status = connection.execute(
                     "SELECT status FROM tasks WHERE id='task-id'"
                 ).fetchone()[0]
@@ -818,7 +819,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
     def test_stuck_reset_defaults_to_preserving_live_lease(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "tasks.db"
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 connection.executescript(
                     """
                     CREATE TABLE tasks (
@@ -848,7 +849,7 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
                 reset = task_manager.reset_stuck_tasks()
 
             self.assertEqual(reset, 0)
-            with sqlite3.connect(db_path) as connection:
+            with closing(sqlite3.connect(db_path)) as connection, connection:
                 status = connection.execute(
                     "SELECT status FROM tasks WHERE id='task-id'"
                 ).fetchone()[0]

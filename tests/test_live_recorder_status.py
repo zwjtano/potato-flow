@@ -2461,12 +2461,16 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 "atomic_write_text",
                 side_effect=OSError("disk full"),
             ), mock.patch.object(
-                recorder_module.os, "killpg"
+                recorder_module.os, "killpg", create=True
             ) as killpg:
                 with self.assertRaisesRegex(RecorderConfigError, "disk full"):
                     manager.start()
 
-            killpg.assert_called_once_with(43210, recorder_module.signal.SIGTERM)
+            if os.name == "nt":
+                process.terminate.assert_called_once_with()
+                killpg.assert_not_called()
+            else:
+                killpg.assert_called_once_with(43210, recorder_module.signal.SIGTERM)
             process.wait.assert_called_once_with(timeout=3)
             self.assertIsNone(manager._process)
             self.assertIsNone(manager._log_handle)
