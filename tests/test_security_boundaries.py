@@ -432,6 +432,35 @@ class SecurityBoundaryTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("不能超过 6000 字", result["final_detail"])
 
+    def test_ajax_settings_save_reports_thread_start_failure(self):
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(
+                app_module,
+                "load_config",
+                return_value={"password_protection_enabled": False},
+            ),
+            patch.object(app_module.threading, "Thread") as thread_class,
+        ):
+            thread_class.return_value.start.side_effect = RuntimeError(
+                "cannot start thread"
+            )
+            response = self.client.post(
+                "/settings",
+                data={"save_operation_id": "operation-id"},
+                headers={
+                    "X-CSRF-Token": "known-token",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.get_json()["success"])
+        progress = app_module._get_settings_save_progress("operation-id")
+        self.assertTrue(progress["done"])
+        self.assertFalse(progress["success"])
+
     def test_saving_recording_ai_prompt_syncs_bridge_config_without_restart(self):
         updated = {
             "RECORDINGS_PATH": "docker-data/recordings",

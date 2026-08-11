@@ -146,6 +146,32 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
                 )
             publish.assert_called_once_with("task_deleted", {"task_id": task_id})
 
+    def test_committed_delete_is_successful_even_if_staged_purge_is_deferred(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        connection = MagicMock()
+        connection.execute.return_value.rowcount = 1
+        with (
+            patch.object(task_manager, "get_task", return_value={"id": task_id}),
+            patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+            patch.object(
+                task_manager,
+                "_stage_task_directory_for_deletion",
+                return_value=("/original", "/staged"),
+            ),
+            patch.object(task_manager, "get_db_connection", return_value=connection),
+            patch.object(task_manager, "publish_task_event"),
+            patch.object(
+                task_manager,
+                "_purge_staged_task_directories",
+                return_value=False,
+            ) as purge,
+        ):
+            result = task_manager.delete_task(task_id, delete_files=True)
+
+        self.assertTrue(result)
+        connection.commit.assert_called_once()
+        purge.assert_called_once_with([("/original", "/staged")])
+
     def test_single_task_delete_restores_files_when_database_delete_fails(self):
         task_id = "11111111-1111-1111-1111-111111111111"
         task = {"id": task_id, "status": "failed"}
@@ -369,6 +395,9 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             patch.object(task_manager, "clear_task_cancel"),
             patch.object(task_manager.threading, "Thread") as thread,
         ):
+            thread.return_value.start.side_effect = RuntimeError(
+                "cannot start queue check"
+            )
             processor.process_task(
                 "task-id",
                 slot_already_acquired=True,
@@ -634,6 +663,25 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         rollback = update.call_args_list[-1].kwargs
         self.assertEqual(rollback["expected_status"], "ready_for_upload")
         self.assertEqual(rollback["status"], "failed")
+
+    def test_bulk_retry_counts_already_uploaded_task_as_reconciled(self):
+        task = {
+            "id": "task-id",
+            "status": "failed",
+            "upload_target": "bilibili",
+            "bilibili_upload_response": json.dumps({"bvid": "BV1done"}),
+        }
+        with (
+            patch.object(task_manager, "get_tasks_by_status", return_value=[task]),
+            patch.object(task_manager, "update_task", return_value=True) as update,
+            patch.object(task_manager, "start_task") as start,
+        ):
+            result = task_manager.retry_failed_tasks(config={})
+
+        self.assertEqual(result["scheduled"], 0)
+        self.assertEqual(result["reconciled"], 1)
+        self.assertEqual(update.call_args.kwargs["status"], "completed")
+        start.assert_not_called()
 
     def test_force_upload_returns_false_without_persisted_success(self):
         initial = {

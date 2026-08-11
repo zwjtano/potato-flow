@@ -271,6 +271,35 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(result["hold_before_cover"])
         self.assertEqual(result["manual_review_fields"], ["title"])
 
+    def test_continue_review_restores_hold_when_retry_launch_fails(self):
+        manager = LiveRecorderManager()
+        fingerprint = "8" * 64
+        previous = {
+            "title": "人工标题",
+            "hold_before_cover": True,
+            "updated_at": "before",
+        }
+        job = {
+            "id": fingerprint,
+            "status": "paused",
+            "bvid": "",
+            "review_override": previous,
+        }
+        with mock.patch.object(
+            manager, "pipeline_job", return_value=job
+        ), mock.patch.object(
+            manager, "_store_pipeline_review_override"
+        ) as store, mock.patch.object(
+            manager,
+            "retry_pipeline_job",
+            side_effect=OSError("spawn failed"),
+        ):
+            with self.assertRaisesRegex(RecorderConfigError, "审核状态已恢复"):
+                manager.continue_pipeline_ai_review(fingerprint)
+
+        self.assertFalse(store.call_args_list[0].args[1]["hold_before_cover"])
+        self.assertEqual(store.call_args_list[1].args, (fingerprint, previous))
+
     def test_review_cover_restores_previous_file_when_database_save_fails(self):
         manager = LiveRecorderManager()
         fingerprint = "1" * 64
@@ -4263,6 +4292,48 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn('name="MAX_CONCURRENT_UPLOADS" value="1"', settings)
         self.assertIn('min="1" max="1" readonly', settings)
         self.assertIn("普通投稿、录播投稿、换源和永久删除共用全局串行队列", settings)
+
+    def test_archive_replacement_marks_reservation_failed_when_thread_cannot_start(self):
+        manager = LiveRecorderManager()
+        video_path = Path("/data/recordings/burned.mp4")
+        with mock.patch.object(
+            manager,
+            "bilibili_archive_detail",
+            return_value={"pages": [{"title": "P1"}]},
+        ), mock.patch.object(
+            manager,
+            "recording_file",
+            return_value=(video_path, {"id": "video-id", "name": video_path.name}),
+        ), mock.patch.object(
+            manager,
+            "burned_replacement_videos",
+            return_value=[{"id": "video-id"}],
+        ), mock.patch.object(
+            manager,
+            "_reserve_archive_replacement",
+            return_value="replacement-id",
+        ), mock.patch.object(
+            manager,
+            "_update_archive_replacement",
+        ) as update, mock.patch.object(
+            recorder_module.threading,
+            "Thread",
+        ) as thread:
+            thread.return_value.start.side_effect = RuntimeError("cannot start thread")
+            with self.assertRaisesRegex(RecorderConfigError, "无法启动换源任务"):
+                manager.start_archive_source_replacement(
+                    account_id="main",
+                    bvid="BV1test",
+                    page_number=1,
+                    file_id="video-id",
+                    confirmation_bvid="BV1test",
+                )
+
+        update.assert_called_once_with(
+            "replacement-id",
+            status="failed",
+            error="换源线程启动失败：cannot start thread",
+        )
 
     def test_recording_stage_order_matches_real_burn_pipeline(self):
         source = (APP_ROOT / "modules" / "live_recorder_manager.py").read_text(

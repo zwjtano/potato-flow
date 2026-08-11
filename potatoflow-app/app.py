@@ -736,7 +736,18 @@ def _start_monitor_run_operation(config_id: int):
         daemon=True,
         name=f'youtube-monitor-run-{config_id}-{operation_id[:8]}'
     )
-    monitor_thread.start()
+    try:
+        monitor_thread.start()
+    except RuntimeError as exc:
+        message = f"无法启动监控后台任务：{exc}"
+        _finalize_monitor_run_operation(
+            operation_id,
+            config_id,
+            False,
+            message,
+            '后台线程未启动，请稍后重试。',
+        )
+        return operation_id, config, message
     return operation_id, config, None
 
 
@@ -1863,7 +1874,10 @@ def live_recording_job_review(fingerprint):
                     flash('标题、简介、标签、分区和两种封面已同步到 B站，视频与分P未改动。', 'success')
                 return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             if action in {'save_and_continue', 'save_and_retry'}:
-                live_recorder_manager.continue_pipeline_ai_review(fingerprint)
+                if not live_recorder_manager.continue_pipeline_ai_review(fingerprint):
+                    raise RecorderConfigError(
+                        '任务状态已变化，未能继续，请刷新后重试。'
+                    )
                 flash('人工修改已确认，现在才开始生成封面并继续投稿。', 'success')
                 return redirect(url_for('live_recording', job=fingerprint))
             flash('人工修改已保存。', 'success')
@@ -3767,8 +3781,16 @@ def retry_failed_tasks_route():
         result = retry_failed_tasks(cfg)
         if isinstance(result, dict):
             scheduled = result.get('scheduled', 0)
+            reconciled = result.get('reconciled', 0)
             total = result.get('total', 0)
-            flash(f'已重新调度 {scheduled}/{total} 个失败任务', 'success')
+            processed = scheduled + reconciled
+            detail = f'重新调度 {scheduled} 个'
+            if reconciled:
+                detail += f'，修正已实际上传成功 {reconciled} 个'
+            flash(
+                f'已处理 {processed}/{total} 个失败任务（{detail}）',
+                'warning' if result.get('failed_ids') else 'success',
+            )
         else:
             flash('重新调度失败，请查看日志', 'danger')
     except Exception as e:
@@ -4334,7 +4356,27 @@ def settings():
                 daemon=True,
                 name=f'settings-save-{operation_id[:8]}'
             )
-            save_thread.start()
+            try:
+                save_thread.start()
+            except RuntimeError as exc:
+                logger.error("无法启动设置保存后台线程：%s", exc)
+                result = {
+                    'success': False,
+                    'final_stage': 'failed',
+                    'final_message': '设置保存任务启动失败',
+                    'final_detail': '后台线程未启动，配置没有被修改，请稍后重试。',
+                    'final_level': 'danger',
+                    'messages': [{
+                        'category': 'danger',
+                        'text': '设置保存任务启动失败，请稍后重试。',
+                    }],
+                }
+                _finalize_settings_save_operation(operation_id, result)
+                return jsonify({
+                    'success': False,
+                    'messages': result['messages'],
+                    'operation_id': operation_id,
+                }), 503
             return jsonify({
                 'success': True,
                 'messages': [],
@@ -5628,8 +5670,9 @@ def youtube_monitor_run(config_id):
     """立即执行一次监控任务"""
     operation_id, config, error_message = _start_monitor_run_operation(config_id)
     if error_message:
+        status_code = 404 if not config else 503
         if _is_ajax_request():
-            return jsonify({'success': False, 'message': error_message}), 404
+            return jsonify({'success': False, 'message': error_message}), status_code
         flash(error_message, 'danger')
         return redirect(url_for('youtube_monitor_index'))
 

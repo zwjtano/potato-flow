@@ -4017,14 +4017,32 @@ class LiveRecorderManager:
         previous = job.get("review_override")
         previous = previous if isinstance(previous, dict) else {}
         now = datetime.now(timezone.utc).isoformat()
-        self._store_pipeline_review_override(fingerprint, {
+        released = {
             **previous,
             "hold_before_cover": False,
             "pre_upload_review_confirmed_at": now,
             "pending_published_update": False,
             "updated_at": now,
-        })
-        return self.retry_pipeline_job(fingerprint)
+        }
+        self._store_pipeline_review_override(fingerprint, released)
+        try:
+            started = self.retry_pipeline_job(fingerprint)
+        except Exception as exc:
+            try:
+                self._store_pipeline_review_override(fingerprint, previous)
+            except Exception as restore_exc:
+                logger.error(
+                    "继续录播任务失败后无法恢复审核暂停信息 %s: %s",
+                    fingerprint,
+                    restore_exc,
+                )
+            if isinstance(exc, RecorderConfigError):
+                raise
+            raise RecorderConfigError(f"继续录播任务失败，审核状态已恢复：{exc}") from exc
+        if not started:
+            self._store_pipeline_review_override(fingerprint, previous)
+            return False
+        return True
 
     def regenerate_published_metadata(
         self,
@@ -5406,11 +5424,20 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     error=str(exc),
                 )
 
-        threading.Thread(
+        worker_thread = threading.Thread(
             target=worker,
             name=f"potato-bilibili-replace-{replacement_id[:8]}",
             daemon=True,
-        ).start()
+        )
+        try:
+            worker_thread.start()
+        except RuntimeError as exc:
+            self._update_archive_replacement(
+                replacement_id,
+                status="failed",
+                error=f"换源线程启动失败：{exc}",
+            )
+            raise RecorderConfigError("无法启动换源任务，请稍后重试") from exc
         return {
             "id": replacement_id,
             "bvid": clean_bvid,

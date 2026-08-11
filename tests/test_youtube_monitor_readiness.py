@@ -29,6 +29,33 @@ class YouTubeMonitorReadinessTests(unittest.TestCase):
         with app_module._MONITOR_RUN_LOCK:
             app_module._MONITOR_RUN_OPERATIONS.clear()
 
+    def test_monitor_thread_start_failure_finishes_operation(self):
+        with app_module._MONITOR_RUN_LOCK:
+            app_module._MONITOR_RUN_OPERATIONS.clear()
+        config = {"id": 9, "name": "manual"}
+        with (
+            patch.object(
+                app_module.youtube_monitor,
+                "get_monitor_config",
+                return_value=config,
+            ),
+            patch.object(app_module.threading, "Thread") as thread_class,
+        ):
+            thread_class.return_value.start.side_effect = RuntimeError(
+                "cannot start thread"
+            )
+            operation_id, returned_config, error = (
+                app_module._start_monitor_run_operation(9)
+            )
+
+        self.assertEqual(returned_config, config)
+        self.assertIn("无法启动监控后台任务", error)
+        progress = app_module._get_monitor_run_progress(operation_id)
+        self.assertTrue(progress["done"])
+        self.assertFalse(progress["success"])
+        with app_module._MONITOR_RUN_LOCK:
+            app_module._MONITOR_RUN_OPERATIONS.clear()
+
     def test_missing_api_and_cookie_are_explicit(self):
         with app_module.app.test_request_context("/youtube_monitor"):
             with patch.object(app_module.youtube_monitor, "youtube", None):

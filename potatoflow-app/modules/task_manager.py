@@ -1788,9 +1788,11 @@ def delete_task(task_id, delete_files=True):
         publish_task_event('task_deleted', {'task_id': task_id})
     except Exception as exc:
         logger.warning("任务已删除，但实时事件发布失败：%s", exc)
-    purged = _purge_staged_task_directories(staged_directories)
+    # 数据库提交后任务已经完成删除。暂存目录清理失败只能作为后续清理
+    # 告警，不能把已提交的删除误报为失败并诱导用户重复操作。
+    _purge_staged_task_directories(staged_directories)
     clear_task_cancel(task_id, clear_flag=True)
-    return purged
+    return True
 
 def clear_all_tasks(delete_files=True):
     """Serialize bulk clearing against new worker scheduling."""
@@ -1870,10 +1872,10 @@ def _clear_all_tasks_locked(delete_files=True):
     except Exception as exc:
         logger.warning("任务已清空，但实时事件发布失败：%s", exc)
 
-    purged = _purge_staged_task_directories(staged_directories)
+    _purge_staged_task_directories(staged_directories)
     for task in tasks:
         clear_task_cancel(task['id'], clear_flag=True)
-    return purged
+    return True
 
 
 def _wait_for_task_inactive(task_id, timeout=PROCESS_TERMINATE_WAIT_SECONDS):
@@ -1997,6 +1999,7 @@ def retry_failed_tasks(config=None):
         return {
             'total': 0,
             'scheduled': 0,
+            'reconciled': 0,
             'failed_ids': []
         }
 
@@ -2009,6 +2012,7 @@ def retry_failed_tasks(config=None):
             config = {}
 
     scheduled = 0
+    reconciled = 0
     failed_ids = []
 
     for task in failed_tasks:
@@ -2018,14 +2022,15 @@ def retry_failed_tasks(config=None):
 
         # 失败状态兜底修复：目标平台其实都成功时，直接纠正为 completed，避免重复调度
         if _task_has_upload_response(task, upload_target):
-            update_task(
+            if update_task(
                 task_id,
                 silent=True,
                 expected_status=TASK_STATES['FAILED'],
                 status=TASK_STATES['COMPLETED'],
                 error_message=None,
                 upload_progress=None
-            )
+            ):
+                reconciled += 1
             continue
 
         if _is_upload_stage_failure(task):
@@ -2079,6 +2084,7 @@ def retry_failed_tasks(config=None):
     return {
         'total': total,
         'scheduled': scheduled,
+        'reconciled': reconciled,
         'failed_ids': failed_ids
     }
 
@@ -2868,8 +2874,14 @@ class TaskProcessor:
             def delayed_check():
                 time.sleep(1)  # 等待1秒确保状态已更新
                 self._check_and_start_next_pending_task()
-            
-            threading.Thread(target=delayed_check, daemon=True).start()
+
+            try:
+                threading.Thread(target=delayed_check, daemon=True).start()
+            except RuntimeError as exc:
+                task_logger.warning(
+                    "当前任务结果已保存，但无法启动下一条队列检查线程：%s",
+                    exc,
+                )
     
     def _check_and_start_next_pending_task(self):
         """检查并启动下一个pending任务"""
