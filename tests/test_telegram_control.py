@@ -322,6 +322,58 @@ class TelegramControlTests(unittest.TestCase):
         self.assertIn("失败的录播", abnormal_text)
         self.assertNotIn("正在投稿的录播", abnormal_text)
 
+    def test_task_list_buttons_show_titles_not_task_ids(self):
+        self.service.process_update(_message_update("/tasks"))
+        # Legacy /tasks text remains copyable; the button-driven page uses titles.
+        self.service.process_update(_callback_update("nav:tasks"))
+        edit_call = next(
+            kwargs["json"] for url, kwargs in reversed(self.session.calls)
+            if url.endswith("/editMessageText")
+        )
+        button_texts = [
+            button["text"]
+            for row in edit_call["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertTrue(any("正在投稿的录播" in text for text in button_texts))
+        self.assertFalse(any("DYU-YYF" in text for text in button_texts))
+
+    def test_task_lists_support_next_page(self):
+        original = self.manager.pipeline_jobs
+
+        def many_jobs(limit):
+            template = original(None)[0]
+            jobs = []
+            for index in range(10):
+                job = dict(template)
+                job["id"] = f"{index:064x}"
+                job["short_id"] = f"{index:012x}"
+                job["display_id"] = f"TASK-{index + 1}"
+                job["title"] = f"分页任务 {index + 1}"
+                jobs.append(job)
+            return jobs[:limit]
+
+        self.manager.pipeline_jobs = many_jobs
+        self.service.process_update(_callback_update("nav:tasks"))
+        first_page = next(
+            kwargs["json"] for url, kwargs in reversed(self.session.calls)
+            if url.endswith("/editMessageText")
+        )
+        callbacks = [
+            button["callback_data"]
+            for row in first_page["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("taskpage:tasks:2", callbacks)
+
+        self.service.process_update(_callback_update("taskpage:tasks:2"))
+        second_page = next(
+            kwargs["json"] for url, kwargs in reversed(self.session.calls)
+            if url.endswith("/editMessageText")
+        )
+        self.assertIn("分页任务 9", second_page["text"])
+        self.assertIn("第 2/2 页", second_page["text"])
+
     def test_navigation_refresh_edits_existing_message(self):
         self.service.process_update(_callback_update("nav:active"))
 

@@ -811,7 +811,7 @@ class TelegramControlService:
         self.manager.save_room_recording_settings(str(room.get("id") or ""), **values)
         return self._room_settings_page(reference)
 
-    def _task_list_page(self, kind: str) -> tuple[str, dict[str, Any]]:
+    def _task_list_page(self, kind: str, page: int = 1) -> tuple[str, dict[str, Any]]:
         all_jobs = list(self.manager.pipeline_jobs(None))
         if kind == "active":
             jobs = [
@@ -828,7 +828,11 @@ class TelegramControlService:
         else:
             jobs = all_jobs[:10]
             heading = "🧾 最近任务"
-        lines = [f"{heading}（{len(jobs)}）"]
+        page_size = 8
+        total_pages = max(1, (len(jobs) + page_size - 1) // page_size)
+        page = max(1, min(int(page or 1), total_pages))
+        page_jobs = jobs[(page - 1) * page_size:page * page_size]
+        lines = [f"{heading}（{len(jobs)}） · 第 {page}/{total_pages} 页"]
         rows: list[list[tuple[str, str]]] = []
         if not jobs:
             lines.append("\n目前没有符合条件的任务。")
@@ -836,7 +840,7 @@ class TelegramControlService:
             "ai": "AI 简介", "cover": "封面", "burn": "烧录字幕",
             "upload": "投稿", "collection": "加入合集", "verify": "校验",
         }
-        for index, job in enumerate(jobs[:8], 1):
+        for index, job in enumerate(page_jobs, (page - 1) * page_size + 1):
             completed = int(job.get("completed_stages") or 0)
             total = int(job.get("total_stages") or 0)
             percent = completed / total * 100 if total else 0
@@ -852,14 +856,21 @@ class TelegramControlService:
                 uploaded = float(progress.get("uploaded_bytes") or 0)
                 total_bytes = float(progress.get("total_bytes") or 0)
                 lines.append(f"上传：{uploaded / total_bytes * 100:.1f}%")
+            button_title = self._clean_detail(
+                job.get("title") or job.get("video_name") or "未命名任务", 28
+            )
             rows.append([(
-                f"查看 {self._job_display_id(job)}",
+                f"查看：{button_title}",
                 f"taskview:{self._job_callback_id(job)}",
             )])
-        refresh = {"active": "nav:active", "abnormal": "nav:abnormal"}.get(
-            kind, "nav:tasks"
-        )
-        rows.append([("🔄 刷新", refresh), ("🏠 首页", "nav:home")])
+        page_actions: list[tuple[str, str]] = []
+        if page > 1:
+            page_actions.append(("⬅️ 上一页", f"taskpage:{kind}:{page - 1}"))
+        page_actions.append((f"第 {page}/{total_pages} 页", f"noop:page{page}"))
+        if page < total_pages:
+            page_actions.append(("下一页 ➡️", f"taskpage:{kind}:{page + 1}"))
+        rows.append(page_actions)
+        rows.append([("🔄 刷新", f"taskpage:{kind}:{page}"), ("🏠 首页", "nav:home")])
         return "\n".join(lines)[:3800], self._nav_keyboard(*rows)
 
     def _task_detail_page(self, reference: str) -> tuple[str, dict[str, Any]]:
@@ -1285,7 +1296,8 @@ class TelegramControlService:
     ) -> bool:
         prefixes = (
             "nav:", "noop:", "roomadd:", "roomtoggle:", "roomdelete:", "roomsettings:",
-            "roomsetting:", "roominput:", "roomaccount:", "roomaccountset:", "taskview:",
+            "roomsetting:", "roominput:", "roomaccount:", "roomaccountset:",
+            "taskpage:", "taskview:",
             "taskretry:", "taskpause:", "taskdelete:",
             "aiview:", "airegen:", "inputcancel:",
         )
@@ -1383,6 +1395,13 @@ class TelegramControlService:
             return True
         if data.startswith("roomaccount:"):
             render(self._room_account_page(data.partition(":")[2]))
+            answer()
+            return True
+        if data.startswith("taskpage:"):
+            _, kind, page_text = data.split(":", 2)
+            if kind not in {"active", "abnormal", "tasks"} or not page_text.isdigit():
+                raise RecorderConfigError("无法识别任务页码")
+            render(self._task_list_page(kind, int(page_text)))
             answer()
             return True
         if data.startswith("roomdelete:"):
