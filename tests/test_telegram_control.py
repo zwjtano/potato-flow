@@ -43,6 +43,11 @@ class _Manager:
                 "name": "YYF",
                 "url": "https://www.douyu.com/9999",
                 "record_only": False,
+                "segment_enabled": True,
+                "segment_minutes": 60,
+                "multipart_enabled": False,
+                "recording_quality": "source",
+                "danmaku_settings_inherit": True,
                 "runtime": {
                     "state": "checking",
                     "label": "检测中",
@@ -68,6 +73,7 @@ class _Manager:
         self.paused = []
         self.deleted_tasks = []
         self.regenerated = []
+        self.saved_room_settings = []
         self.engine_starts = 0
         self.engine_stops = 0
 
@@ -159,6 +165,15 @@ class _Manager:
     def delete_pipeline_job(self, fingerprint, delete_files=False):
         self.deleted_tasks.append((fingerprint, delete_files))
         return {"deleted_file_count": 0}
+
+    def save_room_recording_settings(self, room_id, **values):
+        self.saved_room_settings.append((room_id, dict(values)))
+        room = next(item for item in self.rooms if item["id"] == room_id)
+        room.update(values)
+        return dict(room), "saved"
+
+    def bilibili_archive_accounts(self):
+        return [{"id": "account-1", "name": "萨豆士哈", "uid": "3707033578637692"}]
 
     def regenerate_published_metadata(self, fingerprint, fields):
         self.regenerated.append((fingerprint, set(fields)))
@@ -370,6 +385,58 @@ class TelegramControlTests(unittest.TestCase):
             self.manager.controls,
             [("room-1", False), ("room-2", True)],
         )
+
+    def test_parameter_command_guides_then_accepts_next_message(self):
+        self.service.process_update(_message_update("/add"))
+
+        prompt = self.session.last_payload
+        self.assertIn("请直接发送完整直播间链接", prompt["text"])
+        self.assertIn("inputcancel:", prompt["reply_markup"]["inline_keyboard"][0][0]["callback_data"])
+        self.assertEqual(self.manager.added, [])
+
+        self.service.process_update(
+            _message_update("https://www.douyu.com/7788")
+        )
+
+        self.assertEqual(self.manager.added, ["https://www.douyu.com/7788"])
+        self.assertIn("已添加", self.session.last_payload["text"])
+
+    def test_room_settings_cover_toggle_text_and_account_values(self):
+        self.service.process_update(_callback_update("roomsettings:1"))
+        settings_text = next(
+            kwargs["json"]["text"] for url, kwargs in self.session.calls
+            if url.endswith("/editMessageText")
+        )
+        self.assertIn("直播间设置", settings_text)
+        self.assertIn("B站账号", settings_text)
+        self.assertIn("ASS 参数", settings_text)
+
+        self.service.process_update(_callback_update("roomsetting:1:segment"))
+        self.assertFalse(self.manager.saved_room_settings[-1][1]["segment_enabled"])
+
+        self.service.process_update(_callback_update("roominput:1:schedule_start"))
+        self.service.process_update(_message_update("08:30"))
+        self.assertEqual(
+            self.manager.saved_room_settings[-1][1]["recording_schedule_start"],
+            "08:30",
+        )
+
+        self.service.process_update(_callback_update("roomaccountset:1:1"))
+        self.assertEqual(
+            self.manager.saved_room_settings[-1][1]["bilibili_account_id"],
+            "account-1",
+        )
+
+    def test_guided_input_can_be_cancelled(self):
+        self.service.process_update(_message_update("/add"))
+        callback_data = self.session.last_payload["reply_markup"]["inline_keyboard"][0][0][
+            "callback_data"
+        ]
+
+        self.service.process_update(_callback_update(callback_data))
+        self.service.process_update(_message_update("https://www.douyu.com/7788"))
+
+        self.assertEqual(self.manager.added, [])
 
     def test_delete_requires_matching_inline_confirmation(self):
         self.service.process_update(_message_update("/delete 2"))

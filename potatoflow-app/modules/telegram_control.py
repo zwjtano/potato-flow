@@ -109,6 +109,13 @@ class PendingConfirmation:
     value: str = ""
 
 
+@dataclass
+class PendingInput:
+    command: str
+    token: str
+    expires_at: float
+
+
 class TelegramControlError(RuntimeError):
     pass
 
@@ -130,6 +137,7 @@ class TelegramControlService:
         self._stop_event = threading.Event()
         self._offset: int | None = None
         self._pending_confirmations: dict[str, PendingConfirmation] = {}
+        self._pending_inputs: dict[tuple[str, str], PendingInput] = {}
         self._pending_lock = threading.Lock()
 
     @property
@@ -210,6 +218,7 @@ class TelegramControlService:
         self._offset = None
         with self._pending_lock:
             self._pending_confirmations.clear()
+            self._pending_inputs.clear()
         if self.enabled:
             self.start()
 
@@ -304,7 +313,8 @@ class TelegramControlService:
                     "commands": [
                         {"command": "rooms", "description": "查看直播间与录制状态"},
                         {"command": "add", "description": "添加直播间链接"},
-                        {"command": "start", "description": "开始检测/录制指定直播间"},
+                        {"command": "start", "description": "打开 PotatoFlow 控制台"},
+                        {"command": "record", "description": "开始检测/录制指定直播间"},
                         {"command": "stop", "description": "安全停止指定直播间"},
                         {"command": "delete", "description": "删除直播间（二次确认）"},
                         {"command": "menu", "description": "打开按钮控制台"},
@@ -403,6 +413,19 @@ class TelegramControlService:
             self._send_message(chat_id, f"无权操作。当前 User ID：{user_id}")
             return
         if not text.startswith("/"):
+            pending = self._take_pending_input(chat_id, user_id)
+            if pending:
+                try:
+                    self._dispatch_command(chat_id, user_id, pending.command, text)
+                except (RecorderConfigError, TelegramControlError, ValueError) as exc:
+                    self._send_message(chat_id, f"操作失败：{exc}")
+                except Exception:
+                    logger.exception(
+                        "Telegram 引导输入处理失败：user_id=%s command=%s",
+                        user_id,
+                        pending.command,
+                    )
+                    self._send_message(chat_id, "操作失败，请查看 PotatoFlow 服务日志。")
             return
 
         command, _, argument = text.partition(" ")
@@ -432,6 +455,23 @@ class TelegramControlService:
         command: str,
         argument: str,
     ) -> None:
+        if command.startswith("/roomvalue:"):
+            _, reference, field = command.split(":", 2)
+            self._set_room_setting_value(chat_id, reference, field, argument)
+            return
+        prompts = {
+            "/add": "请直接发送完整直播间链接。",
+            "/record": "请发送直播间编号或名称。",
+            "/stop": "请发送要停止的直播间编号或名称。",
+            "/delete": "请发送要删除的直播间编号或名称。",
+            "/task": "请发送任务编号或任务 ID。",
+            "/retry": "请发送要重试的任务编号或任务 ID。",
+            "/pause": "请发送要暂停的任务编号或任务 ID。",
+            "/delete_task": "请发送要删除记录的任务编号或任务 ID。",
+        }
+        if command in prompts and not argument:
+            self._request_command_input(chat_id, user_id, command, prompts[command])
+            return
         if command in {"/menu", "/start"} and not argument:
             text, markup = self._dashboard_page()
             self._send_message(chat_id, text, reply_markup=markup)
@@ -482,7 +522,7 @@ class TelegramControlService:
             "/menu  打开按钮控制台\n"
             "/rooms  查看直播间编号与状态\n"
             "/add <直播间链接>  添加直播间\n"
-            "/start 或 /record <编号/名称>  开始检测/录制\n"
+            "/record <编号/名称>  开始检测/录制\n"
             "/stop <编号/名称>  安全停止并收尾\n"
             "/delete <编号/名称>  删除直播间（二次确认）\n"
             "\n任务处理\n"
@@ -560,7 +600,7 @@ class TelegramControlService:
             enabled = str(runtime.get("state") or "") not in {"paused", "stopped"}
             action = "停止" if enabled else "启动"
             rows.append([
-                (f"{index}. {room.get('name') or '直播间'}", f"noop:room{index}"),
+                (f"⚙️ {index}. {room.get('name') or '直播间'}", f"roomsettings:{index}"),
                 (action, f"roomtoggle:{index}:{0 if enabled else 1}"),
                 ("删除", f"roomdelete:{index}"),
             ])
@@ -568,6 +608,219 @@ class TelegramControlService:
             [("🔄 刷新", "nav:rooms"), ("🏠 首页", "nav:home")],
         ])
         return text, self._nav_keyboard(*rows)
+
+    def _room_settings_page(self, reference: str) -> tuple[str, dict[str, Any]]:
+        room = self._resolve_room(reference)
+        rooms = self._rooms()
+        index = rooms.index(room) + 1
+        segment_enabled = bool(room.get("segment_enabled", True))
+        multipart = bool(room.get("multipart_enabled", False))
+        record_only = bool(room.get("record_only", False))
+        burn_in = bool(room.get("danmaku_burn_in", False))
+        schedule = bool(room.get("recording_schedule_enabled", False))
+        quality = str(room.get("recording_quality") or "source")
+        text = (
+            f"⚙️ 直播间设置 · {room.get('name') or '直播间'}\n\n"
+            f"录制质量：{quality}\n"
+            f"分段录制：{'开启' if segment_enabled else '关闭'}\n"
+            f"分段时长：{int(room.get('segment_minutes') or 60)} 分钟\n"
+            f"合并分P：{'开启' if multipart else '关闭'}\n"
+            f"投稿模式：{'仅录制' if record_only else '录制并投稿'}\n"
+            f"弹幕烧录：{'开启' if burn_in else '关闭'}\n"
+            f"定时录制：{'开启' if schedule else '关闭'}\n"
+            f"时间范围：{room.get('recording_schedule_start') or '00:00'}–"
+            f"{room.get('recording_schedule_end') or '23:59'}\n\n"
+            f"B站账号：{room.get('bilibili_account_id') or '默认账号'}\n"
+            f"B站合集：{room.get('bilibili_collection_id') or '不加入'}\n"
+            f"继承全局 ASS：{'是' if room.get('danmaku_settings_inherit', True) else '否'}\n"
+            f"ASS 参数：{room.get('danmaku_duration_seconds', 10)} 秒 · "
+            f"字号 {room.get('danmaku_font_size', 42)} · "
+            f"透明度 {room.get('danmaku_opacity', 0.92)}\n"
+            f"ASS 编码：{room.get('danmaku_encoder', 'cpu')} · "
+            f"{room.get('danmaku_encode_preset', 'medium')} · "
+            f"质量 {room.get('danmaku_encode_crf', 20)}\n\n"
+            "点击按钮会立即保存；录制中修改可能在当前分段安全收尾后应用。"
+        )
+        return text, self._nav_keyboard(
+            [("切换画质", f"roomsetting:{index}:quality"),
+             ("切换分段", f"roomsetting:{index}:segment")],
+            [("调整分段时长", f"roomsetting:{index}:minutes"),
+             ("切换分P", f"roomsetting:{index}:multipart")],
+            [("切换投稿模式", f"roomsetting:{index}:recordonly"),
+             ("切换弹幕烧录", f"roomsetting:{index}:burn")],
+            [("切换定时录制", f"roomsetting:{index}:schedule")],
+            [("开始时间", f"roominput:{index}:schedule_start"),
+             ("结束时间", f"roominput:{index}:schedule_end")],
+            [("B站投稿账号", f"roomaccount:{index}"),
+             ("B站合集", f"roominput:{index}:collection")],
+            [("继承全局 ASS", f"roomsetting:{index}:inherit"),
+             ("ASS 飘屏秒数", f"roominput:{index}:duration")],
+            [("ASS 字号", f"roominput:{index}:font_size"),
+             ("ASS 透明度", f"roominput:{index}:opacity")],
+            [("ASS 编码器", f"roomsetting:{index}:encoder"),
+             ("编码预设", f"roomsetting:{index}:preset")],
+            [("ASS 质量值", f"roominput:{index}:encode_quality")],
+            [("🔄 刷新", f"roomsettings:{index}"), ("⬅️ 直播间", "nav:rooms")],
+            [("🏠 首页", "nav:home")],
+        )
+
+    @staticmethod
+    def _room_setting_values(room: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "segment_enabled": bool(room.get("segment_enabled", True)),
+            "segment_minutes": int(room.get("segment_minutes") or 60),
+            "multipart_enabled": bool(room.get("multipart_enabled", False)),
+            "record_only": bool(room.get("record_only", False)),
+            "danmaku_burn_in": bool(room.get("danmaku_burn_in", False)),
+            "danmaku_settings_inherit": bool(room.get("danmaku_settings_inherit", True)),
+            "danmaku_duration_seconds": room.get("danmaku_duration_seconds", 10),
+            "danmaku_font_size": room.get("danmaku_font_size", 42),
+            "danmaku_opacity": room.get("danmaku_opacity", 0.92),
+            "danmaku_encoder": room.get("danmaku_encoder", "cpu"),
+            "danmaku_encode_preset": room.get("danmaku_encode_preset", "medium"),
+            "danmaku_encode_quality": room.get("danmaku_encode_crf", 20),
+            "recording_quality": str(room.get("recording_quality") or "source"),
+            "bilibili_account_id": room.get("bilibili_account_id", ""),
+            "bilibili_collection_id": room.get("bilibili_collection_id", ""),
+            "recording_schedule_enabled": bool(room.get("recording_schedule_enabled", False)),
+            "recording_schedule_start": room.get("recording_schedule_start", "00:00"),
+            "recording_schedule_end": room.get("recording_schedule_end", "23:59"),
+        }
+
+    def _toggle_room_setting(self, reference: str, field: str) -> tuple[str, dict[str, Any]]:
+        room = self._resolve_room(reference)
+        quality_order = ("source", "2160p", "1080p", "720p")
+        values = self._room_setting_values(room)
+        current_quality = str(values["recording_quality"])
+        quality_index = quality_order.index(current_quality) if current_quality in quality_order else 0
+        if field == "quality":
+            values["recording_quality"] = quality_order[(quality_index + 1) % len(quality_order)]
+        elif field == "segment":
+            values["segment_enabled"] = not values["segment_enabled"]
+        elif field == "minutes":
+            durations = (30, 60, 90, 120, 180)
+            current = values["segment_minutes"]
+            values["segment_minutes"] = next(
+                (duration for duration in durations if duration > current), durations[0]
+            )
+        elif field == "multipart":
+            values["multipart_enabled"] = not values["multipart_enabled"]
+        elif field == "recordonly":
+            values["record_only"] = not values["record_only"]
+        elif field == "burn":
+            values["danmaku_burn_in"] = not values["danmaku_burn_in"]
+        elif field == "schedule":
+            values["recording_schedule_enabled"] = not values["recording_schedule_enabled"]
+        elif field == "inherit":
+            values["danmaku_settings_inherit"] = not values["danmaku_settings_inherit"]
+        elif field == "encoder":
+            choices = ("auto", "cpu", "nvidia", "intel", "amd")
+            current = str(values["danmaku_encoder"])
+            index = choices.index(current) if current in choices else 0
+            values["danmaku_encoder"] = choices[(index + 1) % len(choices)]
+        elif field == "preset":
+            choices = (
+                "speed", "balanced", "quality", "p1", "p2", "p3", "p4",
+                "p5", "p6", "p7", "veryfast", "faster", "fast", "medium",
+                "slow", "slower",
+            )
+            current = str(values["danmaku_encode_preset"])
+            index = choices.index(current) if current in choices else 0
+            values["danmaku_encode_preset"] = choices[(index + 1) % len(choices)]
+        else:
+            raise RecorderConfigError("无法识别直播间设置")
+        self.manager.save_room_recording_settings(str(room.get("id") or ""), **values)
+        return self._room_settings_page(reference)
+
+    def _request_room_setting_input(
+        self, chat_id: str, user_id: str, reference: str, field: str
+    ) -> None:
+        prompts = {
+            "schedule_start": "请发送开始时间，例如 08:30。",
+            "schedule_end": "请发送结束时间，例如 23:59。",
+            "collection": "请发送合集 ID；发送 0 表示清空。",
+            "duration": "请发送 ASS 飘屏秒数（1–30）。",
+            "font_size": "请发送 ASS 字号（12–120）。",
+            "opacity": "请发送 ASS 透明度（0.10–1.00）。",
+            "encode_quality": "请发送 ASS 编码质量值（0–51）。",
+        }
+        prompt = prompts.get(field)
+        if not prompt:
+            raise RecorderConfigError("无法识别直播间设置")
+        token = secrets.token_urlsafe(8)
+        with self._pending_lock:
+            self._purge_pending_confirmations()
+            self._pending_inputs[(chat_id, user_id)] = PendingInput(
+                command=f"/roomvalue:{reference}:{field}",
+                token=token,
+                expires_at=time.time() + CONFIRM_TTL_SECONDS,
+            )
+        self._send_message(
+            chat_id,
+            prompt + "\n两分钟内有效。",
+            reply_markup={"inline_keyboard": [[
+                {"text": "取消输入", "callback_data": f"inputcancel:{token}"},
+            ]]},
+        )
+
+    def _set_room_setting_value(
+        self, chat_id: str, reference: str, field: str, raw_value: str
+    ) -> None:
+        room = self._resolve_room(reference)
+        values = self._room_setting_values(room)
+        value = str(raw_value or "").strip()
+        if field in {"schedule_start", "schedule_end"}:
+            if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+                raise RecorderConfigError("时间格式必须是 HH:MM，例如 08:30")
+            values[f"recording_{field}"] = value
+        elif field == "collection":
+            values["bilibili_collection_id"] = "" if value in {"", "0"} else value
+        elif field == "duration":
+            values["danmaku_duration_seconds"] = value
+        elif field == "font_size":
+            values["danmaku_font_size"] = value
+        elif field == "opacity":
+            values["danmaku_opacity"] = value
+        elif field == "encode_quality":
+            values["danmaku_encode_quality"] = value
+        else:
+            raise RecorderConfigError("无法识别直播间设置")
+        self.manager.save_room_recording_settings(str(room.get("id") or ""), **values)
+        text, markup = self._room_settings_page(reference)
+        self._send_message(chat_id, "✅ 设置已保存。\n\n" + text, reply_markup=markup)
+
+    def _room_account_page(self, reference: str) -> tuple[str, dict[str, Any]]:
+        room = self._resolve_room(reference)
+        accounts = list(self.manager.bilibili_archive_accounts())
+        rooms = self._rooms()
+        room_index = rooms.index(room) + 1
+        rows: list[list[tuple[str, str]]] = [[
+            ("使用默认账号", f"roomaccountset:{room_index}:default")
+        ]]
+        lines = [f"B站投稿账号 · {room.get('name') or '直播间'}"]
+        for index, account in enumerate(accounts[:8], 1):
+            lines.append(
+                f"{index}. {account.get('name') or 'B站账号'} · UID {account.get('uid') or '—'}"
+            )
+            rows.append([(
+                f"选择 {account.get('name') or index}",
+                f"roomaccountset:{room_index}:{index}",
+            )])
+        rows.append([("⬅️ 返回设置", f"roomsettings:{room_index}")])
+        return "\n".join(lines), self._nav_keyboard(*rows)
+
+    def _set_room_account(self, reference: str, account_reference: str) -> tuple[str, dict[str, Any]]:
+        room = self._resolve_room(reference)
+        accounts = list(self.manager.bilibili_archive_accounts())
+        account_id = ""
+        if account_reference != "default":
+            if not account_reference.isdigit() or not 1 <= int(account_reference) <= len(accounts):
+                raise RecorderConfigError("没有找到该 B站账号")
+            account_id = str(accounts[int(account_reference) - 1].get("id") or "")
+        values = self._room_setting_values(room)
+        values["bilibili_account_id"] = account_id
+        self.manager.save_room_recording_settings(str(room.get("id") or ""), **values)
+        return self._room_settings_page(reference)
 
     def _task_list_page(self, kind: str) -> tuple[str, dict[str, Any]]:
         all_jobs = list(self.manager.pipeline_jobs(None))
@@ -841,6 +1094,40 @@ class TelegramControlService:
         ]
         for token in expired:
             self._pending_confirmations.pop(token, None)
+        expired_inputs = [
+            key for key, pending in self._pending_inputs.items()
+            if pending.expires_at < now
+        ]
+        for key in expired_inputs:
+            self._pending_inputs.pop(key, None)
+
+    def _request_command_input(
+        self,
+        chat_id: str,
+        user_id: str,
+        command: str,
+        prompt: str,
+    ) -> None:
+        token = secrets.token_urlsafe(8)
+        with self._pending_lock:
+            self._purge_pending_confirmations()
+            self._pending_inputs[(chat_id, user_id)] = PendingInput(
+                command=command,
+                token=token,
+                expires_at=time.time() + CONFIRM_TTL_SECONDS,
+            )
+        self._send_message(
+            chat_id,
+            f"{prompt}\n两分钟内有效；下一条文字将作为 {command} 的参数。",
+            reply_markup={"inline_keyboard": [[
+                {"text": "取消输入", "callback_data": f"inputcancel:{token}"},
+            ]]},
+        )
+
+    def _take_pending_input(self, chat_id: str, user_id: str) -> PendingInput | None:
+        with self._pending_lock:
+            self._purge_pending_confirmations()
+            return self._pending_inputs.pop((chat_id, user_id), None)
 
     def _handle_callback(self, callback: dict[str, Any]) -> None:
         callback_id = str(callback.get("id") or "")
@@ -1009,9 +1296,10 @@ class TelegramControlService:
         data: str,
     ) -> bool:
         prefixes = (
-            "nav:", "noop:", "roomtoggle:", "roomdelete:", "taskview:",
+            "nav:", "noop:", "roomtoggle:", "roomdelete:", "roomsettings:",
+            "roomsetting:", "roominput:", "roomaccount:", "roomaccountset:", "taskview:",
             "taskretry:", "taskpause:", "taskdelete:", "enginestart:",
-            "enginestop:", "aiview:", "airegen:",
+            "enginestop:", "aiview:", "airegen:", "inputcancel:",
         )
         if not data.startswith(prefixes):
             return False
@@ -1039,6 +1327,21 @@ class TelegramControlService:
 
         if data.startswith("noop:"):
             answer("请选择右侧操作")
+            return True
+        if data.startswith("inputcancel:"):
+            token = data.partition(":")[2]
+            key = (chat_id, user_id)
+            with self._pending_lock:
+                self._purge_pending_confirmations()
+                pending = self._pending_inputs.get(key)
+                if pending and secrets.compare_digest(pending.token, token):
+                    self._pending_inputs.pop(key, None)
+                    cancelled = True
+                else:
+                    cancelled = False
+            answer("已取消输入" if cancelled else "输入请求已失效", alert=not cancelled)
+            if cancelled and message_id:
+                self._edit_message(chat_id, message_id, "已取消输入。")
             return True
         if data.startswith("nav:"):
             page_name = data.partition(":")[2]
@@ -1075,6 +1378,29 @@ class TelegramControlService:
             )
             render(self._rooms_page())
             answer("直播间状态已更新")
+            return True
+        if data.startswith("roomsettings:"):
+            render(self._room_settings_page(data.partition(":")[2]))
+            answer()
+            return True
+        if data.startswith("roomsetting:"):
+            _, reference, field = data.split(":", 2)
+            render(self._toggle_room_setting(reference, field))
+            answer("设置已保存")
+            return True
+        if data.startswith("roominput:"):
+            _, reference, field = data.split(":", 2)
+            self._request_room_setting_input(chat_id, user_id, reference, field)
+            answer("请发送设置值")
+            return True
+        if data.startswith("roomaccountset:"):
+            _, reference, account_reference = data.split(":", 2)
+            render(self._set_room_account(reference, account_reference))
+            answer("投稿账号已保存")
+            return True
+        if data.startswith("roomaccount:"):
+            render(self._room_account_page(data.partition(":")[2]))
+            answer()
             return True
         if data.startswith("roomdelete:"):
             reference = data.partition(":")[2]
