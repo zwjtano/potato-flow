@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from .path_policy import atomic_write_text, ensure_directory, safe_path_component
-from .task_lifecycle import recording_task_capabilities
+from .task_lifecycle import RECORDING_RETRYABLE_STATUSES, recording_task_capabilities
 from .utils import get_app_root_dir, get_resource_root_dir
 
 APP_ROOT = Path(get_resource_root_dir())
@@ -6023,22 +6023,41 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         else:
             command.extend(["ingest", "--retry", str(video)])
 
-        claimed = False
         state_path = self._pipeline_state_path()
-        if automatic:
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            try:
-                with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
-                    cursor = db.execute(
-                        """UPDATE uploads SET status='processing', updated_at=?
-                           WHERE fingerprint=? AND status='failed'""",
-                        (now, fingerprint),
-                    )
-                    claimed = cursor.rowcount == 1
-            except sqlite3.Error as exc:
-                raise RecorderConfigError(f"无法锁定自动重试任务：{exc}") from exc
-            if not claimed:
-                return False
+        previous_status: str | None = None
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        allowed_statuses = {"failed"} if automatic else set(RECORDING_RETRYABLE_STATUSES)
+        try:
+            with closing(sqlite3.connect(state_path, timeout=5)) as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                current_status = str(row[0] or "") if row else ""
+                if current_status not in allowed_statuses:
+                    db.rollback()
+                    if automatic:
+                        return False
+                    raise RecorderConfigError("任务状态已变化，可能已由其他请求开始重试")
+                previous_status = current_status
+                cursor = db.execute(
+                    """UPDATE uploads
+                       SET status='processing', error=NULL, updated_at=?
+                       WHERE fingerprint=? AND status=?""",
+                    (now, fingerprint, current_status),
+                )
+                if cursor.rowcount != 1:
+                    db.rollback()
+                    if automatic:
+                        return False
+                    raise RecorderConfigError("任务状态已变化，可能已由其他请求开始重试")
+                db.commit()
+        except RecorderConfigError:
+            raise
+        except sqlite3.Error as exc:
+            kind = "自动重试" if automatic else "重试"
+            raise RecorderConfigError(f"无法锁定{kind}任务：{exc}") from exc
 
         try:
             with log_path.open("a", encoding="utf-8") as log_handle:
@@ -6054,13 +6073,18 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     close_fds=True, **_background_process_kwargs(),
                 )
         except OSError as exc:
-            if claimed:
+            if previous_status is not None:
                 now = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                     db.execute(
-                        """UPDATE uploads SET status='failed', error=?, updated_at=?
+                        """UPDATE uploads SET status=?, error=?, updated_at=?
                            WHERE fingerprint=? AND status='processing'""",
-                        (f"自动重试启动失败：{exc}", now, fingerprint),
+                        (
+                            previous_status,
+                            f"{'自动重试' if automatic else '重试'}启动失败：{exc}",
+                            now,
+                            fingerprint,
+                        ),
                     )
             raise
         return True
@@ -6096,7 +6120,9 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 (now, fingerprint),
             )
             if cursor.rowcount != 1:
-                return False if automatic else True
+                if automatic:
+                    return False
+                raise RecorderConfigError("任务状态已变化，可能已由其他请求开始重试")
             db.execute(
                 """UPDATE upload_stages
                    SET status='running', error=NULL, started_at=?, finished_at=NULL, updated_at=?

@@ -1,5 +1,7 @@
 import sys
+import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -120,6 +122,137 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         request_cancel.assert_called_once_with("task-id")
         self.assertEqual(update_task.call_args.kwargs["status"], "paused")
         delete_files.assert_not_called()
+
+    def test_concurrent_terminal_updates_emit_one_notification(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        status TEXT,
+                        updated_at TEXT
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO tasks (id, status, updated_at) VALUES (?, ?, ?)",
+                    ("task-id", "uploading", "2026-08-11 00:00:00"),
+                )
+
+            barrier = threading.Barrier(2)
+            results = []
+
+            def complete_task():
+                barrier.wait()
+                results.append(
+                    task_manager.update_task("task-id", status="completed")
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "publish_task_event"),
+                patch.object(task_manager, "emit_notification_event") as emit,
+            ):
+                workers = [threading.Thread(target=complete_task) for _ in range(2)]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(timeout=5)
+
+            self.assertEqual(results, [True, True])
+            self.assertEqual(emit.call_count, 1)
+
+    def test_update_missing_task_returns_false(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        status TEXT,
+                        updated_at TEXT
+                    )"""
+                )
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "publish_task_event") as publish,
+                patch.object(task_manager, "emit_notification_event") as emit,
+            ):
+                result = task_manager.update_task("missing", status="failed")
+
+            self.assertFalse(result)
+            publish.assert_not_called()
+            emit.assert_not_called()
+
+    def test_expected_status_allows_only_one_concurrent_retry_claim(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        status TEXT,
+                        updated_at TEXT
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO tasks (id, status, updated_at) VALUES (?, ?, ?)",
+                    ("task-id", "failed", "2026-08-11 00:00:00"),
+                )
+
+            barrier = threading.Barrier(2)
+            results = []
+
+            def claim_retry():
+                barrier.wait()
+                results.append(
+                    task_manager.update_task(
+                        "task-id",
+                        silent=True,
+                        expected_status="failed",
+                        status="pending",
+                    )
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "publish_task_event"),
+                patch.object(task_manager, "emit_notification_event"),
+            ):
+                workers = [threading.Thread(target=claim_retry) for _ in range(2)]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(timeout=5)
+
+            self.assertCountEqual(results, [True, False])
+            with sqlite3.connect(db_path) as connection:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE id='task-id'"
+                ).fetchone()[0]
+            self.assertEqual(status, "pending")
+
+    def test_bulk_retry_does_not_start_worker_when_claim_is_lost(self):
+        task = {
+            "id": "task-id",
+            "status": "failed",
+            "upload_target": "bilibili",
+            "bilibili_upload_response": None,
+        }
+        with (
+            patch.object(task_manager, "get_tasks_by_status", return_value=[task]),
+            patch.object(task_manager, "_is_upload_stage_failure", return_value=True),
+            patch.object(task_manager, "update_task", return_value=False) as update,
+            patch.object(task_manager, "_start_background_upload_retry") as start,
+        ):
+            result = task_manager.retry_failed_tasks(config={})
+
+        self.assertEqual(result["scheduled"], 0)
+        self.assertEqual(
+            update.call_args.kwargs["expected_status"],
+            task_manager.TASK_STATES["FAILED"],
+        )
+        start.assert_not_called()
 
     def test_interrupted_recovery_skips_task_with_live_worker_lease(self):
         row = {

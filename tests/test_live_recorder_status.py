@@ -3583,6 +3583,104 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertGreater(job["auto_retry_remaining_seconds"], 150)
         self.assertLessEqual(job["auto_retry_remaining_seconds"], 180)
 
+    def test_manual_retry_atomically_claims_task_before_starting_process(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_path = root / "state.sqlite3"
+            video = root / "recording.flv"
+            video.write_bytes(b"video")
+            fingerprint = "c" * 64
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.execute(
+                    """CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    )"""
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'failed', 1, '{}', '上传失败', ?, ?)",
+                    (fingerprint, str(video), now, now),
+                )
+            job = {
+                "id": fingerprint,
+                "status": "failed",
+                "video_path": str(video),
+                "attempts": 1,
+                "result": {},
+            }
+            with mock.patch.object(
+                manager, "pipeline_job", return_value=job
+            ), mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(
+                recorder_module, "DATA_ROOT", root
+            ), mock.patch.object(
+                recorder_module.subprocess, "Popen"
+            ) as popen:
+                self.assertTrue(manager.retry_pipeline_job(fingerprint))
+                with self.assertRaisesRegex(RecorderConfigError, "状态已变化"):
+                    manager.retry_pipeline_job(fingerprint)
+
+            popen.assert_called_once()
+            with closing(sqlite3.connect(state_path)) as db:
+                status = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?", (fingerprint,)
+                ).fetchone()[0]
+            self.assertEqual(status, "processing")
+
+    def test_retry_launch_failure_restores_original_retryable_status(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_path = root / "state.sqlite3"
+            video = root / "recording.flv"
+            video.write_bytes(b"video")
+            fingerprint = "d" * 64
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.execute(
+                    """CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    )"""
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'paused', 1, '{}', '用户暂停', ?, ?)",
+                    (fingerprint, str(video), now, now),
+                )
+            job = {
+                "id": fingerprint,
+                "status": "paused",
+                "video_path": str(video),
+                "attempts": 1,
+                "result": {},
+            }
+            with mock.patch.object(
+                manager, "pipeline_job", return_value=job
+            ), mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(
+                recorder_module, "DATA_ROOT", root
+            ), mock.patch.object(
+                recorder_module.subprocess,
+                "Popen",
+                side_effect=OSError("spawn failed"),
+            ):
+                with self.assertRaisesRegex(OSError, "spawn failed"):
+                    manager.retry_pipeline_job(fingerprint)
+
+            with closing(sqlite3.connect(state_path)) as db:
+                status, error = db.execute(
+                    "SELECT status, error FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+            self.assertEqual(status, "paused")
+            self.assertIn("重试启动失败", error)
+
     def test_cleanup_retry_deletes_only_recorded_failure_without_reupload(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:

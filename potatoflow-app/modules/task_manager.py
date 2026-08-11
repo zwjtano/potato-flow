@@ -1247,6 +1247,14 @@ def init_db():
             """CREATE UNIQUE INDEX IF NOT EXISTS
                idx_tasks_display_id ON tasks(display_id)"""
         )
+        cursor.execute(
+            """CREATE INDEX IF NOT EXISTS
+               idx_tasks_created_at ON tasks(created_at DESC)"""
+        )
+        cursor.execute(
+            """CREATE INDEX IF NOT EXISTS
+               idx_tasks_status_created_at ON tasks(status, created_at DESC)"""
+        )
         conn.commit()
     except Exception as e:
         logger.warning(f"数据库升级检查失败（可能已是最新版本）: {e}")
@@ -1354,13 +1362,14 @@ def add_task(youtube_url, upload_target=None, bilibili_account_id=None):
 
     return task_id
 
-def update_task(task_id, silent=False, **kwargs):
+def update_task(task_id, silent=False, expected_status=None, **kwargs):
     """
     更新任务信息
     
     Args:
         task_id: 任务ID
         silent: 是否静默更新（不记录到主日志）
+        expected_status: 可选的当前状态约束，用于并发安全的状态流转
         **kwargs: 要更新的字段及其值
     
     Returns:
@@ -1430,13 +1439,34 @@ def update_task(task_id, silent=False, **kwargs):
     try:
         for attempt in range(1, DB_WRITE_RETRY_TIMES + 1):
             try:
+                # Keep the previous-status read and the update in one writer
+                # transaction. Otherwise concurrent terminal callbacks can both
+                # observe the same old state and emit duplicate notifications.
+                conn.execute('BEGIN IMMEDIATE')
                 existing_row = conn.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
                 existing_task = dict(existing_row) if existing_row else None
+                if existing_task is None:
+                    conn.rollback()
+                    logger.warning(f"任务 {task_id} 不存在，无法更新")
+                    return False
                 previous_status = existing_task.get('status') if existing_task else None
-                conn.execute(
+                if expected_status is not None and previous_status != expected_status:
+                    conn.rollback()
+                    logger.info(
+                        "任务 %s 当前状态为 %s，不满足预期状态 %s",
+                        task_id,
+                        previous_status,
+                        expected_status,
+                    )
+                    return False
+                cursor = conn.execute(
                     f'UPDATE tasks SET {set_clause} WHERE id = ?',
                     values
                 )
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    logger.warning(f"任务 {task_id} 状态已变化，未执行更新")
+                    return False
                 conn.commit()
 
                 event_type = 'task_updated'
@@ -1856,6 +1886,7 @@ def retry_failed_tasks(config=None):
             update_task(
                 task_id,
                 silent=True,
+                expected_status=TASK_STATES['FAILED'],
                 status=TASK_STATES['COMPLETED'],
                 error_message=None,
                 upload_progress=None
@@ -1863,24 +1894,31 @@ def retry_failed_tasks(config=None):
             continue
 
         if _is_upload_stage_failure(task):
-            update_task(
+            claimed = update_task(
                 task_id,
                 silent=True,
+                expected_status=TASK_STATES['FAILED'],
                 status=TASK_STATES['READY_FOR_UPLOAD'],
                 error_message=None,
                 upload_progress=None
             )
+            if not claimed:
+                continue
             _start_background_upload_retry(task_id, config)
             scheduled += 1
             continue
 
-        update_task(
+        claimed = update_task(
             task_id,
             silent=True,
+            expected_status=TASK_STATES['FAILED'],
             status=TASK_STATES['PENDING'],
             error_message=None,
             upload_progress=None
         )
+
+        if not claimed:
+            continue
 
         if start_task(task_id, config):
             scheduled += 1
@@ -1889,6 +1927,7 @@ def retry_failed_tasks(config=None):
             update_task(
                 task_id,
                 silent=True,
+                expected_status=TASK_STATES['PENDING'],
                 status=TASK_STATES['FAILED'],
                 error_message=original_error or '批量重试调度失败，请稍后重试。'
             )
