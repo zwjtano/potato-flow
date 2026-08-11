@@ -321,7 +321,6 @@ class TelegramControlService:
                         {"command": "running", "description": "查看进行中的任务"},
                         {"command": "errors", "description": "查看异常任务"},
                         {"command": "ai", "description": "打开 AI 编辑工作台"},
-                        {"command": "tasks", "description": "查看最近录播任务"},
                         {"command": "task", "description": "查看任务详情与上传进度"},
                         {"command": "retry", "description": "重试失败或暂停的任务"},
                         {"command": "pause", "description": "暂停正在投稿的任务"},
@@ -485,8 +484,6 @@ class TelegramControlService:
             self._set_room_recording(chat_id, argument, True)
         elif command == "/stop":
             self._set_room_recording(chat_id, argument, False)
-        elif command == "/tasks":
-            self._send_message(chat_id, self._tasks_text())
         elif command == "/running":
             text, markup = self._task_list_page("active")
             self._send_message(chat_id, text, reply_markup=markup)
@@ -523,7 +520,6 @@ class TelegramControlService:
             "/running  查看进行中的任务\n"
             "/errors  查看失败与暂停任务\n"
             "/ai  打开 AI 编辑工作台\n"
-            "/tasks  查看最近任务及编号\n"
             "/task <编号/任务ID>  查看详情、进度和错误\n"
             "/retry <编号/任务ID>  重试失败或暂停任务\n"
             "/pause <编号/任务ID>  暂停等待中/上传中的任务\n"
@@ -574,7 +570,7 @@ class TelegramControlService:
         )
         return text, self._nav_keyboard(
             [("🎥 直播间", "nav:rooms"), ("⏳ 进行中", "nav:active")],
-            [("⚠️ 异常任务", "nav:abnormal"), ("🧾 最近任务", "nav:tasks")],
+            [("⚠️ 异常任务", "nav:abnormal")],
             [("✨ AI 编辑", "nav:ai")],
             [("🔄 刷新", "nav:home")],
         )
@@ -890,7 +886,8 @@ class TelegramControlService:
             actions.append(("🗑 删除记录", f"taskdelete:{callback_id}"))
         if actions:
             rows.append(actions)
-        rows.append([("⬅️ 任务列表", "nav:tasks"), ("🏠 首页", "nav:home")])
+        back_page = "active" if status in ACTIVE_TASK_STATUSES else "abnormal"
+        rows.append([("⬅️ 任务列表", f"nav:{back_page}"), ("🏠 首页", "nav:home")])
         return self._task_text(display_id), self._nav_keyboard(*rows)
 
     def _engine_page(self) -> tuple[str, dict[str, Any]]:
@@ -909,17 +906,25 @@ class TelegramControlService:
             [("🔄 刷新", "nav:engine"), ("🏠 首页", "nav:home")],
         )
 
-    def _ai_editor_page(self) -> tuple[str, dict[str, Any]]:
+    def _ai_editor_page(self, page: int = 1) -> tuple[str, dict[str, Any]]:
         jobs = list(self.manager.pipeline_jobs(None))
         editable = [
             job for job in jobs
             if job.get("title") or job.get("description") or job.get("bvid")
-        ][:8]
-        lines = ["✨ AI 编辑工作台", "", "可查看并重新生成标题、简介、标签与封面。"]
+        ]
+        page_size = 8
+        total_pages = max(1, (len(editable) + page_size - 1) // page_size)
+        page = max(1, min(int(page or 1), total_pages))
+        page_jobs = editable[(page - 1) * page_size:page * page_size]
+        lines = [
+            f"✨ AI 编辑工作台 · 第 {page}/{total_pages} 页",
+            "",
+            "可查看并重新生成标题、简介、标签与封面。",
+        ]
         rows: list[list[tuple[str, str]]] = []
         if not editable:
             lines.append("\n目前没有可编辑的录播任务。")
-        for index, job in enumerate(editable, 1):
+        for index, job in enumerate(page_jobs, (page - 1) * page_size + 1):
             title = self._clean_detail(
                 job.get("title") or job.get("video_name") or "未生成标题", 90
             )
@@ -932,7 +937,14 @@ class TelegramControlService:
                 f"编辑：{button_title}",
                 f"aiview:{self._job_callback_id(job)}",
             )])
-        rows.append([("🔄 刷新", "nav:ai"), ("🏠 首页", "nav:home")])
+        page_actions: list[tuple[str, str]] = []
+        if page > 1:
+            page_actions.append(("⬅️ 上一页", f"aipage:{page - 1}"))
+        page_actions.append((f"第 {page}/{total_pages} 页", f"noop:aipage{page}"))
+        if page < total_pages:
+            page_actions.append(("下一页 ➡️", f"aipage:{page + 1}"))
+        rows.append(page_actions)
+        rows.append([("🔄 刷新", f"aipage:{page}"), ("🏠 首页", "nav:home")])
         return "\n".join(lines)[:3800], self._nav_keyboard(*rows)
 
     def _ai_detail_page(self, reference: str) -> tuple[str, dict[str, Any]]:
@@ -1299,7 +1311,7 @@ class TelegramControlService:
             "roomsetting:", "roominput:", "roomaccount:", "roomaccountset:",
             "taskpage:", "taskview:",
             "taskretry:", "taskpause:", "taskdelete:",
-            "aiview:", "airegen:", "inputcancel:",
+            "aipage:", "aiview:", "airegen:", "inputcancel:",
         )
         if not data.startswith(prefixes):
             return False
@@ -1349,7 +1361,7 @@ class TelegramControlService:
                 page = self._dashboard_page()
             elif page_name == "rooms":
                 page = self._rooms_page()
-            elif page_name in {"active", "abnormal", "tasks"}:
+            elif page_name in {"active", "abnormal"}:
                 page = self._task_list_page(page_name)
             elif page_name == "ai":
                 page = self._ai_editor_page()
@@ -1399,9 +1411,16 @@ class TelegramControlService:
             return True
         if data.startswith("taskpage:"):
             _, kind, page_text = data.split(":", 2)
-            if kind not in {"active", "abnormal", "tasks"} or not page_text.isdigit():
+            if kind not in {"active", "abnormal"} or not page_text.isdigit():
                 raise RecorderConfigError("无法识别任务页码")
             render(self._task_list_page(kind, int(page_text)))
+            answer()
+            return True
+        if data.startswith("aipage:"):
+            page_text = data.partition(":")[2]
+            if not page_text.isdigit():
+                raise RecorderConfigError("无法识别 AI 编辑页码")
+            render(self._ai_editor_page(int(page_text)))
             answer()
             return True
         if data.startswith("roomdelete:"):

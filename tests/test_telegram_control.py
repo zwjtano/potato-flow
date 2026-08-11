@@ -323,9 +323,7 @@ class TelegramControlTests(unittest.TestCase):
         self.assertNotIn("正在投稿的录播", abnormal_text)
 
     def test_task_list_buttons_show_titles_not_task_ids(self):
-        self.service.process_update(_message_update("/tasks"))
-        # Legacy /tasks text remains copyable; the button-driven page uses titles.
-        self.service.process_update(_callback_update("nav:tasks"))
+        self.service.process_update(_callback_update("nav:active"))
         edit_call = next(
             kwargs["json"] for url, kwargs in reversed(self.session.calls)
             if url.endswith("/editMessageText")
@@ -354,7 +352,7 @@ class TelegramControlTests(unittest.TestCase):
             return jobs[:limit]
 
         self.manager.pipeline_jobs = many_jobs
-        self.service.process_update(_callback_update("nav:tasks"))
+        self.service.process_update(_callback_update("nav:active"))
         first_page = next(
             kwargs["json"] for url, kwargs in reversed(self.session.calls)
             if url.endswith("/editMessageText")
@@ -364,14 +362,49 @@ class TelegramControlTests(unittest.TestCase):
             for row in first_page["reply_markup"]["inline_keyboard"]
             for button in row
         ]
-        self.assertIn("taskpage:tasks:2", callbacks)
+        self.assertIn("taskpage:active:2", callbacks)
 
-        self.service.process_update(_callback_update("taskpage:tasks:2"))
+        self.service.process_update(_callback_update("taskpage:active:2"))
         second_page = next(
             kwargs["json"] for url, kwargs in reversed(self.session.calls)
             if url.endswith("/editMessageText")
         )
         self.assertIn("分页任务 9", second_page["text"])
+        self.assertIn("第 2/2 页", second_page["text"])
+
+    def test_ai_editor_supports_next_page(self):
+        original = self.manager.pipeline_jobs
+
+        def many_jobs(limit):
+            template = original(None)[0]
+            jobs = []
+            for index in range(10):
+                job = dict(template)
+                job["id"] = f"{index + 20:064x}"
+                job["short_id"] = f"{index + 20:012x}"
+                job["title"] = f"AI 编辑任务 {index + 1}"
+                jobs.append(job)
+            return jobs[:limit]
+
+        self.manager.pipeline_jobs = many_jobs
+        self.service.process_update(_callback_update("nav:ai"))
+        first_page = next(
+            kwargs["json"] for url, kwargs in reversed(self.session.calls)
+            if url.endswith("/editMessageText")
+        )
+        callbacks = [
+            button["callback_data"]
+            for row in first_page["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("aipage:2", callbacks)
+
+        self.service.process_update(_callback_update("aipage:2"))
+        second_page = next(
+            kwargs["json"] for url, kwargs in reversed(self.session.calls)
+            if url.endswith("/editMessageText")
+        )
+        self.assertIn("AI 编辑任务 9", second_page["text"])
         self.assertIn("第 2/2 页", second_page["text"])
 
     def test_navigation_refresh_edits_existing_message(self):
@@ -561,17 +594,6 @@ class TelegramControlTests(unittest.TestCase):
         self.assertEqual(self.manager.deleted, [])
         self.assertNotIn("reply_markup", self.session.last_payload)
         self.assertIn("请先 /stop", self.session.last_payload["text"])
-
-    def test_tasks_command_shows_active_stage(self):
-        self.service.process_update(_message_update("/tasks"))
-
-        self.assertIn("1. ⏳ YYF · processing · upload", self.session.last_payload["text"])
-        self.assertIn("正在投稿的录播", self.session.last_payload["text"])
-        self.assertIn(
-            "ID: <code>DYU-YYF-0728-001</code>",
-            self.session.last_payload["text"],
-        )
-        self.assertEqual(self.session.last_payload["parse_mode"], "HTML")
 
     def test_task_detail_shows_upload_percentage_speed_and_actions(self):
         self.service.process_update(_message_update("/task 1"))
