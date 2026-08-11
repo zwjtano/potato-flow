@@ -16,6 +16,29 @@ def comment(second, text):
 
 
 class Ti2026ContextTests(unittest.TestCase):
+    def test_match_end_inside_recording_sets_exact_cutoff(self):
+        result = ti.recording_match_end_cutoff(
+            "2026-08-20T18:00:00+08:00",
+            3600,
+            "2026-08-20T18:42:15+08:00",
+        )
+        self.assertTrue(result["contains_match_end"])
+        self.assertEqual(result["cutoff_seconds"], 2535.0)
+
+    def test_match_end_after_recording_is_not_assigned(self):
+        result = ti.recording_match_end_cutoff(
+            "2026-08-20T18:00:00+08:00",
+            3600,
+            "2026-08-20T19:00:01+08:00",
+        )
+        self.assertFalse(result["contains_match_end"])
+        self.assertIsNone(result["cutoff_seconds"])
+
+    def test_comments_after_match_end_are_removed(self):
+        comments = [comment(10, "BP"), comment(2535, "GG"), comment(2600, "下一场")]
+        kept = ti.comments_through_match_end(comments, 2535)
+        self.assertEqual([item.text for item in kept], ["BP", "GG"])
+
     def test_team_and_player_aliases_are_normalized(self):
         self.assertEqual(ti.normalize_ti2026_team("液体"), "Team Liquid")
         self.assertEqual(ti.normalize_ti2026_team("雪碧"), "Team Spirit")
@@ -82,6 +105,74 @@ class Ti2026ContextTests(unittest.TestCase):
             comment(20, "这个出装不错"),
         ])
         self.assertEqual(context, {"active": False})
+
+    def test_same_teams_outside_ti_window_do_not_activate_competition_mode(self):
+        context = ti.build_ti2026_context(
+            [comment(10, "XG 对阵液体，第一局BP")],
+            event_date="2026-07-01",
+        )
+        self.assertEqual(context, {"active": False})
+
+    def test_two_ti_teams_during_event_activate_competition_mode(self):
+        context = ti.build_ti2026_context(
+            [comment(10, "XG 对阵液体，第一局BP")],
+            event_date="2026-08-15",
+        )
+        self.assertTrue(context["active"])
+        self.assertEqual(context["mode"], "ti_competition")
+        self.assertFalse(context["explicit_event_identity"])
+        self.assertTrue(context["inside_event_window"])
+
+    def test_explicit_ti_identity_activates_outside_window(self):
+        context = ti.build_ti2026_context(
+            [comment(10, "TI15 XG 对阵液体")],
+            event_date="2026-07-01",
+        )
+        self.assertEqual(context["mode"], "ti_competition")
+        self.assertTrue(context["explicit_event_identity"])
+
+    def test_recording_date_is_extracted_from_standard_filename(self):
+        self.assertEqual(
+            ti.ti2026_event_date_from_filename(
+                "国民大舅哥_二点s10.5赛季百人逃杀_2026-08-15_15-33.flv"
+            ),
+            "2026-08-15",
+        )
+        self.assertEqual(
+            ti.ti2026_event_date_from_filename("recording_2026_08_23_20-00.mp4"),
+            "2026-08-23",
+        )
+        self.assertEqual(
+            ti.ti2026_event_date_from_filename("recording_2026-02-30.mp4"),
+            "",
+        )
+
+    def test_recording_datetime_uses_china_timezone(self):
+        self.assertEqual(
+            ti.ti2026_recording_datetime_from_filename(
+                "recording_2026-08-15_00-30-05.flv"
+            ),
+            "2026-08-15T00:30:05+08:00",
+        )
+
+    def test_china_date_maps_to_previous_utc_date_at_midnight(self):
+        self.assertEqual(
+            ti.liquipedia_utc_window_for_china_date("2026-08-15"),
+            {
+                "start_utc": "2026-08-14T16:00:00Z",
+                "end_utc_exclusive": "2026-08-15T16:00:00Z",
+            },
+        )
+
+    def test_liquipedia_utc_timestamp_is_displayed_in_china_time(self):
+        self.assertEqual(
+            ti.liquipedia_timestamp_to_china("2026-08-14T16:30:00Z"),
+            "2026-08-15T00:30:00+08:00",
+        )
+        self.assertEqual(
+            ti.liquipedia_timestamp_to_china("2026-08-14 16:30:00"),
+            "2026-08-15T00:30:00+08:00",
+        )
 
     def test_strong_claims_require_verified_timeline_evidence(self):
         context = {"active": True, "series_format": "bo3"}

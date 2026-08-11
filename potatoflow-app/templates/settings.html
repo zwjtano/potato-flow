@@ -205,6 +205,23 @@
                                                         用斗鱼主播视角识别英雄、最终装备与 KDA 供封面参考
                                                     </label>
                                                 </div>
+                                                <hr class="my-3">
+                                                <div class="settings-field">
+                                                    <div class="w-100">
+                                                        <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
+                                                            <div>
+                                                                <strong>Dota 2 官方实时数据</strong>
+                                                                <p class="help-text mb-0">用于 TI 比赛的 Match ID、局内时间、击杀、阵容、KDA 和系列赛比分。</p>
+                                                            </div>
+                                                            <span class="settings-status-badge {{ 'is-success' if config.get('STEAM_WEB_API_KEY') else 'is-warning' }}">
+                                                                {{ '已配置' if config.get('STEAM_WEB_API_KEY') else '未配置' }}
+                                                            </span>
+                                                        </div>
+                                                        <label for="steam-web-api-key" class="form-label">Steam Web API 密钥</label>
+                                                        <input type="password" id="steam-web-api-key" name="STEAM_WEB_API_KEY" value="{{ secret_field_value('STEAM_WEB_API_KEY') }}" class="form-control" autocomplete="off" placeholder="在 steamcommunity.com/dev/apikey 申请">
+                                                        <p class="help-text mb-0 mt-2">保存后不回显原密钥；环境变量 <code>STEAM_WEB_API_KEY</code> 仍可作为回退。</p>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </article>
                                     </div>

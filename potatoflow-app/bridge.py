@@ -44,7 +44,12 @@ from dota2_items import (
 )
 from dota2_heroes import build_dota2_hero_reference, find_official_dota2_hero
 from runtime_environment import configure_linux_ca_environment
-from ti2026_context import build_ti2026_context, unsupported_ti2026_claim
+from ti2026_context import (
+    build_ti2026_context,
+    ti2026_event_date_from_filename,
+    ti2026_recording_datetime_from_filename,
+    unsupported_ti2026_claim,
+)
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 _IMAGE_GENERATION_THREAD_LOCK = threading.Lock()
@@ -997,6 +1002,10 @@ def effective_config(base: dict[str, Any], video: Path) -> dict[str, Any]:
         if isinstance(profile, dict) and fnmatch.fnmatch(video.name, str(profile.get("match", ""))):
             cfg.update({key: value for key, value in profile.items() if key != "match"})
             break
+    cfg["_recording_event_date"] = ti2026_event_date_from_filename(video.name)
+    cfg["_recording_event_datetime_china"] = ti2026_recording_datetime_from_filename(
+        video.name
+    )
     return cfg
 
 
@@ -4505,6 +4514,19 @@ def generate_recording_cover_with_ai(
     cover_event_context, cover_context_source = recording_cover_event_context(description)
     cover_subject_name = recording_cover_subject_name(streamer, title)
     headline = recording_cover_headline(title, "", streamer)
+    cover_tournament_context = build_ti2026_context(
+        [],
+        "\n".join(filter(None, (title, ai_topic, description))),
+        event_date=str(cfg.get("_recording_event_date") or "") or None,
+    )
+    competition_cover_instruction = ""
+    if cover_tournament_context.get("mode") == "ti_competition":
+        competition_cover_instruction = (
+            "这是 TI 2026 比赛模式封面：以对阵双方、核心选手和比赛冲突为视觉中心，"
+            "使用电竞赛事转播级构图；不得把观战主播画成参赛选手。只可使用输入中已确认的"
+            "队名、选手、局次和赛果；没有已核验终局比分时不得画比分牌、晋级、淘汰、"
+            "横扫、夺冠或不朽盾归属。"
+        )
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
         "ai_cover_headline": headline,
@@ -4512,6 +4534,7 @@ def generate_recording_cover_with_ai(
         "ai_cover_excludes_time": True,
         "ai_cover_context_source": cover_context_source,
         "ai_cover_event_context": cover_event_context,
+        "ai_cover_mode": cover_tournament_context.get("mode") or "standard",
     }
     if not enabled:
         return None, details
@@ -4942,6 +4965,7 @@ def generate_recording_cover_with_ai(
 只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 {cover_subject_copy_instruction}
 {composition_instruction}
+{competition_cover_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
 {dota2_ability_instruction}
@@ -5616,7 +5640,11 @@ def _generate_danmaku_metadata_with_ai(
         if not streamer_gameplay_verified:
             verified_live_context.pop("game", None)
             verified_live_context.pop("game_segments", None)
-        tournament_context = build_ti2026_context(comments, base_description)
+        tournament_context = build_ti2026_context(
+            comments,
+            base_description,
+            event_date=str(cfg.get("_recording_event_date") or "") or None,
+        )
         payload = {
             "base_description": base_description,
             "streamer_identity": {

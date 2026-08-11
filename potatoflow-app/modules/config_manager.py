@@ -153,6 +153,7 @@ DEFAULT_CONFIG = {
     "SUBTITLE_OPENAI_MODEL_NAME": "",
     "SUBTITLE_OPENAI_THINKING_ENABLED": False,
     "YOUTUBE_API_KEY": "",
+    "STEAM_WEB_API_KEY": "",  # Dota 2 GetLiveLeagueGames；环境变量同名可作为回退
     "YOUTUBE_API_PROXY_ENABLED": False,  # 是否为 YouTube Data API 监控启用独立代理
     "YOUTUBE_API_PROXY_URL": "",  # 监控 API 代理地址，格式：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080
     "YOUTUBE_API_PROXY_USERNAME": "",  # 监控 API 代理用户名（可选）

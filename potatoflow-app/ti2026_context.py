@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable
 
 
@@ -30,6 +31,9 @@ TI2026_RULES: dict[str, Any] = {
         "grand_final_series_format": "bo5",
     },
 }
+
+CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+UTC_TIMEZONE = timezone.utc
 
 
 TI2026_TEAMS: tuple[dict[str, Any], ...] = (
@@ -110,8 +114,8 @@ TI2026_ROSTER_CHANGES = [
     ]
 
 
-_TI_MARKERS = re.compile(
-    r"(?:TI\s*(?:15|2026)|国际邀请赛|不朽盾|Aegis|瑞士轮|主赛事|败者组|胜者组)",
+_TI_IDENTITY_MARKERS = re.compile(
+    r"(?:TI\s*(?:15|2026)|The\s+International\s+2026|国际邀请赛|上海TI|不朽盾|Aegis)",
     re.IGNORECASE,
 )
 _SERIES_MARKERS = re.compile(r"(?:BO\s*[35]|第\s*[一二三四五1-5]\s*局|比分|赛点|BP|对阵)", re.IGNORECASE)
@@ -182,7 +186,146 @@ def infer_ti2026_series_markers(comments: Iterable[Any]) -> list[dict[str, Any]]
     return markers
 
 
-def build_ti2026_context(comments: Iterable[Any], base_description: str = "") -> dict[str, Any]:
+def _inside_ti2026_window(event_date: date | str | None) -> bool:
+    raw = event_date or date.today()
+    if isinstance(raw, date):
+        value = raw.isoformat()
+    else:
+        value = str(raw or "")[:10]
+    return TI2026_RULES["dates"]["start"] <= value <= TI2026_RULES["dates"]["end"]
+
+
+def ti2026_event_date_from_filename(value: str) -> str:
+    """Return an ISO recording date from PotatoFlow's dated filenames."""
+    recording_time = ti2026_recording_datetime_from_filename(value)
+    return recording_time[:10] if recording_time else ""
+
+
+def ti2026_recording_datetime_from_filename(value: str) -> str:
+    """Return a timezone-aware China recording timestamp from a dated filename."""
+    match = re.search(
+        r"(?<!\d)(20\d{2})[-_](0[1-9]|1[0-2])[-_]([0-2]\d|3[01])"
+        r"(?:[-_](?:([01]\d|2[0-3]))[-_:]([0-5]\d)(?:[-_:]([0-5]\d))?)?(?!\d)",
+        str(value or ""),
+    )
+    if not match:
+        return ""
+    try:
+        year, month, day, hour, minute, second = match.groups()
+        parsed = datetime(
+            int(year), int(month), int(day),
+            int(hour or 0), int(minute or 0), int(second or 0),
+            tzinfo=CHINA_TIMEZONE,
+        )
+        return parsed.isoformat()
+    except ValueError:
+        return ""
+
+
+def liquipedia_utc_window_for_china_date(value: date | str) -> dict[str, str]:
+    """Map one China calendar day to the exact UTC interval used by Liquipedia."""
+    china_date = value if isinstance(value, date) else date.fromisoformat(str(value)[:10])
+    start_china = datetime.combine(china_date, time.min, tzinfo=CHINA_TIMEZONE)
+    end_china = start_china + timedelta(days=1)
+    return {
+        "start_utc": start_china.astimezone(UTC_TIMEZONE).isoformat().replace("+00:00", "Z"),
+        "end_utc_exclusive": end_china.astimezone(UTC_TIMEZONE).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def liquipedia_timestamp_to_china(value: Any) -> str:
+    """Convert a Liquipedia UTC timestamp (ISO text or Unix seconds) to UTC+8."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        parsed = datetime.fromtimestamp(float(value), tz=UTC_TIMEZONE)
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            try:
+                parsed = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return ""
+        # Liquipedia timestamps without an offset are documented/treated as UTC.
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC_TIMEZONE)
+    return parsed.astimezone(CHINA_TIMEZONE).isoformat()
+
+
+def _aware_china_datetime(value: Any) -> datetime | None:
+    """Parse Unix/ISO timestamps and normalize them to China time."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        raw_number = float(value)
+        if raw_number > 10_000_000_000:  # Accept millisecond timestamps too.
+            raw_number /= 1000
+        return datetime.fromtimestamp(raw_number, tz=UTC_TIMEZONE).astimezone(CHINA_TIMEZONE)
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=CHINA_TIMEZONE)
+    return parsed.astimezone(CHINA_TIMEZONE)
+
+
+def recording_match_end_cutoff(
+    recording_start_china: Any,
+    recording_duration_seconds: float,
+    match_end_timestamp: Any,
+) -> dict[str, Any]:
+    """Return the exact data cutoff when a match ends inside one recording."""
+    recording_start = _aware_china_datetime(recording_start_china)
+    match_end = _aware_china_datetime(match_end_timestamp)
+    try:
+        duration = float(recording_duration_seconds)
+    except (TypeError, ValueError):
+        duration = -1
+    if recording_start is None or match_end is None or duration < 0:
+        return {
+            "contains_match_end": False,
+            "cutoff_seconds": None,
+            "reason": "invalid_timestamp_or_duration",
+        }
+    recording_end = recording_start + timedelta(seconds=duration)
+    contains = recording_start <= match_end <= recording_end
+    return {
+        "contains_match_end": contains,
+        "cutoff_seconds": round((match_end - recording_start).total_seconds(), 3) if contains else None,
+        "recording_start_china": recording_start.isoformat(),
+        "recording_end_china": recording_end.isoformat(),
+        "match_end_china": match_end.isoformat(),
+        "reason": "match_ended_inside_recording" if contains else "match_end_outside_recording",
+    }
+
+
+def comments_through_match_end(
+    comments: Iterable[Any], cutoff_seconds: float | None
+) -> list[Any]:
+    """Keep only comments at or before the verified match-end boundary."""
+    if cutoff_seconds is None:
+        return []
+    boundary = max(0.0, float(cutoff_seconds))
+    return [
+        comment
+        for comment in comments
+        if float(getattr(comment, "time", 0) or 0) <= boundary
+    ]
+
+
+def build_ti2026_context(
+    comments: Iterable[Any],
+    base_description: str = "",
+    event_date: date | str | None = None,
+) -> dict[str, Any]:
     comment_list = list(comments)
     texts = [str(getattr(comment, "text", "") or "") for comment in comment_list]
     corpus = "\n".join([str(base_description or ""), *texts])
@@ -191,11 +334,11 @@ def build_ti2026_context(comments: Iterable[Any], base_description: str = "") ->
         for team in TI2026_TEAMS
         if any(_mentions(corpus, alias) for alias in (team["name"], *team["aliases"]))
 ]
-    active = bool(
-        _TI_MARKERS.search(corpus)
-        or len(mentioned_teams) >= 2
-        or (mentioned_teams and _SERIES_MARKERS.search(corpus))
-    )
+    explicit_ti_identity = bool(_TI_IDENTITY_MARKERS.search(corpus))
+    inside_event_window = _inside_ti2026_window(event_date)
+    # Outside the event window, a normal tournament featuring the same teams is
+    # not TI. During TI, require both opponents unless the content names TI itself.
+    active = explicit_ti_identity or (inside_event_window and len(mentioned_teams) >= 2)
     if not active:
         return {"active": False}
     mentioned_players: list[dict[str, str]] = []
@@ -210,8 +353,21 @@ def build_ti2026_context(comments: Iterable[Any], base_description: str = "") ->
         "main_event" if re.search(r"(?:主赛事|胜者组|败者组|淘汰赛)", corpus, re.I) else "group_stage"
     )
     series_format = "bo5" if phase == "grand_final" else "bo3"
+    event_date_value = (
+        event_date.isoformat() if isinstance(event_date, date) else str(event_date or "")[:10]
+    )
     return {
         "active": True,
+        "mode": "ti_competition",
+        "explicit_event_identity": explicit_ti_identity,
+        "inside_event_window": inside_event_window,
+        "recording_timezone": "Asia/Shanghai",
+        "recording_date_china": event_date_value,
+        "liquipedia_query_window": (
+            liquipedia_utc_window_for_china_date(event_date_value)
+            if event_date_value
+            else {}
+        ),
         "event": TI2026_RULES["event"],
         "phase": phase,
         "series_format": series_format,
