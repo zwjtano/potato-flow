@@ -275,6 +275,40 @@ class TelegramControlTests(unittest.TestCase):
         self.assertIn("nav:rooms", callbacks)
         self.assertIn("nav:active", callbacks)
         self.assertIn("nav:ai", callbacks)
+        self.assertNotIn("nav:engine", callbacks)
+        self.assertNotIn("nav:status", callbacks)
+        self.assertNotIn("nav:notifications", callbacks)
+        self.assertNotIn("录制引擎", payload["text"])
+
+    def test_rooms_page_can_start_guided_add(self):
+        self.service.process_update(_callback_update("nav:rooms"))
+        edit_call = next(
+            kwargs["json"] for url, kwargs in self.session.calls
+            if url.endswith("/editMessageText")
+        )
+        callbacks = [
+            button["callback_data"]
+            for row in edit_call["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("roomadd:prompt", callbacks)
+
+        self.service.process_update(_callback_update("roomadd:prompt"))
+        prompt = next(
+            kwargs["json"] for url, kwargs in reversed(self.session.calls)
+            if url.endswith("/sendMessage")
+        )
+        self.assertIn("请直接发送完整直播间链接", prompt["text"])
+
+    def test_ai_editor_buttons_show_titles_not_task_ids(self):
+        self.service.process_update(_message_update("/ai"))
+        buttons = [
+            button["text"]
+            for row in self.session.last_payload["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertTrue(any("正在投稿的录播" in text for text in buttons))
+        self.assertFalse(any("DYU-YYF" in text for text in buttons))
 
     def test_running_and_abnormal_pages_filter_tasks(self):
         self.service.process_update(_message_update("/running"))
@@ -494,13 +528,6 @@ class TelegramControlTests(unittest.TestCase):
         self.assertIn("速度：10.0B/s", text)
         self.assertIn("/pause <code>DYU-YYF-0728-001</code>", text)
 
-    def test_engine_pid_is_copyable(self):
-        self.service.process_update(_message_update("/engine"))
-
-        payload = self.session.last_payload
-        self.assertIn("进程 PID：<code>123</code>", payload["text"])
-        self.assertEqual(payload["parse_mode"], "HTML")
-
     def test_retry_and_pause_task_commands_use_manager(self):
         self.service.process_update(_message_update("/retry 2"))
         self.service.process_update(_message_update("/pause DYU-YYF-0728-001"))
@@ -543,30 +570,6 @@ class TelegramControlTests(unittest.TestCase):
             "task_delete:",
             confirmation["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
         )
-
-    def test_engine_stop_requires_confirmation(self):
-        self.service.process_update(_message_update("/engine stop"))
-        callback_data = self.session.last_payload["reply_markup"]["inline_keyboard"][0][0][
-            "callback_data"
-        ]
-        self.assertEqual(self.manager.engine_stops, 0)
-
-        self.service.process_update(
-            {
-                "update_id": 2,
-                "callback_query": {
-                    "id": "callback-engine",
-                    "from": {"id": 1001},
-                    "data": callback_data,
-                    "message": {
-                        "message_id": 13,
-                        "chat": {"id": -100200},
-                    },
-                },
-            }
-        )
-
-        self.assertEqual(self.manager.engine_stops, 1)
 
     def test_files_lists_recent_recording_artifacts(self):
         self.service.process_update(_message_update("/files"))

@@ -327,8 +327,6 @@ class TelegramControlService:
                         {"command": "pause", "description": "暂停正在投稿的任务"},
                         {"command": "delete_task", "description": "删除任务记录（保留文件）"},
                         {"command": "files", "description": "查看最近录播文件"},
-                        {"command": "engine", "description": "查看、启动或停止录制引擎"},
-                        {"command": "status", "description": "查看服务与磁盘状态"},
                         {"command": "help", "description": "查看命令帮助"},
                     ]
                 },
@@ -508,10 +506,6 @@ class TelegramControlService:
             self._request_task_delete(chat_id, user_id, argument)
         elif command == "/files":
             self._send_message(chat_id, self._files_text())
-        elif command == "/engine":
-            self._engine_command(chat_id, user_id, argument)
-        elif command in {"/status", "/disk"}:
-            self._send_message(chat_id, self._status_text())
         else:
             self._send_message(chat_id, "无法识别该命令。\n\n" + self._help_text())
 
@@ -534,13 +528,8 @@ class TelegramControlService:
             "/retry <编号/任务ID>  重试失败或暂停任务\n"
             "/pause <编号/任务ID>  暂停等待中/上传中的任务\n"
             "/delete_task <编号/任务ID>  删除任务记录并保留文件\n"
-            "\n服务与文件\n"
+            "\n文件\n"
             "/files  查看最近录播文件\n"
-            "/engine  查看录制引擎状态\n"
-            "/engine start  启动录制引擎\n"
-            "/engine stop  停止录制引擎（二次确认）\n"
-            "/status  查看服务与磁盘状态\n"
-            "/disk  查看磁盘与录播目录空间\n"
             "/help  查看本帮助\n\n"
             "直播间可用列表编号、完整房间号或唯一名称选择。"
         )
@@ -558,7 +547,6 @@ class TelegramControlService:
         }
 
     def _dashboard_page(self) -> tuple[str, dict[str, Any]]:
-        status = self.manager.status()
         rooms = self._rooms()
         jobs = list(self.manager.pipeline_jobs(None))
         recording = sum(
@@ -570,24 +558,16 @@ class TelegramControlService:
         abnormal = sum(
             1 for job in jobs if str(job.get("status") or "") in ABNORMAL_TASK_STATUSES
         )
-        root = Path(recordings_dir())
-        disk_root = root
-        while not disk_root.exists() and disk_root != disk_root.parent:
-            disk_root = disk_root.parent
-        free = shutil.disk_usage(disk_root).free
         text = (
             "🥔 PotatoFlow 控制台\n\n"
-            f"录制引擎：{'🟢 运行中' if status.get('running') else '⚫ 已停止'}\n"
             f"直播间：{len(rooms)} 个 · 🔴 正在录制 {recording} 个\n"
             f"进行中任务：{active} 个\n"
-            f"异常任务：{abnormal} 个\n"
-            f"磁盘可用：{_human_bytes(free)}"
+            f"异常任务：{abnormal} 个"
         )
         return text, self._nav_keyboard(
             [("🎥 直播间", "nav:rooms"), ("⏳ 进行中", "nav:active")],
             [("⚠️ 异常任务", "nav:abnormal"), ("🧾 最近任务", "nav:tasks")],
-            [("✨ AI 编辑", "nav:ai"), ("⚙️ 录制引擎", "nav:engine")],
-            [("🩺 系统状态", "nav:status"), ("🔔 通知与安全", "nav:notifications")],
+            [("✨ AI 编辑", "nav:ai")],
             [("🔄 刷新", "nav:home")],
         )
 
@@ -605,6 +585,7 @@ class TelegramControlService:
                 ("删除", f"roomdelete:{index}"),
             ])
         rows.extend([
+            [("➕ 添加直播间", "roomadd:prompt")],
             [("🔄 刷新", "nav:rooms"), ("🏠 首页", "nav:home")],
         ])
         return text, self._nav_keyboard(*rows)
@@ -927,8 +908,9 @@ class TelegramControlService:
                 f"\n{index}. {job.get('room_name') or '直播间'} · "
                 f"{job.get('status') or '未知'}\n{title}"
             )
+            button_title = self._clean_detail(title, 28)
             rows.append([(
-                f"编辑 {self._job_display_id(job)}",
+                f"编辑：{button_title}",
                 f"aiview:{self._job_callback_id(job)}",
             )])
         rows.append([("🔄 刷新", "nav:ai"), ("🏠 首页", "nav:home")])
@@ -936,13 +918,11 @@ class TelegramControlService:
 
     def _ai_detail_page(self, reference: str) -> tuple[str, dict[str, Any]]:
         job = self._resolve_task(reference)
-        display_id = self._job_display_id(job)
         callback_id = self._job_callback_id(job)
         description = self._clean_detail(job.get("description"), 900) or "尚未生成"
         tags = "、".join(str(tag) for tag in (job.get("tags") or [])) or "尚未生成"
         text = (
             "✨ AI 编辑\n\n"
-            f"任务 ID：{display_id}\n"
             f"状态：{job.get('status') or '未知'}\n\n"
             f"标题\n{self._clean_detail(job.get('title'), 180) or '尚未生成'}\n\n"
             f"简介\n{description}\n\n"
@@ -1296,10 +1276,10 @@ class TelegramControlService:
         data: str,
     ) -> bool:
         prefixes = (
-            "nav:", "noop:", "roomtoggle:", "roomdelete:", "roomsettings:",
+            "nav:", "noop:", "roomadd:", "roomtoggle:", "roomdelete:", "roomsettings:",
             "roomsetting:", "roominput:", "roomaccount:", "roomaccountset:", "taskview:",
-            "taskretry:", "taskpause:", "taskdelete:", "enginestart:",
-            "enginestop:", "aiview:", "airegen:", "inputcancel:",
+            "taskretry:", "taskpause:", "taskdelete:",
+            "aiview:", "airegen:", "inputcancel:",
         )
         if not data.startswith(prefixes):
             return False
@@ -1351,17 +1331,6 @@ class TelegramControlService:
                 page = self._rooms_page()
             elif page_name in {"active", "abnormal", "tasks"}:
                 page = self._task_list_page(page_name)
-            elif page_name == "engine":
-                page = self._engine_page()
-            elif page_name == "status":
-                page = (
-                    self._status_text(),
-                    self._nav_keyboard(
-                        [("🔄 刷新", "nav:status"), ("🏠 首页", "nav:home")]
-                    ),
-                )
-            elif page_name == "notifications":
-                page = self._notifications_page()
             elif page_name == "ai":
                 page = self._ai_editor_page()
             else:
@@ -1369,6 +1338,12 @@ class TelegramControlService:
                 return True
             render(page)
             answer()
+            return True
+        if data.startswith("roomadd:"):
+            self._request_command_input(
+                chat_id, user_id, "/add", "请直接发送完整直播间链接。"
+            )
+            answer("请发送直播间链接")
             return True
         if data.startswith("roomtoggle:"):
             _, reference, enabled_text = data.split(":", 2)
@@ -1425,15 +1400,6 @@ class TelegramControlService:
             return True
         if data.startswith("taskdelete:"):
             self._request_task_delete(chat_id, user_id, data.partition(":")[2])
-            answer("请二次确认")
-            return True
-        if data.startswith("enginestart:"):
-            self.manager.start()
-            render(self._engine_page())
-            answer("录制引擎已启动")
-            return True
-        if data.startswith("enginestop:"):
-            self._engine_command(chat_id, user_id, "stop")
             answer("请二次确认")
             return True
         if data.startswith("aiview:"):
