@@ -105,7 +105,14 @@ class DanmakuPipelineTests(unittest.TestCase):
         self.assertEqual(args[args.index("-allow_sw") + 1], "0")
         self.assertEqual(args[args.index("-realtime") + 1], "1")
         self.assertEqual(args[args.index("-prio_speed") + 1], "1")
-        self.assertEqual(args[args.index("-q:v") + 1], "20")
+        self.assertEqual(args[args.index("-q:v") + 1], "61")
+
+    def test_apple_quality_preserves_shared_lower_is_better_scale(self):
+        best = danmaku_pipeline._encoder_video_args("apple", "speed", 0)
+        smallest = danmaku_pipeline._encoder_video_args("apple", "speed", 51)
+
+        self.assertEqual(best[best.index("-q:v") + 1], "100")
+        self.assertEqual(smallest[smallest.index("-q:v") + 1], "0")
 
     def test_auto_probe_prefers_apple_videotoolbox_on_apple_silicon(self):
         def fake_run(command, **_kwargs):

@@ -1629,7 +1629,7 @@ def encoding_capabilities():
         ffmpeg = get_ffmpeg_path(logger=logger) or 'ffmpeg'
         result = probe_encoding_capabilities(
             ffmpeg,
-            preferred=str(config.get('VIDEO_ENCODER') or 'auto'),
+            preferred=str(config.get('DANMAKU_ENCODER') or 'auto'),
             force_refresh=_coerce_checkbox_value(request.args.get('refresh', 'off')),
         )
         result['purpose'] = purpose

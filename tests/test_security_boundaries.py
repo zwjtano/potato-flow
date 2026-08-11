@@ -14,6 +14,8 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 import app as app_module  # noqa: E402
+import danmaku_pipeline  # noqa: E402
+from modules import youtube_handler  # noqa: E402
 
 
 class SecurityBoundaryTests(unittest.TestCase):
@@ -40,6 +42,39 @@ class SecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["X-Frame-Options"], "SAMEORIGIN")
         self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
+
+    def test_danmaku_encoder_probe_uses_danmaku_preference(self):
+        detected = {
+            "recommendation": {"id": "apple"},
+            "capabilities": [],
+        }
+        with (
+            patch.object(
+                app_module,
+                "load_config",
+                return_value={
+                    "VIDEO_ENCODER": "cpu",
+                    "DANMAKU_ENCODER": "apple",
+                },
+            ),
+            patch.object(youtube_handler, "get_ffmpeg_path", return_value="ffmpeg"),
+            patch.object(
+                danmaku_pipeline,
+                "probe_encoding_capabilities",
+                return_value=detected,
+            ) as probe,
+        ):
+            response = self.client.get(
+                "/api/encoding-capabilities?purpose=danmaku&refresh=1"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        probe.assert_called_once_with(
+            "ffmpeg",
+            preferred="apple",
+            force_refresh=True,
+        )
+        self.assertEqual(response.get_json()["configured_encoder"], "apple")
 
     def test_detailed_health_requires_login_when_protection_is_enabled(self):
         with patch.object(

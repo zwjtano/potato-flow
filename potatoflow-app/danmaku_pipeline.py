@@ -113,6 +113,10 @@ def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
             "-qvbr_quality_level", value,
         ]
     if backend == "apple":
+        # VideoToolbox expects a 0-100 quality percentage where larger values
+        # mean higher quality, the opposite of the shared CRF/CQ-style control.
+        # Preserve the UI contract (0 is best, 51 is smallest) and translate it.
+        videotoolbox_quality = str(round((51 - int(value)) * 100 / 51))
         speed_args = {
             "speed": ["-realtime", "1", "-prio_speed", "1"],
             "balanced": ["-realtime", "1", "-prio_speed", "0"],
@@ -123,7 +127,7 @@ def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
             "-profile:v", "high",
             "-allow_sw", "0",
             *speed_args,
-            "-q:v", value,
+            "-q:v", videotoolbox_quality,
             "-pix_fmt", "yuv420p",
         ]
     return ["-c:v", "libx264", "-preset", selected_preset, "-crf", value]
