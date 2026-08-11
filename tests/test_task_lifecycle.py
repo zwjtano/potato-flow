@@ -93,19 +93,82 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         delete_files.assert_not_called()
         get_connection.assert_not_called()
 
-    def test_task_record_is_preserved_when_file_deletion_fails(self):
-        task = {"id": "task-id", "status": "failed"}
-        with (
-            patch.object(task_manager, "get_task", return_value=task),
-            patch.object(task_manager, "request_task_cancel"),
-            patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
-            patch.object(task_manager, "delete_task_files", return_value=False),
-            patch.object(task_manager, "get_db_connection") as get_connection,
-        ):
-            result = task_manager.delete_task("task-id", delete_files=True)
+    def test_task_record_is_preserved_when_file_staging_fails(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        task = {"id": task_id, "status": "failed"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            task_dir = root / task_id
+            task_dir.mkdir()
+            with (
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "get_task", return_value=task),
+                patch.object(task_manager, "request_task_cancel"),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager.os, "replace", side_effect=OSError("busy")),
+                patch.object(task_manager, "get_db_connection") as get_connection,
+            ):
+                result = task_manager.delete_task(task_id, delete_files=True)
 
-        self.assertFalse(result)
-        get_connection.assert_not_called()
+            self.assertFalse(result)
+            self.assertTrue(task_dir.exists())
+            get_connection.assert_not_called()
+
+    def test_single_task_delete_purges_staged_files_after_commit(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        task = {"id": task_id, "status": "failed"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "tasks.db"
+            task_dir = root / task_id
+            task_dir.mkdir()
+            (task_dir / "video.mp4").write_bytes(b"video")
+            with sqlite3.connect(db_path) as connection:
+                connection.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY)")
+                connection.execute("INSERT INTO tasks VALUES (?)", (task_id,))
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "get_task", return_value=task),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager, "publish_task_event") as publish,
+            ):
+                result = task_manager.delete_task(task_id, delete_files=True)
+
+            self.assertTrue(result)
+            self.assertFalse(task_dir.exists())
+            self.assertEqual(list(root.glob(".*.deleting-*")), [])
+            with sqlite3.connect(db_path) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0],
+                    0,
+                )
+            publish.assert_called_once_with("task_deleted", {"task_id": task_id})
+
+    def test_single_task_delete_restores_files_when_database_delete_fails(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        task = {"id": task_id, "status": "failed"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            task_dir = root / task_id
+            task_dir.mkdir()
+            (task_dir / "video.mp4").write_bytes(b"video")
+            connection = MagicMock()
+            connection.execute.side_effect = sqlite3.OperationalError("database busy")
+            with (
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "get_task", return_value=task),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager, "get_db_connection", return_value=connection),
+                patch.object(task_manager, "publish_task_event") as publish,
+            ):
+                result = task_manager.delete_task(task_id, delete_files=True)
+
+            self.assertFalse(result)
+            self.assertTrue((task_dir / "video.mp4").exists())
+            self.assertEqual(list(root.glob(".*.deleting-*")), [])
+            connection.rollback.assert_called_once()
+            publish.assert_not_called()
 
     def test_clear_all_stages_directories_until_database_commit(self):
         task_ids = [

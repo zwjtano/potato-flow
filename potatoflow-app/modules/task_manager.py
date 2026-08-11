@@ -1676,6 +1676,42 @@ def get_tasks_by_status(status):
     finally:
         conn.close()
 
+
+def _stage_task_directory_for_deletion(task_id):
+    """Atomically hide a task directory until its database deletion commits."""
+    original = _get_task_download_dir_real(task_id)
+    if not os.path.exists(original):
+        return None
+    staged = os.path.join(
+        os.path.dirname(original),
+        f".{os.path.basename(original)}.deleting-{uuid.uuid4().hex}",
+    )
+    os.replace(original, staged)
+    return original, staged
+
+
+def _restore_staged_task_directories(staged_directories):
+    restored = True
+    for original, staged in reversed(staged_directories):
+        try:
+            if os.path.exists(staged) and not os.path.exists(original):
+                os.replace(staged, original)
+        except OSError as exc:
+            restored = False
+            logger.error("恢复任务目录失败 %s: %s", original, exc)
+    return restored
+
+
+def _purge_staged_task_directories(staged_directories):
+    success = True
+    for _original, staged in staged_directories:
+        try:
+            shutil.rmtree(staged)
+        except OSError as exc:
+            success = False
+            logger.error("任务记录已删除，但暂存目录清理失败 %s: %s", staged, exc)
+    return success
+
 def delete_task(task_id, delete_files=True):
     """
     删除任务
@@ -1699,24 +1735,43 @@ def delete_task(task_id, delete_files=True):
         logger.warning(f"任务 {task_id} 仍在停止中，本次不删除")
         return False
 
-    # 删除任务文件
-    if delete_files and not delete_task_files(task_id):
-        logger.error(f"任务 {task_id} 的文件未能完整删除，已保留任务记录")
-        return False
+    staged_directories = []
+    if delete_files:
+        try:
+            staged = _stage_task_directory_for_deletion(task_id)
+            if staged:
+                staged_directories.append(staged)
+        except (OSError, ValueError) as exc:
+            logger.error("暂存任务 %s 的待删除文件失败：%s", task_id, exc)
+            return False
     
     # 删除任务记录
     conn = get_db_connection()
     try:
-        conn.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
+        cursor = conn.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
+        if cursor.rowcount != 1:
+            conn.rollback()
+            _restore_staged_task_directories(staged_directories)
+            logger.warning("任务 %s 状态已变化或已被删除", task_id)
+            return False
         conn.commit()
-        logger.info(f"任务 {task_id} 删除成功")
-        publish_task_event('task_deleted', {'task_id': task_id})
-        return True
     except Exception as e:
         logger.error(f"删除任务 {task_id} 失败: {str(e)}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        _restore_staged_task_directories(staged_directories)
         return False
     finally:
         conn.close()
+
+    logger.info(f"任务 {task_id} 删除成功")
+    try:
+        publish_task_event('task_deleted', {'task_id': task_id})
+    except Exception as exc:
+        logger.warning("任务已删除，但实时事件发布失败：%s", exc)
+    return _purge_staged_task_directories(staged_directories)
 
 def clear_all_tasks(delete_files=True):
     """
@@ -1746,23 +1801,12 @@ def clear_all_tasks(delete_files=True):
     if delete_files:
         try:
             for task in tasks:
-                original = _get_task_download_dir_real(task['id'])
-                if not os.path.exists(original):
-                    continue
-                staged = os.path.join(
-                    os.path.dirname(original),
-                    f".{os.path.basename(original)}.deleting-{uuid.uuid4().hex}",
-                )
-                os.replace(original, staged)
-                staged_directories.append((original, staged))
+                staged = _stage_task_directory_for_deletion(task['id'])
+                if staged:
+                    staged_directories.append(staged)
         except (OSError, ValueError) as exc:
             logger.error("暂存待删除任务文件失败，正在恢复：%s", exc)
-            for original, staged in reversed(staged_directories):
-                try:
-                    if os.path.exists(staged) and not os.path.exists(original):
-                        os.replace(staged, original)
-                except OSError as restore_exc:
-                    logger.error("恢复任务目录失败 %s: %s", original, restore_exc)
+            _restore_staged_task_directories(staged_directories)
             return False
     
     # 清空任务表
@@ -1776,12 +1820,7 @@ def clear_all_tasks(delete_files=True):
             conn.rollback()
         except Exception:
             pass
-        for original, staged in reversed(staged_directories):
-            try:
-                if os.path.exists(staged) and not os.path.exists(original):
-                    os.replace(staged, original)
-            except OSError as restore_exc:
-                logger.error("数据库回滚后恢复任务目录失败 %s: %s", original, restore_exc)
+        _restore_staged_task_directories(staged_directories)
         return False
     finally:
         conn.close()
@@ -1792,16 +1831,7 @@ def clear_all_tasks(delete_files=True):
     except Exception as exc:
         logger.warning("任务已清空，但实时事件发布失败：%s", exc)
 
-    purge_failed = []
-    for _original, staged in staged_directories:
-        try:
-            shutil.rmtree(staged)
-        except OSError as exc:
-            purge_failed.append(staged)
-            logger.error("任务记录已清空，但暂存目录删除失败 %s: %s", staged, exc)
-    if purge_failed:
-        return False
-    return True
+    return _purge_staged_task_directories(staged_directories)
 
 
 def _wait_for_task_inactive(task_id, timeout=PROCESS_TERMINATE_WAIT_SECONDS):
