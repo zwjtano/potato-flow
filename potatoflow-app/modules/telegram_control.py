@@ -38,6 +38,8 @@ _COPYABLE_COMMAND_PATTERN = re.compile(
     r"(?P<value>[A-Za-z0-9][A-Za-z0-9._:-]*)"
 )
 _COPYABLE_NUMBER_PATTERN = re.compile(r"(?<![\w])(?P<value>-?\d{5,})(?![\w])")
+ACTIVE_TASK_STATUSES = {"pending", "processing", "video_uploaded"}
+ABNORMAL_TASK_STATUSES = {"failed", "paused"}
 
 
 def _as_bool(value: Any) -> bool:
@@ -104,6 +106,7 @@ class PendingConfirmation:
     expires_at: float
     target_id: str = ""
     target_name: str = ""
+    value: str = ""
 
 
 class TelegramControlError(RuntimeError):
@@ -260,6 +263,27 @@ class TelegramControlService:
             payload["reply_markup"] = reply_markup
         return self._api("sendMessage", payload)
 
+    def _edit_message(
+        self,
+        chat_id: str,
+        message_id: Any,
+        text: str,
+        *,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> Any:
+        rendered_text, has_copyable_values = _telegram_copyable_html(str(text)[:3800])
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": rendered_text,
+            "disable_web_page_preview": True,
+        }
+        if has_copyable_values:
+            payload["parse_mode"] = "HTML"
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        return self._api("editMessageText", payload)
+
     def _discard_backlog(self) -> None:
         updates = self._api(
             "getUpdates",
@@ -283,6 +307,10 @@ class TelegramControlService:
                         {"command": "start", "description": "开始检测/录制指定直播间"},
                         {"command": "stop", "description": "安全停止指定直播间"},
                         {"command": "delete", "description": "删除直播间（二次确认）"},
+                        {"command": "menu", "description": "打开按钮控制台"},
+                        {"command": "running", "description": "查看进行中的任务"},
+                        {"command": "errors", "description": "查看异常任务"},
+                        {"command": "ai", "description": "打开 AI 编辑工作台"},
                         {"command": "tasks", "description": "查看最近录播任务"},
                         {"command": "task", "description": "查看任务详情与上传进度"},
                         {"command": "retry", "description": "重试失败或暂停的任务"},
@@ -404,7 +432,10 @@ class TelegramControlService:
         command: str,
         argument: str,
     ) -> None:
-        if command in {"/help", "/start"} and not argument:
+        if command in {"/menu", "/start"} and not argument:
+            text, markup = self._dashboard_page()
+            self._send_message(chat_id, text, reply_markup=markup)
+        elif command == "/help":
             self._send_message(chat_id, self._help_text())
         elif command == "/rooms":
             self._send_message(chat_id, self._rooms_text())
@@ -418,6 +449,15 @@ class TelegramControlService:
             self._set_room_recording(chat_id, argument, False)
         elif command == "/tasks":
             self._send_message(chat_id, self._tasks_text())
+        elif command == "/running":
+            text, markup = self._task_list_page("active")
+            self._send_message(chat_id, text, reply_markup=markup)
+        elif command in {"/errors", "/failed"}:
+            text, markup = self._task_list_page("abnormal")
+            self._send_message(chat_id, text, reply_markup=markup)
+        elif command == "/ai":
+            text, markup = self._ai_editor_page()
+            self._send_message(chat_id, text, reply_markup=markup)
         elif command == "/task":
             self._send_message(chat_id, self._task_text(argument))
         elif command == "/retry":
@@ -439,12 +479,16 @@ class TelegramControlService:
     def _help_text() -> str:
         return (
             "PotatoFlow 远程控制\n\n"
+            "/menu  打开按钮控制台\n"
             "/rooms  查看直播间编号与状态\n"
             "/add <直播间链接>  添加直播间\n"
             "/start 或 /record <编号/名称>  开始检测/录制\n"
             "/stop <编号/名称>  安全停止并收尾\n"
             "/delete <编号/名称>  删除直播间（二次确认）\n"
             "\n任务处理\n"
+            "/running  查看进行中的任务\n"
+            "/errors  查看失败与暂停任务\n"
+            "/ai  打开 AI 编辑工作台\n"
             "/tasks  查看最近任务及编号\n"
             "/task <编号/任务ID>  查看详情、进度和错误\n"
             "/retry <编号/任务ID>  重试失败或暂停任务\n"
@@ -463,6 +507,229 @@ class TelegramControlService:
 
     def _rooms(self) -> list[dict[str, Any]]:
         return list(self.manager.rooms_with_status())
+
+    @staticmethod
+    def _nav_keyboard(*rows: list[tuple[str, str]]) -> dict[str, Any]:
+        return {
+            "inline_keyboard": [
+                [{"text": label, "callback_data": data} for label, data in row]
+                for row in rows
+            ]
+        }
+
+    def _dashboard_page(self) -> tuple[str, dict[str, Any]]:
+        status = self.manager.status()
+        rooms = self._rooms()
+        jobs = list(self.manager.pipeline_jobs(None))
+        recording = sum(
+            1 for room in rooms if (room.get("runtime") or {}).get("recording")
+        )
+        active = sum(
+            1 for job in jobs if str(job.get("status") or "") in ACTIVE_TASK_STATUSES
+        )
+        abnormal = sum(
+            1 for job in jobs if str(job.get("status") or "") in ABNORMAL_TASK_STATUSES
+        )
+        root = Path(recordings_dir())
+        disk_root = root
+        while not disk_root.exists() and disk_root != disk_root.parent:
+            disk_root = disk_root.parent
+        free = shutil.disk_usage(disk_root).free
+        text = (
+            "🥔 PotatoFlow 控制台\n\n"
+            f"录制引擎：{'🟢 运行中' if status.get('running') else '⚫ 已停止'}\n"
+            f"直播间：{len(rooms)} 个 · 🔴 正在录制 {recording} 个\n"
+            f"进行中任务：{active} 个\n"
+            f"异常任务：{abnormal} 个\n"
+            f"磁盘可用：{_human_bytes(free)}"
+        )
+        return text, self._nav_keyboard(
+            [("🎥 直播间", "nav:rooms"), ("⏳ 进行中", "nav:active")],
+            [("⚠️ 异常任务", "nav:abnormal"), ("🧾 最近任务", "nav:tasks")],
+            [("✨ AI 编辑", "nav:ai"), ("⚙️ 录制引擎", "nav:engine")],
+            [("🩺 系统状态", "nav:status"), ("🔔 通知与安全", "nav:notifications")],
+            [("🔄 刷新", "nav:home")],
+        )
+
+    def _rooms_page(self) -> tuple[str, dict[str, Any]]:
+        rooms = self._rooms()
+        text = self._rooms_text()
+        rows: list[list[tuple[str, str]]] = []
+        for index, room in enumerate(rooms[:8], 1):
+            runtime = room.get("runtime") or {}
+            enabled = str(runtime.get("state") or "") not in {"paused", "stopped"}
+            action = "停止" if enabled else "启动"
+            rows.append([
+                (f"{index}. {room.get('name') or '直播间'}", f"noop:room{index}"),
+                (action, f"roomtoggle:{index}:{0 if enabled else 1}"),
+                ("删除", f"roomdelete:{index}"),
+            ])
+        rows.extend([
+            [("🔄 刷新", "nav:rooms"), ("🏠 首页", "nav:home")],
+        ])
+        return text, self._nav_keyboard(*rows)
+
+    def _task_list_page(self, kind: str) -> tuple[str, dict[str, Any]]:
+        all_jobs = list(self.manager.pipeline_jobs(None))
+        if kind == "active":
+            jobs = [
+                job for job in all_jobs
+                if str(job.get("status") or "") in ACTIVE_TASK_STATUSES
+            ]
+            heading = "⏳ 进行中的任务"
+        elif kind == "abnormal":
+            jobs = [
+                job for job in all_jobs
+                if str(job.get("status") or "") in ABNORMAL_TASK_STATUSES
+            ]
+            heading = "⚠️ 异常任务"
+        else:
+            jobs = all_jobs[:10]
+            heading = "🧾 最近任务"
+        lines = [f"{heading}（{len(jobs)}）"]
+        rows: list[list[tuple[str, str]]] = []
+        if not jobs:
+            lines.append("\n目前没有符合条件的任务。")
+        stage_labels = {
+            "ai": "AI 简介", "cover": "封面", "burn": "烧录字幕",
+            "upload": "投稿", "collection": "加入合集", "verify": "校验",
+        }
+        for index, job in enumerate(jobs[:8], 1):
+            completed = int(job.get("completed_stages") or 0)
+            total = int(job.get("total_stages") or 0)
+            percent = completed / total * 100 if total else 0
+            stage = str(job.get("active_stage") or job.get("failed_stage") or "等待")
+            status = str(job.get("status") or "未知")
+            lines.append(
+                f"\n{index}. {job.get('room_name') or '直播间'} · {status}\n"
+                f"{job.get('title') or job.get('video_name') or self._job_display_id(job)}\n"
+                f"阶段：{stage_labels.get(stage, stage)} · 总进度 {completed}/{total} ({percent:.0f}%)"
+            )
+            progress = job.get("upload_progress")
+            if isinstance(progress, dict) and float(progress.get("total_bytes") or 0) > 0:
+                uploaded = float(progress.get("uploaded_bytes") or 0)
+                total_bytes = float(progress.get("total_bytes") or 0)
+                lines.append(f"上传：{uploaded / total_bytes * 100:.1f}%")
+            rows.append([(
+                f"查看 {self._job_display_id(job)}",
+                f"taskview:{self._job_callback_id(job)}",
+            )])
+        refresh = {"active": "nav:active", "abnormal": "nav:abnormal"}.get(
+            kind, "nav:tasks"
+        )
+        rows.append([("🔄 刷新", refresh), ("🏠 首页", "nav:home")])
+        return "\n".join(lines)[:3800], self._nav_keyboard(*rows)
+
+    def _task_detail_page(self, reference: str) -> tuple[str, dict[str, Any]]:
+        job = self._resolve_task(reference)
+        display_id = self._job_display_id(job)
+        callback_id = self._job_callback_id(job)
+        status = str(job.get("status") or "")
+        rows: list[list[tuple[str, str]]] = [
+            [("🔄 刷新进度", f"taskview:{callback_id}")],
+        ]
+        actions: list[tuple[str, str]] = []
+        if job.get("retryable"):
+            actions.append(("🔁 重试", f"taskretry:{callback_id}"))
+        if job.get("pausable"):
+            actions.append(("⏸ 暂停", f"taskpause:{callback_id}"))
+        if status not in ACTIVE_TASK_STATUSES:
+            actions.append(("🗑 删除记录", f"taskdelete:{callback_id}"))
+        if actions:
+            rows.append(actions)
+        rows.append([("⬅️ 任务列表", "nav:tasks"), ("🏠 首页", "nav:home")])
+        return self._task_text(display_id), self._nav_keyboard(*rows)
+
+    def _engine_page(self) -> tuple[str, dict[str, Any]]:
+        status = self.manager.status()
+        text = (
+            "⚙️ 录制引擎\n\n"
+            f"状态：{'🟢 运行中' if status.get('running') else '⚫ 已停止'}\n"
+            f"进程 PID：{status.get('pid') or '—'}"
+        )
+        action = (
+            [("⛔ 停止引擎", "enginestop:request")]
+            if status.get("running") else [("▶️ 启动引擎", "enginestart:now")]
+        )
+        return text, self._nav_keyboard(
+            action,
+            [("🔄 刷新", "nav:engine"), ("🏠 首页", "nav:home")],
+        )
+
+    def _ai_editor_page(self) -> tuple[str, dict[str, Any]]:
+        jobs = list(self.manager.pipeline_jobs(None))
+        editable = [
+            job for job in jobs
+            if job.get("title") or job.get("description") or job.get("bvid")
+        ][:8]
+        lines = ["✨ AI 编辑工作台", "", "可查看并重新生成标题、简介、标签与封面。"]
+        rows: list[list[tuple[str, str]]] = []
+        if not editable:
+            lines.append("\n目前没有可编辑的录播任务。")
+        for index, job in enumerate(editable, 1):
+            title = self._clean_detail(
+                job.get("title") or job.get("video_name") or "未生成标题", 90
+            )
+            lines.append(
+                f"\n{index}. {job.get('room_name') or '直播间'} · "
+                f"{job.get('status') or '未知'}\n{title}"
+            )
+            rows.append([(
+                f"编辑 {self._job_display_id(job)}",
+                f"aiview:{self._job_callback_id(job)}",
+            )])
+        rows.append([("🔄 刷新", "nav:ai"), ("🏠 首页", "nav:home")])
+        return "\n".join(lines)[:3800], self._nav_keyboard(*rows)
+
+    def _ai_detail_page(self, reference: str) -> tuple[str, dict[str, Any]]:
+        job = self._resolve_task(reference)
+        display_id = self._job_display_id(job)
+        callback_id = self._job_callback_id(job)
+        description = self._clean_detail(job.get("description"), 900) or "尚未生成"
+        tags = "、".join(str(tag) for tag in (job.get("tags") or [])) or "尚未生成"
+        text = (
+            "✨ AI 编辑\n\n"
+            f"任务 ID：{display_id}\n"
+            f"状态：{job.get('status') or '未知'}\n\n"
+            f"标题\n{self._clean_detail(job.get('title'), 180) or '尚未生成'}\n\n"
+            f"简介\n{description}\n\n"
+            f"标签\n{tags}"
+        )
+        return text[:3800], self._nav_keyboard(
+            [("生成标题", f"airegen:title:{callback_id}"),
+             ("生成简介", f"airegen:description:{callback_id}")],
+            [("生成标签", f"airegen:tags:{callback_id}"),
+             ("重新生成全部", f"airegen:all:{callback_id}")],
+            [("生成 16:9 封面", f"airegen:cover_16x9:{callback_id}"),
+             ("生成 4:3 封面", f"airegen:cover_4x3:{callback_id}")],
+            [("🔄 刷新", f"aiview:{callback_id}"), ("⬅️ AI 工作台", "nav:ai")],
+            [("🏠 首页", "nav:home")],
+        )
+
+    def _notifications_page(self) -> tuple[str, dict[str, Any]]:
+        enabled = _as_bool(self.config.get("NOTIFY_ENABLED"))
+        telegram = _as_bool(self.config.get("NOTIFY_TELEGRAM_ENABLED"))
+        event_keys = (
+            "NOTIFY_EVENT_TASK_ADDED", "NOTIFY_EVENT_TASK_COMPLETED",
+            "NOTIFY_EVENT_TASK_FAILED", "NOTIFY_EVENT_RECORDING_STARTED",
+            "NOTIFY_EVENT_RECORDING_STOPPED", "NOTIFY_EVENT_COOKIE_INVALID",
+        )
+        enabled_events = sum(_as_bool(self.config.get(key, True)) for key in event_keys)
+        text = (
+            "🔔 通知与安全\n\n"
+            f"通知总开关：{'开启' if enabled else '关闭'}\n"
+            f"Telegram 通知：{'开启' if telegram else '关闭'}\n"
+            f"已启用事件：{enabled_events}/{len(event_keys)}\n\n"
+            "安全策略\n"
+            f"• 管理员白名单：{len(self.admin_user_ids)} 人\n"
+            f"• 固定目标会话：{'已配置' if self.target_chat_id else '未配置'}\n"
+            "• 停止引擎、删除直播间和删除任务均需二次确认\n"
+            f"• 确认按钮有效期：{CONFIRM_TTL_SECONDS} 秒\n\n"
+            "通知开关请在 PotatoFlow 设置页修改。"
+        )
+        return text, self._nav_keyboard(
+            [("🔄 刷新", "nav:notifications"), ("🏠 首页", "nav:home")],
+        )
 
     def _rooms_text(self) -> str:
         rooms = self._rooms()
@@ -592,6 +859,10 @@ class TelegramControlService:
                     },
                 )
             return
+        if self._handle_navigation_callback(
+            callback_id, chat_id, user_id, message, data
+        ):
+            return
         action, _, token = data.partition(":")
         with self._pending_lock:
             self._purge_pending_confirmations()
@@ -641,6 +912,38 @@ class TelegramControlService:
             self.manager.stop()
             result_text = "✅ 录制引擎已停止，正在录制的文件已安全收尾。"
             logger.info("Telegram 控制停止录制引擎：user_id=%s", user_id)
+        elif action == "ai_regen":
+            fields = {
+                "title": {"title"},
+                "description": {"description"},
+                "tags": {"tags"},
+                "all": {"title", "description", "tags"},
+                "cover_16x9": {"cover_16x9"},
+                "cover_4x3": {"cover_4x3"},
+            }.get(pending.value)
+            if not fields:
+                raise RecorderConfigError("无法识别 AI 生成项目")
+            self._api(
+                "answerCallbackQuery",
+                {"callback_query_id": callback_id, "text": "AI 生成已开始"},
+            )
+            message_id = message.get("message_id")
+            if message_id:
+                try:
+                    self._edit_message(
+                        chat_id,
+                        message_id,
+                        f"⏳ 正在让 AI 重新生成{pending.target_name}……\n完成后会发送通知。",
+                    )
+                except TelegramControlError:
+                    logger.warning("Telegram AI 编辑进度消息更新失败")
+            threading.Thread(
+                target=self._run_ai_regeneration,
+                args=(chat_id, user_id, pending, fields),
+                name=f"potato-telegram-ai-{pending.target_id[:8]}",
+                daemon=True,
+            ).start()
+            return
         else:
             result_text = "无法识别该确认操作。"
         self._api(
@@ -662,6 +965,161 @@ class TelegramControlService:
             except TelegramControlError:
                 pass
         self._send_message(chat_id, result_text)
+
+    def _run_ai_regeneration(
+        self,
+        chat_id: str,
+        user_id: str,
+        pending: PendingConfirmation,
+        fields: set[str],
+    ) -> None:
+        try:
+            self.manager.regenerate_published_metadata(pending.target_id, fields)
+            self._send_message(
+                chat_id,
+                f"✅ AI 生成完成：{pending.target_name}。\n"
+                f"任务 ID：{pending.target_id[:12]}\n发送 /ai 检查结果。",
+            )
+            logger.info(
+                "Telegram AI 编辑完成：user_id=%s task_id=%s fields=%s",
+                user_id,
+                pending.target_id[:12],
+                sorted(fields),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Telegram AI 编辑失败：user_id=%s task_id=%s",
+                user_id,
+                pending.target_id[:12],
+            )
+            try:
+                self._send_message(
+                    chat_id,
+                    f"❌ AI 生成失败：{self._clean_detail(exc, 300)}",
+                )
+            except TelegramControlError:
+                logger.warning("Telegram AI 编辑失败通知发送失败")
+
+    def _handle_navigation_callback(
+        self,
+        callback_id: str,
+        chat_id: str,
+        user_id: str,
+        message: dict[str, Any],
+        data: str,
+    ) -> bool:
+        prefixes = (
+            "nav:", "noop:", "roomtoggle:", "roomdelete:", "taskview:",
+            "taskretry:", "taskpause:", "taskdelete:", "enginestart:",
+            "enginestop:", "aiview:", "airegen:",
+        )
+        if not data.startswith(prefixes):
+            return False
+        message_id = message.get("message_id")
+
+        def answer(text: str = "已刷新", *, alert: bool = False) -> None:
+            if callback_id:
+                self._api("answerCallbackQuery", {
+                    "callback_query_id": callback_id,
+                    "text": text[:200],
+                    "show_alert": alert,
+                })
+
+        def render(page: tuple[str, dict[str, Any]]) -> None:
+            text, markup = page
+            if message_id:
+                try:
+                    self._edit_message(chat_id, message_id, text, reply_markup=markup)
+                    return
+                except TelegramControlError as exc:
+                    if "message is not modified" in str(exc).lower():
+                        return
+                    raise
+            self._send_message(chat_id, text, reply_markup=markup)
+
+        if data.startswith("noop:"):
+            answer("请选择右侧操作")
+            return True
+        if data.startswith("nav:"):
+            page_name = data.partition(":")[2]
+            if page_name == "home":
+                page = self._dashboard_page()
+            elif page_name == "rooms":
+                page = self._rooms_page()
+            elif page_name in {"active", "abnormal", "tasks"}:
+                page = self._task_list_page(page_name)
+            elif page_name == "engine":
+                page = self._engine_page()
+            elif page_name == "status":
+                page = (
+                    self._status_text(),
+                    self._nav_keyboard(
+                        [("🔄 刷新", "nav:status"), ("🏠 首页", "nav:home")]
+                    ),
+                )
+            elif page_name == "notifications":
+                page = self._notifications_page()
+            elif page_name == "ai":
+                page = self._ai_editor_page()
+            else:
+                answer("页面不存在", alert=True)
+                return True
+            render(page)
+            answer()
+            return True
+        if data.startswith("roomtoggle:"):
+            _, reference, enabled_text = data.split(":", 2)
+            room = self._resolve_room(reference)
+            self.manager.set_room_recording(
+                str(room.get("id") or ""), enabled_text == "1"
+            )
+            render(self._rooms_page())
+            answer("直播间状态已更新")
+            return True
+        if data.startswith("roomdelete:"):
+            reference = data.partition(":")[2]
+            self._request_room_delete(chat_id, user_id, reference)
+            answer("请二次确认")
+            return True
+        if data.startswith("taskview:"):
+            render(self._task_detail_page(data.partition(":")[2]))
+            answer()
+            return True
+        if data.startswith("taskretry:"):
+            job = self._resolve_task(data.partition(":")[2])
+            self.manager.retry_pipeline_job(str(job.get("id") or ""))
+            render(self._task_detail_page(self._job_display_id(job)))
+            answer("已开始重试")
+            return True
+        if data.startswith("taskpause:"):
+            job = self._resolve_task(data.partition(":")[2])
+            self.manager.pause_pipeline_job(str(job.get("id") or ""))
+            render(self._task_detail_page(self._job_display_id(job)))
+            answer("任务已暂停")
+            return True
+        if data.startswith("taskdelete:"):
+            self._request_task_delete(chat_id, user_id, data.partition(":")[2])
+            answer("请二次确认")
+            return True
+        if data.startswith("enginestart:"):
+            self.manager.start()
+            render(self._engine_page())
+            answer("录制引擎已启动")
+            return True
+        if data.startswith("enginestop:"):
+            self._engine_command(chat_id, user_id, "stop")
+            answer("请二次确认")
+            return True
+        if data.startswith("aiview:"):
+            render(self._ai_detail_page(data.partition(":")[2]))
+            answer()
+            return True
+        if data.startswith("airegen:"):
+            _, field, reference = data.split(":", 2)
+            self._request_ai_regenerate(chat_id, user_id, reference, field)
+            answer("请二次确认")
+            return True
+        return False
 
     def _tasks_text(self) -> str:
         jobs = list(self.manager.pipeline_jobs(10))
@@ -880,6 +1338,50 @@ class TelegramControlService:
                     {"text": "取消", "callback_data": f"task_cancel:{token}"},
                 ]]
             },
+        )
+
+    @staticmethod
+    def _job_callback_id(job: dict[str, Any]) -> str:
+        """Keep Telegram callback_data safely below its 64-byte limit."""
+        return str(job.get("short_id") or job.get("id") or "")[:12]
+
+    def _request_ai_regenerate(
+        self,
+        chat_id: str,
+        user_id: str,
+        reference: str,
+        field: str,
+    ) -> None:
+        job = self._resolve_task(reference)
+        labels = {
+            "title": "标题", "description": "简介", "tags": "标签",
+            "all": "标题、简介和标签", "cover_16x9": "16:9 封面",
+            "cover_4x3": "4:3 封面",
+        }
+        label = labels.get(field)
+        if not label:
+            raise RecorderConfigError("无法识别 AI 生成项目")
+        token = secrets.token_urlsafe(8)
+        pending = PendingConfirmation(
+            action="ai_regen",
+            user_id=user_id,
+            chat_id=chat_id,
+            expires_at=time.time() + CONFIRM_TTL_SECONDS,
+            target_id=str(job.get("id") or ""),
+            target_name=label,
+            value=field,
+        )
+        with self._pending_lock:
+            self._pending_confirmations[token] = pending
+            self._purge_pending_confirmations()
+        self._send_message(
+            chat_id,
+            f"确定让 AI 重新生成{label}吗？\n"
+            "现有内容会在生成成功后更新，确认按钮 2 分钟内有效。",
+            reply_markup={"inline_keyboard": [[
+                {"text": f"确认生成{label}", "callback_data": f"ai_regen:{token}"},
+                {"text": "取消", "callback_data": f"ai_cancel:{token}"},
+            ]]},
         )
 
     def _files_text(self) -> str:

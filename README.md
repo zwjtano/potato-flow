@@ -1,5 +1,7 @@
 # PotatoFlow（土豆录播姬）
 
+项目来源：[Y2A-Auto](https://github.com/fqscfqj/Y2A-Auto)（下载、AI 处理与投稿） · [biliup](https://github.com/biliup/biliup)（直播录制）
+
 PotatoFlow 是一个面向 Linux 和 Windows 的直播录制、弹幕处理、AI 内容生成和哔哩哔哩投稿工具。录制、文件管理、任务队列、人工审核和系统设置集中在同一个 WebUI，对外只使用一个服务端口。
 
 [图文文档](https://zwjtano.github.io/potato-flow/) · [最新版本](https://github.com/zwjtano/potato-flow/releases/latest) · [问题反馈](https://github.com/zwjtano/potato-flow/issues)

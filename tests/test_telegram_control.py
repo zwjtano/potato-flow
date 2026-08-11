@@ -1,5 +1,6 @@
 import pathlib
 import sys
+import time
 import unittest
 
 
@@ -66,6 +67,7 @@ class _Manager:
         self.retried = []
         self.paused = []
         self.deleted_tasks = []
+        self.regenerated = []
         self.engine_starts = 0
         self.engine_stops = 0
 
@@ -158,6 +160,10 @@ class _Manager:
         self.deleted_tasks.append((fingerprint, delete_files))
         return {"deleted_file_count": 0}
 
+    def regenerate_published_metadata(self, fingerprint, fields):
+        self.regenerated.append((fingerprint, set(fields)))
+        return {"ai_regenerated_fields": sorted(fields)}
+
     def recording_files(self, limit):
         return {
             "files": [
@@ -200,6 +206,21 @@ def _message_update(text, *, user_id="1001", chat_id="-100200"):
     }
 
 
+def _callback_update(data, *, user_id="1001", chat_id="-100200", message_id=20):
+    return {
+        "update_id": 2,
+        "callback_query": {
+            "id": "callback-nav",
+            "from": {"id": int(user_id)},
+            "data": data,
+            "message": {
+                "message_id": message_id,
+                "chat": {"id": int(chat_id)},
+            },
+        },
+    }
+
+
 class TelegramControlTests(unittest.TestCase):
     def setUp(self):
         self.manager = _Manager()
@@ -222,6 +243,96 @@ class TelegramControlTests(unittest.TestCase):
         self.assertEqual(
             service.validation_errors(),
             ["Bot Token", "Chat ID", "管理员 User ID"],
+        )
+
+    def test_start_opens_dashboard_with_counts_and_navigation(self):
+        self.service.process_update(_message_update("/start"))
+
+        payload = self.session.last_payload
+        self.assertIn("PotatoFlow 控制台", payload["text"])
+        self.assertIn("进行中任务：1 个", payload["text"])
+        self.assertIn("异常任务：1 个", payload["text"])
+        callbacks = [
+            button["callback_data"]
+            for row in payload["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("nav:rooms", callbacks)
+        self.assertIn("nav:active", callbacks)
+        self.assertIn("nav:ai", callbacks)
+
+    def test_running_and_abnormal_pages_filter_tasks(self):
+        self.service.process_update(_message_update("/running"))
+        active_text = self.session.last_payload["text"]
+        self.assertIn("正在投稿的录播", active_text)
+        self.assertNotIn("失败的录播", active_text)
+
+        self.service.process_update(_message_update("/errors"))
+        abnormal_text = self.session.last_payload["text"]
+        self.assertIn("失败的录播", abnormal_text)
+        self.assertNotIn("正在投稿的录播", abnormal_text)
+
+    def test_navigation_refresh_edits_existing_message(self):
+        self.service.process_update(_callback_update("nav:active"))
+
+        methods = [url.rsplit("/", 1)[-1] for url, _ in self.session.calls]
+        self.assertIn("editMessageText", methods)
+        self.assertIn("answerCallbackQuery", methods)
+        edit_call = next(
+            kwargs["json"] for url, kwargs in self.session.calls
+            if url.endswith("/editMessageText")
+        )
+        self.assertIn("进行中的任务", edit_call["text"])
+
+    def test_unauthorized_navigation_callback_is_rejected(self):
+        self.service.process_update(
+            _callback_update("nav:home", user_id="9999")
+        )
+
+        self.assertEqual(len(self.session.calls), 1)
+        self.assertTrue(self.session.calls[0][0].endswith("/answerCallbackQuery"))
+        self.assertEqual(self.session.last_payload["text"], "无权操作")
+
+    def test_task_detail_refresh_has_progress_and_actions(self):
+        self.service.process_update(
+            _callback_update("taskview:DYU-YYF-0728-001")
+        )
+
+        edit_call = next(
+            kwargs["json"] for url, kwargs in self.session.calls
+            if url.endswith("/editMessageText")
+        )
+        self.assertIn("上传：50.00%", edit_call["text"])
+        callbacks = [
+            button["callback_data"]
+            for row in edit_call["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn("taskview:" + "a" * 12, callbacks)
+        self.assertIn("taskpause:" + "a" * 12, callbacks)
+
+    def test_ai_regeneration_requires_confirmation(self):
+        self.service.process_update(
+            _callback_update("airegen:title:DYU-YYF-0728-001")
+        )
+        confirmation = next(
+            kwargs["json"] for url, kwargs in reversed(self.session.calls)
+            if url.endswith("/sendMessage")
+        )
+        callback_data = confirmation["reply_markup"]["inline_keyboard"][0][0][
+            "callback_data"
+        ]
+        self.assertEqual(self.manager.regenerated, [])
+
+        self.service.process_update(_callback_update(callback_data, message_id=21))
+
+        deadline = time.time() + 1
+        while not self.manager.regenerated and time.time() < deadline:
+            time.sleep(0.01)
+
+        self.assertEqual(
+            self.manager.regenerated,
+            [("a" * 64, {"title"})],
         )
 
     def test_rooms_command_lists_numbered_rooms_and_modes(self):
