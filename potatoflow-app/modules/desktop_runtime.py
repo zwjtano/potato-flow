@@ -170,7 +170,9 @@ def component_diagnostics(layout: WindowsRuntimeLayout) -> list[dict[str, object
     manifest = load_runtime_manifest(layout)
     expected = manifest.get("components") if isinstance(manifest.get("components"), list) else []
     bundled_names = {path.name for path in layout.bin_root.iterdir()} if layout.bin_root.is_dir() else set()
-    windows_bundle = os.name == "nt" or any(name.endswith(".exe") for name in bundled_names)
+    has_windows_tools = any(name.endswith(".exe") for name in bundled_names)
+    has_extensionless_tools = any(name in bundled_names for name in ("biliup", "ffmpeg", "ffprobe"))
+    windows_bundle = has_windows_tools or (not has_extensionless_tools and os.name == "nt")
     names = (
         {"biliup.exe", "ffmpeg.exe", "ffprobe.exe"}
         if windows_bundle

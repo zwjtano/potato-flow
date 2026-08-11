@@ -59,7 +59,11 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
             (resources / "bin").mkdir(parents=True)
             for name in ("biliup", "ffmpeg", "ffprobe"):
                 (resources / "bin" / name).write_bytes(name.encode())
-            components = component_diagnostics(resolve_macos_runtime(resources))
+            # A macOS bundle may be inspected by a Windows CI runner; the
+            # package contents, not the host running the test, are authoritative.
+            layout = resolve_macos_runtime(resources)
+            with mock.patch("modules.desktop_runtime.os.name", "nt"):
+                components = component_diagnostics(layout)
             self.assertEqual({item["name"] for item in components}, {"biliup", "ffmpeg", "ffprobe"})
             self.assertTrue(all(item["exists"] for item in components))
 
