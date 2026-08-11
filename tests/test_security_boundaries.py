@@ -120,6 +120,37 @@ class SecurityBoundaryTests(unittest.TestCase):
             flashes,
         )
 
+    def test_auto_mode_add_reports_queue_when_immediate_start_fails(self):
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(
+                app_module,
+                "load_config",
+                return_value={"AUTO_MODE_ENABLED": True},
+            ),
+            patch.object(
+                app_module,
+                "resolve_account",
+                return_value={"id": "default"},
+            ),
+            patch.object(app_module, "add_task", return_value="task-id"),
+            patch.object(app_module, "start_task", return_value=False),
+        ):
+            response = self.client.post(
+                "/tasks/add",
+                data={"youtube_url": "https://youtu.be/example"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session_state:
+            flashes = session_state.get("_flashes", [])
+        self.assertTrue(any(
+            category == "warning" and "保留在队列中" in message
+            for category, message in flashes
+        ))
+
     def test_password_hash_and_legacy_password_verification(self):
         hashed = app_module.generate_password_hash("correct horse")
 

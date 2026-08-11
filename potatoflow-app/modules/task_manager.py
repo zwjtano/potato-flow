@@ -844,25 +844,39 @@ def recover_interrupted_tasks_to_pending():
                 continue
             has_bilibili_resp = bool(row['bilibili_upload_response'])
             has_upload_resp = has_bilibili_resp
-            # 若上传响应已存在，直接标记为 completed（避免重复上传）
-            if has_upload_resp:
-                conn.execute(
-                    'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
-                    (TASK_STATES['COMPLETED'], now_str, task_id)
-                )
-                recovered += 1
-                continue
-
-            # 其他处理中状态：恢复为 pending，由流水线根据checkpoint跳过已完成阶段
-            conn.execute(
-                'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
-                (TASK_STATES['PENDING'], now_str, task_id)
+            target_status = (
+                TASK_STATES['COMPLETED']
+                if has_upload_resp
+                else TASK_STATES['PENDING']
             )
-            recovered += 1
+            # 若上传响应已存在，直接标记为 completed（避免重复上传）
+            # 状态与租约在同一条写语句中复核，避免检查租约后新 worker
+            # 刚取得租约，恢复线程又把它改回 pending/completed。
+            update_cursor = conn.execute(
+                """UPDATE tasks
+                   SET status = ?, updated_at = ?
+                   WHERE id = ? AND status = ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM task_worker_leases
+                         WHERE task_id = ? AND lease_until > ?
+                     )""",
+                (
+                    target_status,
+                    now_str,
+                    task_id,
+                    status,
+                    task_id,
+                    time.time(),
+                ),
+            )
+            if update_cursor.rowcount == 1:
+                recovered += 1
+            else:
+                logger.info("断点续跑：任务 %s 状态或租约已变化，跳过", task_id)
 
         conn.commit()
         if recovered:
-            logger.info(f"断点续跑：已恢复 {recovered} 个处理中任务为 pending")
+            logger.info("断点续跑：已安全恢复 %s 个中断任务", recovered)
         return recovered
     except Exception as e:
         logger.warning(f"断点续跑：恢复处理中任务失败（忽略）：{e}")
@@ -1369,7 +1383,7 @@ def update_task(task_id, silent=False, expected_status=None, **kwargs):
     Args:
         task_id: 任务ID
         silent: 是否静默更新（不记录到主日志）
-        expected_status: 可选的当前状态约束，用于并发安全的状态流转
+        expected_status: 可选的当前状态或状态集合约束，用于并发安全的状态流转
         **kwargs: 要更新的字段及其值
     
     Returns:
@@ -1450,15 +1464,20 @@ def update_task(task_id, silent=False, expected_status=None, **kwargs):
                     logger.warning(f"任务 {task_id} 不存在，无法更新")
                     return False
                 previous_status = existing_task.get('status') if existing_task else None
-                if expected_status is not None and previous_status != expected_status:
-                    conn.rollback()
-                    logger.info(
-                        "任务 %s 当前状态为 %s，不满足预期状态 %s",
-                        task_id,
-                        previous_status,
-                        expected_status,
-                    )
-                    return False
+                if expected_status is not None:
+                    if isinstance(expected_status, str):
+                        expected_statuses = {expected_status}
+                    else:
+                        expected_statuses = set(expected_status)
+                    if previous_status not in expected_statuses:
+                        conn.rollback()
+                        logger.info(
+                            "任务 %s 当前状态为 %s，不满足预期状态 %s",
+                            task_id,
+                            previous_status,
+                            sorted(expected_statuses),
+                        )
+                        return False
                 cursor = conn.execute(
                     f'UPDATE tasks SET {set_clause} WHERE id = ?',
                     values
@@ -1767,13 +1786,15 @@ def pause_task(task_id):
     if str(task.get('status') or '') not in YOUTUBE_PAUSABLE_STATUSES:
         return False
 
-    request_task_cancel(task_id)
-    update_task(
+    if not update_task(
         task_id,
+        expected_status=YOUTUBE_PAUSABLE_STATUSES,
         status=TASK_STATES['PAUSED'],
         error_message=None,
         upload_progress=None,
-    )
+    ):
+        return False
+    request_task_cancel(task_id)
     return _wait_for_task_inactive(task_id)
 
 
@@ -1987,14 +2008,8 @@ def init_task_semaphore(max_concurrent_tasks=3):
     task_semaphore = threading.Semaphore(max_concurrent_tasks)
     logger.info(f"任务信号量初始化完成: {task_semaphore}")
 
-def reset_stuck_tasks(skip_active=False, cancel_active=False):
+def reset_stuck_tasks(skip_active=True, cancel_active=False):
     """重置卡住的任务"""
-    import time
-    current_time = time.time()
-    
-    # 定义超时时间（30分钟）
-    timeout_seconds = 30 * 60
-    
     conn = get_db_connection()
     try:
         # 查找可能卡住的任务（状态为处理中但长时间未更新）
@@ -2027,14 +2042,34 @@ def reset_stuck_tasks(skip_active=False, cancel_active=False):
                     continue
                 
                 # 重置为失败状态
-                conn.execute('''
-                    UPDATE tasks 
+                lease_guard = """
+                    AND NOT EXISTS (
+                        SELECT 1 FROM task_worker_leases
+                        WHERE task_id = ? AND lease_until > ?
+                    )
+                """ if skip_active else ""
+                parameters = [
+                    TASK_STATES['FAILED'],
+                    f"任务超时重置 (原状态: {old_status})",
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    task_id,
+                    old_status,
+                    updated_at,
+                ]
+                if skip_active:
+                    parameters.extend([task_id, time.time()])
+                update_cursor = conn.execute(f'''
+                    UPDATE tasks
                     SET status = ?, error_message = ?, updated_at = ?
-                    WHERE id = ?
-                ''', (TASK_STATES['FAILED'], 
-                      f"任务超时重置 (原状态: {old_status})",
-                      datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                      task_id))
+                    WHERE id = ? AND status = ? AND updated_at = ?
+                    {lease_guard}
+                ''', parameters)
+                if update_cursor.rowcount != 1:
+                    logger.info(
+                        "任务 %s 状态、更新时间或租约已变化，跳过重置",
+                        task_id,
+                    )
+                    continue
                 reset_count += 1
                 
                 logger.info(f"重置任务 {task_id[:8]}... 从 {old_status} 到 failed")

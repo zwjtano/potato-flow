@@ -3600,8 +3600,13 @@ def add_task_route():
         if task_id:
             if config.get('AUTO_MODE_ENABLED', False):
                 logger.info(f"自动模式已启用，立即开始处理任务 {task_id}")
-                start_task(task_id, config)
-                flash(f'任务已添加并开始处理: {youtube_url}', 'success')
+                if start_task(task_id, config):
+                    flash(f'任务已添加并开始处理: {youtube_url}', 'success')
+                else:
+                    flash(
+                        f'任务已添加，但未能立即启动，将保留在队列中: {youtube_url}',
+                        'warning',
+                    )
             else:
                 flash(f'任务已添加: {youtube_url}', 'success')
         else:

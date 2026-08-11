@@ -121,7 +121,29 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         self.assertTrue(result)
         request_cancel.assert_called_once_with("task-id")
         self.assertEqual(update_task.call_args.kwargs["status"], "paused")
+        self.assertEqual(
+            update_task.call_args.kwargs["expected_status"],
+            task_manager.YOUTUBE_PAUSABLE_STATUSES,
+        )
         delete_files.assert_not_called()
+
+    def test_pause_does_not_overwrite_task_that_completed_concurrently(self):
+        task = {"id": "task-id", "status": "uploading"}
+        with (
+            patch.object(task_manager, "get_task", return_value=task),
+            patch.object(task_manager, "request_task_cancel") as request_cancel,
+            patch.object(task_manager, "update_task", return_value=False) as update,
+            patch.object(task_manager, "_wait_for_task_inactive") as wait,
+        ):
+            result = task_manager.pause_task("task-id")
+
+        self.assertFalse(result)
+        self.assertEqual(
+            update.call_args.kwargs["expected_status"],
+            task_manager.YOUTUBE_PAUSABLE_STATUSES,
+        )
+        request_cancel.assert_not_called()
+        wait.assert_not_called()
 
     def test_concurrent_terminal_updates_emit_one_notification(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -284,7 +306,10 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             "bilibili_upload_response": None,
         }
         connection = MagicMock()
-        connection.execute.return_value.fetchall.return_value = [row]
+        select_cursor = MagicMock()
+        select_cursor.fetchall.return_value = [row]
+        update_cursor = MagicMock(rowcount=1)
+        connection.execute.side_effect = [select_cursor, update_cursor]
         with (
             patch.object(task_manager, "get_db_connection", return_value=connection),
             patch.object(task_manager._TASK_LEASE_STORE, "is_live", return_value=False),
@@ -296,6 +321,83 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             str(call.args[0]).lstrip().startswith("UPDATE tasks")
             for call in connection.execute.call_args_list
         ))
+
+    def test_interrupted_recovery_sql_guard_preserves_new_live_lease(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY, status TEXT, upload_target TEXT,
+                        bilibili_upload_response TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE task_worker_leases (
+                        task_id TEXT PRIMARY KEY, owner_id TEXT,
+                        acquired_at REAL, heartbeat_at REAL, lease_until REAL
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, 'bilibili', NULL, ?)",
+                    ("task-id", "uploading", "2026-08-11 00:00:00"),
+                )
+                connection.execute(
+                    "INSERT INTO task_worker_leases VALUES (?, 'new-worker', ?, ?, ?)",
+                    ("task-id", time.time(), time.time(), time.time() + 60),
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager._TASK_LEASE_STORE, "is_live", return_value=False),
+            ):
+                recovered = task_manager.recover_interrupted_tasks_to_pending()
+
+            self.assertEqual(recovered, 0)
+            with sqlite3.connect(db_path) as connection:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE id='task-id'"
+                ).fetchone()[0]
+            self.assertEqual(status, "uploading")
+
+    def test_stuck_reset_defaults_to_preserving_live_lease(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY, status TEXT, error_message TEXT,
+                        updated_at TEXT
+                    );
+                    CREATE TABLE task_worker_leases (
+                        task_id TEXT PRIMARY KEY, owner_id TEXT,
+                        acquired_at REAL, heartbeat_at REAL, lease_until REAL
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, NULL, ?)",
+                    ("task-id", "uploading", "2026-08-10 00:00:00"),
+                )
+                connection.execute(
+                    "INSERT INTO task_worker_leases VALUES (?, 'new-worker', ?, ?, ?)",
+                    ("task-id", time.time(), time.time(), time.time() + 60),
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "_is_task_active", return_value=False),
+                patch.object(task_manager._TASK_LEASE_STORE, "is_live", return_value=False),
+            ):
+                reset = task_manager.reset_stuck_tasks()
+
+            self.assertEqual(reset, 0)
+            with sqlite3.connect(db_path) as connection:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE id='task-id'"
+                ).fetchone()[0]
+            self.assertEqual(status, "uploading")
 
 
 class DownloadCleanupLifecycleTests(unittest.TestCase):
