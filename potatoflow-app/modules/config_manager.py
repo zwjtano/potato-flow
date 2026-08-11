@@ -211,7 +211,7 @@ DEFAULT_CONFIG = {
     "DANMAKU_DURATION_SECONDS": 10.0,
     "DANMAKU_FONT_SIZE": 42,
     "DANMAKU_OPACITY": 0.92,
-    "DANMAKU_ENCODER": "auto",  # auto/cpu/nvidia/intel/amd
+    "DANMAKU_ENCODER": "auto",  # auto/cpu/nvidia/intel/amd/apple
     "DANMAKU_ENCODE_PRESET": "medium",
     "DANMAKU_ENCODE_QUALITY": 20,
     # Windows 桌面壳专用；非桌面启动时不改变原有绑定。
@@ -382,7 +382,11 @@ def load_config():
 
                 danmaku_encoder_value = str(config.get('DANMAKU_ENCODER', 'auto') or 'auto').lower().strip()
                 danmaku_encoder_changed = False
-                if danmaku_encoder_value == 'nvidia' or danmaku_encoder_value not in valid_encoders:
+                valid_danmaku_encoders = (*valid_encoders, 'apple')
+                if (
+                    danmaku_encoder_value == 'nvidia'
+                    or danmaku_encoder_value not in valid_danmaku_encoders
+                ):
                     config['DANMAKU_ENCODER'] = 'auto'
                     danmaku_encoder_changed = True
 
@@ -532,7 +536,7 @@ def update_config(new_config):
                 encoder_value = str(new_config[key]).lower().strip()
                 current_config[key] = (
                     encoder_value
-                    if encoder_value in ('auto', 'cpu', 'nvidia', 'intel', 'amd')
+                    if encoder_value in ('auto', 'cpu', 'nvidia', 'intel', 'amd', 'apple')
                     else 'cpu'
                 )
             elif key == 'DANMAKU_DURATION_SECONDS':

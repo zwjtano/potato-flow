@@ -2273,7 +2273,7 @@ class LiveRecorderManager:
         if recording_schedule_enabled and schedule_start == schedule_end:
             raise RecorderConfigError("定时录制的开始时间和结束时间不能相同")
         encoder = str(danmaku_encoder or "cpu").strip().lower()
-        if encoder not in {"auto", "cpu", "nvidia", "intel", "amd"}:
+        if encoder not in {"auto", "cpu", "nvidia", "intel", "amd", "apple"}:
             raise RecorderConfigError("不支持的弹幕烧录编码器")
 
         with self._lock:

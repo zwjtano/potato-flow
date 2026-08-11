@@ -86,6 +86,14 @@ ENCODER_PROFILES: dict[str, dict[str, Any]] = {
         "quality": 20,
         "presets": ("speed", "balanced", "quality"),
     },
+    "apple": {
+        "label": "Apple 芯片（VideoToolbox）",
+        "ffmpeg_encoder": "h264_videotoolbox",
+        "preset": "speed",
+        "quality_name": "Q",
+        "quality": 20,
+        "presets": ("speed", "balanced", "quality"),
+    },
 }
 
 
@@ -103,6 +111,20 @@ def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
         return [
             "-c:v", "h264_amf", "-quality", selected_preset, "-rc", "qvbr",
             "-qvbr_quality_level", value,
+        ]
+    if backend == "apple":
+        speed_args = {
+            "speed": ["-realtime", "1", "-prio_speed", "1"],
+            "balanced": ["-realtime", "1", "-prio_speed", "0"],
+            "quality": ["-realtime", "0", "-prio_speed", "0"],
+        }[selected_preset]
+        return [
+            "-c:v", "h264_videotoolbox",
+            "-profile:v", "high",
+            "-allow_sw", "0",
+            *speed_args,
+            "-q:v", value,
+            "-pix_fmt", "yuv420p",
         ]
     return ["-c:v", "libx264", "-preset", selected_preset, "-crf", value]
 
@@ -237,8 +259,22 @@ def _windows_graphics_devices() -> list[dict[str, str]]:
     return devices
 
 
+def _apple_graphics_devices() -> list[dict[str, str]]:
+    """Expose Apple Silicon's media engine as a VideoToolbox backend."""
+    if platform.system() != "Darwin" or platform.machine().lower() not in {
+        "arm64",
+        "aarch64",
+    }:
+        return []
+    return [{
+        "name": _cpu_device()["name"],
+        "driver": "macOS VideoToolbox",
+        "backend": "apple",
+    }]
+
+
 def _graphics_devices() -> list[dict[str, str]]:
-    devices = _windows_graphics_devices()
+    devices = _windows_graphics_devices() + _apple_graphics_devices()
     for device in _nvidia_devices():
         normalized = device["name"].casefold()
         existing = next(
@@ -349,6 +385,7 @@ def probe_encoding_capabilities(
                 "nvidia": "NVENC",
                 "intel": "QSV",
                 "amd": "AMF",
+                "apple": "VideoToolbox",
             }[backend]
             if backend == "cpu" and cpu_device.get("logical_cores"):
                 suffix += f"，{cpu_device['logical_cores']} 线程"
@@ -376,7 +413,11 @@ def probe_encoding_capabilities(
         reason = "已验证当前配置指定的编码器可用"
     else:
         selected = next(
-            (backend for backend in ("nvidia", "intel", "amd", "cpu") if backend in available_ids),
+            (
+                backend
+                for backend in ("apple", "nvidia", "intel", "amd", "cpu")
+                if backend in available_ids
+            ),
             "cpu",
         )
         reason = "按实际 FFmpeg 编码测试选择，CPU 始终作为保底"
