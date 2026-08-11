@@ -228,8 +228,12 @@
                                 {% endif %}
                             </td>
                             <td class="text-center" data-recording-status>
-                                {% if job.ai_queued %}
+                                {% if job.upload_queued %}
+                                <span class="badge rounded-pill text-bg-warning">投稿排队中</span>
+                                {% elif job.ai_queued %}
                                 <span class="badge rounded-pill text-bg-warning">AI 简介排队中</span>
+                                {% elif job.burn_queued %}
+                                <span class="badge rounded-pill text-bg-warning">烧录排队中</span>
                                 {% elif job.status == 'completed' %}
                                 <span class="badge rounded-pill text-bg-success">已完成</span>
                                 {% elif job.status == 'failed' %}
@@ -346,7 +350,9 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <span data-recording-status>{% if job.ai_queued %}<span class="badge rounded-pill text-bg-warning">AI 简介排队中</span>
+                        <span data-recording-status>{% if job.upload_queued %}<span class="badge rounded-pill text-bg-warning">投稿排队中</span>
+                        {% elif job.ai_queued %}<span class="badge rounded-pill text-bg-warning">AI 简介排队中</span>
+                        {% elif job.burn_queued %}<span class="badge rounded-pill text-bg-warning">烧录排队中</span>
                         {% elif job.status == 'completed' %}<span class="badge rounded-pill text-bg-success">已完成</span>
                         {% elif job.status == 'failed' %}<span class="badge rounded-pill text-bg-danger">{{ '本地处理失败' if job.record_only else '投稿失败 · 待人工审核' }}</span>
                         {% elif job.status == 'dry_run' %}<span class="badge rounded-pill text-bg-warning">待投稿</span>
@@ -2103,10 +2109,15 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         }).join('');
         const completed = Number(job.completed_stages || 0);
         const total = Number(job.total_stages || 6);
+        const queuedStatusLabel = job.upload_queued ? '投稿排队中'
+            : job.ai_queued ? 'AI 简介排队中'
+            : job.burn_queued ? '烧录排队中'
+            : '';
         const statusLabel = job.status === 'completed' ? '全部完成'
             : job.status === 'failed' ? (job.record_only ? '本地处理失败' : '等待人工审核')
             : job.status === 'paused' ? '投稿已暂停，可恢复或删除'
             : job.upload_queued ? `等待投稿队列（第 ${job.upload_queue_position || 1} 位）`
+            : queuedStatusLabel ? queuedStatusLabel
             : job.active_stage ? `正在${recordingStageMetaFor(job, job.active_stage).name}`
             : `${completed}/${total} 步已完成`;
         const retryNotice = job.auto_retry_scheduled
@@ -2117,7 +2128,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         body.innerHTML = `
             <div class="recording-detail-summary">
                 <div><strong>${escapeRecordingDetail(statusLabel)}</strong><span class="text-muted small">创建于 ${escapeRecordingDetail(formatRecordingDetailDate(job.created_at))}，更新于 ${escapeRecordingDetail(formatRecordingDetailDate(job.updated_at))}</span></div>
-                <span class="badge ${job.status === 'failed' ? 'text-bg-danger' : job.status === 'completed' ? 'text-bg-success' : 'text-bg-primary'}">${escapeRecordingDetail(recordingJobStatusNames[job.status] || job.status || '处理中')}</span>
+                <span class="badge ${job.status === 'failed' ? 'text-bg-danger' : job.status === 'completed' ? 'text-bg-success' : queuedStatusLabel ? 'text-bg-warning' : 'text-bg-primary'}">${escapeRecordingDetail(queuedStatusLabel || recordingJobStatusNames[job.status] || job.status || '处理中')}</span>
             </div>
             ${retryNotice}
             <div class="recording-detail-legend" aria-label="流水线状态说明">
@@ -2312,7 +2323,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
 
     function recordingStatusMarkup(job) {
         const status = String(job?.status || 'processing');
+        if (job?.upload_queued) return '<span class="badge rounded-pill text-bg-warning">投稿排队中</span>';
         if (job?.ai_queued) return '<span class="badge rounded-pill text-bg-warning">AI 简介排队中</span>';
+        if (job?.burn_queued) return '<span class="badge rounded-pill text-bg-warning">烧录排队中</span>';
         if (status === 'completed') return '<span class="badge rounded-pill text-bg-success">已完成</span>';
         if (status === 'failed') {
             return `<span class="badge rounded-pill text-bg-danger">${job?.record_only ? '本地处理失败' : '投稿失败 · 待人工审核'}</span>`;

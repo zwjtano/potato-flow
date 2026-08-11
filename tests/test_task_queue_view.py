@@ -114,6 +114,16 @@ class TaskQueueViewTests(unittest.TestCase):
             "active",
         )
 
+    def test_recording_burn_queue_is_reported_as_queued(self):
+        self.assertEqual(
+            recording_queue_bucket({"status": "processing", "burn_queued": True}),
+            "queued",
+        )
+        self.assertEqual(
+            recording_queue_bucket({"status": "processing", "upload_queued": True}),
+            "queued",
+        )
+
     def test_summary_combines_both_sources_without_double_counting(self):
         summary = build_queue_summary(
             [
