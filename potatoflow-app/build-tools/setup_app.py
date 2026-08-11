@@ -102,8 +102,9 @@ def resource_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def configure_windows_runtime() -> tuple[Path, Path]:
-    if platform.system() == "Windows":
+def configure_desktop_runtime() -> tuple[Path, Path]:
+    system = platform.system()
+    if system == "Windows":
         os.environ.setdefault("PYTHONIOENCODING", "utf-8")
         try:
             locale.setlocale(locale.LC_ALL, "")
@@ -111,15 +112,28 @@ def configure_windows_runtime() -> tuple[Path, Path]:
             pass
     from modules.desktop_runtime import (
         configure_runtime_environment,
+        ensure_data_layout,
         ensure_windows_layout,
+        resolve_macos_runtime,
         resolve_windows_runtime,
     )
 
-    layout = ensure_windows_layout(resolve_windows_runtime(sys.executable, resource_root()))
+    if system == "Darwin":
+        layout = resolve_macos_runtime(resource_root())
+        ensure_data_layout(layout.data_root)
+        layout.recordings_root.mkdir(parents=True, exist_ok=True)
+        layout.exports_root.mkdir(parents=True, exist_ok=True)
+    else:
+        layout = ensure_windows_layout(resolve_windows_runtime(sys.executable, resource_root()))
     configure_runtime_environment(layout)
     data_root = layout.data_root
     os.chdir(data_root)
     return resource_root(), data_root
+
+
+def configure_windows_runtime() -> tuple[Path, Path]:
+    """Backward-compatible name retained for launcher integrations and tests."""
+    return configure_desktop_runtime()
 
 
 def run_internal_cli(args: list[str]) -> int | None:
@@ -340,8 +354,12 @@ def run_desktop(data_root: Path) -> int:
     if instance is None:
         return 0
 
-    import pystray
     import webview
+    pystray = None
+    if os.name == "nt":
+        import pystray as windows_pystray
+
+        pystray = windows_pystray
     port = _select_server_port(os.environ.get("PORT"))
     url = f"http://127.0.0.1:{port}"
     token = secrets.token_urlsafe(32)
@@ -391,7 +409,12 @@ def run_desktop(data_root: Path) -> int:
     def open_recordings(*_args) -> None:
         path = Path(os.environ["POTATOFLOW_RECORDINGS_DIR"])
         path.mkdir(parents=True, exist_ok=True)
-        os.startfile(path)
+        if os.name == "nt":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
 
     def recording_label(_item=None) -> str:
         try:
@@ -418,7 +441,7 @@ def run_desktop(data_root: Path) -> int:
     threading.Thread(target=activation_listener, daemon=True, name="desktop-activation").start()
 
     icon_image = load_tray_icon()
-    tray: pystray.Icon
+    tray = None
 
     def check_updates(*_args, manual: bool = True) -> None:
         def update_worker() -> None:
@@ -491,7 +514,8 @@ def run_desktop(data_root: Path) -> int:
                     window.destroy()
                 finally:
                     try:
-                        tray.stop()
+                        if tray is not None:
+                            tray.stop()
                     except Exception:
                         pass
             except Exception:
@@ -516,21 +540,27 @@ def run_desktop(data_root: Path) -> int:
     def on_closing() -> bool:
         if state["exiting"]:
             return True
+        if pystray is None:
+            shutdown()
+            return False
         window.hide()
         return False
 
     window.events.closing += on_closing
-    tray = pystray.Icon(
-        "PotatoFlow", icon_image, "PotatoFlow",
-        menu=pystray.Menu(
-            pystray.MenuItem("打开 PotatoFlow", show_window, default=True),
-            pystray.MenuItem(recording_label, None, enabled=False),
-            pystray.MenuItem("打开录播目录", open_recordings),
-            pystray.MenuItem("检查更新", check_updates),
-            pystray.MenuItem("退出", shutdown),
-        ),
-    )
-    threading.Thread(target=tray.run, daemon=True, name="desktop-tray").start()
+    if pystray is not None:
+        tray = pystray.Icon(
+            "PotatoFlow", icon_image, "PotatoFlow",
+            menu=pystray.Menu(
+                pystray.MenuItem("打开 PotatoFlow", show_window, default=True),
+                pystray.MenuItem(recording_label, None, enabled=False),
+                pystray.MenuItem("打开录播目录", open_recordings),
+                pystray.MenuItem("检查更新", check_updates),
+                pystray.MenuItem("退出", shutdown),
+            ),
+        )
+        threading.Thread(target=tray.run, daemon=True, name="desktop-tray").start()
+    else:
+        icon_image.close()
 
     def on_started() -> None:
         marker = data_root / "state" / "onboarding.json"
@@ -539,7 +569,11 @@ def run_desktop(data_root: Path) -> int:
 
     try:
         try:
-            webview.start(on_started, gui="edgechromium", debug=False)
+            webview.start(
+                on_started,
+                gui="edgechromium" if os.name == "nt" else "cocoa",
+                debug=False,
+            )
         except BaseException as exc:
             # pywebview/Edge may report a late native `kill` exception after
             # window.destroy() has already completed. During an intentional
@@ -553,7 +587,8 @@ def run_desktop(data_root: Path) -> int:
         if force_exit_timer is not None:
             force_exit_timer.cancel()
         try:
-            tray.stop()
+            if tray is not None:
+                tray.stop()
         except Exception:
             pass
         if process.poll() is None:
@@ -590,7 +625,7 @@ def run_desktop(data_root: Path) -> int:
 
 
 def main() -> int:
-    _resource_root, data_root = configure_windows_runtime()
+    _resource_root, data_root = configure_desktop_runtime()
     args = list(sys.argv[1:])
     internal_exit_code = run_internal_cli(args)
     if internal_exit_code is not None:

@@ -36,6 +36,9 @@ class WindowsRuntimeLayout:
         return {key: str(value) for key, value in asdict(self).items()}
 
 
+MacOSRuntimeLayout = WindowsRuntimeLayout
+
+
 def default_windows_data_dir() -> Path:
     local_app_data = str(os.environ.get("LOCALAPPDATA") or "").strip()
     if not local_app_data:
@@ -98,6 +101,27 @@ def resolve_windows_runtime(
     )
 
 
+def resolve_macos_runtime(resources: Path | None = None) -> MacOSRuntimeLayout:
+    """Resolve writable and bundled paths for the Apple Silicon desktop app."""
+    resource_root = Path(resources or Path(sys.executable).resolve().parent).resolve()
+    install_root = Path(sys.executable).resolve().parent
+    user_root = Path.home()
+    data_root = user_root / "Library" / "Application Support" / "PotatoFlow"
+    movies_root = user_root / "Movies" / "PotatoFlow"
+    bin_root = resource_root / "bin"
+    manifest_path = resource_root / RUNTIME_MANIFEST
+    return MacOSRuntimeLayout(
+        mode="installed",
+        install_root=install_root,
+        resource_root=resource_root,
+        data_root=data_root.resolve(),
+        recordings_root=(movies_root / "recordings").resolve(),
+        exports_root=(movies_root / "exports").resolve(),
+        bin_root=bin_root.resolve(),
+        manifest_path=manifest_path.resolve(),
+    )
+
+
 def ensure_data_layout(data_dir: Path) -> Path:
     root = Path(data_dir).expanduser().resolve()
     for name in ("config", "cookies", "db", "downloads", "logs", "recordings", "state", "temp"):
@@ -123,13 +147,14 @@ def configure_runtime_environment(layout: WindowsRuntimeLayout) -> None:
     os.environ["POTATOFLOW_EXPORTS_DIR"] = str(layout.exports_root)
     os.environ["POTATOFLOW_RUNTIME_MODE"] = layout.mode
     os.environ["PATH"] = str(layout.bin_root) + os.pathsep + os.environ.get("PATH", "")
-    for component, variable in (
-        ("biliup.exe", "RECORDER_BIN"),
-        ("ffmpeg.exe", "FFMPEG_LOCATION"),
-        ("ffprobe.exe", "FFPROBE_LOCATION"),
-    ):
-        candidate = layout.bin_root / component
-        if candidate.is_file():
+    components = (
+        (("biliup.exe", "biliup"), "RECORDER_BIN"),
+        (("ffmpeg.exe", "ffmpeg"), "FFMPEG_LOCATION"),
+        (("ffprobe.exe", "ffprobe"), "FFPROBE_LOCATION"),
+    )
+    for names, variable in components:
+        candidate = next((layout.bin_root / name for name in names if (layout.bin_root / name).is_file()), None)
+        if candidate is not None:
             os.environ[variable] = str(candidate)
 
 
@@ -144,7 +169,15 @@ def load_runtime_manifest(layout: WindowsRuntimeLayout) -> dict[str, object]:
 def component_diagnostics(layout: WindowsRuntimeLayout) -> list[dict[str, object]]:
     manifest = load_runtime_manifest(layout)
     expected = manifest.get("components") if isinstance(manifest.get("components"), list) else []
-    names = {"biliup.exe", "ffmpeg.exe", "ffprobe.exe"}
+    bundled_names = {path.name for path in layout.bin_root.iterdir()} if layout.bin_root.is_dir() else set()
+    has_windows_tools = any(name.endswith(".exe") for name in bundled_names)
+    has_extensionless_tools = any(name in bundled_names for name in ("biliup", "ffmpeg", "ffprobe"))
+    windows_bundle = has_windows_tools or (not has_extensionless_tools and os.name == "nt")
+    names = (
+        {"biliup.exe", "ffmpeg.exe", "ffprobe.exe"}
+        if windows_bundle
+        else {"biliup", "ffmpeg", "ffprobe"}
+    )
     names.update(str(item.get("name")) for item in expected if isinstance(item, dict))
     results = []
     for name in sorted(filter(None, names)):
