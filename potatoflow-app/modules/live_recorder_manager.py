@@ -1499,7 +1499,11 @@ class LiveRecorderManager:
             daemon=True,
             name="potato-recording-notifications",
         )
-        self._recording_notification_thread.start()
+        try:
+            self._recording_notification_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动录制通知线程，将在下次检查时重试：%s", exc)
+            self._recording_notification_thread = None
 
     def resolve_room(self, url: str) -> dict[str, Any]:
         """Resolve a supported room URL into canonical streamer metadata."""
@@ -2017,7 +2021,11 @@ class LiveRecorderManager:
             name="recorder-config-reload",
             daemon=True,
         )
-        self._reload_thread.start()
+        try:
+            self._reload_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动录制配置重载线程，将保留重载请求：%s", exc)
+            self._reload_thread = None
 
     def _reload_when_recordings_finish(self) -> None:
         while RELOAD_PATH.exists():
@@ -2144,7 +2152,11 @@ class LiveRecorderManager:
             name="recording-schedule",
             daemon=True,
         )
-        self._recording_schedule_thread.start()
+        try:
+            self._recording_schedule_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动定时录制检查线程，将在下次检查时重试：%s", exc)
+            self._recording_schedule_thread = None
 
     def _clear_stale_multipart_session(self, session_key: str) -> bool:
         """Detach an earlier failed broadcast before a manual recording restarts."""
@@ -2666,33 +2678,63 @@ class LiveRecorderManager:
                     **_background_process_kwargs(),
                 )
 
-            log_start = self._log_handle.tell()
-            self._process = launch_worker()
-            atomic_write_text(PID_PATH, str(self._process.pid))
-            time.sleep(0.25)
-            if self._process.poll() is not None:
-                exit_code = self._process.returncode
-                self._log_handle.flush()
-                with LOG_PATH.open("r", encoding="utf-8", errors="replace") as log_reader:
-                    log_reader.seek(log_start)
-                    startup_log = log_reader.read()
-                backup = _backup_incompatible_recorder_database(startup_log)
-                if backup is not None:
-                    self._log_handle.write(
-                        f"\n[PotatoFlow] recorder 数据库迁移不兼容，已备份到 {backup}，自动重建。\n"
-                    )
-                    self._log_handle.flush()
-                    self._process = launch_worker()
-                    atomic_write_text(PID_PATH, str(self._process.pid))
-                    time.sleep(0.5)
-                    if self._process.poll() is not None:
-                        exit_code = self._process.returncode
-                if self._process.poll() is not None:
-                    self._process = None
+            def rollback_failed_start() -> None:
+                process = self._process
+                if process is not None and process.poll() is None:
+                    try:
+                        if os.name != "nt":
+                            os.killpg(process.pid, signal.SIGTERM)
+                        else:
+                            process.terminate()
+                        process.wait(timeout=3)
+                    except (OSError, ProcessLookupError, subprocess.SubprocessError):
+                        try:
+                            process.kill()
+                        except (OSError, ProcessLookupError):
+                            pass
+                self._process = None
+                try:
                     PID_PATH.unlink(missing_ok=True)
-                    raise RecorderConfigError(
-                        f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 recorder-core"
-                    )
+                except OSError as cleanup_exc:
+                    logger.warning("清理失败启动的录制 PID 文件失败：%s", cleanup_exc)
+                if self._log_handle is not None:
+                    try:
+                        self._log_handle.close()
+                    except OSError as cleanup_exc:
+                        logger.warning("关闭失败启动的录制日志句柄失败：%s", cleanup_exc)
+                    self._log_handle = None
+
+            try:
+                log_start = self._log_handle.tell()
+                self._process = launch_worker()
+                atomic_write_text(PID_PATH, str(self._process.pid))
+                time.sleep(0.25)
+                if self._process.poll() is not None:
+                    exit_code = self._process.returncode
+                    self._log_handle.flush()
+                    with LOG_PATH.open("r", encoding="utf-8", errors="replace") as log_reader:
+                        log_reader.seek(log_start)
+                        startup_log = log_reader.read()
+                    backup = _backup_incompatible_recorder_database(startup_log)
+                    if backup is not None:
+                        self._log_handle.write(
+                            f"\n[PotatoFlow] recorder 数据库迁移不兼容，已备份到 {backup}，自动重建。\n"
+                        )
+                        self._log_handle.flush()
+                        self._process = launch_worker()
+                        atomic_write_text(PID_PATH, str(self._process.pid))
+                        time.sleep(0.5)
+                        if self._process.poll() is not None:
+                            exit_code = self._process.returncode
+                    if self._process.poll() is not None:
+                        raise RecorderConfigError(
+                            f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 recorder-core"
+                        )
+            except Exception as exc:
+                rollback_failed_start()
+                if isinstance(exc, RecorderConfigError):
+                    raise
+                raise RecorderConfigError(f"录制 worker 启动失败：{exc}") from exc
             self._ensure_orphan_recovery_thread()
             self._ensure_upload_retry_thread()
             self._ensure_recording_notification_thread()
@@ -2733,18 +2775,57 @@ class LiveRecorderManager:
                                 **_hidden_process_kwargs(),
                             )
                 else:
-                    try:
-                        os.killpg(pid, signal.SIGTERM)
-                    except (ProcessLookupError, PermissionError):
+                    def signal_worker(sig: int) -> None:
                         try:
-                            os.kill(pid, signal.SIGTERM)
-                        except (ProcessLookupError, PermissionError):
+                            os.killpg(pid, sig)
+                            return
+                        except ProcessLookupError:
                             pass
+                        except PermissionError:
+                            pass
+                        try:
+                            os.kill(pid, sig)
+                        except ProcessLookupError:
+                            return
+                        except PermissionError as exc:
+                            raise RecorderConfigError(
+                                f"没有权限停止录制进程 {pid}"
+                            ) from exc
+
+                    def worker_alive() -> bool:
+                        try:
+                            os.kill(pid, 0)
+                            return True
+                        except ProcessLookupError:
+                            return False
+                        except PermissionError:
+                            return True
+
+                    signal_worker(signal.SIGTERM)
                     if self._process is not None:
                         try:
                             self._process.wait(timeout=8)
                         except subprocess.TimeoutExpired:
-                            os.killpg(pid, signal.SIGKILL)
+                            signal_worker(signal.SIGKILL)
+                            try:
+                                self._process.wait(timeout=3)
+                            except subprocess.TimeoutExpired as exc:
+                                raise RecorderConfigError(
+                                    "录制进程在强制终止后仍未退出"
+                                ) from exc
+                    else:
+                        deadline = time.monotonic() + 8
+                        while worker_alive() and time.monotonic() < deadline:
+                            time.sleep(0.05)
+                        if worker_alive():
+                            signal_worker(signal.SIGKILL)
+                            deadline = time.monotonic() + 3
+                            while worker_alive() and time.monotonic() < deadline:
+                                time.sleep(0.05)
+                            if worker_alive():
+                                raise RecorderConfigError(
+                                    "录制进程在强制终止后仍未退出"
+                                )
             self._process = None
             if self._log_handle is not None:
                 self._log_handle.close()
@@ -2868,7 +2949,7 @@ class LiveRecorderManager:
             suffix for suffix, kind in RECORDING_FILE_SUFFIXES.items() if kind == "video"
         }
         cutoff = time.time() - max(0, minimum_age_seconds)
-        candidates: list[tuple[Path, str]] = []
+        candidates: list[tuple[Path, str, float]] = []
         root = recordings_dir()
         if not root.is_dir():
             return candidates
@@ -2879,7 +2960,8 @@ class LiveRecorderManager:
             if resolved in known_paths:
                 continue
             try:
-                if path.stat().st_mtime > cutoff:
+                modified_at = path.stat().st_mtime
+                if modified_at > cutoff:
                     continue
             except OSError:
                 continue
@@ -2892,9 +2974,11 @@ class LiveRecorderManager:
                 "",
             )
             if room_id:
-                candidates.append((resolved, room_id))
-        candidates.sort(key=lambda item: item[0].stat().st_mtime)
-        return candidates
+                candidates.append((resolved, room_id, modified_at))
+        # 使用扫描时已经取得的时间排序，避免文件恰好被正常 hook 接管并
+        # 移走后，第二次 stat 让整轮漏单恢复全部中断。
+        candidates.sort(key=lambda item: item[2])
+        return [(path, room_id) for path, room_id, _mtime in candidates]
 
     def recover_orphan_recordings(self, minimum_age_seconds: float = 120) -> int:
         """Feed missed segments back into independent or multipart upload flows."""
@@ -2946,7 +3030,11 @@ class LiveRecorderManager:
             name="potato-orphan-recording-recovery",
             daemon=True,
         )
-        self._orphan_recovery_thread.start()
+        try:
+            self._orphan_recovery_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动漏单恢复线程，将在下次检查时重试：%s", exc)
+            self._orphan_recovery_thread = None
 
     @staticmethod
     def _state_datetime(value: Any) -> datetime | None:
@@ -2998,7 +3086,11 @@ class LiveRecorderManager:
             name="potato-bilibili-upload-retry",
             daemon=True,
         )
-        self._upload_retry_thread.start()
+        try:
+            self._upload_retry_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动投稿自动重试线程，将在下次检查时重试：%s", exc)
+            self._upload_retry_thread = None
 
     def _recording_file_roots(self) -> dict[str, Path]:
         return {
@@ -4919,11 +5011,6 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             whole_result["bilibili"] = updated_result
             now = datetime.now(timezone.utc).isoformat()
             state_path = self._pipeline_state_path()
-            with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
-                db.execute(
-                    "UPDATE uploads SET result_json=?, updated_at=? WHERE fingerprint=?",
-                    (json.dumps(whole_result, ensure_ascii=False), now, fingerprint),
-                )
             metadata = {
                 **review,
                 "title": title,
@@ -4941,7 +5028,36 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 },
                 "updated_at": now,
             }
-            self._store_pipeline_review_override(fingerprint, metadata)
+            # 本地投稿结果与“待同步”标记必须在同一事务内落盘。否则第一步
+            # 成功、第二步失败会继续显示待同步并诱导用户重复修改线上稿件。
+            with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
+                cursor = db.execute(
+                    "UPDATE uploads SET result_json=?, updated_at=? WHERE fingerprint=?",
+                    (json.dumps(whole_result, ensure_ascii=False), now, fingerprint),
+                )
+                if cursor.rowcount != 1:
+                    raise RecorderConfigError(
+                        "B站稿件已更新，但本地任务状态已变化，请刷新任务列表"
+                    )
+                db.execute(
+                    """CREATE TABLE IF NOT EXISTS recording_review_overrides (
+                        fingerprint TEXT PRIMARY KEY,
+                        metadata_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                db.execute(
+                    """INSERT INTO recording_review_overrides
+                       (fingerprint, metadata_json, updated_at) VALUES (?, ?, ?)
+                       ON CONFLICT(fingerprint) DO UPDATE SET
+                         metadata_json=excluded.metadata_json,
+                         updated_at=excluded.updated_at""",
+                    (
+                        fingerprint,
+                        json.dumps(metadata, ensure_ascii=False),
+                        now,
+                    ),
+                )
             return metadata
         except RecorderConfigError:
             raise

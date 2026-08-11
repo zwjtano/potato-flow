@@ -2449,8 +2449,11 @@ def live_recording_start():
 @app.route('/live-recording/stop', methods=['POST'])
 @login_required
 def live_recording_stop():
-    live_recorder_manager.stop()
-    flash('录制引擎已停止。', 'success')
+    try:
+        live_recorder_manager.stop()
+        flash('录制引擎已停止。', 'success')
+    except RecorderConfigError as exc:
+        flash(str(exc), 'danger')
     return redirect(url_for('live_recording'))
 
 # 确保日志目录存在

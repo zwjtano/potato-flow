@@ -300,6 +300,76 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(store.call_args_list[0].args[1]["hold_before_cover"])
         self.assertEqual(store.call_args_list[1].args, (fingerprint, previous))
 
+    def test_published_metadata_result_and_review_commit_together(self):
+        manager = LiveRecorderManager()
+        fingerprint = "6" * 64
+        job = {
+            "id": fingerprint,
+            "status": "completed",
+            "bvid": "BV1done",
+            "title": "原标题",
+            "description": "原简介",
+            "tags": ["录播"],
+            "partition_id": "171",
+            "result": {"bilibili": {"bvid": "BV1done", "aid": 123}},
+            "review_override": {
+                "title": "新标题",
+                "description": "新简介",
+                "pending_published_update": True,
+            },
+        }
+        uploader = mock.Mock()
+        uploader.update_uploaded_metadata.return_value = (
+            True,
+            {"bvid": "BV1done", "aid": 123, "part_count": 1},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.execute(
+                    "CREATE TABLE uploads (fingerprint TEXT PRIMARY KEY, result_json TEXT, updated_at TEXT)"
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, '{}', 'old')",
+                    (fingerprint,),
+                )
+            with mock.patch.object(
+                manager, "pipeline_job", return_value=job
+            ), mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch(
+                "modules.bilibili_uploader.BilibiliUploader",
+                return_value=uploader,
+            ), mock.patch(
+                "modules.bilibili_accounts.resolve_account",
+                return_value={"cookies_path": "cookies.json"},
+            ), mock.patch(
+                "modules.bilibili_accounts.resolve_cookie_path",
+                return_value=Path(temp_dir) / "cookies.json",
+            ), mock.patch(
+                "modules.config_manager.load_config",
+                return_value={},
+            ):
+                metadata = manager.update_published_metadata(fingerprint)
+
+            with closing(sqlite3.connect(state_path)) as db:
+                stored_result = json.loads(
+                    db.execute(
+                        "SELECT result_json FROM uploads WHERE fingerprint=?",
+                        (fingerprint,),
+                    ).fetchone()[0]
+                )
+                stored_review = json.loads(
+                    db.execute(
+                        "SELECT metadata_json FROM recording_review_overrides WHERE fingerprint=?",
+                        (fingerprint,),
+                    ).fetchone()[0]
+                )
+
+        self.assertEqual(stored_result["bilibili"]["part_count"], 1)
+        self.assertFalse(stored_review["pending_published_update"])
+        self.assertEqual(metadata, stored_review)
+
     def test_review_cover_restores_previous_file_when_database_save_fails(self):
         manager = LiveRecorderManager()
         fingerprint = "1" * 64
@@ -2310,6 +2380,147 @@ class LiveRecorderStatusTests(unittest.TestCase):
 
             self.assertIsNone(pid)
             self.assertFalse(pid_path.exists())
+
+    def test_recorder_start_failure_closes_log_and_clears_process_state(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            binary = root / "biliup"
+            binary.write_bytes(b"binary")
+            log_path = root / "logs" / "recorder.log"
+            log_path.parent.mkdir()
+            pid_path = root / "recorder.pid"
+            status_path = root / "status.json"
+            with mock.patch.object(
+                manager, "_pid", return_value=None
+            ), mock.patch.object(
+                manager, "list_rooms", return_value=[{"id": "room-1"}]
+            ), mock.patch.object(
+                type(manager),
+                "binary_path",
+                new_callable=mock.PropertyMock,
+                return_value=binary,
+            ), mock.patch.object(
+                manager, "sync_configs"
+            ), mock.patch.object(
+                manager, "_write_control_state"
+            ), mock.patch.object(
+                recorder_module, "LOG_PATH", log_path
+            ), mock.patch.object(
+                recorder_module, "PID_PATH", pid_path
+            ), mock.patch.object(
+                recorder_module, "STATUS_PATH", status_path
+            ), mock.patch.object(
+                recorder_module, "RECORDER_RUNTIME_DIR", root
+            ), mock.patch.object(
+                recorder_module.subprocess,
+                "Popen",
+                side_effect=OSError("spawn failed"),
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "spawn failed"):
+                    manager.start()
+
+            self.assertIsNone(manager._process)
+            self.assertIsNone(manager._log_handle)
+            self.assertFalse(pid_path.exists())
+
+    def test_recorder_pid_write_failure_terminates_untracked_worker(self):
+        manager = LiveRecorderManager()
+        process = mock.Mock(pid=43210)
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            binary = root / "biliup"
+            binary.write_bytes(b"binary")
+            log_path = root / "recorder.log"
+            with mock.patch.object(
+                manager, "_pid", return_value=None
+            ), mock.patch.object(
+                manager, "list_rooms", return_value=[{"id": "room-1"}]
+            ), mock.patch.object(
+                type(manager),
+                "binary_path",
+                new_callable=mock.PropertyMock,
+                return_value=binary,
+            ), mock.patch.object(
+                manager, "sync_configs"
+            ), mock.patch.object(
+                manager, "_write_control_state"
+            ), mock.patch.object(
+                recorder_module, "LOG_PATH", log_path
+            ), mock.patch.object(
+                recorder_module, "PID_PATH", root / "recorder.pid"
+            ), mock.patch.object(
+                recorder_module, "STATUS_PATH", root / "status.json"
+            ), mock.patch.object(
+                recorder_module, "RECORDER_RUNTIME_DIR", root
+            ), mock.patch.object(
+                recorder_module.subprocess, "Popen", return_value=process
+            ), mock.patch.object(
+                recorder_module,
+                "atomic_write_text",
+                side_effect=OSError("disk full"),
+            ), mock.patch.object(
+                recorder_module.os, "killpg"
+            ) as killpg:
+                with self.assertRaisesRegex(RecorderConfigError, "disk full"):
+                    manager.start()
+
+            killpg.assert_called_once_with(43210, recorder_module.signal.SIGTERM)
+            process.wait.assert_called_once_with(timeout=3)
+            self.assertIsNone(manager._process)
+            self.assertIsNone(manager._log_handle)
+
+    @unittest.skipIf(os.name == "nt", "POSIX signal behavior")
+    def test_recorder_stop_permission_failure_preserves_pid_tracking(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pid_path = root / "recorder.pid"
+            status_path = root / "status.json"
+            pid_path.write_text("43210", encoding="utf-8")
+            status_path.write_text("{}", encoding="utf-8")
+            with mock.patch.object(
+                manager, "_pid", return_value=43210
+            ), mock.patch.object(
+                recorder_module, "PID_PATH", pid_path
+            ), mock.patch.object(
+                recorder_module, "STATUS_PATH", status_path
+            ), mock.patch.object(
+                recorder_module.os,
+                "killpg",
+                side_effect=PermissionError("denied"),
+            ), mock.patch.object(
+                recorder_module.os,
+                "kill",
+                side_effect=PermissionError("denied"),
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "没有权限停止"):
+                    manager.stop()
+
+            self.assertTrue(pid_path.exists())
+            self.assertTrue(status_path.exists())
+
+    def test_auxiliary_thread_start_failures_remain_retryable(self):
+        manager = LiveRecorderManager()
+        with mock.patch.object(
+            recorder_module.threading, "Thread"
+        ) as thread_class:
+            thread_class.return_value.start.side_effect = RuntimeError(
+                "cannot start thread"
+            )
+            manager._ensure_recording_notification_thread()
+            manager._ensure_reload_thread()
+            manager._ensure_recording_schedule_thread()
+            manager._ensure_orphan_recovery_thread()
+            manager._ensure_upload_retry_thread()
+
+        self.assertIsNone(manager._recording_notification_thread)
+        self.assertIsNone(manager._reload_thread)
+        self.assertIsNone(manager._recording_schedule_thread)
+        self.assertIsNone(manager._orphan_recovery_thread)
+        self.assertIsNone(manager._upload_retry_thread)
+        self.assertEqual(thread_class.return_value.start.call_count, 5)
 
     def test_container_restart_marks_interrupted_cover_as_retryable_failure(self):
         manager = LiveRecorderManager()
