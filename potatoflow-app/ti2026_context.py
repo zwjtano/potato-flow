@@ -44,16 +44,27 @@ TI2026_TEAMS: tuple[dict[str, Any], ...] = (
     {"name": "TEAM VISION", "aliases": ["TEAM VISION", "Team Vision", "VISION", "PARIVISION", "PVISION", "PV"], "players": ["Satanic", "No[o]ne-", "Noticed", "9Class", "Dukalis"]},
     {"name": "Nigma Galaxy", "aliases": ["Nigma", "NGX", "尼格玛"], "players": ["SumaiL", "lorenof", "Davai", "OmaR", "GH"]},
     {"name": "HULIGANI", "aliases": ["HULIGANI", "Huligani"], "players": ["ssnovv1", "Mirage`", "Corrupted", "sayuw", "RESPECT"]},
-    {"name": "Team Resilience", "aliases": ["Resilience", "TR", "韧性队"], "players": ["YSR-04E", "Erika", "poyoyo", "Echozz", "niu", "planet", "zzq"]},
-    {"name": "Vici Gaming", "aliases": ["Vici Gaming", "Vici", "VG", "维基"], "players": ["shiro", "Xm", "Bach", "Faith_bian", "XinQ", "y`"]},
+    {"name": "Team Resilience", "aliases": ["Resilience", "TR", "韧性队"], "players": ["Erika", "Echozz", "niu", "planet", "zzq"]},
+    {"name": "Vici Gaming", "aliases": ["Vici Gaming", "Vici", "VG", "维基"], "players": ["shiro", "Xm", "Faith_bian", "XinQ", "y`"]},
     {"name": "OG", "aliases": ["OG"], "players": ["Natsumi", "Yopaj-", "Raven", "TIMS", "skem"]},
     {"name": "LGD Gaming", "aliases": ["LGD Gaming", "LGD", "老干爹"], "players": ["Yuma", "Topson", "Wisper", "Thiolicor", "KJ"]},
     {"name": "GamerLegion", "aliases": ["GamerLegion", "GL"], "players": ["Ghost", "RCY", "Fayde", "Bignum", "Speeed"]},
 )
 
 TI2026_PLAYER_ALIASES: dict[str, tuple[str, ...]] = {
-    "Topson": ("普森", "汤普森", "森哥", "上帝之子", "托普森", "托皇"),
+    player: ()
+    for team in TI2026_TEAMS
+    for player in team["players"]
 }
+TI2026_PLAYER_ALIASES.update({
+    "Ame": ("萧瑟",),
+    "NothingToSay": ("NTS", "莫言", "责任神"),
+    "fy": ("fy神", "烟火神"),
+    "Topson": ("普森", "汤普森", "森哥", "上帝之子", "托普森", "托皇"),
+    "SumaiL": ("苏美尔", "苏皇", "跳跳"),
+    "Erika": ("YSR-04E", "poyoyo"),
+    "Faith_bian": ("Bach", "张睿达"),
+})
 
 TI2026_ROSTER_CHANGES = [
     {
