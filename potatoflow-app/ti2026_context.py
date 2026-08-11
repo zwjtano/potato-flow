@@ -51,15 +51,49 @@ TI2026_TEAMS: tuple[dict[str, Any], ...] = (
     {"name": "GamerLegion", "aliases": ["GamerLegion", "GL"], "players": ["Ghost", "RCY", "Fayde", "Bignum", "Speeed"]},
 )
 
+TI2026_TEAM_MEDIA: dict[str, dict[str, Any]] = {
+    "Aurora Gaming": {"team_id": 9467224, "slug": "aurora-gaming", "logo_source": "https://cdn.steamusercontent.com/ugc/13052583756685508/22B0338D7E09FB2F021E5DB5BBEFFD170D5E5E1A/"},
+    "BoomBoys": {"team_id": 8255888, "slug": "boomboys", "logo_source": "https://cdn.steamusercontent.com/ugc/9995426432403529725/51E13136D4CCC8C7D8062861541A1D13B8ED87E0/"},
+    "Team Falcons": {"team_id": 9247354, "slug": "team-falcons", "logo_source": "https://cdn.steamusercontent.com/ugc/2314350571781870059/2B5C9FE9BA0A2DC303A13261444532AA08352843/"},
+    "Team Liquid": {"team_id": 2163, "slug": "team-liquid", "logo_source": "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/2163.png"},
+    "1win Team": {"team_id": 10182357, "slug": "1win", "logo_source": "https://cdn.steamusercontent.com/ugc/10678669599334676082/E48827F4A163D4D02F817EA3C32166D5F1D5FC98/"},
+    "Xtreme Gaming": {"team_id": 8261500, "slug": "xtreme-gaming", "logo_source": "https://cdn.steamusercontent.com/ugc/2402194226059610590/E3CF4B6C4B2CFB974A9B415141E4A37317AD4D80/"},
+    "Team Yandex": {"team_id": 9823272, "slug": "team-yandex", "logo_source": "https://cdn.steamusercontent.com/ugc/12970505637628494427/B04C3358F4E815ADFC2F8B1B8BE3AB0CE75C8881/"},
+    "Team Spirit": {"team_id": 7119388, "slug": "team-spirit", "logo_source": "https://cdn.steamusercontent.com/ugc/1839179120711951766/CD7E0885CB527334205CC7885E9C101B7BC17702/"},
+    "TEAM VISION": {"team_id": 9572001, "slug": "team-vision", "logo_source": "https://cdn.steamusercontent.com/ugc/10380389074903512947/5D074799695A862D17D4205285315FE20399B28D/"},
+    "Nigma Galaxy": {"team_id": 7554697, "slug": "nigma-galaxy", "logo_source": "https://cdn.steamusercontent.com/ugc/1827894588975105240/421C0D8318D71D5DD31FD08A7933AB622AE26590/"},
+    "HULIGANI": {"team_id": 10149530, "slug": "huligani", "logo_source": "https://cdn.steamusercontent.com/ugc/14844266645370842778/47230D9640A722EAF06548C2EEB813ED4296AE3F/"},
+    "Team Resilience": {"team_id": 5017210, "slug": "team-resilience", "logo_source": "https://cdn.steamusercontent.com/ugc/14326265454983833183/734A1D8A0938380A48221CDAE1AACB0C5C0AB585/"},
+    "Vici Gaming": {"team_id": 726228, "slug": "vici-gaming", "logo_source": "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/726228.png"},
+    "OG": {"team_id": 2586976, "slug": "og", "logo_source": "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/2586976.png"},
+    "LGD Gaming": {"team_id": 10150538, "slug": "lgd-gaming", "logo_source": "https://cdn.steamusercontent.com/ugc/10055782735581672481/2B2BCEA9CC05286D7164E4548A2EB64CDBC77F31/"},
+    "GamerLegion": {"team_id": 9964962, "slug": "gamerlegion", "logo_source": "https://cdn.steamusercontent.com/ugc/13245379764580870318/1048428BEFAC87EC1C64E15706A4758A173B5BFB/"},
+}
+
+for _team in TI2026_TEAMS:
+    _media = TI2026_TEAM_MEDIA[str(_team["name"])]
+    _team["team_id"] = _media["team_id"]
+    _team["logo_path"] = f"static/img/ti2026/teams/{_media['slug']}.png"
+    _team["logo_source"] = _media["logo_source"]
+    _team["player_portraits"] = {
+        player: {"status": "awaiting_official_asset", "path": "", "source": ""}
+        for player in _team["players"]
+    }
+
 TI2026_PLAYER_ALIASES: dict[str, tuple[str, ...]] = {
     player: ()
     for team in TI2026_TEAMS
     for player in team["players"]
 }
 TI2026_PLAYER_ALIASES.update({
-    "Ame": ("萧瑟",),
+    "Ame": ("萧瑟", "哥哥", "Ame哥"),
     "NothingToSay": ("NTS", "莫言", "责任神"),
     "fy": ("fy神", "烟火神"),
+    "tOfu": ("豆腐",),
+    "Pure": ("普洱",),
+    "Xxs": ("小学生",),
+    "No[o]ne-": ("Noone", "No[o]ne", "NoOne"),
+    "XinQ": ("行星神", "心情"),
     "Topson": ("普森", "汤普森", "森哥", "上帝之子", "托普森", "托皇"),
     "SumaiL": ("苏美尔", "苏皇", "跳跳"),
     "Erika": ("YSR-04E", "poyoyo"),
@@ -192,7 +226,7 @@ def build_ti2026_context(comments: Iterable[Any], base_description: str = "") ->
             "team_player_action_requires_same_window_evidence": True,
             "series_result_requires_verified_score_or_explicit_result": True,
         },
-    }
+}
 
 
 _SENSITIVE_CLAIMS: tuple[tuple[str, tuple[str, ...]], ...] = (

@@ -21,7 +21,13 @@ class Ti2026ContextTests(unittest.TestCase):
         self.assertEqual(ti.normalize_ti2026_team("雪碧"), "Team Spirit")
         self.assertEqual(ti.ti2026_team_for_player("Ame"), "Xtreme Gaming")
         self.assertEqual(ti.ti2026_team_for_player("萧瑟"), "Xtreme Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("哥哥"), "Xtreme Gaming")
         self.assertEqual(ti.ti2026_team_for_player("责任神"), "Xtreme Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("豆腐"), "Team Liquid")
+        self.assertEqual(ti.ti2026_team_for_player("普洱"), "1win Team")
+        self.assertEqual(ti.ti2026_team_for_player("小学生"), "Xtreme Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("Noone"), "TEAM VISION")
+        self.assertEqual(ti.ti2026_team_for_player("心情"), "Vici Gaming")
         self.assertEqual(ti.ti2026_team_for_player("Faith_bian"), "Vici Gaming")
         self.assertEqual(ti.ti2026_team_for_player("Bach"), "Vici Gaming")
         self.assertEqual(ti.ti2026_team_for_player("poyoyo"), "Team Resilience")
@@ -42,6 +48,11 @@ class Ti2026ContextTests(unittest.TestCase):
         }
         self.assertEqual(set(ti.TI2026_PLAYER_ALIASES), roster)
         self.assertTrue(all(team["aliases"] for team in ti.TI2026_TEAMS))
+        self.assertTrue(all(team["team_id"] for team in ti.TI2026_TEAMS))
+        self.assertTrue(all(team["logo_path"].endswith(".png") for team in ti.TI2026_TEAMS))
+        self.assertTrue(all(len(team["player_portraits"]) == 5 for team in ti.TI2026_TEAMS))
+        app_root = MODULE_PATH.parent
+        self.assertTrue(all((app_root / team["logo_path"]).is_file() for team in ti.TI2026_TEAMS))
 
     def test_context_detects_ti_series_and_explicit_game_boundaries(self):
         context = ti.build_ti2026_context([
