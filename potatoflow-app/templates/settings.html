@@ -2155,12 +2155,13 @@
                                                             <div class="input-group">
                                                                 <input type="text" id="recordings-path" name="RECORDINGS_PATH"
                                                                        value="{{ config.get('RECORDINGS_PATH', 'docker-data/recordings') }}"
+                                                                       data-resolved-path="{{ recordings_path }}"
                                                                        class="form-control" placeholder="docker-data/recordings">
                                                                 <button class="btn btn-outline-primary" type="button" id="browse-recordings-path">
                                                                     <i class="bi bi-folder2-open"></i> 选择文件夹
                                                                 </button>
                                                             </div>
-                                                            <p class="help-text mb-0">相对路径以 PotatoFlow 项目根目录为准。默认 <code>docker-data/recordings</code>，即 <code>potato-flow/docker-data/recordings/</code>。</p>
+                                                            <p class="help-text mb-0">相对路径以 PotatoFlow 项目根目录为准。macOS 新安装默认使用 <code>~/Movies/PotatoFlow/recordings</code>；已有旧目录中的录播会继续保留原位置。Docker 默认使用 <code>potato-flow/docker-data/recordings/</code>。</p>
                                                         </div>
                                                     </div>
                                                     <div class="col-lg-4">
@@ -3999,7 +4000,15 @@
 
         openButton.addEventListener('click', function () {
             picker.show();
-            loadDirectory(pathInput.value.trim() || '{{ recordings_path }}');
+            const configured = pathInput.value.trim();
+            const defaultAliases = new Set([
+                'recordings', './recordings',
+                'docker-data/recordings', './docker-data/recordings'
+            ]);
+            const initial = defaultAliases.has(configured)
+                ? pathInput.dataset.resolvedPath
+                : configured;
+            loadDirectory(initial || '{{ recordings_path }}');
         });
         parentButton.addEventListener('click', function () {
             if (parentPath) loadDirectory(parentPath);

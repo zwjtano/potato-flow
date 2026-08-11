@@ -20,6 +20,25 @@ from modules.utils import get_app_root_dir, get_resource_root_dir  # noqa: E402
 
 
 class WindowsDesktopInstallerTests(unittest.TestCase):
+    def test_frozen_macos_uses_application_support_for_mutable_data(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.dict(
+            os.environ,
+            {"HOME": temp},
+        ), mock.patch.object(
+            sys,
+            "frozen",
+            True,
+            create=True,
+        ), mock.patch.object(
+            sys,
+            "platform",
+            "darwin",
+        ):
+            self.assertEqual(
+                Path(get_app_root_dir()),
+                Path(temp) / "Library" / "Application Support" / "PotatoFlow",
+            )
+
     def test_data_root_override_does_not_change_resource_root(self):
         with tempfile.TemporaryDirectory() as temp, mock.patch.dict(
             os.environ, {"POTATOFLOW_DATA_DIR": temp}

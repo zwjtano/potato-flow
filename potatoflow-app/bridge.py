@@ -5185,6 +5185,7 @@ def cleanup_uploaded_recording(
     danmaku_xml: Path | None,
     upload_video: Path,
     artifact_dir: Path | None = None,
+    ass_path: Path | None = None,
     retained_paths: Iterable[Path | None] = (),
     xml_retention_hours: float = 0.0,
 ) -> dict[str, Any]:
@@ -5198,6 +5199,7 @@ def cleanup_uploaded_recording(
     candidates = [
         ("video", video),
         ("danmaku_xml", danmaku_xml),
+        ("ass", ass_path),
     ]
     if upload_video.resolve() != video.resolve():
         candidates.append(("upload_video", upload_video))
@@ -6917,7 +6919,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
                 ass_path = build_ass(
                     comments,
-                    work_dir / f"{video.stem}.ass",
+                    video.parent / f"ASS_{video.stem}.ass",
                     width=width,
                     height=height,
                     font_name=str(cfg.get("danmaku_font_name", "Noto Sans CJK SC")),
@@ -8422,6 +8424,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 danmaku_xml,
                 upload_video,
                 artifact_dir=work_dir,
+                ass_path=ass_path,
                 retained_paths=(
                     cover,
                     cover43,
@@ -8506,12 +8509,9 @@ def generate_record_only_ass(
         )
         return None
     width, height = probe_video_size(video, str(cfg.get("ffprobe", "ffprobe")))
-    # Keep the editable subtitle inside the same recording session, but not
-    # beside the burned MP4. Many players automatically load a same-stem ASS;
-    # doing that for an already burned video renders every comment twice.
-    ass_dir = video.parent / "ass"
-    ass_dir.mkdir(parents=True, exist_ok=True)
-    ass_path = ass_dir / f"{video.stem}.zh-CN.ass"
+    # Keep XML, editable ASS and video together. Prefix the ASS instead of using
+    # the video's exact stem so players do not auto-load it over a burned MP4.
+    ass_path = video.parent / f"ASS_{video.stem}.ass"
     generated = build_ass(
         comments,
         ass_path,

@@ -2664,7 +2664,7 @@ class BridgeTests(unittest.TestCase):
                     ("cleanup", "completed"),
                 ],
             )
-            ass = video.parent / "ass" / f"{video.stem}.zh-CN.ass"
+            ass = video.parent / f"ASS_{video.stem}.ass"
             self.assertTrue(ass.is_file())
             self.assertIn("测试弹幕", ass.read_text(encoding="utf-8-sig"))
 
@@ -3423,7 +3423,7 @@ class BridgeTests(unittest.TestCase):
             video = root / "clip.flv"
             xml = root / "clip.xml"
             upload_video = root / "artifacts" / "clip.mp4"
-            ass = root / "artifacts" / "clip.ass"
+            ass = root / "ASS_clip.ass"
             ai_cover = root / "artifacts" / "ai_cover.jpg"
             upload_video.parent.mkdir()
             for path in (video, xml, upload_video, ass, ai_cover):
@@ -3434,6 +3434,7 @@ class BridgeTests(unittest.TestCase):
                 xml,
                 upload_video,
                 artifact_dir=upload_video.parent,
+                ass_path=ass,
             )
 
             self.assertEqual(result["failed"], [])
@@ -5733,7 +5734,7 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.load_config(path)
 
-    def test_record_only_ass_is_language_tagged_simplified_chinese(self):
+    def test_record_only_ass_is_kept_beside_video_without_same_stem(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.flv"
@@ -5757,7 +5758,7 @@ class BridgeTests(unittest.TestCase):
 
             self.assertEqual(
                 result,
-                root / "ass" / "阿怪MrWeird_茅山后裔_2026-07-26_14-59.zh-CN.ass",
+                root / "ASS_阿怪MrWeird_茅山后裔_2026-07-26_14-59.ass",
             )
             self.assertTrue(result.is_file())
             self.assertFalse(legacy_ass.exists())
@@ -5794,6 +5795,7 @@ class BridgeTests(unittest.TestCase):
             self.assertFalse(
                 (video.parent / "ass" / f"{video.stem}.zh-CN.ass").exists()
             )
+            self.assertFalse((video.parent / f"ASS_{video.stem}.ass").exists())
 
     def test_record_only_empty_xml_marks_ass_failed_and_preserves_video(self):
         with tempfile.TemporaryDirectory() as temp:

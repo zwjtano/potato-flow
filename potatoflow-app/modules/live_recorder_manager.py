@@ -36,15 +36,31 @@ WORKSPACE_ROOT = APP_ROOT.parent
 DATA_ROOT = Path(get_app_root_dir())
 CONFIG_DIR = DATA_ROOT / "config"
 WINDOWS_DOCUMENTS_RECORDINGS_DIR = Path.home() / "Documents" / "PotatoFlow" / "recordings"
+
+
+def _default_recordings_dir() -> Path:
+    if os.name == "nt":
+        return WINDOWS_DOCUMENTS_RECORDINGS_DIR
+    if sys.platform == "darwin":
+        legacy = WORKSPACE_ROOT / "docker-data" / "recordings"
+        try:
+            if legacy.is_dir() and next(legacy.iterdir(), None) is not None:
+                return legacy
+        except OSError:
+            # Preserve the old location when it exists but cannot be inspected.
+            if legacy.exists():
+                return legacy
+        return Path.home() / "Movies" / "PotatoFlow" / "recordings"
+    return WORKSPACE_ROOT / "docker-data" / "recordings"
+
+
 RECORDINGS_DIR = (
     Path(os.environ["POTATOFLOW_RECORDINGS_DIR"]).expanduser().resolve()
     if str(os.environ.get("POTATOFLOW_RECORDINGS_DIR") or "").strip()
     else DATA_ROOT / "recordings"
     if str(os.environ.get("POTATOFLOW_DATA_DIR") or "").strip()
     else (
-        WINDOWS_DOCUMENTS_RECORDINGS_DIR
-        if os.name == "nt"
-        else WORKSPACE_ROOT / "docker-data" / "recordings"
+        _default_recordings_dir()
     )
 )
 ROOMS_PATH = CONFIG_DIR / "live_recorders.json"

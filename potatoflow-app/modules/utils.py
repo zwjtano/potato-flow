@@ -23,9 +23,16 @@ def get_app_root_dir():
     if configured_data_root:
         app_root = os.path.abspath(os.path.expanduser(configured_data_root))
     elif getattr(sys, 'frozen', False):
-        # 在PyInstaller打包环境中
-        # sys.executable 指向的是实际的可执行文件
-        app_root = os.path.dirname(sys.executable)
+        if sys.platform == 'darwin':
+            # macOS 应用包及安装目录应保持只读；用户数据放到标准目录。
+            app_root = os.path.join(
+                os.path.expanduser('~/Library/Application Support'),
+                'PotatoFlow',
+            )
+        else:
+            # 在PyInstaller打包环境中
+            # sys.executable 指向的是实际的可执行文件
+            app_root = os.path.dirname(sys.executable)
     else:
         # 在开发环境中
         # __file__ 是当前文件的路径，需要向上两级找到项目根目录
