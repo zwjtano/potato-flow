@@ -21,10 +21,7 @@ from modules.utils import get_app_root_dir, get_resource_root_dir  # noqa: E402
 
 class WindowsDesktopInstallerTests(unittest.TestCase):
     def test_frozen_macos_uses_application_support_for_mutable_data(self):
-        with tempfile.TemporaryDirectory() as temp, mock.patch.dict(
-            os.environ,
-            {"HOME": temp},
-        ), mock.patch.object(
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
             sys,
             "frozen",
             True,
@@ -33,6 +30,9 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
             sys,
             "platform",
             "darwin",
+        ), mock.patch(
+            "modules.utils.os.path.expanduser",
+            return_value=str(Path(temp) / "Library" / "Application Support"),
         ):
             self.assertEqual(
                 Path(get_app_root_dir()),

@@ -62,10 +62,6 @@ class LiveRecorderStatusTests(unittest.TestCase):
             "platform",
             "darwin",
         ), mock.patch.object(
-            recorder_module.os,
-            "name",
-            "posix",
-        ), mock.patch.object(
             recorder_module,
             "WORKSPACE_ROOT",
             Path(temp) / "project",

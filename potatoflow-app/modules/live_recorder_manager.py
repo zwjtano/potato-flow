@@ -39,8 +39,6 @@ WINDOWS_DOCUMENTS_RECORDINGS_DIR = Path.home() / "Documents" / "PotatoFlow" / "r
 
 
 def _default_recordings_dir() -> Path:
-    if os.name == "nt":
-        return WINDOWS_DOCUMENTS_RECORDINGS_DIR
     if sys.platform == "darwin":
         legacy = WORKSPACE_ROOT / "docker-data" / "recordings"
         try:
@@ -51,6 +49,8 @@ def _default_recordings_dir() -> Path:
             if legacy.exists():
                 return legacy
         return Path.home() / "Movies" / "PotatoFlow" / "recordings"
+    if os.name == "nt":
+        return WINDOWS_DOCUMENTS_RECORDINGS_DIR
     return WORKSPACE_ROOT / "docker-data" / "recordings"
 
 
