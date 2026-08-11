@@ -3409,6 +3409,7 @@ class LiveRecorderManager:
             stages.sort(key=lambda item: order_index.get(str(item.get("key")), len(order)))
             upload_stage = next((item for item in stages if item["key"] == "upload"), {})
             ai_stage = next((item for item in stages if item["key"] == "ai"), {})
+            burn_stage = next((item for item in stages if item["key"] == "burn"), {})
             cover_stage = next(
                 (item for item in stages if item["key"] == "cover_16x9"),
                 next((item for item in stages if item["key"] == "cover"), {}),
@@ -3566,6 +3567,7 @@ class LiveRecorderManager:
             )
             upload_queued = upload_stage.get("status") == "queued"
             ai_queued = ai_stage.get("status") == "queued"
+            burn_queued = burn_stage.get("status") == "queued"
             stage_label = RECORDING_STAGE_LABELS.get(
                 str(failed_stage or active_stage or ""),
                 str(failed_stage or active_stage or "处理任务"),
@@ -3579,6 +3581,8 @@ class LiveRecorderManager:
                 )
             elif ai_queued:
                 progress_label = "AI 简介排队中"
+            elif burn_queued:
+                progress_label = "烧录排队中"
             elif active_stage:
                 progress_label = f"正在{stage_label}"
             elif job_status == "paused":
@@ -3724,6 +3728,7 @@ class LiveRecorderManager:
                 "upload_queued": upload_queued,
                 "upload_queue_position": queued_upload_positions.get(row["fingerprint"]),
                 "ai_queued": ai_queued,
+                "burn_queued": burn_queued,
                 "upload_progress": upload_progress,
                 "upload_progress_text": upload_progress_text,
                 "processing_duration_text": processing_duration_text,

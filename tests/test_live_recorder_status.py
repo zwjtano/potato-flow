@@ -3281,6 +3281,49 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 manager.delete_pipeline_job(first_id)
                 self.assertIsNone(manager.pipeline_job(first_id))
 
+    def test_burn_queue_is_exposed_as_queued_instead_of_processing(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            fingerprint = "d" * 64
+            updated_at = "2026-08-11T01:00:00+00:00"
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', 1, '{}', NULL, ?, ?)",
+                    (fingerprint, "/data/recordings/test.flv", updated_at, updated_at),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'burn', 'queued', '{}', NULL, NULL, NULL, ?)",
+                    (fingerprint, updated_at),
+                )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[]):
+                job = manager.pipeline_jobs()[0]
+
+        self.assertTrue(job["burn_queued"])
+        self.assertEqual(job["progress_label"], "烧录排队中")
+        tasks_template = (
+            Path(__file__).resolve().parents[1] / "potatoflow-app" / "templates" / "tasks.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn("投稿排队中", tasks_template)
+        self.assertIn("AI 简介排队中", tasks_template)
+        self.assertIn("烧录排队中", tasks_template)
+
     def test_pre_upload_processing_job_can_be_paused(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
