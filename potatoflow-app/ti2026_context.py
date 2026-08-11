@@ -47,9 +47,22 @@ TI2026_TEAMS: tuple[dict[str, Any], ...] = (
     {"name": "Team Resilience", "aliases": ["Resilience", "TR", "韧性队"], "players": ["YSR-04E", "Erika", "poyoyo", "Echozz", "niu", "planet", "zzq"]},
     {"name": "Vici Gaming", "aliases": ["Vici Gaming", "Vici", "VG", "维基"], "players": ["shiro", "Xm", "Bach", "Faith_bian", "XinQ", "y`"]},
     {"name": "OG", "aliases": ["OG"], "players": ["Natsumi", "Yopaj-", "Raven", "TIMS", "skem"]},
-    {"name": "LGD Gaming", "aliases": ["LGD Gaming", "LGD"], "players": ["Yuma", "TaiLung", "Wisper", "Thiolicor", "KJ"]},
+    {"name": "LGD Gaming", "aliases": ["LGD Gaming", "LGD", "老干爹"], "players": ["Yuma", "Topson", "Wisper", "Thiolicor", "KJ"]},
     {"name": "GamerLegion", "aliases": ["GamerLegion", "GL"], "players": ["Ghost", "RCY", "Fayde", "Bignum", "Speeed"]},
 )
+
+TI2026_PLAYER_ALIASES: dict[str, tuple[str, ...]] = {
+    "Topson": ("普森", "汤普森", "森哥", "上帝之子", "托普森", "托皇"),
+}
+
+TI2026_ROSTER_CHANGES = [
+    {
+        "team": "LGD Gaming",
+        "removed_player": "TaiLung",
+        "replacement_player": "Topson",
+        "reason": "TaiLung is ineligible for The International 2026",
+    },
+    ]
 
 
 _TI_MARKERS = re.compile(
@@ -89,8 +102,9 @@ def ti2026_team_for_player(value: str) -> str:
     if not key:
         return ""
     for team in TI2026_TEAMS:
-        if any(key == _compact(player) for player in team["players"]):
-            return str(team["name"])
+        for player in team["players"]:
+            if any(key == _compact(alias) for alias in (player, *TI2026_PLAYER_ALIASES.get(player, ()))):
+                return str(team["name"])
     return ""
 
 
@@ -131,7 +145,7 @@ def build_ti2026_context(comments: Iterable[Any], base_description: str = "") ->
         str(team["name"])
         for team in TI2026_TEAMS
         if any(_mentions(corpus, alias) for alias in (team["name"], *team["aliases"]))
-    ]
+]
     active = bool(
         _TI_MARKERS.search(corpus)
         or len(mentioned_teams) >= 2
@@ -144,7 +158,8 @@ def build_ti2026_context(comments: Iterable[Any], base_description: str = "") ->
         if mentioned_teams and str(team["name"]) not in mentioned_teams:
             continue
         for player in team["players"]:
-            if _mentions(corpus, player):
+            aliases = (player, *TI2026_PLAYER_ALIASES.get(player, ()))
+            if any(_mentions(corpus, alias) for alias in aliases):
                 mentioned_players.append({"name": player, "team": str(team["name"])})
     phase = "grand_final" if re.search(r"(?:总决赛|GRAND\s*FINAL|决赛第五局)", corpus, re.I) else (
         "main_event" if re.search(r"(?:主赛事|胜者组|败者组|淘汰赛)", corpus, re.I) else "group_stage"
@@ -157,6 +172,7 @@ def build_ti2026_context(comments: Iterable[Any], base_description: str = "") ->
         "series_format": series_format,
         "mentioned_teams": mentioned_teams,
         "mentioned_players": mentioned_players,
+        "roster_changes": TI2026_ROSTER_CHANGES,
         "series_markers": infer_ti2026_series_markers(comment_list),
         "rules": TI2026_RULES,
         "editorial_policy": {

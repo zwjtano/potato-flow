@@ -21,6 +21,13 @@ class Ti2026ContextTests(unittest.TestCase):
         self.assertEqual(ti.normalize_ti2026_team("雪碧"), "Team Spirit")
         self.assertEqual(ti.ti2026_team_for_player("Ame"), "Xtreme Gaming")
         self.assertEqual(ti.ti2026_team_for_player("Faith_bian"), "Vici Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("Topson"), "LGD Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("普森"), "LGD Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("汤普森"), "LGD Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("森哥"), "LGD Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("托皇"), "LGD Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("上帝之子"), "LGD Gaming")
+        self.assertEqual(ti.ti2026_team_for_player("TaiLung"), "")
 
     def test_context_detects_ti_series_and_explicit_game_boundaries(self):
         context = ti.build_ti2026_context([
