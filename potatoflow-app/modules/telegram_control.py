@@ -547,6 +547,7 @@ class TelegramControlService:
         }
 
     def _dashboard_page(self) -> tuple[str, dict[str, Any]]:
+        status = self.manager.status()
         rooms = self._rooms()
         jobs = list(self.manager.pipeline_jobs(None))
         recording = sum(
@@ -558,11 +559,18 @@ class TelegramControlService:
         abnormal = sum(
             1 for job in jobs if str(job.get("status") or "") in ABNORMAL_TASK_STATUSES
         )
+        root = Path(recordings_dir())
+        disk_root = root
+        while not disk_root.exists() and disk_root != disk_root.parent:
+            disk_root = disk_root.parent
+        free = shutil.disk_usage(disk_root).free
         text = (
             "🥔 PotatoFlow 控制台\n\n"
+            f"录制引擎：{'🟢 运行中' if status.get('running') else '⚫ 已停止'}\n"
             f"直播间：{len(rooms)} 个 · 🔴 正在录制 {recording} 个\n"
             f"进行中任务：{active} 个\n"
-            f"异常任务：{abnormal} 个"
+            f"异常任务：{abnormal} 个\n"
+            f"磁盘可用：{_human_bytes(free)}"
         )
         return text, self._nav_keyboard(
             [("🎥 直播间", "nav:rooms"), ("⏳ 进行中", "nav:active")],

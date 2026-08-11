@@ -278,7 +278,8 @@ class TelegramControlTests(unittest.TestCase):
         self.assertNotIn("nav:engine", callbacks)
         self.assertNotIn("nav:status", callbacks)
         self.assertNotIn("nav:notifications", callbacks)
-        self.assertNotIn("录制引擎", payload["text"])
+        self.assertIn("录制引擎：🟢 运行中", payload["text"])
+        self.assertIn("磁盘可用：", payload["text"])
 
     def test_rooms_page_can_start_guided_add(self):
         self.service.process_update(_callback_update("nav:rooms"))
