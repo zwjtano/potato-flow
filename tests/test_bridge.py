@@ -4497,6 +4497,22 @@ class BridgeTests(unittest.TestCase):
             "",
         )
 
+    def test_common_named_card_hands_are_required_as_visuals(self):
+        for headline in (
+            "省钱后做成两对",
+            "追A做成葫芦仍仅第四",
+            "黑桃Q做成大同花顺",
+            "五张7逆转升至第一",
+            "后程连成五个9",
+            "四条K保守收手最终第四",
+            "最后一轮凑出同花",
+            "差一张顺子听牌",
+        ):
+            with self.subTest(headline=headline):
+                instruction = bridge.recording_cover_card_hand_instruction(headline)
+                self.assertTrue(instruction)
+                self.assertIn("正面扑克牌", instruction)
+
     @unittest.skip("removed cover behavior")
     def test_cover_subject_identity_locks_aliases_to_character_base(self):
         yyf_instruction = bridge.recording_cover_subject_identity_instruction(

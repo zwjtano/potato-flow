@@ -3327,8 +3327,11 @@ def recording_cover_card_hand_instruction(headline: str) -> str:
     """Turn verified card-hand wording into an explicit cover visual contract."""
     text = str(headline or "").strip()
     if not re.search(
-        r"牌局|扑克牌|德州|皇家同花顺|同花顺|同花|葫芦|四条|五条",
+        r"牌局|扑克牌|德州|牌型|听牌|皇家同花顺|同花顺|同花|葫芦|"
+        r"顺子|两对|对子|一对|三条|四条|五条|"
+        r"[四五](?:张|个)\s*(?:10|[2-9TJQKA])",
         text,
+        flags=re.IGNORECASE,
     ):
         return ""
 
@@ -3346,7 +3349,7 @@ def recording_cover_card_hand_instruction(headline: str) -> str:
         return None
 
     five_kind = completed_rank_hand(
-        r"(?:人工)?五条\s*(?P<rank>10|[2-9TJQKA])"
+        r"(?:人工)?(?:五条|五(?:张|个))\s*(?P<rank>10|[2-9TJQKA])"
     )
     if five_kind:
         _, rank = five_kind
@@ -3405,7 +3408,8 @@ def recording_cover_card_hand_instruction(headline: str) -> str:
         )
 
     return (
-        "标题涉及扑克牌局或牌型，画面必须用清楚可辨的正面扑克牌表现标题已经确认的牌面或牌型，"
+        "标题明确涉及扑克牌局、牌面或牌型，画面应尽量把对应正面牌组作为主要视觉元素，"
+        "必须用清楚可辨的正面扑克牌表现标题已经确认的牌面或牌型，"
         "不能只用人物、标题文字、牌背、筹码或抽象光效代替。"
         "标题若明确写出未成、错失、差一张或落空，必须表现对应的缺牌状态，不得画成已经完成的牌型。"
     )
