@@ -69,6 +69,11 @@ config.*.yaml
 # Build/package output
 **/dist/
 **/build/
+potatoflow-app/build-tools/build-macos/
+potatoflow-app/build-tools/dist-macos/
+potatoflow-app/build-tools/macos-components/
+potatoflow-app/build-tools/PotatoFlow-macOS.spec
+potatoflow-app/build-tools/PotatoFlow.icns
 site/
 *.zip
 *.tar.gz

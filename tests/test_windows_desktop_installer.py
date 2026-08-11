@@ -12,14 +12,57 @@ APP_ROOT = ROOT / "potatoflow-app"
 sys.path.insert(0, str(APP_ROOT))
 
 from modules.desktop_runtime import (  # noqa: E402
+    component_diagnostics,
     configure_runtime_environment,
     import_legacy_data,
+    resolve_macos_runtime,
     resolve_windows_runtime,
 )
 from modules.utils import get_app_root_dir, get_resource_root_dir  # noqa: E402
 
 
 class WindowsDesktopInstallerTests(unittest.TestCase):
+    def test_macos_runtime_uses_application_support_movies_and_bundled_tools(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            Path,
+            "home",
+            return_value=Path(temp) / "home",
+        ):
+            resources = Path(temp) / "PotatoFlow.app" / "Contents" / "Resources"
+            layout = resolve_macos_runtime(resources)
+            self.assertEqual(
+                layout.data_root,
+                (Path(temp) / "home" / "Library" / "Application Support" / "PotatoFlow").resolve(),
+            )
+            self.assertEqual(
+                layout.recordings_root,
+                (Path(temp) / "home" / "Movies" / "PotatoFlow" / "recordings").resolve(),
+            )
+            self.assertEqual(layout.bin_root, (resources / "bin").resolve())
+
+    def test_macos_runtime_environment_uses_extensionless_bundled_tools(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.dict(os.environ, {}, clear=True):
+            resources = Path(temp) / "resources"
+            (resources / "bin").mkdir(parents=True)
+            for name in ("biliup", "ffmpeg", "ffprobe"):
+                (resources / "bin" / name).touch()
+            with mock.patch.object(Path, "home", return_value=Path(temp) / "home"):
+                layout = resolve_macos_runtime(resources)
+            configure_runtime_environment(layout)
+            self.assertEqual(os.environ["RECORDER_BIN"], str((resources / "bin" / "biliup").resolve()))
+            self.assertEqual(os.environ["FFMPEG_LOCATION"], str((resources / "bin" / "ffmpeg").resolve()))
+            self.assertEqual(os.environ["FFPROBE_LOCATION"], str((resources / "bin" / "ffprobe").resolve()))
+
+    def test_macos_component_diagnostics_uses_extensionless_names(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(Path, "home", return_value=Path(temp) / "home"):
+            resources = Path(temp) / "resources"
+            (resources / "bin").mkdir(parents=True)
+            for name in ("biliup", "ffmpeg", "ffprobe"):
+                (resources / "bin" / name).write_bytes(name.encode())
+            components = component_diagnostics(resolve_macos_runtime(resources))
+            self.assertEqual({item["name"] for item in components}, {"biliup", "ffmpeg", "ffprobe"})
+            self.assertTrue(all(item["exists"] for item in components))
+
     def test_frozen_macos_uses_application_support_for_mutable_data(self):
         with tempfile.TemporaryDirectory() as temp, mock.patch.object(
             sys,
@@ -133,6 +176,23 @@ class WindowsDesktopInstallerTests(unittest.TestCase):
         self.assertIn("windows-tests:", application_workflow)
         self.assertIn("./ops/test-all.ps1", application_workflow)
         self.assertIn("Run all test suites before packaging", workflow)
+
+    def test_macos_release_builds_and_validates_apple_silicon_dmg(self):
+        workflow = (ROOT / ".github" / "workflows" / "macos-release.yml").read_text(encoding="utf-8")
+        builder = (APP_ROOT / "build-tools" / "build_macos.py").read_text(encoding="utf-8")
+        launcher = (APP_ROOT / "build-tools" / "setup_app.py").read_text(encoding="utf-8")
+
+        self.assertIn('test "$(uname -m)" = "arm64"', workflow)
+        self.assertIn("Run all test suites before packaging", workflow)
+        self.assertIn("Smoke test packaged server mode", workflow)
+        self.assertIn("codesign --verify --deep --strict", workflow)
+        self.assertIn("macOS-Apple-Silicon.dmg", workflow)
+        self.assertIn('target_arch="arm64"', builder)
+        self.assertIn('bundle_identifier="io.github.zwjtano.potatoflow"', builder)
+        self.assertIn('gui="edgechromium" if os.name == "nt" else "cocoa"', launcher)
+        onboarding = (APP_ROOT / "templates" / "onboarding.html").read_text(encoding="utf-8")
+        self.assertIn("{{ desktop_platform }} 首次设置", onboarding)
+        self.assertIn("{{ desktop_webview }}", onboarding)
 
     def test_release_build_requires_tag_source_and_version_to_match(self):
         workflow = (ROOT / ".github" / "workflows" / "windows-release.yml").read_text(

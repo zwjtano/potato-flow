@@ -4030,7 +4030,14 @@ def desktop_onboarding():
         'recordings': str(recordings_dir()),
         'exports': str(Path(os.environ.get('POTATOFLOW_EXPORTS_DIR') or data_root / 'exports').resolve()),
     }
-    return render_template('onboarding.html', paths=paths)
+    desktop_platform = 'macOS' if sys.platform == 'darwin' else 'Windows'
+    desktop_webview = 'Cocoa WebView' if sys.platform == 'darwin' else 'WebView2'
+    return render_template(
+        'onboarding.html',
+        paths=paths,
+        desktop_platform=desktop_platform,
+        desktop_webview=desktop_webview,
+    )
 
 
 @app.route('/api/onboarding/status')
@@ -4066,9 +4073,10 @@ def desktop_onboarding_complete():
 @app.route('/diagnostics')
 @login_required
 def desktop_diagnostics():
-    from modules.desktop_runtime import component_diagnostics, resolve_windows_runtime
+    from modules.desktop_runtime import component_diagnostics, resolve_macos_runtime, resolve_windows_runtime
 
-    layout = resolve_windows_runtime(sys.executable, Path(__file__).resolve().parent)
+    resource_root = Path(__file__).resolve().parent
+    layout = resolve_macos_runtime(resource_root) if sys.platform == 'darwin' else resolve_windows_runtime(sys.executable, resource_root)
     # The launcher is authoritative in frozen mode; source mode uses the active paths.
     data_root = Path(os.environ.get('POTATOFLOW_DATA_DIR') or layout.data_root).resolve()
     recordings_root = Path(os.environ.get('POTATOFLOW_RECORDINGS_DIR') or recordings_dir()).resolve()
@@ -4092,9 +4100,10 @@ def desktop_diagnostics():
 @app.route('/api/runtime-diagnostics')
 @login_required
 def desktop_runtime_diagnostics_api():
-    from modules.desktop_runtime import component_diagnostics, resolve_windows_runtime
+    from modules.desktop_runtime import component_diagnostics, resolve_macos_runtime, resolve_windows_runtime
 
-    layout = resolve_windows_runtime(sys.executable, Path(__file__).resolve().parent)
+    resource_root = Path(__file__).resolve().parent
+    layout = resolve_macos_runtime(resource_root) if sys.platform == 'darwin' else resolve_windows_runtime(sys.executable, resource_root)
     components = component_diagnostics(layout)
     webview2 = False
     if os.name == 'nt':
@@ -4110,7 +4119,10 @@ def desktop_runtime_diagnostics_api():
                     continue
         except ImportError:
             pass
-    components.append({'name': 'WebView2 Runtime', 'exists': webview2, 'path': 'Windows Runtime', 'sha256': ''})
+    if sys.platform == 'darwin':
+        components.append({'name': 'Cocoa WebView', 'exists': True, 'path': 'macOS System Framework', 'sha256': ''})
+    else:
+        components.append({'name': 'WebView2 Runtime', 'exists': webview2, 'path': 'Windows Runtime', 'sha256': ''})
     return jsonify({'components': components, 'mode': os.environ.get('POTATOFLOW_RUNTIME_MODE', 'source')})
 
 @app.route('/system_health')
