@@ -868,16 +868,35 @@ def _replace_task_cover(task: dict, uploaded_file):
             raise ValueError('无法创建原始封面备份路径')
         shutil.copy2(current_cover_path, original_backup)
 
+    staged_custom_covers = []
     for existing_ext in ALLOWED_COVER_EXTENSIONS:
         custom_candidate = _safe_join_task_dir(task_dir_real, f'custom_cover{existing_ext}')
         if custom_candidate and os.path.exists(custom_candidate):
-            os.remove(custom_candidate)
+            staged = f"{custom_candidate}.replacing-{uuid.uuid4().hex}"
+            os.replace(custom_candidate, staged)
+            staged_custom_covers.append((custom_candidate, staged))
 
     new_cover_path = _safe_join_task_dir(task_dir_real, f'custom_cover{ext}')
     if not new_cover_path:
         raise ValueError('无法创建封面保存路径')
-    uploaded_file.save(new_cover_path)
-    update_task(task_id, cover_path_local=new_cover_path, silent=True)
+    try:
+        uploaded_file.save(new_cover_path)
+        if not update_task(task_id, cover_path_local=new_cover_path, silent=True):
+            raise RuntimeError('封面文件已写入，但任务记录更新失败')
+    except Exception:
+        try:
+            if os.path.exists(new_cover_path):
+                os.remove(new_cover_path)
+        finally:
+            for original, staged in reversed(staged_custom_covers):
+                if os.path.exists(staged) and not os.path.exists(original):
+                    os.replace(staged, original)
+        raise
+    for _original, staged in staged_custom_covers:
+        try:
+            os.remove(staged)
+        except OSError as exc:
+            logger.warning("旧自定义封面暂存文件清理失败 %s: %s", staged, exc)
     return new_cover_path
 
 
@@ -894,7 +913,8 @@ def _restore_task_cover(task: dict):
     if not original_backup:
         raise ValueError('未找到原始封面备份，无法恢复')
 
-    update_task(task_id, cover_path_local=original_backup, silent=True)
+    if not update_task(task_id, cover_path_local=original_backup, silent=True):
+        raise RuntimeError('恢复封面时任务记录更新失败')
     return original_backup
 
 
@@ -1651,17 +1671,33 @@ def live_recording_job_cover_variant(fingerprint, variant):
 @login_required
 def live_recording_job_retry(fingerprint):
     try:
-        live_recorder_manager.retry_pipeline_job(fingerprint)
+        started = live_recorder_manager.retry_pipeline_job(fingerprint)
+        if not started:
+            return jsonify({
+                'ok': False,
+                'error': '任务状态已变化，可能已由其他请求开始重试。',
+            }), 409
         return jsonify({'ok': True, 'message': '已开始重试，进度会自动刷新。'}), 202
     except RecorderConfigError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
+    except OSError as exc:
+        logger.error("启动录播任务重试进程失败：%s", exc)
+        return jsonify({
+            'ok': False,
+            'error': '重试进程启动失败，任务已恢复为可重试状态。',
+        }), 503
 
 
 @app.route('/live-recording/jobs/<fingerprint>/pause', methods=['POST'])
 @login_required
 def live_recording_job_pause(fingerprint):
     try:
-        live_recorder_manager.pause_pipeline_job(fingerprint)
+        paused = live_recorder_manager.pause_pipeline_job(fingerprint)
+        if not paused:
+            return jsonify({
+                'ok': False,
+                'error': '任务状态已变化，未能暂停。',
+            }), 409
         return jsonify({
             'ok': True,
             'message': '录播任务已暂停，源文件和处理产物均已保留。',
@@ -1679,10 +1715,12 @@ def live_recording_job_delete(fingerprint):
             fingerprint,
             delete_files=delete_files,
         )
+        cleanup_pending = result.get('cleanup_pending') or []
         flash(
             f"录播任务已删除"
-            + (f"，同时删除 {result['deleted_file_count']} 个关联文件" if delete_files else ""),
-            'success',
+            + (f"，同时删除 {result['deleted_file_count']} 个关联文件" if delete_files else "")
+            + (f"；另有 {len(cleanup_pending)} 项暂存文件待系统清理" if cleanup_pending else ""),
+            'warning' if cleanup_pending else 'success',
         )
     except RecorderConfigError as exc:
         flash(str(exc), 'danger')
@@ -3322,8 +3360,13 @@ def _start_background_force_upload(task_id, config, platform_name):
             import traceback
             logger.error(traceback.format_exc())
 
-    upload_thread = threading.Thread(target=background_force_upload, daemon=True)
-    upload_thread.start()
+    try:
+        upload_thread = threading.Thread(target=background_force_upload, daemon=True)
+        upload_thread.start()
+    except RuntimeError as exc:
+        logger.error("无法启动任务 %s 的后台强制上传线程：%s", task_id, exc)
+        return False
+    return True
     
 @app.route('/tasks/stream')
 @login_required
@@ -3450,9 +3493,17 @@ def edit_task(task_id):
                 # 从final_update_data中移除silent，避免重复传递
                 final_update_data.pop('silent')
             
-            update_task(task_id, silent=silent_param, **final_update_data)
+            update_succeeded = update_task(
+                task_id,
+                silent=silent_param,
+                **final_update_data,
+            )
         except Exception as e:
             logger.warning(f"update_task调用失败: {e}")
+            update_succeeded = False
+        if not update_succeeded:
+            flash('任务信息保存失败，未执行后续操作，请重试。', 'danger')
+            return redirect(redirect_target)
         logger.info(f"任务 {task_id} 信息已更新")
         updated_task = get_task(task_id)
         if action == 'force_upload':
@@ -3463,7 +3514,9 @@ def edit_task(task_id):
                 flash(f'请先选择{ "、".join(missing_partitions) }，或开启分区推荐后再继续上传。', 'danger')
                 return redirect(redirect_target)
 
-            _start_background_force_upload(task_id, config, platform_name)
+            if not _start_background_force_upload(task_id, config, platform_name):
+                flash('任务信息已保存，但后台上传线程启动失败，请重试。', 'danger')
+                return redirect(redirect_target)
             flash(f'已保存当前修改，并启动强制上传到{platform_name}，正在后台处理...', 'info')
             return redirect(url_for('manual_review'))
 
@@ -3742,9 +3795,10 @@ def force_upload_task_route(task_id):
         return redirect(url_for('edit_task', task_id=task_id))
     
     # 启动后台强制上传
-    flash(f'已启动强制上传到{platform_name}，正在后台处理...', 'info')
-
-    _start_background_force_upload(task_id, config, platform_name)
+    if _start_background_force_upload(task_id, config, platform_name):
+        flash(f'已启动强制上传到{platform_name}，正在后台处理...', 'info')
+    else:
+        flash('后台上传线程启动失败，请重试。', 'danger')
 
     return redirect(url_for('manual_review'))
 
@@ -5077,6 +5131,7 @@ def clear_specific_logs():
     try:
         logs_dir = get_app_subdir('logs')
         processed_files = []
+        failed_files = []
         bytes_freed = 0
 
         # 清空 app.log 和 task_manager.log
@@ -5087,8 +5142,9 @@ def clear_specific_logs():
                     bytes_freed += os.path.getsize(fpath)
                     open(fpath, 'w', encoding='utf-8').close()
                     processed_files.append(fname)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failed_files.append(fname)
+                    logger.warning("清空日志文件失败 %s: %s", fname, exc)
 
         # 删除所有task_xxx.log文件
         for filename in os.listdir(logs_dir):
@@ -5098,10 +5154,21 @@ def clear_specific_logs():
                     bytes_freed += os.path.getsize(path) if os.path.exists(path) else 0
                     os.remove(path)
                     processed_files.append(filename)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failed_files.append(filename)
+                    logger.warning("删除任务日志失败 %s: %s", filename, exc)
 
-        return {'success': True, 'files_processed': len(processed_files), 'processed_files': processed_files, 'bytes_freed': bytes_freed, 'bytes_freed_readable': _human_readable_size(bytes_freed)}
+        result = {
+            'success': not failed_files,
+            'files_processed': len(processed_files),
+            'processed_files': processed_files,
+            'failed_files': failed_files,
+            'bytes_freed': bytes_freed,
+            'bytes_freed_readable': _human_readable_size(bytes_freed),
+        }
+        if failed_files:
+            result['error'] = f"有 {len(failed_files)} 个日志文件未能清理"
+        return result
     except Exception as e:
         logger.warning(f"清空日志失败: {e}")
         return {'success': False, 'error': str(e)}

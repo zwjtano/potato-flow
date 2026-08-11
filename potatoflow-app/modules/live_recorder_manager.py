@@ -3565,9 +3565,12 @@ class LiveRecorderManager:
                 ),
                 None,
             )
-            upload_queued = upload_stage.get("status") == "queued"
-            ai_queued = ai_stage.get("status") == "queued"
-            burn_queued = burn_stage.get("status") == "queued"
+            queue_is_active = (
+                job_status in {"processing", "video_uploaded"} and not failed_stage
+            )
+            upload_queued = queue_is_active and upload_stage.get("status") == "queued"
+            ai_queued = queue_is_active and ai_stage.get("status") == "queued"
+            burn_queued = queue_is_active and burn_stage.get("status") == "queued"
             stage_label = RECORDING_STAGE_LABELS.get(
                 str(failed_stage or active_stage or ""),
                 str(failed_stage or active_stage or "处理任务"),
@@ -3789,7 +3792,9 @@ class LiveRecorderManager:
         cover_path = str(previous.get("cover_path") or "").strip()
         cover43_path = str(previous.get("cover43_path") or "").strip()
 
-        def save_cover(upload: Any, stem: str) -> str:
+        pending_covers: list[tuple[Path, Path]] = []
+
+        def prepare_cover(upload: Any, stem: str) -> str:
             if not upload or not str(getattr(upload, "filename", "") or "").strip():
                 return ""
             suffix = Path(str(upload.filename)).suffix.lower()
@@ -3798,13 +3803,27 @@ class LiveRecorderManager:
             artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
             artifact_dir.mkdir(parents=True, exist_ok=True)
             destination = artifact_dir / f"{stem}{suffix}"
-            upload.save(destination)
-            if not destination.is_file() or destination.stat().st_size <= 0:
-                raise RecorderConfigError("封面保存失败")
+            temporary = artifact_dir / f".{stem}.{uuid.uuid4().hex}.uploading{suffix}"
+            try:
+                upload.save(temporary)
+                if not temporary.is_file() or temporary.stat().st_size <= 0:
+                    raise RecorderConfigError("封面保存失败")
+            except RecorderConfigError:
+                temporary.unlink(missing_ok=True)
+                raise
+            except OSError as exc:
+                temporary.unlink(missing_ok=True)
+                raise RecorderConfigError("封面保存失败，请稍后重试") from exc
+            pending_covers.append((temporary, destination))
             return str(destination)
 
-        cover_path = save_cover(cover_file, "manual-review-cover-16x9") or cover_path
-        cover43_path = save_cover(cover43_file, "manual-review-cover-4x3") or cover43_path
+        try:
+            cover_path = prepare_cover(cover_file, "manual-review-cover-16x9") or cover_path
+            cover43_path = prepare_cover(cover43_file, "manual-review-cover-4x3") or cover43_path
+        except Exception:
+            for temporary, _destination in pending_covers:
+                temporary.unlink(missing_ok=True)
+            raise
 
         # A durable BVID is the publication boundary. Post-upload stages such as
         # comments, collections, or cleanup may fail after Bilibili has already
@@ -3870,7 +3889,37 @@ class LiveRecorderManager:
             ),
             "updated_at": now,
         }
-        self._store_pipeline_review_override(fingerprint, metadata)
+        installed_covers: list[tuple[Path, Path | None]] = []
+        try:
+            for temporary, destination in pending_covers:
+                backup = None
+                if destination.exists():
+                    backup = destination.with_name(
+                        f".{destination.name}.{uuid.uuid4().hex}.replacing"
+                    )
+                    os.replace(destination, backup)
+                try:
+                    os.replace(temporary, destination)
+                except Exception:
+                    if backup is not None:
+                        os.replace(backup, destination)
+                    raise
+                installed_covers.append((destination, backup))
+            self._store_pipeline_review_override(fingerprint, metadata)
+        except Exception as exc:
+            for temporary, _destination in pending_covers:
+                temporary.unlink(missing_ok=True)
+            for destination, backup in reversed(installed_covers):
+                destination.unlink(missing_ok=True)
+                if backup is not None and backup.exists():
+                    os.replace(backup, destination)
+            if isinstance(exc, RecorderConfigError):
+                raise
+            raise RecorderConfigError("保存审核信息失败，请稍后重试") from exc
+
+        for _destination, backup in installed_covers:
+            if backup is not None:
+                backup.unlink(missing_ok=True)
         return metadata
 
     def _store_pipeline_review_override(
@@ -5753,18 +5802,22 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 return True
             if current[0] == "completed":
                 raise RecorderConfigError("任务已经完成，无法暂停")
+            if current[0] not in {"processing", "video_uploaded"}:
+                raise RecorderConfigError("任务状态已变化，未能暂停，请刷新后重试")
             db.execute(
                 """UPDATE upload_stages
                    SET status='paused', error=NULL, finished_at=?, updated_at=?
                    WHERE fingerprint=? AND status IN ('queued', 'running')""",
                 (now, now, fingerprint),
             )
-            db.execute(
+            cursor = db.execute(
                 """UPDATE uploads
                    SET status='paused', error=NULL, updated_at=?
                    WHERE fingerprint=? AND status IN ('processing', 'video_uploaded')""",
                 (now, fingerprint),
             )
+            if cursor.rowcount != 1:
+                raise RecorderConfigError("任务状态已变化，未能暂停，请刷新后重试")
         return True
 
     def delete_pipeline_job(self, fingerprint: str, delete_files: bool = False) -> dict[str, Any]:
@@ -5789,94 +5842,135 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             if job.get("status") in {"processing", "video_uploaded"}:
                 self.pause_pipeline_job(fingerprint)
 
-        with self._lock, closing(sqlite3.connect(state_path, timeout=30)) as db, db:
-            db.row_factory = sqlite3.Row
-            row = db.execute(
-                "SELECT * FROM uploads WHERE fingerprint=?",
-                (fingerprint,),
-            ).fetchone()
-            if not row:
-                raise RecorderConfigError("没有找到该录播任务")
-            if row["status"] in {"processing", "video_uploaded"}:
-                failed_stage = db.execute(
-                    """SELECT 1 FROM upload_stages
-                       WHERE fingerprint=? AND status='failed' LIMIT 1""",
-                    (fingerprint,),
-                ).fetchone()
-                if not failed_stage:
-                    raise RecorderConfigError("任务进程尚未停止，请稍后重试删除")
-
-            stage_rows = db.execute(
-                "SELECT details_json FROM upload_stages WHERE fingerprint=?",
-                (fingerprint,),
-            ).fetchall()
-            tables = {
-                item[0]
-                for item in db.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            review = {}
-            if "recording_review_overrides" in tables:
-                review_row = db.execute(
-                    "SELECT metadata_json FROM recording_review_overrides WHERE fingerprint=?",
-                    (fingerprint,),
-                ).fetchone()
-                review = self._decode_json(review_row["metadata_json"]) if review_row else {}
-                db.execute(
-                    "DELETE FROM recording_review_overrides WHERE fingerprint=?",
-                    (fingerprint,),
-                )
-            db.execute("DELETE FROM upload_stages WHERE fingerprint=?", (fingerprint,))
-            db.execute("DELETE FROM uploads WHERE fingerprint=?", (fingerprint,))
-
+        staged_paths: list[tuple[Path, Path]] = []
         deleted_files: list[str] = []
-        if delete_files:
-            candidates: set[Path] = {Path(str(row["video_path"]))}
-            video_path = Path(str(row["video_path"]))
-            candidates.update(video_path.with_suffix(suffix) for suffix in (".xml", ".ass"))
-            for stage_row in stage_rows:
-                details = self._decode_json(stage_row["details_json"])
-                for key, value in details.items():
-                    if isinstance(value, str) and (
-                        key.endswith("_path") or key in {"danmaku_xml", "ass_path", "cover"}
+        try:
+            with self._lock, closing(sqlite3.connect(state_path, timeout=30)) as db, db:
+                db.row_factory = sqlite3.Row
+                row = db.execute(
+                    "SELECT * FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                if not row:
+                    raise RecorderConfigError("没有找到该录播任务")
+                if row["status"] in {"processing", "video_uploaded"}:
+                    failed_stage = db.execute(
+                        """SELECT 1 FROM upload_stages
+                           WHERE fingerprint=? AND status='failed' LIMIT 1""",
+                        (fingerprint,),
+                    ).fetchone()
+                    if not failed_stage:
+                        raise RecorderConfigError("任务进程尚未停止，请稍后重试删除")
+
+                stage_rows = db.execute(
+                    "SELECT details_json FROM upload_stages WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchall()
+                tables = {
+                    item[0]
+                    for item in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                review = {}
+                if "recording_review_overrides" in tables:
+                    review_row = db.execute(
+                        "SELECT metadata_json FROM recording_review_overrides WHERE fingerprint=?",
+                        (fingerprint,),
+                    ).fetchone()
+                    review = self._decode_json(review_row["metadata_json"]) if review_row else {}
+
+                if delete_files:
+                    roots_map = self._recording_file_roots()
+                    roots = tuple(root.expanduser().resolve() for root in roots_map.values())
+                    artifact_dir = (
+                        roots_map["artifacts"] / fingerprint[:16]
+                    ).expanduser().resolve()
+                    candidates: set[Path] = {Path(str(row["video_path"]))}
+                    video_path = Path(str(row["video_path"]))
+                    candidates.update(
+                        video_path.with_suffix(suffix) for suffix in (".xml", ".ass")
+                    )
+                    for stage_row in stage_rows:
+                        details = self._decode_json(stage_row["details_json"])
+                        for key, value in details.items():
+                            if isinstance(value, str) and (
+                                key.endswith("_path")
+                                or key in {"danmaku_xml", "ass_path", "cover"}
+                            ):
+                                candidates.add(Path(value))
+                    for key in ("cover_path", "cover43_path"):
+                        value = str(review.get(key) or "").strip()
+                        if value:
+                            candidates.add(Path(value))
+
+                    targets: list[Path] = []
+                    if artifact_dir.is_dir() and any(
+                        artifact_dir == root or root in artifact_dir.parents
+                        for root in roots
                     ):
-                        candidates.add(Path(value))
-            manual_cover = str(review.get("cover_path") or "").strip()
-            if manual_cover:
-                candidates.add(Path(manual_cover))
-            manual_cover43 = str(review.get("cover43_path") or "").strip()
-            if manual_cover43:
-                candidates.add(Path(manual_cover43))
+                        deleted_files.extend(
+                            str(path) for path in artifact_dir.rglob("*") if path.is_file()
+                        )
+                        targets.append(artifact_dir)
+                    for candidate in candidates:
+                        resolved = candidate.expanduser().resolve()
+                        if artifact_dir == resolved or artifact_dir in resolved.parents:
+                            continue
+                        if not any(
+                            resolved == root or root in resolved.parents for root in roots
+                        ):
+                            continue
+                        if resolved.is_file():
+                            deleted_files.append(str(resolved))
+                            targets.append(resolved)
 
-            roots = tuple(self._recording_file_roots().values())
-            for candidate in candidates:
-                resolved = candidate.expanduser().resolve()
-                if not any(
-                    resolved == root or root in resolved.parents
-                    for root in roots
-                ):
-                    continue
-                try:
-                    if resolved.is_file():
-                        resolved.unlink()
-                        deleted_files.append(str(resolved))
-                except OSError:
-                    continue
+                    for original in targets:
+                        staged = original.with_name(
+                            f".{original.name}.deleting-{uuid.uuid4().hex}"
+                        )
+                        os.replace(original, staged)
+                        staged_paths.append((original, staged))
 
-            artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
-            if artifact_dir.is_dir():
-                shutil.rmtree(artifact_dir, ignore_errors=True)
+                if "recording_review_overrides" in tables:
+                    db.execute(
+                        "DELETE FROM recording_review_overrides WHERE fingerprint=?",
+                        (fingerprint,),
+                    )
+                db.execute("DELETE FROM upload_stages WHERE fingerprint=?", (fingerprint,))
+                db.execute("DELETE FROM uploads WHERE fingerprint=?", (fingerprint,))
+        except Exception as exc:
+            for original, staged in reversed(staged_paths):
+                if staged.exists():
+                    os.replace(staged, original)
+            if isinstance(exc, RecorderConfigError):
+                raise
+            raise RecorderConfigError(f"删除录播任务失败，文件已恢复：{exc}") from exc
+
+        cleanup_pending: list[str] = []
+        for _original, staged in staged_paths:
+            try:
+                if staged.is_dir():
+                    shutil.rmtree(staged)
+                else:
+                    staged.unlink(missing_ok=True)
+            except OSError as exc:
+                cleanup_pending.append(str(staged))
+                logger.warning("录播任务已删除，但暂存文件清理失败 %s: %s", staged, exc)
 
         log_path = DATA_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
         try:
             log_path.unlink()
         except FileNotFoundError:
             pass
+        except OSError as exc:
+            cleanup_pending.append(str(log_path))
+            logger.warning("录播任务已删除，但日志清理失败 %s: %s", log_path, exc)
         return {
             "fingerprint": fingerprint,
             "deleted_files": deleted_files,
             "deleted_file_count": len(deleted_files),
+            "cleanup_pending": cleanup_pending,
         }
 
     def pipeline_cover(self, fingerprint: str, variant: str = "16x9") -> Path:

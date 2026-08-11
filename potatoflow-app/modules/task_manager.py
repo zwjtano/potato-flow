@@ -1512,7 +1512,14 @@ def update_task(task_id, silent=False, expected_status=None, **kwargs):
                         'updated_at': filtered_kwargs.get('updated_at')
                     }
 
-                publish_task_event(event_type, event_payload)
+                try:
+                    publish_task_event(event_type, event_payload)
+                except Exception as exc:
+                    logger.warning(
+                        "任务 %s 已更新，但实时事件发布失败：%s",
+                        task_id,
+                        exc,
+                    )
                 if (
                     status_changed
                     and previous_status != filtered_kwargs.get('status')
@@ -1521,19 +1528,26 @@ def update_task(task_id, silent=False, expected_status=None, **kwargs):
                     merged_task = dict(existing_task or {})
                     merged_task.update(filtered_kwargs)
                     merged_task['id'] = task_id
-                    emit_notification_event(
-                        NotificationEvent(
-                            event_type=(
-                                EVENT_TASK_COMPLETED
-                                if filtered_kwargs.get('status') == TASK_STATES['COMPLETED']
-                                else EVENT_TASK_FAILED
-                            ),
-                            payload=_build_task_notification_payload(
-                                merged_task,
-                                overrides={'previous_status': previous_status},
-                            ),
+                    try:
+                        emit_notification_event(
+                            NotificationEvent(
+                                event_type=(
+                                    EVENT_TASK_COMPLETED
+                                    if filtered_kwargs.get('status') == TASK_STATES['COMPLETED']
+                                    else EVENT_TASK_FAILED
+                                ),
+                                payload=_build_task_notification_payload(
+                                    merged_task,
+                                    overrides={'previous_status': previous_status},
+                                ),
+                            )
                         )
-                    )
+                    except Exception as exc:
+                        logger.warning(
+                            "任务 %s 已更新，但通知事件构建或发布失败：%s",
+                            task_id,
+                            exc,
+                        )
                 if not silent:  # 只有非静默模式才记录到主日志
                     logger.info(f"任务 {task_id} 更新成功: {filtered_kwargs}")
                 return True
@@ -1743,6 +1757,7 @@ def delete_task(task_id, delete_files=True):
                 staged_directories.append(staged)
         except (OSError, ValueError) as exc:
             logger.error("暂存任务 %s 的待删除文件失败：%s", task_id, exc)
+            clear_task_cancel(task_id, clear_flag=True)
             return False
     
     # 删除任务记录
@@ -1753,6 +1768,7 @@ def delete_task(task_id, delete_files=True):
             conn.rollback()
             _restore_staged_task_directories(staged_directories)
             logger.warning("任务 %s 状态已变化或已被删除", task_id)
+            clear_task_cancel(task_id, clear_flag=True)
             return False
         conn.commit()
     except Exception as e:
@@ -1762,6 +1778,7 @@ def delete_task(task_id, delete_files=True):
         except Exception:
             pass
         _restore_staged_task_directories(staged_directories)
+        clear_task_cancel(task_id, clear_flag=True)
         return False
     finally:
         conn.close()
@@ -1771,9 +1788,17 @@ def delete_task(task_id, delete_files=True):
         publish_task_event('task_deleted', {'task_id': task_id})
     except Exception as exc:
         logger.warning("任务已删除，但实时事件发布失败：%s", exc)
-    return _purge_staged_task_directories(staged_directories)
+    purged = _purge_staged_task_directories(staged_directories)
+    clear_task_cancel(task_id, clear_flag=True)
+    return purged
 
 def clear_all_tasks(delete_files=True):
+    """Serialize bulk clearing against new worker scheduling."""
+    with _TASK_SCHEDULING_LOCK:
+        return _clear_all_tasks_locked(delete_files=delete_files)
+
+
+def _clear_all_tasks_locked(delete_files=True):
     """
     清空所有任务
     
@@ -1795,6 +1820,9 @@ def clear_all_tasks(delete_files=True):
     ]
     if active_ids:
         logger.warning("仍有任务尚未安全停止，取消清空: %s", active_ids)
+        for task in tasks:
+            if task['id'] not in active_ids:
+                clear_task_cancel(task['id'], clear_flag=True)
         return False
 
     staged_directories: list[tuple[str, str]] = []
@@ -1807,12 +1835,21 @@ def clear_all_tasks(delete_files=True):
         except (OSError, ValueError) as exc:
             logger.error("暂存待删除任务文件失败，正在恢复：%s", exc)
             _restore_staged_task_directories(staged_directories)
+            for task in tasks:
+                clear_task_cancel(task['id'], clear_flag=True)
             return False
     
-    # 清空任务表
+    # 只删除本次快照内已经安全停止的任务。清空期间新加入的任务不在
+    # 这个集合中，必须保留，不能被无条件 DELETE 误删。
+    task_ids = [str(task['id']) for task in tasks]
     conn = get_db_connection()
     try:
-        conn.execute('DELETE FROM tasks')
+        if task_ids:
+            placeholders = ','.join('?' for _ in task_ids)
+            conn.execute(
+                f'DELETE FROM tasks WHERE id IN ({placeholders})',
+                task_ids,
+            )
         conn.commit()
     except Exception as e:
         logger.error(f"清空任务失败: {str(e)}")
@@ -1821,6 +1858,8 @@ def clear_all_tasks(delete_files=True):
         except Exception:
             pass
         _restore_staged_task_directories(staged_directories)
+        for task in tasks:
+            clear_task_cancel(task['id'], clear_flag=True)
         return False
     finally:
         conn.close()
@@ -1831,7 +1870,10 @@ def clear_all_tasks(delete_files=True):
     except Exception as exc:
         logger.warning("任务已清空，但实时事件发布失败：%s", exc)
 
-    return _purge_staged_task_directories(staged_directories)
+    purged = _purge_staged_task_directories(staged_directories)
+    for task in tasks:
+        clear_task_cancel(task['id'], clear_flag=True)
+    return purged
 
 
 def _wait_for_task_inactive(task_id, timeout=PROCESS_TERMINATE_WAIT_SECONDS):
@@ -1877,10 +1919,13 @@ def abandon_task(task_id, delete_files=False):
         error_message="用户主动放弃任务",
         upload_progress=None,
     ):
+        clear_task_cancel(task_id, clear_flag=True)
         return False
+    result = True
     if delete_files:
-        return delete_task_files(task_id)
-    return True
+        result = delete_task_files(task_id)
+    clear_task_cancel(task_id, clear_flag=True)
+    return result
 
 
 def _get_task_download_dir_real(task_id):
@@ -1937,7 +1982,12 @@ def _start_background_upload_retry(task_id, config):
         except Exception as exc:
             logger.error(f"后台上传重试任务 {task_id} 出错: {exc}")
 
-    threading.Thread(target=run_upload_retry, daemon=True).start()
+    try:
+        threading.Thread(target=run_upload_retry, daemon=True).start()
+    except RuntimeError as exc:
+        logger.error("无法启动任务 %s 的后台上传重试线程：%s", task_id, exc)
+        return False
+    return True
 
 def retry_failed_tasks(config=None):
     """重新调度所有失败的任务。"""
@@ -1989,8 +2039,17 @@ def retry_failed_tasks(config=None):
             )
             if not claimed:
                 continue
-            _start_background_upload_retry(task_id, config)
-            scheduled += 1
+            if _start_background_upload_retry(task_id, config):
+                scheduled += 1
+            else:
+                failed_ids.append(task_id)
+                update_task(
+                    task_id,
+                    silent=True,
+                    expected_status=TASK_STATES['READY_FOR_UPLOAD'],
+                    status=TASK_STATES['FAILED'],
+                    error_message=original_error or '批量重试调度失败，请稍后重试。',
+                )
             continue
 
         claimed = update_task(
@@ -2471,7 +2530,19 @@ class TaskProcessor:
                         logger.error(f"任务 {task_id} 执行出错: {str(e)}")
                         import traceback
                         logger.error(traceback.format_exc())
-                        update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"执行出错: {str(e)}")
+                        current_task = get_task(task_id)
+                        current_status = current_task.get('status') if current_task else None
+                        if current_status not in {
+                            TASK_STATES['PAUSED'],
+                            TASK_STATES['AWAITING_REVIEW'],
+                            TASK_STATES['COMPLETED'],
+                        } and current_status:
+                            update_task(
+                                task_id,
+                                expected_status=current_status,
+                                status=TASK_STATES['FAILED'],
+                                error_message=f"执行出错: {str(e)}",
+                            )
                     finally:
                         _mark_task_inactive(task_id)
                         _TASK_LEASE_STORE.release(task_id)
@@ -2718,7 +2789,9 @@ class TaskProcessor:
             task = get_task(task_id)
             if task is not None:
                 upload_target = _get_task_upload_target(task)
-                if task['status'] == TASK_STATES['AWAITING_REVIEW']:
+                if task['status'] == TASK_STATES['PAUSED']:
+                    task_logger.info("任务已暂停，收尾阶段不覆盖暂停状态")
+                elif task['status'] == TASK_STATES['AWAITING_REVIEW']:
                     task_logger.info("任务当前处于人工审核状态，保留待审核状态")
                 elif task['status'] != TASK_STATES['COMPLETED'] and task['status'] != TASK_STATES['FAILED']:
                     # 如果没有开启自动上传或者上传失败，则标记为"准备上传"
@@ -2736,15 +2809,39 @@ class TaskProcessor:
         except TaskCancelledError:
             task_logger.info("任务已取消，停止后续处理")
             current_task = get_task(task_id)
-            if current_task and current_task.get('status') == TASK_STATES['PAUSED']:
-                task_logger.info("任务保留为已暂停状态，可稍后从断点恢复")
-            else:
-                update_task(task_id, status=TASK_STATES['FAILED'], error_message="任务已取消")
+            current_status = current_task.get('status') if current_task else None
+            if current_status in {
+                TASK_STATES['PAUSED'],
+                TASK_STATES['AWAITING_REVIEW'],
+                TASK_STATES['COMPLETED'],
+            }:
+                task_logger.info("任务已进入终态，不用取消结果覆盖当前状态")
+            elif current_status:
+                update_task(
+                    task_id,
+                    expected_status=current_status,
+                    status=TASK_STATES['FAILED'],
+                    error_message="任务已取消",
+                )
         except Exception as e:
             task_logger.error(f"任务处理过程中发生错误: {str(e)}")
             import traceback
             task_logger.error(traceback.format_exc())
-            update_task(task_id, status=TASK_STATES['FAILED'], error_message=str(e))
+            current_task = get_task(task_id)
+            current_status = current_task.get('status') if current_task else None
+            if current_status in {
+                TASK_STATES['PAUSED'],
+                TASK_STATES['AWAITING_REVIEW'],
+                TASK_STATES['COMPLETED'],
+            }:
+                task_logger.info("任务已进入终态，不用异常状态覆盖当前结果")
+            elif current_status:
+                update_task(
+                    task_id,
+                    expected_status=current_status,
+                    status=TASK_STATES['FAILED'],
+                    error_message=str(e),
+                )
         finally:
             clear_task_cancel(task_id, clear_flag=True)
             # 释放并发配额
@@ -8123,6 +8220,7 @@ def start_task(task_id, config=None):
         if not update_task(
             task_id,
             silent=True,
+            expected_status=TASK_STATES['PAUSED'],
             status=TASK_STATES['PENDING'],
             error_message=None,
             upload_progress=None,
@@ -8200,6 +8298,20 @@ def force_upload_task(task_id, config=None):
     try:
         # 直接执行上传步骤
         processor._upload_to_target(task_id, task_logger, allow_missing_translations=True)
+        finished_task = get_task(task_id)
+        upload_succeeded = bool(
+            finished_task
+            and (
+                finished_task.get('status') == TASK_STATES['COMPLETED']
+                or _task_has_upload_response(
+                    finished_task,
+                    _get_task_upload_target(finished_task),
+                )
+            )
+        )
+        if not upload_succeeded:
+            task_logger.error("强制上传未产生成功的持久化结果")
+            return False
 
         # 上传流程（强制路径）不会进入 process_task 的 finally，需手动唤醒队列
         try:

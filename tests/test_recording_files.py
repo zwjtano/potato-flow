@@ -241,6 +241,29 @@ class RecordingFilesTests(unittest.TestCase):
         with closing(sqlite3.connect(state_path)) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 0)
 
+    def test_delete_pipeline_job_keeps_database_row_when_file_staging_fails(self):
+        fingerprint = "9" * 64
+        video = self.recordings / "locked.flv"
+        video.write_bytes(b"video")
+        state_path = self._create_pipeline_job(fingerprint, video)
+        with mock.patch.object(
+            recorder_module.os,
+            "replace",
+            side_effect=PermissionError("file is busy"),
+        ):
+            with self.assertRaisesRegex(RecorderConfigError, "文件已恢复"):
+                self.manager.delete_pipeline_job(fingerprint, delete_files=True)
+
+        self.assertTrue(video.exists())
+        with closing(sqlite3.connect(state_path)) as db, db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()[0],
+                1,
+            )
+
     def test_delete_pipeline_job_removes_related_files_and_rejects_untracked_active_job(self):
         fingerprint = "b" * 64
         video = self.recordings / "finished.flv"

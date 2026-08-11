@@ -271,6 +271,50 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertFalse(result["hold_before_cover"])
         self.assertEqual(result["manual_review_fields"], ["title"])
 
+    def test_review_cover_restores_previous_file_when_database_save_fails(self):
+        manager = LiveRecorderManager()
+        fingerprint = "1" * 64
+        with tempfile.TemporaryDirectory() as temp:
+            artifacts = Path(temp) / "artifacts"
+            cover_dir = artifacts / fingerprint[:16]
+            cover_dir.mkdir(parents=True)
+            previous_cover = cover_dir / "manual-review-cover-16x9.jpg"
+            previous_cover.write_bytes(b"previous-cover")
+            upload = mock.Mock(filename="replacement.jpg")
+            upload.save.side_effect = lambda path: Path(path).write_bytes(b"new-cover")
+            job = {
+                "status": "failed",
+                "bvid": "",
+                "record_only": False,
+                "title": "原标题",
+                "description": "原简介",
+                "tags": ["录播"],
+                "partition_id": "171",
+                "review_override": {"cover_path": str(previous_cover)},
+            }
+
+            with mock.patch.object(manager, "pipeline_job", return_value=job), mock.patch.object(
+                manager,
+                "_recording_file_roots",
+                return_value={"artifacts": artifacts},
+            ), mock.patch.object(
+                manager,
+                "_store_pipeline_review_override",
+                side_effect=sqlite3.OperationalError("database busy"),
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "保存审核信息失败"):
+                    manager.save_pipeline_review(
+                        fingerprint,
+                        title="原标题",
+                        description="原简介",
+                        tags=["录播"],
+                        partition_id="171",
+                        cover_file=upload,
+                    )
+
+            self.assertEqual(previous_cover.read_bytes(), b"previous-cover")
+            self.assertEqual(list(cover_dir.glob(".*")), [])
+
     def test_pre_upload_review_rejects_cover_generation(self):
         manager = LiveRecorderManager()
         job = {
@@ -3324,6 +3368,47 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertIn("AI 简介排队中", tasks_template)
         self.assertIn("烧录排队中", tasks_template)
 
+    def test_failed_stage_takes_priority_over_stale_queued_stage(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            fingerprint = "7" * 64
+            updated_at = "2026-08-11T01:00:00+00:00"
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', 1, '{}', NULL, ?, ?)",
+                    (fingerprint, "/data/recordings/test.flv", updated_at, updated_at),
+                )
+                db.executemany(
+                    "INSERT INTO upload_stages VALUES (?, ?, ?, '{}', ?, NULL, NULL, ?)",
+                    [
+                        (fingerprint, "ai", "failed", "AI 失败", updated_at),
+                        (fingerprint, "burn", "queued", None, updated_at),
+                    ],
+                )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[]):
+                job = manager.pipeline_jobs()[0]
+
+        self.assertEqual(job["status"], "failed")
+        self.assertFalse(job["burn_queued"])
+        self.assertEqual(job["progress_label"], "生成 AI 简介失败")
+
     def test_pre_upload_processing_job_can_be_paused(self):
         manager = LiveRecorderManager()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3443,6 +3528,65 @@ class LiveRecorderStatusTests(unittest.TestCase):
                     ).fetchone()[0],
                     "running",
                 )
+
+    def test_pause_reports_conflict_when_worker_changes_parent_status(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            fingerprint = "8" * 64
+            updated_at = "2026-08-06T06:00:00+00:00"
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', 1, '{}', NULL, ?, ?)",
+                    (fingerprint, "/data/recordings/active.flv", updated_at, updated_at),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'running', '{}', NULL, ?, NULL, ?)",
+                    (fingerprint, updated_at, updated_at),
+                )
+
+            def worker_exits_with_failure(_job):
+                with closing(sqlite3.connect(state_path)) as db, db:
+                    db.execute(
+                        "UPDATE uploads SET status='failed' WHERE fingerprint=?",
+                        (fingerprint,),
+                    )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(
+                manager, "list_rooms", return_value=[]
+            ), mock.patch.object(
+                manager,
+                "_terminate_pipeline_worker",
+                side_effect=worker_exits_with_failure,
+            ):
+                with self.assertRaisesRegex(RecorderConfigError, "状态已变化"):
+                    manager.pause_pipeline_job(fingerprint)
+
+            with closing(sqlite3.connect(state_path)) as db:
+                parent_status = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?", (fingerprint,)
+                ).fetchone()[0]
+                stage_status = db.execute(
+                    "SELECT status FROM upload_stages WHERE fingerprint=? AND stage='upload'",
+                    (fingerprint,),
+                ).fetchone()[0]
+            self.assertEqual(parent_status, "failed")
+            self.assertEqual(stage_status, "running")
 
     def test_delete_active_pipeline_job_stops_it_first(self):
         manager = LiveRecorderManager()
