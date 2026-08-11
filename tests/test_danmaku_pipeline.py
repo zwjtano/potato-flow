@@ -81,6 +81,67 @@ class DanmakuPipelineTests(unittest.TestCase):
 
         self.assertEqual([device["backend"] for device in devices], ["nvidia", "amd", "intel"])
 
+    def test_apple_silicon_exposes_videotoolbox_media_engine(self):
+        with patch(
+            "danmaku_pipeline.platform.system", return_value="Darwin"
+        ), patch(
+            "danmaku_pipeline.platform.machine", return_value="arm64"
+        ), patch(
+            "danmaku_pipeline._cpu_device",
+            return_value={"name": "Apple M4", "logical_cores": 10},
+        ):
+            devices = danmaku_pipeline._apple_graphics_devices()
+
+        self.assertEqual(devices, [{
+            "name": "Apple M4",
+            "driver": "macOS VideoToolbox",
+            "backend": "apple",
+        }])
+
+    def test_apple_speed_profile_requires_hardware_and_prioritizes_speed(self):
+        args = danmaku_pipeline._encoder_video_args("apple", "speed", 20)
+
+        self.assertEqual(args[args.index("-c:v") + 1], "h264_videotoolbox")
+        self.assertEqual(args[args.index("-allow_sw") + 1], "0")
+        self.assertEqual(args[args.index("-realtime") + 1], "1")
+        self.assertEqual(args[args.index("-prio_speed") + 1], "1")
+        self.assertEqual(args[args.index("-q:v") + 1], "20")
+
+    def test_auto_probe_prefers_apple_videotoolbox_on_apple_silicon(self):
+        def fake_run(command, **_kwargs):
+            encoder = command[command.index("-c:v") + 1]
+            available = encoder in {"libx264", "h264_videotoolbox"}
+            return types.SimpleNamespace(
+                returncode=0 if available else 1,
+                stdout="",
+                stderr="" if available else "encoder unavailable",
+            )
+
+        apple_device = {
+            "name": "Apple M4",
+            "driver": "macOS VideoToolbox",
+            "backend": "apple",
+        }
+        with patch(
+            "danmaku_pipeline._cpu_device",
+            return_value={"name": "Apple M4", "logical_cores": 10},
+        ), patch(
+            "danmaku_pipeline._graphics_devices", return_value=[apple_device]
+        ), patch(
+            "danmaku_pipeline.subprocess.run", side_effect=fake_run
+        ):
+            result = probe_encoding_capabilities(
+                "test-ffmpeg-apple-silicon", force_refresh=True
+            )
+
+        apple = next(
+            item for item in result["capabilities"] if item["id"] == "apple"
+        )
+        self.assertTrue(apple["available"])
+        self.assertEqual(apple["devices"], [apple_device])
+        self.assertIn("Apple M4", apple["label"])
+        self.assertEqual(result["recommendation"]["id"], "apple")
+
     def test_nvidia_device_query_reports_model_and_driver(self):
         result = types.SimpleNamespace(
             returncode=0,
@@ -210,6 +271,9 @@ class DanmakuPipelineTests(unittest.TestCase):
             with patch(
                 "danmaku_pipeline.subprocess.run",
                 return_value=types.SimpleNamespace(returncode=0, stdout="0\n", stderr=""),
+            ), patch(
+                "danmaku_pipeline._resolve_encoder_for_devices",
+                return_value="nvidia",
             ), patch("danmaku_pipeline.subprocess.Popen", FakeProcess):
                 burn_ass(video, ass, output, encoder="nvidia", preset="p5", crf=18, progress_callback=updates.append)
 

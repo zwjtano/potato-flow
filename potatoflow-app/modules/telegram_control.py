@@ -699,7 +699,7 @@ class TelegramControlService:
         elif field == "inherit":
             values["danmaku_settings_inherit"] = not values["danmaku_settings_inherit"]
         elif field == "encoder":
-            choices = ("auto", "cpu", "nvidia", "intel", "amd")
+            choices = ("auto", "cpu", "nvidia", "intel", "amd", "apple")
             current = str(values["danmaku_encoder"])
             index = choices.index(current) if current in choices else 0
             values["danmaku_encoder"] = choices[(index + 1) % len(choices)]
