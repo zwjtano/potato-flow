@@ -279,6 +279,26 @@ class ReplaceTaskCoverTests(unittest.TestCase):
         self.assertEqual(len(custom_covers), 1,
                          f'Expected exactly one custom_cover.* file, found: {custom_covers}')
 
+    def test_database_update_failure_restores_previous_custom_cover(self):
+        task_dir = self._task_dir()
+        os.makedirs(task_dir, exist_ok=True)
+        stale = os.path.join(task_dir, 'custom_cover.png')
+        with open(stale, 'wb') as fh:
+            fh.write(b'stale-cover')
+        self.mock_update_task.return_value = False
+
+        with self.assertRaisesRegex(RuntimeError, '任务记录更新失败'):
+            self._replace_task_cover(
+                {'id': self.TASK_ID, 'cover_path_local': stale},
+                _make_fake_file_storage('fresh.png'),
+            )
+
+        with open(stale, 'rb') as fh:
+            self.assertEqual(fh.read(), b'stale-cover')
+        self.assertFalse(any(
+            '.replacing-' in name for name in os.listdir(task_dir)
+        ))
+
 
 if __name__ == '__main__':
     unittest.main()

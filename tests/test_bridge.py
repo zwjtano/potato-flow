@@ -4464,6 +4464,55 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("上方或下方约三分之一", long_layout)
         self.assertIn("至少8%的安全边距", long_layout)
 
+    def test_card_hand_cover_instruction_requires_visible_five_of_a_kind(self):
+        instruction = bridge.recording_cover_card_hand_instruction(
+            "川神人工五条K轰出20500分，后程断牌卡对手"
+        )
+
+        self.assertIn("五张点数均为 K 的正面扑克牌", instruction)
+        self.assertIn("不得按标准牌组常识缩减成四张", instruction)
+        self.assertIn("不能被人物、文字或裁切遮住", instruction)
+
+    def test_card_hand_cover_instruction_does_not_turn_failed_draw_into_win(self):
+        instruction = bridge.recording_cover_card_hand_instruction(
+            "冲击五条10却只差一张落空"
+        )
+
+        self.assertNotIn("五张点数均为 10", instruction)
+        self.assertIn("不得画成已经完成的牌型", instruction)
+
+    def test_card_hand_cover_instruction_preserves_blocked_royal_flush(self):
+        instruction = bridge.recording_cover_card_hand_instruction(
+            "抢J卡断皇家同花顺，冲同花顺错失方片4后垫底"
+        )
+
+        self.assertIn("不是已经完成皇家同花顺", instruction)
+        self.assertIn("将关键 J 牌单独抽出", instruction)
+        self.assertIn("错失方片4", instruction)
+        self.assertIn("不得把缺牌状态画成已经完成的同花顺", instruction)
+
+    def test_non_card_cover_has_no_card_hand_instruction(self):
+        self.assertEqual(
+            bridge.recording_cover_card_hand_instruction("枫哥钢背兽拆掉基地"),
+            "",
+        )
+
+    def test_common_named_card_hands_are_required_as_visuals(self):
+        for headline in (
+            "省钱后做成两对",
+            "追A做成葫芦仍仅第四",
+            "黑桃Q做成大同花顺",
+            "五张7逆转升至第一",
+            "后程连成五个9",
+            "四条K保守收手最终第四",
+            "最后一轮凑出同花",
+            "差一张顺子听牌",
+        ):
+            with self.subTest(headline=headline):
+                instruction = bridge.recording_cover_card_hand_instruction(headline)
+                self.assertTrue(instruction)
+                self.assertIn("正面扑克牌", instruction)
+
     @unittest.skip("removed cover behavior")
     def test_cover_subject_identity_locks_aliases_to_character_base(self):
         yyf_instruction = bridge.recording_cover_subject_identity_instruction(

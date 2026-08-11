@@ -120,6 +120,146 @@ class SecurityBoundaryTests(unittest.TestCase):
             flashes,
         )
 
+    def test_auto_mode_add_reports_queue_when_immediate_start_fails(self):
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(
+                app_module,
+                "load_config",
+                return_value={"AUTO_MODE_ENABLED": True},
+            ),
+            patch.object(
+                app_module,
+                "resolve_account",
+                return_value={"id": "default"},
+            ),
+            patch.object(app_module, "add_task", return_value="task-id"),
+            patch.object(app_module, "start_task", return_value=False),
+        ):
+            response = self.client.post(
+                "/tasks/add",
+                data={"youtube_url": "https://youtu.be/example"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session_state:
+            flashes = session_state.get("_flashes", [])
+        self.assertTrue(any(
+            category == "warning" and "保留在队列中" in message
+            for category, message in flashes
+        ))
+
+    def test_edit_does_not_force_upload_when_metadata_save_fails(self):
+        task = {
+            "id": "task-id",
+            "status": app_module.TASK_STATES["FAILED"],
+        }
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(app_module, "load_config", return_value={}),
+            patch.object(app_module, "get_task", return_value=task),
+            patch.object(app_module, "update_task", return_value=False),
+            patch.object(app_module, "_start_background_force_upload") as start_upload,
+        ):
+            response = self.client.post(
+                "/tasks/task-id/edit",
+                data={
+                    "action": "force_upload",
+                    "video_title_translated": "标题",
+                    "description_translated": "简介",
+                    "selected_partition_id_bilibili": "17",
+                    "tags_json": "[]",
+                },
+                headers={"X-CSRF-Token": "known-token"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        start_upload.assert_not_called()
+        with self.client.session_transaction() as session_state:
+            flashes = session_state.get("_flashes", [])
+        self.assertIn(
+            ("danger", "任务信息保存失败，未执行后续操作，请重试。"),
+            flashes,
+        )
+
+    def test_recording_retry_launch_failure_returns_json_service_error(self):
+        fingerprint = "a" * 64
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(app_module, "load_config", return_value={}),
+            patch.object(
+                app_module.live_recorder_manager,
+                "retry_pipeline_job",
+                side_effect=OSError("spawn failed"),
+            ),
+        ):
+            response = self.client.post(
+                f"/live-recording/jobs/{fingerprint}/retry",
+                headers={"X-CSRF-Token": "known-token"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.get_json()["ok"])
+        self.assertIn("已恢复为可重试状态", response.get_json()["error"])
+
+    def test_recording_retry_lost_claim_returns_conflict(self):
+        fingerprint = "b" * 64
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(app_module, "load_config", return_value={}),
+            patch.object(
+                app_module.live_recorder_manager,
+                "retry_pipeline_job",
+                return_value=False,
+            ),
+        ):
+            response = self.client.post(
+                f"/live-recording/jobs/{fingerprint}/retry",
+                headers={"X-CSRF-Token": "known-token"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["ok"])
+
+    def test_background_force_upload_reports_thread_start_failure(self):
+        with patch.object(app_module.threading, "Thread") as thread:
+            thread.return_value.start.side_effect = RuntimeError("cannot start thread")
+            started = app_module._start_background_force_upload(
+                "task-id",
+                {},
+                "bilibili",
+            )
+
+        self.assertFalse(started)
+
+    def test_specific_log_cleanup_reports_individual_delete_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs = Path(temp_dir)
+            (logs / "app.log").write_text("app log", encoding="utf-8")
+            task_log = logs / "task_example.log"
+            task_log.write_text("task log", encoding="utf-8")
+            original_remove = app_module.os.remove
+
+            def remove_with_failure(path):
+                if Path(path).name == task_log.name:
+                    raise PermissionError("busy")
+                return original_remove(path)
+
+            with (
+                patch.object(app_module, "get_app_subdir", return_value=str(logs)),
+                patch.object(app_module.os, "remove", side_effect=remove_with_failure),
+            ):
+                result = app_module.clear_specific_logs()
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["failed_files"], [task_log.name])
+        self.assertIn("1 个日志文件", result["error"])
+
     def test_password_hash_and_legacy_password_verification(self):
         hashed = app_module.generate_password_hash("correct horse")
 
@@ -291,6 +431,35 @@ class SecurityBoundaryTests(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertIn("不能超过 6000 字", result["final_detail"])
+
+    def test_ajax_settings_save_reports_thread_start_failure(self):
+        with self.client.session_transaction() as session_state:
+            session_state[app_module._CSRF_SESSION_KEY] = "known-token"
+        with (
+            patch.object(
+                app_module,
+                "load_config",
+                return_value={"password_protection_enabled": False},
+            ),
+            patch.object(app_module.threading, "Thread") as thread_class,
+        ):
+            thread_class.return_value.start.side_effect = RuntimeError(
+                "cannot start thread"
+            )
+            response = self.client.post(
+                "/settings",
+                data={"save_operation_id": "operation-id"},
+                headers={
+                    "X-CSRF-Token": "known-token",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.get_json()["success"])
+        progress = app_module._get_settings_save_progress("operation-id")
+        self.assertTrue(progress["done"])
+        self.assertFalse(progress["success"])
 
     def test_saving_recording_ai_prompt_syncs_bridge_config_without_restart(self):
         updated = {

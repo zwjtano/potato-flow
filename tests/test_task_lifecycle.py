@@ -1,7 +1,11 @@
 import sys
+import json
+import sqlite3
 import tempfile
+import threading
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -91,19 +95,234 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         delete_files.assert_not_called()
         get_connection.assert_not_called()
 
-    def test_task_record_is_preserved_when_file_deletion_fails(self):
-        task = {"id": "task-id", "status": "failed"}
-        with (
-            patch.object(task_manager, "get_task", return_value=task),
-            patch.object(task_manager, "request_task_cancel"),
-            patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
-            patch.object(task_manager, "delete_task_files", return_value=False),
-            patch.object(task_manager, "get_db_connection") as get_connection,
-        ):
-            result = task_manager.delete_task("task-id", delete_files=True)
+    def test_task_record_is_preserved_when_file_staging_fails(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        task = {"id": task_id, "status": "failed"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            task_dir = root / task_id
+            task_dir.mkdir()
+            with (
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "get_task", return_value=task),
+                patch.object(task_manager, "request_task_cancel"),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager.os, "replace", side_effect=OSError("busy")),
+                patch.object(task_manager, "get_db_connection") as get_connection,
+            ):
+                result = task_manager.delete_task(task_id, delete_files=True)
 
-        self.assertFalse(result)
-        get_connection.assert_not_called()
+            self.assertFalse(result)
+            self.assertTrue(task_dir.exists())
+            get_connection.assert_not_called()
+
+    def test_single_task_delete_purges_staged_files_after_commit(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        task = {"id": task_id, "status": "failed"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "tasks.db"
+            task_dir = root / task_id
+            task_dir.mkdir()
+            (task_dir / "video.mp4").write_bytes(b"video")
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY)")
+                connection.execute("INSERT INTO tasks VALUES (?)", (task_id,))
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "get_task", return_value=task),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager, "publish_task_event") as publish,
+            ):
+                result = task_manager.delete_task(task_id, delete_files=True)
+
+            self.assertTrue(result)
+            self.assertFalse(task_dir.exists())
+            self.assertEqual(list(root.glob(".*.deleting-*")), [])
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0],
+                    0,
+                )
+            publish.assert_called_once_with("task_deleted", {"task_id": task_id})
+
+    def test_committed_delete_is_successful_even_if_staged_purge_is_deferred(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        connection = MagicMock()
+        connection.execute.return_value.rowcount = 1
+        with (
+            patch.object(task_manager, "get_task", return_value={"id": task_id}),
+            patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+            patch.object(
+                task_manager,
+                "_stage_task_directory_for_deletion",
+                return_value=("/original", "/staged"),
+            ),
+            patch.object(task_manager, "get_db_connection", return_value=connection),
+            patch.object(task_manager, "publish_task_event"),
+            patch.object(
+                task_manager,
+                "_purge_staged_task_directories",
+                return_value=False,
+            ) as purge,
+        ):
+            result = task_manager.delete_task(task_id, delete_files=True)
+
+        self.assertTrue(result)
+        connection.commit.assert_called_once()
+        purge.assert_called_once_with([("/original", "/staged")])
+
+    def test_single_task_delete_restores_files_when_database_delete_fails(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        task = {"id": task_id, "status": "failed"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            task_dir = root / task_id
+            task_dir.mkdir()
+            (task_dir / "video.mp4").write_bytes(b"video")
+            connection = MagicMock()
+            connection.execute.side_effect = sqlite3.OperationalError("database busy")
+            with (
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "get_task", return_value=task),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager, "get_db_connection", return_value=connection),
+                patch.object(task_manager, "publish_task_event") as publish,
+                patch.object(task_manager, "clear_task_cancel") as clear_cancel,
+            ):
+                result = task_manager.delete_task(task_id, delete_files=True)
+
+            self.assertFalse(result)
+            self.assertTrue((task_dir / "video.mp4").exists())
+            self.assertEqual(list(root.glob(".*.deleting-*")), [])
+            connection.rollback.assert_called_once()
+            publish.assert_not_called()
+            clear_cancel.assert_called_once_with(task_id, clear_flag=True)
+
+    def test_clear_all_stages_directories_until_database_commit(self):
+        task_ids = [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "tasks.db"
+            for task_id in task_ids:
+                task_dir = root / task_id
+                task_dir.mkdir()
+                (task_dir / "video.mp4").write_bytes(b"video")
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    "CREATE TABLE tasks (id TEXT PRIMARY KEY, created_at TEXT)"
+                )
+                connection.executemany(
+                    "INSERT INTO tasks VALUES (?, '2026-08-11 00:00:00')",
+                    [(task_id,) for task_id in task_ids],
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager, "publish_task_event") as publish,
+            ):
+                result = task_manager.clear_all_tasks(delete_files=True)
+
+            self.assertTrue(result)
+            self.assertTrue(all(not (root / task_id).exists() for task_id in task_ids))
+            self.assertEqual(list(root.glob(".*.deleting-*")), [])
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                count = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+            self.assertEqual(count, 0)
+            publish.assert_called_once_with("tasks_cleared", {})
+
+    def test_clear_all_restores_staged_directory_when_database_delete_fails(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            task_dir = root / task_id
+            task_dir.mkdir()
+            (task_dir / "video.mp4").write_bytes(b"video")
+            connection = MagicMock()
+            connection.execute.side_effect = sqlite3.OperationalError("database busy")
+            with (
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "get_all_tasks", return_value=[{"id": task_id}]),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager, "get_db_connection", return_value=connection),
+                patch.object(task_manager, "publish_task_event") as publish,
+                patch.object(task_manager, "clear_task_cancel") as clear_cancel,
+            ):
+                result = task_manager.clear_all_tasks(delete_files=True)
+
+            self.assertFalse(result)
+            self.assertTrue(task_dir.exists())
+            self.assertTrue((task_dir / "video.mp4").exists())
+            self.assertEqual(list(root.glob(".*.deleting-*")), [])
+            connection.rollback.assert_called_once()
+            publish.assert_not_called()
+            clear_cancel.assert_called_once_with(task_id, clear_flag=True)
+
+    def test_clear_all_does_not_restore_files_after_committed_event_failure(self):
+        task_id = "11111111-1111-1111-1111-111111111111"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "tasks.db"
+            task_dir = root / task_id
+            task_dir.mkdir()
+            (task_dir / "video.mp4").write_bytes(b"video")
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    "CREATE TABLE tasks (id TEXT PRIMARY KEY, created_at TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, '2026-08-11 00:00:00')",
+                    (task_id,),
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "DOWNLOADS_DIR", str(root)),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(
+                    task_manager,
+                    "publish_task_event",
+                    side_effect=RuntimeError("listener closed"),
+                ),
+            ):
+                result = task_manager.clear_all_tasks(delete_files=True)
+
+            self.assertTrue(result)
+            self.assertFalse(task_dir.exists())
+            self.assertEqual(list(root.glob(".*.deleting-*")), [])
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                count = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+            self.assertEqual(count, 0)
+
+    def test_clear_all_preserves_task_added_after_initial_snapshot(self):
+        old_id = "11111111-1111-1111-1111-111111111111"
+        new_id = "22222222-2222-2222-2222-222222222222"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY)")
+                connection.executemany(
+                    "INSERT INTO tasks VALUES (?)",
+                    [(old_id,), (new_id,)],
+                )
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "get_all_tasks", return_value=[{"id": old_id}]),
+                patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+                patch.object(task_manager, "publish_task_event"),
+            ):
+                result = task_manager.clear_all_tasks(delete_files=False)
+
+            self.assertTrue(result)
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                remaining = [row[0] for row in connection.execute("SELECT id FROM tasks")]
+            self.assertEqual(remaining, [new_id])
 
     def test_pause_requests_stop_and_preserves_files(self):
         task = {"id": "task-id", "status": "uploading"}
@@ -119,7 +338,399 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
         self.assertTrue(result)
         request_cancel.assert_called_once_with("task-id")
         self.assertEqual(update_task.call_args.kwargs["status"], "paused")
+        self.assertEqual(
+            update_task.call_args.kwargs["expected_status"],
+            task_manager.YOUTUBE_PAUSABLE_STATUSES,
+        )
         delete_files.assert_not_called()
+
+    def test_pause_does_not_overwrite_task_that_completed_concurrently(self):
+        task = {"id": "task-id", "status": "uploading"}
+        with (
+            patch.object(task_manager, "get_task", return_value=task),
+            patch.object(task_manager, "request_task_cancel") as request_cancel,
+            patch.object(task_manager, "update_task", return_value=False) as update,
+            patch.object(task_manager, "_wait_for_task_inactive") as wait,
+        ):
+            result = task_manager.pause_task("task-id")
+
+        self.assertFalse(result)
+        self.assertEqual(
+            update.call_args.kwargs["expected_status"],
+            task_manager.YOUTUBE_PAUSABLE_STATUSES,
+        )
+        request_cancel.assert_not_called()
+        wait.assert_not_called()
+
+    def test_process_finalizer_preserves_concurrently_paused_status(self):
+        processor = object.__new__(task_manager.TaskProcessor)
+        processor.config = {
+            "TRANSLATE_TITLE": False,
+            "TRANSLATE_DESCRIPTION": False,
+            "GENERATE_TAGS": False,
+            "RECOMMEND_PARTITION": False,
+            "CONTENT_MODERATION_ENABLED": False,
+            "SUBTITLE_TRANSLATION_ENABLED": False,
+            "SUBTITLE_EMBED_IN_VIDEO": False,
+            "AUTO_MODE_ENABLED": False,
+        }
+        task = {
+            "id": "task-id",
+            "status": task_manager.TASK_STATES["PAUSED"],
+            "youtube_url": "https://youtu.be/example",
+            "upload_target": "bilibili",
+            "pipeline_checkpoint": json.dumps({
+                "version": 1,
+                "completed": [
+                    task_manager.PIPELINE_STAGE_FETCH_INFO,
+                    task_manager.PIPELINE_STAGE_DOWNLOAD_VIDEO,
+                ],
+            }),
+        }
+        semaphore = MagicMock()
+        task_logger = MagicMock()
+        with (
+            patch.object(task_manager, "get_task", return_value=task),
+            patch.object(task_manager, "setup_task_logger", return_value=task_logger),
+            patch.object(task_manager, "update_task", return_value=True) as update,
+            patch.object(task_manager, "clear_task_cancel"),
+            patch.object(task_manager.threading, "Thread") as thread,
+        ):
+            thread.return_value.start.side_effect = RuntimeError(
+                "cannot start queue check"
+            )
+            processor.process_task(
+                "task-id",
+                slot_already_acquired=True,
+                acquired_task_semaphore=semaphore,
+            )
+
+        status_updates = [
+            call for call in update.call_args_list if "status" in call.kwargs
+        ]
+        self.assertEqual(status_updates, [])
+        semaphore.release.assert_called_once()
+        thread.return_value.start.assert_called_once()
+
+    def test_process_exception_does_not_overwrite_concurrent_pause(self):
+        processor = object.__new__(task_manager.TaskProcessor)
+        processor.config = {
+            "TRANSLATE_TITLE": False,
+            "TRANSLATE_DESCRIPTION": False,
+            "GENERATE_TAGS": False,
+            "RECOMMEND_PARTITION": False,
+            "CONTENT_MODERATION_ENABLED": False,
+            "SUBTITLE_TRANSLATION_ENABLED": False,
+            "SUBTITLE_EMBED_IN_VIDEO": False,
+            "AUTO_MODE_ENABLED": False,
+        }
+        active = {
+            "id": "task-id",
+            "status": task_manager.TASK_STATES["PENDING"],
+            "youtube_url": "https://youtu.be/example",
+            "upload_target": "bilibili",
+        }
+        paused = {**active, "status": task_manager.TASK_STATES["PAUSED"]}
+        semaphore = MagicMock()
+        with (
+            patch.object(
+                task_manager,
+                "get_task",
+                side_effect=[active, active, active, paused],
+            ),
+            patch.object(task_manager, "setup_task_logger", return_value=MagicMock()),
+            patch.object(task_manager, "update_task", return_value=True) as update,
+            patch.object(
+                processor,
+                "_fetch_video_info",
+                side_effect=RuntimeError("download interrupted"),
+            ),
+            patch.object(task_manager, "clear_task_cancel"),
+            patch.object(task_manager.threading, "Thread"),
+        ):
+            processor.process_task(
+                "task-id",
+                slot_already_acquired=True,
+                acquired_task_semaphore=semaphore,
+            )
+
+        status_updates = [
+            call for call in update.call_args_list if "status" in call.kwargs
+        ]
+        self.assertEqual(status_updates, [])
+        semaphore.release.assert_called_once()
+
+    def test_abandon_clears_cancel_flag_after_worker_stops(self):
+        task = {"id": "task-id", "status": "uploading"}
+        with (
+            patch.object(task_manager, "get_task", return_value=task),
+            patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+            patch.object(task_manager, "update_task", return_value=True),
+        ):
+            result = task_manager.abandon_task("task-id", delete_files=False)
+
+        self.assertTrue(result)
+        self.assertFalse(task_manager.is_task_cancelled("task-id"))
+
+    def test_abandon_clears_cancel_flag_when_status_update_fails(self):
+        task = {"id": "task-id", "status": "uploading"}
+        with (
+            patch.object(task_manager, "get_task", return_value=task),
+            patch.object(task_manager, "_wait_for_task_inactive", return_value=True),
+            patch.object(task_manager, "update_task", return_value=False),
+        ):
+            result = task_manager.abandon_task("task-id", delete_files=False)
+
+        self.assertFalse(result)
+        self.assertFalse(task_manager.is_task_cancelled("task-id"))
+
+    def test_concurrent_terminal_updates_emit_one_notification(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        status TEXT,
+                        updated_at TEXT
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO tasks (id, status, updated_at) VALUES (?, ?, ?)",
+                    ("task-id", "uploading", "2026-08-11 00:00:00"),
+                )
+
+            barrier = threading.Barrier(2)
+            results = []
+
+            def complete_task():
+                barrier.wait()
+                results.append(
+                    task_manager.update_task("task-id", status="completed")
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "publish_task_event"),
+                patch.object(task_manager, "emit_notification_event") as emit,
+            ):
+                workers = [threading.Thread(target=complete_task) for _ in range(2)]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(timeout=5)
+
+            self.assertEqual(results, [True, True])
+            self.assertEqual(emit.call_count, 1)
+
+    def test_update_missing_task_returns_false(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        status TEXT,
+                        updated_at TEXT
+                    )"""
+                )
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "publish_task_event") as publish,
+                patch.object(task_manager, "emit_notification_event") as emit,
+            ):
+                result = task_manager.update_task("missing", status="failed")
+
+            self.assertFalse(result)
+            publish.assert_not_called()
+            emit.assert_not_called()
+
+    def test_committed_update_stays_successful_when_event_listener_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    "CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT, updated_at TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES ('task-id', 'pending', '2026-08-11 00:00:00')"
+                )
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(
+                    task_manager,
+                    "publish_task_event",
+                    side_effect=RuntimeError("listener closed"),
+                ),
+                patch.object(task_manager, "emit_notification_event"),
+            ):
+                result = task_manager.update_task("task-id", status="downloading")
+
+            self.assertTrue(result)
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE id='task-id'"
+                ).fetchone()[0]
+            self.assertEqual(status, "downloading")
+
+    def test_expected_status_allows_only_one_concurrent_retry_claim(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        status TEXT,
+                        updated_at TEXT
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO tasks (id, status, updated_at) VALUES (?, ?, ?)",
+                    ("task-id", "failed", "2026-08-11 00:00:00"),
+                )
+
+            barrier = threading.Barrier(2)
+            results = []
+
+            def claim_retry():
+                barrier.wait()
+                results.append(
+                    task_manager.update_task(
+                        "task-id",
+                        silent=True,
+                        expected_status="failed",
+                        status="pending",
+                    )
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "publish_task_event"),
+                patch.object(task_manager, "emit_notification_event"),
+            ):
+                workers = [threading.Thread(target=claim_retry) for _ in range(2)]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(timeout=5)
+
+            self.assertCountEqual(results, [True, False])
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE id='task-id'"
+                ).fetchone()[0]
+            self.assertEqual(status, "pending")
+
+    def test_bulk_retry_does_not_start_worker_when_claim_is_lost(self):
+        task = {
+            "id": "task-id",
+            "status": "failed",
+            "upload_target": "bilibili",
+            "bilibili_upload_response": None,
+        }
+        with (
+            patch.object(task_manager, "get_tasks_by_status", return_value=[task]),
+            patch.object(task_manager, "_is_upload_stage_failure", return_value=True),
+            patch.object(task_manager, "update_task", return_value=False) as update,
+            patch.object(task_manager, "_start_background_upload_retry") as start,
+        ):
+            result = task_manager.retry_failed_tasks(config={})
+
+        self.assertEqual(result["scheduled"], 0)
+        self.assertEqual(
+            update.call_args.kwargs["expected_status"],
+            task_manager.TASK_STATES["FAILED"],
+        )
+        start.assert_not_called()
+
+    def test_bulk_upload_retry_rolls_back_when_thread_cannot_start(self):
+        task = {
+            "id": "task-id",
+            "status": "failed",
+            "error_message": "上传失败",
+            "upload_target": "bilibili",
+            "bilibili_upload_response": None,
+        }
+        with (
+            patch.object(task_manager, "get_tasks_by_status", return_value=[task]),
+            patch.object(task_manager, "_is_upload_stage_failure", return_value=True),
+            patch.object(task_manager, "update_task", return_value=True) as update,
+            patch.object(task_manager, "_start_background_upload_retry", return_value=False),
+        ):
+            result = task_manager.retry_failed_tasks(config={})
+
+        self.assertEqual(result["scheduled"], 0)
+        self.assertEqual(result["failed_ids"], ["task-id"])
+        rollback = update.call_args_list[-1].kwargs
+        self.assertEqual(rollback["expected_status"], "ready_for_upload")
+        self.assertEqual(rollback["status"], "failed")
+
+    def test_bulk_retry_counts_already_uploaded_task_as_reconciled(self):
+        task = {
+            "id": "task-id",
+            "status": "failed",
+            "upload_target": "bilibili",
+            "bilibili_upload_response": json.dumps({"bvid": "BV1done"}),
+        }
+        with (
+            patch.object(task_manager, "get_tasks_by_status", return_value=[task]),
+            patch.object(task_manager, "update_task", return_value=True) as update,
+            patch.object(task_manager, "start_task") as start,
+        ):
+            result = task_manager.retry_failed_tasks(config={})
+
+        self.assertEqual(result["scheduled"], 0)
+        self.assertEqual(result["reconciled"], 1)
+        self.assertEqual(update.call_args.kwargs["status"], "completed")
+        start.assert_not_called()
+
+    def test_force_upload_returns_false_without_persisted_success(self):
+        initial = {
+            "id": "task-id",
+            "status": task_manager.TASK_STATES["READY_FOR_UPLOAD"],
+            "upload_target": "bilibili",
+        }
+        failed = {
+            **initial,
+            "status": task_manager.TASK_STATES["FAILED"],
+            "error_message": "upload failed",
+        }
+        processor = MagicMock()
+        with (
+            patch.object(task_manager, "get_task", side_effect=[initial, failed]),
+            patch.object(task_manager, "get_global_task_processor", return_value=processor),
+            patch.object(task_manager._TASK_LEASE_STORE, "acquire", return_value=True),
+            patch.object(task_manager._TASK_LEASE_STORE, "release"),
+            patch.object(task_manager, "_mark_task_active", return_value=True),
+            patch.object(task_manager, "_mark_task_inactive"),
+            patch.object(task_manager, "setup_task_logger", return_value=MagicMock()),
+            patch.object(task_manager, "clear_task_cancel"),
+        ):
+            result = task_manager.force_upload_task("task-id", config={})
+
+        self.assertFalse(result)
+        processor._upload_to_target.assert_called_once()
+
+    def test_resume_paused_task_uses_compare_and_set_transition(self):
+        task = {
+            "id": "task-id",
+            "status": task_manager.TASK_STATES["PAUSED"],
+        }
+        with (
+            patch.object(task_manager, "get_task", return_value=task),
+            patch.object(task_manager, "_is_task_active", return_value=False),
+            patch.object(task_manager, "clear_task_cancel"),
+            patch.object(task_manager, "update_task", return_value=False) as update,
+            patch.object(task_manager, "get_global_task_processor") as get_processor,
+        ):
+            result = task_manager.start_task("task-id", config={"configured": True})
+
+        self.assertFalse(result)
+        self.assertEqual(
+            update.call_args.kwargs["expected_status"],
+            task_manager.TASK_STATES["PAUSED"],
+        )
+        get_processor.assert_not_called()
 
     def test_interrupted_recovery_skips_task_with_live_worker_lease(self):
         row = {
@@ -151,7 +762,10 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             "bilibili_upload_response": None,
         }
         connection = MagicMock()
-        connection.execute.return_value.fetchall.return_value = [row]
+        select_cursor = MagicMock()
+        select_cursor.fetchall.return_value = [row]
+        update_cursor = MagicMock(rowcount=1)
+        connection.execute.side_effect = [select_cursor, update_cursor]
         with (
             patch.object(task_manager, "get_db_connection", return_value=connection),
             patch.object(task_manager._TASK_LEASE_STORE, "is_live", return_value=False),
@@ -163,6 +777,83 @@ class TaskLifecyclePolicyTests(unittest.TestCase):
             str(call.args[0]).lstrip().startswith("UPDATE tasks")
             for call in connection.execute.call_args_list
         ))
+
+    def test_interrupted_recovery_sql_guard_preserves_new_live_lease(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY, status TEXT, upload_target TEXT,
+                        bilibili_upload_response TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE task_worker_leases (
+                        task_id TEXT PRIMARY KEY, owner_id TEXT,
+                        acquired_at REAL, heartbeat_at REAL, lease_until REAL
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, 'bilibili', NULL, ?)",
+                    ("task-id", "uploading", "2026-08-11 00:00:00"),
+                )
+                connection.execute(
+                    "INSERT INTO task_worker_leases VALUES (?, 'new-worker', ?, ?, ?)",
+                    ("task-id", time.time(), time.time(), time.time() + 60),
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager._TASK_LEASE_STORE, "is_live", return_value=False),
+            ):
+                recovered = task_manager.recover_interrupted_tasks_to_pending()
+
+            self.assertEqual(recovered, 0)
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE id='task-id'"
+                ).fetchone()[0]
+            self.assertEqual(status, "uploading")
+
+    def test_stuck_reset_defaults_to_preserving_live_lease(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "tasks.db"
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY, status TEXT, error_message TEXT,
+                        updated_at TEXT
+                    );
+                    CREATE TABLE task_worker_leases (
+                        task_id TEXT PRIMARY KEY, owner_id TEXT,
+                        acquired_at REAL, heartbeat_at REAL, lease_until REAL
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, NULL, ?)",
+                    ("task-id", "uploading", "2026-08-10 00:00:00"),
+                )
+                connection.execute(
+                    "INSERT INTO task_worker_leases VALUES (?, 'new-worker', ?, ?, ?)",
+                    ("task-id", time.time(), time.time(), time.time() + 60),
+                )
+
+            with (
+                patch.object(task_manager, "DB_PATH", str(db_path)),
+                patch.object(task_manager, "_is_task_active", return_value=False),
+                patch.object(task_manager._TASK_LEASE_STORE, "is_live", return_value=False),
+            ):
+                reset = task_manager.reset_stuck_tasks()
+
+            self.assertEqual(reset, 0)
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE id='task-id'"
+                ).fetchone()[0]
+            self.assertEqual(status, "uploading")
 
 
 class DownloadCleanupLifecycleTests(unittest.TestCase):

@@ -3323,6 +3323,98 @@ def recording_cover_text_layout_instruction(
     )
 
 
+def recording_cover_card_hand_instruction(headline: str) -> str:
+    """Turn verified card-hand wording into an explicit cover visual contract."""
+    text = str(headline or "").strip()
+    if not re.search(
+        r"牌局|扑克牌|德州|牌型|听牌|皇家同花顺|同花顺|同花|葫芦|"
+        r"顺子|两对|对子|一对|三条|四条|五条|"
+        r"[四五](?:张|个)\s*(?:10|[2-9TJQKA])",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return ""
+
+    def completed_rank_hand(
+        pattern: str,
+    ) -> tuple[re.Match[str], str] | None:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            before = text[max(0, match.start() - 6):match.start()]
+            after = text[match.end():match.end() + 8]
+            if re.search(r"冲击|追(?:出|成)?|错失|错过|未成|没成|差一张", before):
+                continue
+            if re.match(r"(?:仍)?未成|没成|落空|只差|失败", after):
+                continue
+            return match, match.group("rank").upper()
+        return None
+
+    five_kind = completed_rank_hand(
+        r"(?:人工)?(?:五条|五(?:张|个))\s*(?P<rank>10|[2-9TJQKA])"
+    )
+    if five_kind:
+        _, rank = five_kind
+        return (
+            "这是扑克牌型封面。标题已确认的核心牌型是五条"
+            f"{rank}：画面必须清楚展示五张点数均为 {rank} 的正面扑克牌，"
+            "五张牌同时完整可见并呈扇形展开，点数与花色角标清晰可辨。"
+            "五条属于本局允许出现的特殊牌型，不得按标准牌组常识缩减成四张，"
+            "也不得只画牌背、筹码、金色光效、抽象王冠或用标题文字代替牌面。"
+            "扑克牌型是与主播人物和标题并列的主要视觉主体，不能被人物、文字或裁切遮住。"
+        )
+
+    four_kind = completed_rank_hand(r"四条\s*(?P<rank>10|[2-9TJQKA])")
+    if four_kind:
+        _, rank = four_kind
+        return (
+            "这是扑克牌型封面。标题已确认的核心牌型是四条"
+            f"{rank}：画面必须清楚展示四张点数均为 {rank} 的正面扑克牌，"
+            "四张牌同时完整可见，点数与花色角标清晰可辨；"
+            "不得只画牌背、筹码、光效或用标题文字代替牌面。"
+        )
+
+    blocked_royal = re.search(
+        r"抢\s*(?P<rank>10|[2-9TJQKA])\s*卡断皇家同花顺",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if blocked_royal:
+        rank = blocked_royal.group("rank").upper()
+        missing_card = re.search(
+            r"错失\s*(?P<suit>黑桃|红桃|梅花|方片)\s*(?P<rank>10|[2-9TJQKA])",
+            text,
+            flags=re.IGNORECASE,
+        )
+        missing_instruction = ""
+        if missing_card:
+            suit = missing_card.group("suit")
+            missing_rank = missing_card.group("rank").upper()
+            missing_instruction = (
+                f"同时可用一个明确空位或移出的 {suit}{missing_rank} 表现“错失{suit}{missing_rank}”，"
+                "但不得把缺牌状态画成已经完成的同花顺。"
+            )
+        return (
+            "这是扑克牌型被卡断的封面，不是已经完成皇家同花顺。"
+            "画面必须清楚展示同一花色的 A、K、Q、J、10 牌型关系，"
+            f"并将关键 {rank} 牌单独抽出、移开或加断裂标记，明确表现“抢{rank}卡断”；"
+            "不得把五张牌完整连成一个成功牌型，也不得只用标题文字、牌背、筹码或抽象光效代替。"
+            + missing_instruction
+        )
+
+    if "皇家同花顺" in text:
+        return (
+            "这是扑克牌型封面。标题中的皇家同花顺必须用五张同一花色的"
+            " A、K、Q、J、10 正面扑克牌清楚表现，五张牌同时完整可见；"
+            "不得只画牌背、筹码、王冠、光效或用标题文字代替牌型。"
+        )
+
+    return (
+        "标题明确涉及扑克牌局、牌面或牌型，画面应尽量把对应正面牌组作为主要视觉元素，"
+        "必须用清楚可辨的正面扑克牌表现标题已经确认的牌面或牌型，"
+        "不能只用人物、标题文字、牌背、筹码或抽象光效代替。"
+        "标题若明确写出未成、错失、差一张或落空，必须表现对应的缺牌状态，不得画成已经完成的牌型。"
+    )
+
+
 def recording_cover_hero_matches_title(hero: str, title: str) -> bool:
     """Reject telemetry only when the reviewed headline names another hero.
 
@@ -4527,6 +4619,7 @@ def generate_recording_cover_with_ai(
             "队名、选手、局次和赛果；没有已核验终局比分时不得画比分牌、晋级、淘汰、"
             "横扫、夺冠或不朽盾归属。"
         )
+    card_hand_instruction = recording_cover_card_hand_instruction(headline)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
         "ai_cover_headline": headline,
@@ -4535,6 +4628,7 @@ def generate_recording_cover_with_ai(
         "ai_cover_context_source": cover_context_source,
         "ai_cover_event_context": cover_event_context,
         "ai_cover_mode": cover_tournament_context.get("mode") or "standard",
+        "ai_cover_card_hand_instruction": card_hand_instruction,
     }
     if not enabled:
         return None, details
@@ -4966,6 +5060,7 @@ def generate_recording_cover_with_ai(
 {cover_subject_copy_instruction}
 {composition_instruction}
 {competition_cover_instruction}
+{card_hand_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
 {dota2_ability_instruction}

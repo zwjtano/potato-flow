@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from .path_policy import atomic_write_text, ensure_directory, safe_path_component
-from .task_lifecycle import recording_task_capabilities
+from .task_lifecycle import RECORDING_RETRYABLE_STATUSES, recording_task_capabilities
 from .utils import get_app_root_dir, get_resource_root_dir
 
 APP_ROOT = Path(get_resource_root_dir())
@@ -1499,7 +1499,11 @@ class LiveRecorderManager:
             daemon=True,
             name="potato-recording-notifications",
         )
-        self._recording_notification_thread.start()
+        try:
+            self._recording_notification_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动录制通知线程，将在下次检查时重试：%s", exc)
+            self._recording_notification_thread = None
 
     def resolve_room(self, url: str) -> dict[str, Any]:
         """Resolve a supported room URL into canonical streamer metadata."""
@@ -2017,7 +2021,11 @@ class LiveRecorderManager:
             name="recorder-config-reload",
             daemon=True,
         )
-        self._reload_thread.start()
+        try:
+            self._reload_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动录制配置重载线程，将保留重载请求：%s", exc)
+            self._reload_thread = None
 
     def _reload_when_recordings_finish(self) -> None:
         while RELOAD_PATH.exists():
@@ -2144,7 +2152,11 @@ class LiveRecorderManager:
             name="recording-schedule",
             daemon=True,
         )
-        self._recording_schedule_thread.start()
+        try:
+            self._recording_schedule_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动定时录制检查线程，将在下次检查时重试：%s", exc)
+            self._recording_schedule_thread = None
 
     def _clear_stale_multipart_session(self, session_key: str) -> bool:
         """Detach an earlier failed broadcast before a manual recording restarts."""
@@ -2666,33 +2678,63 @@ class LiveRecorderManager:
                     **_background_process_kwargs(),
                 )
 
-            log_start = self._log_handle.tell()
-            self._process = launch_worker()
-            atomic_write_text(PID_PATH, str(self._process.pid))
-            time.sleep(0.25)
-            if self._process.poll() is not None:
-                exit_code = self._process.returncode
-                self._log_handle.flush()
-                with LOG_PATH.open("r", encoding="utf-8", errors="replace") as log_reader:
-                    log_reader.seek(log_start)
-                    startup_log = log_reader.read()
-                backup = _backup_incompatible_recorder_database(startup_log)
-                if backup is not None:
-                    self._log_handle.write(
-                        f"\n[PotatoFlow] recorder 数据库迁移不兼容，已备份到 {backup}，自动重建。\n"
-                    )
-                    self._log_handle.flush()
-                    self._process = launch_worker()
-                    atomic_write_text(PID_PATH, str(self._process.pid))
-                    time.sleep(0.5)
-                    if self._process.poll() is not None:
-                        exit_code = self._process.returncode
-                if self._process.poll() is not None:
-                    self._process = None
+            def rollback_failed_start() -> None:
+                process = self._process
+                if process is not None and process.poll() is None:
+                    try:
+                        if os.name != "nt":
+                            os.killpg(process.pid, signal.SIGTERM)
+                        else:
+                            process.terminate()
+                        process.wait(timeout=3)
+                    except (OSError, ProcessLookupError, subprocess.SubprocessError):
+                        try:
+                            process.kill()
+                        except (OSError, ProcessLookupError):
+                            pass
+                self._process = None
+                try:
                     PID_PATH.unlink(missing_ok=True)
-                    raise RecorderConfigError(
-                        f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 recorder-core"
-                    )
+                except OSError as cleanup_exc:
+                    logger.warning("清理失败启动的录制 PID 文件失败：%s", cleanup_exc)
+                if self._log_handle is not None:
+                    try:
+                        self._log_handle.close()
+                    except OSError as cleanup_exc:
+                        logger.warning("关闭失败启动的录制日志句柄失败：%s", cleanup_exc)
+                    self._log_handle = None
+
+            try:
+                log_start = self._log_handle.tell()
+                self._process = launch_worker()
+                atomic_write_text(PID_PATH, str(self._process.pid))
+                time.sleep(0.25)
+                if self._process.poll() is not None:
+                    exit_code = self._process.returncode
+                    self._log_handle.flush()
+                    with LOG_PATH.open("r", encoding="utf-8", errors="replace") as log_reader:
+                        log_reader.seek(log_start)
+                        startup_log = log_reader.read()
+                    backup = _backup_incompatible_recorder_database(startup_log)
+                    if backup is not None:
+                        self._log_handle.write(
+                            f"\n[PotatoFlow] recorder 数据库迁移不兼容，已备份到 {backup}，自动重建。\n"
+                        )
+                        self._log_handle.flush()
+                        self._process = launch_worker()
+                        atomic_write_text(PID_PATH, str(self._process.pid))
+                        time.sleep(0.5)
+                        if self._process.poll() is not None:
+                            exit_code = self._process.returncode
+                    if self._process.poll() is not None:
+                        raise RecorderConfigError(
+                            f"录制 worker 启动失败（退出码 {exit_code}），请检查录制日志并重新构建 recorder-core"
+                        )
+            except Exception as exc:
+                rollback_failed_start()
+                if isinstance(exc, RecorderConfigError):
+                    raise
+                raise RecorderConfigError(f"录制 worker 启动失败：{exc}") from exc
             self._ensure_orphan_recovery_thread()
             self._ensure_upload_retry_thread()
             self._ensure_recording_notification_thread()
@@ -2733,18 +2775,57 @@ class LiveRecorderManager:
                                 **_hidden_process_kwargs(),
                             )
                 else:
-                    try:
-                        os.killpg(pid, signal.SIGTERM)
-                    except (ProcessLookupError, PermissionError):
+                    def signal_worker(sig: int) -> None:
                         try:
-                            os.kill(pid, signal.SIGTERM)
-                        except (ProcessLookupError, PermissionError):
+                            os.killpg(pid, sig)
+                            return
+                        except ProcessLookupError:
                             pass
+                        except PermissionError:
+                            pass
+                        try:
+                            os.kill(pid, sig)
+                        except ProcessLookupError:
+                            return
+                        except PermissionError as exc:
+                            raise RecorderConfigError(
+                                f"没有权限停止录制进程 {pid}"
+                            ) from exc
+
+                    def worker_alive() -> bool:
+                        try:
+                            os.kill(pid, 0)
+                            return True
+                        except ProcessLookupError:
+                            return False
+                        except PermissionError:
+                            return True
+
+                    signal_worker(signal.SIGTERM)
                     if self._process is not None:
                         try:
                             self._process.wait(timeout=8)
                         except subprocess.TimeoutExpired:
-                            os.killpg(pid, signal.SIGKILL)
+                            signal_worker(signal.SIGKILL)
+                            try:
+                                self._process.wait(timeout=3)
+                            except subprocess.TimeoutExpired as exc:
+                                raise RecorderConfigError(
+                                    "录制进程在强制终止后仍未退出"
+                                ) from exc
+                    else:
+                        deadline = time.monotonic() + 8
+                        while worker_alive() and time.monotonic() < deadline:
+                            time.sleep(0.05)
+                        if worker_alive():
+                            signal_worker(signal.SIGKILL)
+                            deadline = time.monotonic() + 3
+                            while worker_alive() and time.monotonic() < deadline:
+                                time.sleep(0.05)
+                            if worker_alive():
+                                raise RecorderConfigError(
+                                    "录制进程在强制终止后仍未退出"
+                                )
             self._process = None
             if self._log_handle is not None:
                 self._log_handle.close()
@@ -2868,7 +2949,7 @@ class LiveRecorderManager:
             suffix for suffix, kind in RECORDING_FILE_SUFFIXES.items() if kind == "video"
         }
         cutoff = time.time() - max(0, minimum_age_seconds)
-        candidates: list[tuple[Path, str]] = []
+        candidates: list[tuple[Path, str, float]] = []
         root = recordings_dir()
         if not root.is_dir():
             return candidates
@@ -2879,7 +2960,8 @@ class LiveRecorderManager:
             if resolved in known_paths:
                 continue
             try:
-                if path.stat().st_mtime > cutoff:
+                modified_at = path.stat().st_mtime
+                if modified_at > cutoff:
                     continue
             except OSError:
                 continue
@@ -2892,9 +2974,11 @@ class LiveRecorderManager:
                 "",
             )
             if room_id:
-                candidates.append((resolved, room_id))
-        candidates.sort(key=lambda item: item[0].stat().st_mtime)
-        return candidates
+                candidates.append((resolved, room_id, modified_at))
+        # 使用扫描时已经取得的时间排序，避免文件恰好被正常 hook 接管并
+        # 移走后，第二次 stat 让整轮漏单恢复全部中断。
+        candidates.sort(key=lambda item: item[2])
+        return [(path, room_id) for path, room_id, _mtime in candidates]
 
     def recover_orphan_recordings(self, minimum_age_seconds: float = 120) -> int:
         """Feed missed segments back into independent or multipart upload flows."""
@@ -2946,7 +3030,11 @@ class LiveRecorderManager:
             name="potato-orphan-recording-recovery",
             daemon=True,
         )
-        self._orphan_recovery_thread.start()
+        try:
+            self._orphan_recovery_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动漏单恢复线程，将在下次检查时重试：%s", exc)
+            self._orphan_recovery_thread = None
 
     @staticmethod
     def _state_datetime(value: Any) -> datetime | None:
@@ -2998,7 +3086,11 @@ class LiveRecorderManager:
             name="potato-bilibili-upload-retry",
             daemon=True,
         )
-        self._upload_retry_thread.start()
+        try:
+            self._upload_retry_thread.start()
+        except RuntimeError as exc:
+            logger.warning("无法启动投稿自动重试线程，将在下次检查时重试：%s", exc)
+            self._upload_retry_thread = None
 
     def _recording_file_roots(self) -> dict[str, Path]:
         return {
@@ -3565,9 +3657,12 @@ class LiveRecorderManager:
                 ),
                 None,
             )
-            upload_queued = upload_stage.get("status") == "queued"
-            ai_queued = ai_stage.get("status") == "queued"
-            burn_queued = burn_stage.get("status") == "queued"
+            queue_is_active = (
+                job_status in {"processing", "video_uploaded"} and not failed_stage
+            )
+            upload_queued = queue_is_active and upload_stage.get("status") == "queued"
+            ai_queued = queue_is_active and ai_stage.get("status") == "queued"
+            burn_queued = queue_is_active and burn_stage.get("status") == "queued"
             stage_label = RECORDING_STAGE_LABELS.get(
                 str(failed_stage or active_stage or ""),
                 str(failed_stage or active_stage or "处理任务"),
@@ -3789,7 +3884,9 @@ class LiveRecorderManager:
         cover_path = str(previous.get("cover_path") or "").strip()
         cover43_path = str(previous.get("cover43_path") or "").strip()
 
-        def save_cover(upload: Any, stem: str) -> str:
+        pending_covers: list[tuple[Path, Path]] = []
+
+        def prepare_cover(upload: Any, stem: str) -> str:
             if not upload or not str(getattr(upload, "filename", "") or "").strip():
                 return ""
             suffix = Path(str(upload.filename)).suffix.lower()
@@ -3798,13 +3895,27 @@ class LiveRecorderManager:
             artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
             artifact_dir.mkdir(parents=True, exist_ok=True)
             destination = artifact_dir / f"{stem}{suffix}"
-            upload.save(destination)
-            if not destination.is_file() or destination.stat().st_size <= 0:
-                raise RecorderConfigError("封面保存失败")
+            temporary = artifact_dir / f".{stem}.{uuid.uuid4().hex}.uploading{suffix}"
+            try:
+                upload.save(temporary)
+                if not temporary.is_file() or temporary.stat().st_size <= 0:
+                    raise RecorderConfigError("封面保存失败")
+            except RecorderConfigError:
+                temporary.unlink(missing_ok=True)
+                raise
+            except OSError as exc:
+                temporary.unlink(missing_ok=True)
+                raise RecorderConfigError("封面保存失败，请稍后重试") from exc
+            pending_covers.append((temporary, destination))
             return str(destination)
 
-        cover_path = save_cover(cover_file, "manual-review-cover-16x9") or cover_path
-        cover43_path = save_cover(cover43_file, "manual-review-cover-4x3") or cover43_path
+        try:
+            cover_path = prepare_cover(cover_file, "manual-review-cover-16x9") or cover_path
+            cover43_path = prepare_cover(cover43_file, "manual-review-cover-4x3") or cover43_path
+        except Exception:
+            for temporary, _destination in pending_covers:
+                temporary.unlink(missing_ok=True)
+            raise
 
         # A durable BVID is the publication boundary. Post-upload stages such as
         # comments, collections, or cleanup may fail after Bilibili has already
@@ -3870,7 +3981,37 @@ class LiveRecorderManager:
             ),
             "updated_at": now,
         }
-        self._store_pipeline_review_override(fingerprint, metadata)
+        installed_covers: list[tuple[Path, Path | None]] = []
+        try:
+            for temporary, destination in pending_covers:
+                backup = None
+                if destination.exists():
+                    backup = destination.with_name(
+                        f".{destination.name}.{uuid.uuid4().hex}.replacing"
+                    )
+                    os.replace(destination, backup)
+                try:
+                    os.replace(temporary, destination)
+                except Exception:
+                    if backup is not None:
+                        os.replace(backup, destination)
+                    raise
+                installed_covers.append((destination, backup))
+            self._store_pipeline_review_override(fingerprint, metadata)
+        except Exception as exc:
+            for temporary, _destination in pending_covers:
+                temporary.unlink(missing_ok=True)
+            for destination, backup in reversed(installed_covers):
+                destination.unlink(missing_ok=True)
+                if backup is not None and backup.exists():
+                    os.replace(backup, destination)
+            if isinstance(exc, RecorderConfigError):
+                raise
+            raise RecorderConfigError("保存审核信息失败，请稍后重试") from exc
+
+        for _destination, backup in installed_covers:
+            if backup is not None:
+                backup.unlink(missing_ok=True)
         return metadata
 
     def _store_pipeline_review_override(
@@ -3968,14 +4109,32 @@ class LiveRecorderManager:
         previous = job.get("review_override")
         previous = previous if isinstance(previous, dict) else {}
         now = datetime.now(timezone.utc).isoformat()
-        self._store_pipeline_review_override(fingerprint, {
+        released = {
             **previous,
             "hold_before_cover": False,
             "pre_upload_review_confirmed_at": now,
             "pending_published_update": False,
             "updated_at": now,
-        })
-        return self.retry_pipeline_job(fingerprint)
+        }
+        self._store_pipeline_review_override(fingerprint, released)
+        try:
+            started = self.retry_pipeline_job(fingerprint)
+        except Exception as exc:
+            try:
+                self._store_pipeline_review_override(fingerprint, previous)
+            except Exception as restore_exc:
+                logger.error(
+                    "继续录播任务失败后无法恢复审核暂停信息 %s: %s",
+                    fingerprint,
+                    restore_exc,
+                )
+            if isinstance(exc, RecorderConfigError):
+                raise
+            raise RecorderConfigError(f"继续录播任务失败，审核状态已恢复：{exc}") from exc
+        if not started:
+            self._store_pipeline_review_override(fingerprint, previous)
+            return False
+        return True
 
     def regenerate_published_metadata(
         self,
@@ -4852,11 +5011,6 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             whole_result["bilibili"] = updated_result
             now = datetime.now(timezone.utc).isoformat()
             state_path = self._pipeline_state_path()
-            with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
-                db.execute(
-                    "UPDATE uploads SET result_json=?, updated_at=? WHERE fingerprint=?",
-                    (json.dumps(whole_result, ensure_ascii=False), now, fingerprint),
-                )
             metadata = {
                 **review,
                 "title": title,
@@ -4874,7 +5028,36 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 },
                 "updated_at": now,
             }
-            self._store_pipeline_review_override(fingerprint, metadata)
+            # 本地投稿结果与“待同步”标记必须在同一事务内落盘。否则第一步
+            # 成功、第二步失败会继续显示待同步并诱导用户重复修改线上稿件。
+            with closing(sqlite3.connect(state_path, timeout=30)) as db, db:
+                cursor = db.execute(
+                    "UPDATE uploads SET result_json=?, updated_at=? WHERE fingerprint=?",
+                    (json.dumps(whole_result, ensure_ascii=False), now, fingerprint),
+                )
+                if cursor.rowcount != 1:
+                    raise RecorderConfigError(
+                        "B站稿件已更新，但本地任务状态已变化，请刷新任务列表"
+                    )
+                db.execute(
+                    """CREATE TABLE IF NOT EXISTS recording_review_overrides (
+                        fingerprint TEXT PRIMARY KEY,
+                        metadata_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                db.execute(
+                    """INSERT INTO recording_review_overrides
+                       (fingerprint, metadata_json, updated_at) VALUES (?, ?, ?)
+                       ON CONFLICT(fingerprint) DO UPDATE SET
+                         metadata_json=excluded.metadata_json,
+                         updated_at=excluded.updated_at""",
+                    (
+                        fingerprint,
+                        json.dumps(metadata, ensure_ascii=False),
+                        now,
+                    ),
+                )
             return metadata
         except RecorderConfigError:
             raise
@@ -5357,11 +5540,20 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     error=str(exc),
                 )
 
-        threading.Thread(
+        worker_thread = threading.Thread(
             target=worker,
             name=f"potato-bilibili-replace-{replacement_id[:8]}",
             daemon=True,
-        ).start()
+        )
+        try:
+            worker_thread.start()
+        except RuntimeError as exc:
+            self._update_archive_replacement(
+                replacement_id,
+                status="failed",
+                error=f"换源线程启动失败：{exc}",
+            )
+            raise RecorderConfigError("无法启动换源任务，请稍后重试") from exc
         return {
             "id": replacement_id,
             "bvid": clean_bvid,
@@ -5753,18 +5945,22 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 return True
             if current[0] == "completed":
                 raise RecorderConfigError("任务已经完成，无法暂停")
+            if current[0] not in {"processing", "video_uploaded"}:
+                raise RecorderConfigError("任务状态已变化，未能暂停，请刷新后重试")
             db.execute(
                 """UPDATE upload_stages
                    SET status='paused', error=NULL, finished_at=?, updated_at=?
                    WHERE fingerprint=? AND status IN ('queued', 'running')""",
                 (now, now, fingerprint),
             )
-            db.execute(
+            cursor = db.execute(
                 """UPDATE uploads
                    SET status='paused', error=NULL, updated_at=?
                    WHERE fingerprint=? AND status IN ('processing', 'video_uploaded')""",
                 (now, fingerprint),
             )
+            if cursor.rowcount != 1:
+                raise RecorderConfigError("任务状态已变化，未能暂停，请刷新后重试")
         return True
 
     def delete_pipeline_job(self, fingerprint: str, delete_files: bool = False) -> dict[str, Any]:
@@ -5789,94 +5985,135 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             if job.get("status") in {"processing", "video_uploaded"}:
                 self.pause_pipeline_job(fingerprint)
 
-        with self._lock, closing(sqlite3.connect(state_path, timeout=30)) as db, db:
-            db.row_factory = sqlite3.Row
-            row = db.execute(
-                "SELECT * FROM uploads WHERE fingerprint=?",
-                (fingerprint,),
-            ).fetchone()
-            if not row:
-                raise RecorderConfigError("没有找到该录播任务")
-            if row["status"] in {"processing", "video_uploaded"}:
-                failed_stage = db.execute(
-                    """SELECT 1 FROM upload_stages
-                       WHERE fingerprint=? AND status='failed' LIMIT 1""",
-                    (fingerprint,),
-                ).fetchone()
-                if not failed_stage:
-                    raise RecorderConfigError("任务进程尚未停止，请稍后重试删除")
-
-            stage_rows = db.execute(
-                "SELECT details_json FROM upload_stages WHERE fingerprint=?",
-                (fingerprint,),
-            ).fetchall()
-            tables = {
-                item[0]
-                for item in db.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            review = {}
-            if "recording_review_overrides" in tables:
-                review_row = db.execute(
-                    "SELECT metadata_json FROM recording_review_overrides WHERE fingerprint=?",
-                    (fingerprint,),
-                ).fetchone()
-                review = self._decode_json(review_row["metadata_json"]) if review_row else {}
-                db.execute(
-                    "DELETE FROM recording_review_overrides WHERE fingerprint=?",
-                    (fingerprint,),
-                )
-            db.execute("DELETE FROM upload_stages WHERE fingerprint=?", (fingerprint,))
-            db.execute("DELETE FROM uploads WHERE fingerprint=?", (fingerprint,))
-
+        staged_paths: list[tuple[Path, Path]] = []
         deleted_files: list[str] = []
-        if delete_files:
-            candidates: set[Path] = {Path(str(row["video_path"]))}
-            video_path = Path(str(row["video_path"]))
-            candidates.update(video_path.with_suffix(suffix) for suffix in (".xml", ".ass"))
-            for stage_row in stage_rows:
-                details = self._decode_json(stage_row["details_json"])
-                for key, value in details.items():
-                    if isinstance(value, str) and (
-                        key.endswith("_path") or key in {"danmaku_xml", "ass_path", "cover"}
+        try:
+            with self._lock, closing(sqlite3.connect(state_path, timeout=30)) as db, db:
+                db.row_factory = sqlite3.Row
+                row = db.execute(
+                    "SELECT * FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                if not row:
+                    raise RecorderConfigError("没有找到该录播任务")
+                if row["status"] in {"processing", "video_uploaded"}:
+                    failed_stage = db.execute(
+                        """SELECT 1 FROM upload_stages
+                           WHERE fingerprint=? AND status='failed' LIMIT 1""",
+                        (fingerprint,),
+                    ).fetchone()
+                    if not failed_stage:
+                        raise RecorderConfigError("任务进程尚未停止，请稍后重试删除")
+
+                stage_rows = db.execute(
+                    "SELECT details_json FROM upload_stages WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchall()
+                tables = {
+                    item[0]
+                    for item in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                review = {}
+                if "recording_review_overrides" in tables:
+                    review_row = db.execute(
+                        "SELECT metadata_json FROM recording_review_overrides WHERE fingerprint=?",
+                        (fingerprint,),
+                    ).fetchone()
+                    review = self._decode_json(review_row["metadata_json"]) if review_row else {}
+
+                if delete_files:
+                    roots_map = self._recording_file_roots()
+                    roots = tuple(root.expanduser().resolve() for root in roots_map.values())
+                    artifact_dir = (
+                        roots_map["artifacts"] / fingerprint[:16]
+                    ).expanduser().resolve()
+                    candidates: set[Path] = {Path(str(row["video_path"]))}
+                    video_path = Path(str(row["video_path"]))
+                    candidates.update(
+                        video_path.with_suffix(suffix) for suffix in (".xml", ".ass")
+                    )
+                    for stage_row in stage_rows:
+                        details = self._decode_json(stage_row["details_json"])
+                        for key, value in details.items():
+                            if isinstance(value, str) and (
+                                key.endswith("_path")
+                                or key in {"danmaku_xml", "ass_path", "cover"}
+                            ):
+                                candidates.add(Path(value))
+                    for key in ("cover_path", "cover43_path"):
+                        value = str(review.get(key) or "").strip()
+                        if value:
+                            candidates.add(Path(value))
+
+                    targets: list[Path] = []
+                    if artifact_dir.is_dir() and any(
+                        artifact_dir == root or root in artifact_dir.parents
+                        for root in roots
                     ):
-                        candidates.add(Path(value))
-            manual_cover = str(review.get("cover_path") or "").strip()
-            if manual_cover:
-                candidates.add(Path(manual_cover))
-            manual_cover43 = str(review.get("cover43_path") or "").strip()
-            if manual_cover43:
-                candidates.add(Path(manual_cover43))
+                        deleted_files.extend(
+                            str(path) for path in artifact_dir.rglob("*") if path.is_file()
+                        )
+                        targets.append(artifact_dir)
+                    for candidate in candidates:
+                        resolved = candidate.expanduser().resolve()
+                        if artifact_dir == resolved or artifact_dir in resolved.parents:
+                            continue
+                        if not any(
+                            resolved == root or root in resolved.parents for root in roots
+                        ):
+                            continue
+                        if resolved.is_file():
+                            deleted_files.append(str(resolved))
+                            targets.append(resolved)
 
-            roots = tuple(self._recording_file_roots().values())
-            for candidate in candidates:
-                resolved = candidate.expanduser().resolve()
-                if not any(
-                    resolved == root or root in resolved.parents
-                    for root in roots
-                ):
-                    continue
-                try:
-                    if resolved.is_file():
-                        resolved.unlink()
-                        deleted_files.append(str(resolved))
-                except OSError:
-                    continue
+                    for original in targets:
+                        staged = original.with_name(
+                            f".{original.name}.deleting-{uuid.uuid4().hex}"
+                        )
+                        os.replace(original, staged)
+                        staged_paths.append((original, staged))
 
-            artifact_dir = self._recording_file_roots()["artifacts"] / fingerprint[:16]
-            if artifact_dir.is_dir():
-                shutil.rmtree(artifact_dir, ignore_errors=True)
+                if "recording_review_overrides" in tables:
+                    db.execute(
+                        "DELETE FROM recording_review_overrides WHERE fingerprint=?",
+                        (fingerprint,),
+                    )
+                db.execute("DELETE FROM upload_stages WHERE fingerprint=?", (fingerprint,))
+                db.execute("DELETE FROM uploads WHERE fingerprint=?", (fingerprint,))
+        except Exception as exc:
+            for original, staged in reversed(staged_paths):
+                if staged.exists():
+                    os.replace(staged, original)
+            if isinstance(exc, RecorderConfigError):
+                raise
+            raise RecorderConfigError(f"删除录播任务失败，文件已恢复：{exc}") from exc
+
+        cleanup_pending: list[str] = []
+        for _original, staged in staged_paths:
+            try:
+                if staged.is_dir():
+                    shutil.rmtree(staged)
+                else:
+                    staged.unlink(missing_ok=True)
+            except OSError as exc:
+                cleanup_pending.append(str(staged))
+                logger.warning("录播任务已删除，但暂存文件清理失败 %s: %s", staged, exc)
 
         log_path = DATA_ROOT / "logs" / f"pipeline-{fingerprint[:12]}.log"
         try:
             log_path.unlink()
         except FileNotFoundError:
             pass
+        except OSError as exc:
+            cleanup_pending.append(str(log_path))
+            logger.warning("录播任务已删除，但日志清理失败 %s: %s", log_path, exc)
         return {
             "fingerprint": fingerprint,
             "deleted_files": deleted_files,
             "deleted_file_count": len(deleted_files),
+            "cleanup_pending": cleanup_pending,
         }
 
     def pipeline_cover(self, fingerprint: str, variant: str = "16x9") -> Path:
@@ -6023,22 +6260,41 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         else:
             command.extend(["ingest", "--retry", str(video)])
 
-        claimed = False
         state_path = self._pipeline_state_path()
-        if automatic:
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            try:
-                with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
-                    cursor = db.execute(
-                        """UPDATE uploads SET status='processing', updated_at=?
-                           WHERE fingerprint=? AND status='failed'""",
-                        (now, fingerprint),
-                    )
-                    claimed = cursor.rowcount == 1
-            except sqlite3.Error as exc:
-                raise RecorderConfigError(f"无法锁定自动重试任务：{exc}") from exc
-            if not claimed:
-                return False
+        previous_status: str | None = None
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        allowed_statuses = {"failed"} if automatic else set(RECORDING_RETRYABLE_STATUSES)
+        try:
+            with closing(sqlite3.connect(state_path, timeout=5)) as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                current_status = str(row[0] or "") if row else ""
+                if current_status not in allowed_statuses:
+                    db.rollback()
+                    if automatic:
+                        return False
+                    raise RecorderConfigError("任务状态已变化，可能已由其他请求开始重试")
+                previous_status = current_status
+                cursor = db.execute(
+                    """UPDATE uploads
+                       SET status='processing', error=NULL, updated_at=?
+                       WHERE fingerprint=? AND status=?""",
+                    (now, fingerprint, current_status),
+                )
+                if cursor.rowcount != 1:
+                    db.rollback()
+                    if automatic:
+                        return False
+                    raise RecorderConfigError("任务状态已变化，可能已由其他请求开始重试")
+                db.commit()
+        except RecorderConfigError:
+            raise
+        except sqlite3.Error as exc:
+            kind = "自动重试" if automatic else "重试"
+            raise RecorderConfigError(f"无法锁定{kind}任务：{exc}") from exc
 
         try:
             with log_path.open("a", encoding="utf-8") as log_handle:
@@ -6054,13 +6310,18 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     close_fds=True, **_background_process_kwargs(),
                 )
         except OSError as exc:
-            if claimed:
+            if previous_status is not None:
                 now = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 with closing(sqlite3.connect(state_path, timeout=5)) as db, db:
                     db.execute(
-                        """UPDATE uploads SET status='failed', error=?, updated_at=?
+                        """UPDATE uploads SET status=?, error=?, updated_at=?
                            WHERE fingerprint=? AND status='processing'""",
-                        (f"自动重试启动失败：{exc}", now, fingerprint),
+                        (
+                            previous_status,
+                            f"{'自动重试' if automatic else '重试'}启动失败：{exc}",
+                            now,
+                            fingerprint,
+                        ),
                     )
             raise
         return True
@@ -6096,7 +6357,9 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                 (now, fingerprint),
             )
             if cursor.rowcount != 1:
-                return False if automatic else True
+                if automatic:
+                    return False
+                raise RecorderConfigError("任务状态已变化，可能已由其他请求开始重试")
             db.execute(
                 """UPDATE upload_stages
                    SET status='running', error=NULL, started_at=?, finished_at=NULL, updated_at=?
