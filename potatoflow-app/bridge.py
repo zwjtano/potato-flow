@@ -44,6 +44,7 @@ from dota2_items import (
 )
 from dota2_heroes import build_dota2_hero_reference, find_official_dota2_hero
 from runtime_environment import configure_linux_ca_environment
+from ti2026_context import build_ti2026_context, unsupported_ti2026_claim
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 _IMAGE_GENERATION_THREAD_LOCK = threading.Lock()
@@ -5615,6 +5616,7 @@ def _generate_danmaku_metadata_with_ai(
         if not streamer_gameplay_verified:
             verified_live_context.pop("game", None)
             verified_live_context.pop("game_segments", None)
+        tournament_context = build_ti2026_context(comments, base_description)
         payload = {
             "base_description": base_description,
             "streamer_identity": {
@@ -5644,6 +5646,7 @@ def _generate_danmaku_metadata_with_ai(
             "sampled_comments": "",
             "sampled_comment_evidence": [],
             "verified_live_context": verified_live_context,
+            "tournament_context": tournament_context,
             "streamer_participation": {
                 "gameplay_verified": streamer_gameplay_verified,
                 "mode": participation_mode,
@@ -5708,10 +5711,14 @@ preferred_description_name（例如谢彬/谢彬DD统一写“奶哥”，YYF默
 交替使用房间名、实名和多个外号。editorial_names 是同一主播可用的可靠名称，只能用于身份消歧，
 不得将这些别名当成多个人。昵称只改变公开文案，不改变人物身份和动作归属；不能因为昵称带有贬义或玩梗含义，
 就自行补充失误、情绪或结果。
-room_participant_identity_map 是当前直播间专属活动的可靠参赛昵称与斗鱼房间映射；非空时，弹幕中出现
+ room_participant_identity_map 是当前直播间专属活动的可靠参赛昵称与斗鱼房间映射；非空时，弹幕中出现
 其中 name 或 aliases 可确定为对应参赛主播，并在文案中统一使用 name。该表只能证明人物身份，不能单独证明
 人物执行了某动作、与谁对阵或获得何种结果；动作和关系仍须由同一事件窗口的原始弹幕明确支持。不得把表外的
-弹幕用户名或相似称呼强行匹配为参赛主播。
+ 弹幕用户名或相似称呼强行匹配为参赛主播。
+ tournament_context.active=true 时，本段按 TI 2026 赛事观战处理。必须使用其中的战队、选手、赛制和局次
+ 边界做身份消歧；当前主播、解说或导播不是画面英雄的操作者。series_markers 只证明明确出现的局次边界，
+ 不证明胜负。赛点、晋级、淘汰、掉入败者组、横扫和夺冠必须由同一事件窗口的原始弹幕明确支持，或由已核验
+ 比分与对应 BO3/BO5 规则严格推出；不得根据欢呼、经济领先、基地画面或历史荣誉猜测。
 弹幕中确实提到的其他主播、选手或嘉宾可以写入，但必须有能明确指向该人物的原文证据；
 不得把弹幕用户名、模糊外号、英雄名或同名对象当成真实人物。涉及人物的句子必须写清“谁做了什么”。
 对每个关键事件按5W1H检查：When 由程序回到 XML 自动定位；event 尽量交代 Who（谁）、What（做了什么）、
@@ -6160,6 +6167,7 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
             "video_duration_seconds": timeline_duration_seconds,
             "final_description": final_description,
             "verified_timeline": timeline_lines(final_description),
+            "tournament_context": payload["tournament_context"],
         }
         title_system_prompt = f"""
 你是哔哩哔哩直播录播标题编辑。简介已经生成并通过时间点校验，现在只能根据 final_description
@@ -6187,7 +6195,9 @@ spectating 禁止写成当前主播正在操刀任何英雄；unknown 也不得�
 时间点支撑，不能把一小时录播写成十几秒片段的关键词摘要。
 选择时依次比较：明确结果或强反差、关键操作或决定、阶段性转折、可复述的节目效果、信息明确的重要讨论。
 若 verified_live_context 的 game/game_segments 标记 ended_confirmed，它只用于确定对局边界，不能单独作为标题；
-只有 verified_timeline 同时明确写出胜负、翻盘、基地告破或决定性收尾时，具体结束结果才提升为最高优先级。
+ 只有 verified_timeline 同时明确写出胜负、翻盘、基地告破或决定性收尾时，具体结束结果才提升为最高优先级。
+ tournament_context.active=true 时，必须使用其中的 TI 2026 赛制。赛点、晋级、淘汰、掉入败者组、横扫和
+ 夺冠等结论只能原样沿用 verified_timeline 已核验事实，不能根据局次、领先或单局胜负自行外推系列赛结果。
 禁止生成“本局结束”“转入下一局”“开始下一把”等没有具体结果的信息。
 即使标题还有其他看点，也不得用“结束后转入下一局、进入某英雄对局”等过场语串联；直接写两局各自的具体事件。
 弹幕很多但没有具体动作、对象或结果，不等于标题价值高。“进入后段/进入环节/继续进行/第几圈左右”只是过程状态，
@@ -6279,6 +6289,13 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
                     rejection_reason = "标题只描述过程或使用空泛套话"
                 elif recording_title_uses_opaque_attribution(candidate_topic):
                     rejection_reason = "标题使用了被指、被曝或据称等模糊来源词"
+                elif unsupported_claim := unsupported_ti2026_claim(
+                    candidate_topic,
+                    final_description,
+                    title_payload.get("tournament_context"),
+                ):
+                    diagnostics["title_topic_unsupported_ti2026_claim"] = unsupported_claim
+                    rejection_reason = "TI赛事强结论没有已核验时间线或比分支持"
                 elif recording_title_topic_is_underfilled(
                     candidate_topic,
                     timeline_duration_seconds,
