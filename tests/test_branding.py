@@ -61,6 +61,8 @@ class BrandingTests(unittest.TestCase):
 
         self.assertIn('name="RECORDINGS_PATH"', settings_template)
         self.assertIn("potato-flow/docker-data/recordings/", settings_template)
+        self.assertIn("~/Movies/PotatoFlow/recordings", settings_template)
+        self.assertIn('data-resolved-path="{{ recordings_path }}"', settings_template)
         self.assertIn('id="browse-recordings-path"', settings_template)
         self.assertIn('id="recordings-directory-picker"', settings_template)
         self.assertIn("settings_recording_directories", settings_template)

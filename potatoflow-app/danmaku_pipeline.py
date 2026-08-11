@@ -113,6 +113,10 @@ def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
             "-qvbr_quality_level", value,
         ]
     if backend == "apple":
+        # VideoToolbox expects a 0-100 quality percentage where larger values
+        # mean higher quality, the opposite of the shared CRF/CQ-style control.
+        # Preserve the UI contract (0 is best, 51 is smallest) and translate it.
+        videotoolbox_quality = str(round((51 - int(value)) * 100 / 51))
         speed_args = {
             "speed": ["-realtime", "1", "-prio_speed", "1"],
             "balanced": ["-realtime", "1", "-prio_speed", "0"],
@@ -123,7 +127,7 @@ def _encoder_video_args(backend: str, preset: str, quality: int) -> list[str]:
             "-profile:v", "high",
             "-allow_sw", "0",
             *speed_args,
-            "-q:v", value,
+            "-q:v", videotoolbox_quality,
             "-pix_fmt", "yuv420p",
         ]
     return ["-c:v", "libx264", "-preset", selected_preset, "-crf", value]
@@ -259,12 +263,30 @@ def _windows_graphics_devices() -> list[dict[str, str]]:
     return devices
 
 
+def _is_apple_silicon() -> bool:
+    if platform.system() != "Darwin":
+        return False
+    if platform.machine().lower() in {"arm64", "aarch64"}:
+        return True
+    # Rosetta reports x86_64 to Python even though VideoToolbox still exposes
+    # the Apple media engine. Ask the kernel about the underlying hardware.
+    executable = shutil.which("sysctl") or "/usr/sbin/sysctl"
+    try:
+        result = subprocess.run(
+            [executable, "-in", "hw.optional.arm64"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            **_hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and str(result.stdout or "").strip() == "1"
+
+
 def _apple_graphics_devices() -> list[dict[str, str]]:
     """Expose Apple Silicon's media engine as a VideoToolbox backend."""
-    if platform.system() != "Darwin" or platform.machine().lower() not in {
-        "arm64",
-        "aarch64",
-    }:
+    if not _is_apple_silicon():
         return []
     return [{
         "name": _cpu_device()["name"],
@@ -729,7 +751,10 @@ def probe_video_size(video: Path, ffprobe: str = "ffprobe") -> tuple[int, int]:
 def _filter_path(path: Path) -> str:
     # Escaping required by FFmpeg's filter parser (in addition to argv handling).
     value = str(path.resolve()).replace("\\", "\\\\")
-    for char in (":", "'", "[", "]", ","):
+    # A quote inside an already single-quoted filter value needs to close the
+    # value, survive both parser layers, and reopen it.
+    value = value.replace("'", "'\\\\\\''")
+    for char in (":", "[", "]", ","):
         value = value.replace(char, f"\\{char}")
     return value
 

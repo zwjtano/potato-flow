@@ -56,6 +56,44 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 Path(temp) / "recordings",
             )
 
+    def test_fresh_macos_default_recordings_directory_uses_movies(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            recorder_module.sys,
+            "platform",
+            "darwin",
+        ), mock.patch.object(
+            recorder_module,
+            "WORKSPACE_ROOT",
+            Path(temp) / "project",
+        ), mock.patch.object(
+            recorder_module.Path,
+            "home",
+            return_value=Path(temp) / "home",
+        ):
+            expected = Path(temp) / "home" / "Movies" / "PotatoFlow" / "recordings"
+            self.assertEqual(recorder_module._default_recordings_dir(), expected)
+
+    def test_macos_preserves_nonempty_legacy_recordings_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            legacy = root / "project" / "docker-data" / "recordings"
+            legacy.mkdir(parents=True)
+            (legacy / "existing.flv").write_bytes(b"recording")
+            with mock.patch.object(
+                recorder_module.sys,
+                "platform",
+                "darwin",
+            ), mock.patch.object(
+                recorder_module.os,
+                "name",
+                "posix",
+            ), mock.patch.object(
+                recorder_module,
+                "WORKSPACE_ROOT",
+                root / "project",
+            ):
+                self.assertEqual(recorder_module._default_recordings_dir(), legacy)
+
     def test_status_reports_recordings_disk_free_space(self):
         manager = LiveRecorderManager()
         usage = mock.Mock(

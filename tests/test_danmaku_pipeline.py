@@ -50,6 +50,12 @@ def _process_burn_slot(lock_path, result_queue, hold_seconds):
 
 
 class DanmakuPipelineTests(unittest.TestCase):
+    def test_filter_path_escapes_apostrophe_for_nested_ffmpeg_parser(self):
+        escaped = danmaku_pipeline._filter_path(Path("主播's,[测试]: subtitle.ass"))
+
+        self.assertIn("主播'\\\\\\''s", escaped)
+        self.assertIn(r"\,\[测试\]\:", escaped)
+
     def test_cpu_query_reports_model_and_logical_cores(self):
         registry_key = unittest.mock.MagicMock()
         registry_key.__enter__.return_value = registry_key
@@ -98,6 +104,41 @@ class DanmakuPipelineTests(unittest.TestCase):
             "backend": "apple",
         }])
 
+    def test_rosetta_runtime_still_exposes_apple_media_engine(self):
+        result = types.SimpleNamespace(returncode=0, stdout="1\n", stderr="")
+        with patch(
+            "danmaku_pipeline.platform.system", return_value="Darwin"
+        ), patch(
+            "danmaku_pipeline.platform.machine", return_value="x86_64"
+        ), patch(
+            "danmaku_pipeline.shutil.which", return_value="/usr/sbin/sysctl"
+        ), patch(
+            "danmaku_pipeline.subprocess.run", return_value=result
+        ) as run, patch(
+            "danmaku_pipeline._cpu_device",
+            return_value={"name": "Apple M4", "logical_cores": 10},
+        ):
+            devices = danmaku_pipeline._apple_graphics_devices()
+
+        self.assertEqual(devices[0]["backend"], "apple")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/sbin/sysctl", "-in", "hw.optional.arm64"],
+        )
+
+    def test_intel_mac_does_not_expose_apple_media_engine(self):
+        result = types.SimpleNamespace(returncode=0, stdout="0\n", stderr="")
+        with patch(
+            "danmaku_pipeline.platform.system", return_value="Darwin"
+        ), patch(
+            "danmaku_pipeline.platform.machine", return_value="x86_64"
+        ), patch(
+            "danmaku_pipeline.shutil.which", return_value="/usr/sbin/sysctl"
+        ), patch("danmaku_pipeline.subprocess.run", return_value=result):
+            devices = danmaku_pipeline._apple_graphics_devices()
+
+        self.assertEqual(devices, [])
+
     def test_apple_speed_profile_requires_hardware_and_prioritizes_speed(self):
         args = danmaku_pipeline._encoder_video_args("apple", "speed", 20)
 
@@ -105,7 +146,14 @@ class DanmakuPipelineTests(unittest.TestCase):
         self.assertEqual(args[args.index("-allow_sw") + 1], "0")
         self.assertEqual(args[args.index("-realtime") + 1], "1")
         self.assertEqual(args[args.index("-prio_speed") + 1], "1")
-        self.assertEqual(args[args.index("-q:v") + 1], "20")
+        self.assertEqual(args[args.index("-q:v") + 1], "61")
+
+    def test_apple_quality_preserves_shared_lower_is_better_scale(self):
+        best = danmaku_pipeline._encoder_video_args("apple", "speed", 0)
+        smallest = danmaku_pipeline._encoder_video_args("apple", "speed", 51)
+
+        self.assertEqual(best[best.index("-q:v") + 1], "100")
+        self.assertEqual(smallest[smallest.index("-q:v") + 1], "0")
 
     def test_auto_probe_prefers_apple_videotoolbox_on_apple_silicon(self):
         def fake_run(command, **_kwargs):
