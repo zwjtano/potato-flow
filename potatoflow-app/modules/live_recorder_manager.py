@@ -4822,6 +4822,45 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             )
             errors: list[str] = []
             if selected_cover_fields:
+                tournament_match: dict[str, Any] = {}
+                try:
+                    from .liquipedia_result_verifier import discover_liquipedia_recording_match
+                    from ti2026_context import TI2026_PLAYER_ALIASES, TI2026_TEAMS
+
+                    tournament_probe = bridge.build_ti2026_context(
+                        [],
+                        "\n".join((title, description)),
+                        event_date=str(bridge_config.get("_recording_event_date") or "") or None,
+                    )
+                    if tournament_probe.get("active") and bridge_config.get("_recording_event_datetime_china"):
+                        team_aliases = {
+                            str(team["name"]): [
+                                *(str(alias) for alias in team.get("aliases", [])),
+                                *(
+                                    str(alias)
+                                    for player in team.get("players", [])
+                                    for alias in (player, *TI2026_PLAYER_ALIASES.get(player, ()))
+                                ),
+                            ]
+                            for team in TI2026_TEAMS
+                        }
+                        tournament_match = discover_liquipedia_recording_match(
+                            recording_start_china=str(
+                                bridge_config.get("_recording_event_datetime_china")
+                            ),
+                            recording_duration_seconds=float(video_duration_seconds or 0),
+                            evidence_text="\n".join((title, description)),
+                            team_aliases=team_aliases,
+                            timeout=float(
+                                bridge_config.get("liquipedia_timeout_seconds", 20) or 20
+                            ),
+                        )
+                except Exception as exc:
+                    tournament_match = {
+                        "status": "unavailable",
+                        "source": "liquipedia_mediawiki",
+                        "reason": bridge.safe_task_error_detail(exc),
+                    }
                 # A cover-only regeneration follows the title currently saved
                 # in the review form. The AI-stage topic belongs to the
                 # original upload and may be stale after a manual title edit.
@@ -4899,6 +4938,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                                 output_path=staged_output,
                                 game_context=cover_game_context,
                                 game_context_locked=True,
+                                tournament_match=tournament_match,
                                 cover_text=cover_text,
                                 shared_reference_cache=cover_reference_cache,
                             )
