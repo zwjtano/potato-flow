@@ -11,6 +11,29 @@ SPEC.loader.exec_module(verifier)
 
 
 class LiquipediaResultVerifierTests(unittest.TestCase):
+    def test_tournament_schedule_extracts_embedded_match_maps(self):
+        parsed = verifier.parse_liquipedia_tournament_matches(
+            """|M1={{Match
+|opponent1={{TeamOpponent|Team Falcons}}
+|opponent2={{TeamOpponent|LGD Gaming}}
+|date=August 13, 2026 - 11:00 {{Abbr/CST}}
+|matchid1=8942993144
+|map1={{Map
+|team1side=radiant
+|t1h1=hus|t1h2=cm
+|team2side=dire
+|t2h1=hw|t2h2=wr
+|length=40m46s|winner=2
+}}
+}}
+"""
+        )
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["opponents"], ["Team Falcons", "LGD Gaming"])
+        self.assertEqual(parsed[0]["maps"][0]["match_id"], 8942993144)
+        self.assertEqual(parsed[0]["maps"][0]["winner_side"], 2)
+        self.assertEqual(parsed[0]["maps"][0]["team2_heroes"], ["hw", "wr"])
+
     def test_page_url_is_converted_to_mediawiki_title(self):
         self.assertEqual(
             verifier.liquipedia_page_title(

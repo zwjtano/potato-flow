@@ -17,6 +17,7 @@ HERO_CONSTANTS_URL = (
 )
 DEFAULT_USER_AGENT = "PotatoFlow/1.6.78 (+https://github.com/zwjtano/potato-flow)"
 CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+TI2026_GROUP_STAGE_PAGE = "The International/2026/Group Stage"
 
 
 def _fetch_json(url: str, *, timeout: float, user_agent: str) -> dict[str, Any]:
@@ -69,6 +70,127 @@ def parse_liquipedia_match_wikitext(wikitext: str) -> dict[str, Any]:
         "scheduled_time_source": date_match.group(1).strip() if date_match else "",
         "maps": maps,
     }
+
+
+def parse_liquipedia_tournament_matches(wikitext: str) -> list[dict[str, Any]]:
+    """Extract embedded Match blocks from a tournament schedule page."""
+    text = str(wikitext or "")
+    starts = list(re.finditer(r"(?m)^\|M\d+\s*=\s*\{\{Match\s*$", text, re.I))
+    matches: list[dict[str, Any]] = []
+    for index, start in enumerate(starts):
+        block = text[start.start() : starts[index + 1].start() if index + 1 < len(starts) else len(text)]
+        opponents = [
+            match.group(1).strip()
+            for match in re.finditer(
+                r"(?m)^\|opponent[12]\s*=\s*\{\{TeamOpponent\|([^}|]+)", block, re.I
+            )
+        ]
+        date_match = re.search(r"(?m)^\|date\s*=\s*([^\n]+)", block, re.I)
+        if len(opponents) != 2 or not date_match:
+            continue
+        maps: list[dict[str, Any]] = []
+        for number in range(1, 6):
+            match_id = re.search(rf"(?m)^\|matchid{number}\s*=\s*(\d+)", block, re.I)
+            map_body = re.search(
+                rf"(?ms)^\|map{number}\s*=\s*\{{\{{Map\s*(.*?)(?=^\|map\d+\s*=|^\}}\}}\s*$)",
+                block,
+                re.I,
+            )
+            if not match_id and not map_body:
+                continue
+            body = map_body.group(1) if map_body else ""
+            winner = re.search(r"(?:^|\|)winner\s*=\s*([12])(?:\||\s*$)", body, re.I)
+            length = re.search(r"(?:^|\|)length\s*=\s*([^|\n]*)", body, re.I)
+            maps.append({
+                "game_number": number,
+                "match_id": int(match_id.group(1)) if match_id else 0,
+                "winner_side": int(winner.group(1)) if winner else 0,
+                "length": str(length.group(1) or "").strip() if length else "",
+                "team1_heroes": re.findall(r"(?:^|\|)t1h\d+\s*=\s*([^|\n]+)", body, re.I),
+                "team2_heroes": re.findall(r"(?:^|\|)t2h\d+\s*=\s*([^|\n]+)", body, re.I),
+            })
+        matches.append({
+            "opponents": opponents,
+            "scheduled_time_source": date_match.group(1).strip(),
+            "maps": maps,
+        })
+    return matches
+
+
+def _parse_liquipedia_china_schedule(value: str) -> datetime | None:
+    cleaned = re.sub(r"\s*\{\{Abbr/(?:CST|UTC\+8)\}\}\s*", "", str(value or ""), flags=re.I)
+    try:
+        return datetime.strptime(cleaned.strip(), "%B %d, %Y - %H:%M").replace(tzinfo=CHINA_TIMEZONE)
+    except ValueError:
+        return None
+
+
+def _team_in_text(team: str, text: str, aliases: dict[str, list[str]]) -> bool:
+    compact_text = _compact_team(text)
+    return any(_compact_team(name) in compact_text for name in (team, *(aliases.get(team) or [])))
+
+
+def discover_liquipedia_recording_match(
+    *, recording_start_china: str, recording_duration_seconds: float, evidence_text: str,
+    team_aliases: dict[str, list[str]] | None = None, timeout: float = 20,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> dict[str, Any]:
+    """Find the unique TI series supported by both recording time and local text."""
+    aliases = team_aliases or {}
+    query = urllib.parse.urlencode({
+        "action": "parse", "page": TI2026_GROUP_STAGE_PAGE,
+        "prop": "wikitext", "format": "json", "formatversion": 2,
+    })
+    payload = _fetch_json(f"{LIQUIPEDIA_API}?{query}", timeout=timeout, user_agent=user_agent)
+    parsed = payload.get("parse") or {}
+    schedule = parse_liquipedia_tournament_matches(str(parsed.get("wikitext") or ""))
+    recording_start = datetime.fromisoformat(str(recording_start_china).replace("Z", "+00:00"))
+    if recording_start.tzinfo is None:
+        recording_start = recording_start.replace(tzinfo=CHINA_TIMEZONE)
+    recording_start = recording_start.astimezone(CHINA_TIMEZONE)
+    recording_end = recording_start + timedelta(seconds=max(0.0, float(recording_duration_seconds)))
+    candidates: list[dict[str, Any]] = []
+    for series in schedule:
+        scheduled = _parse_liquipedia_china_schedule(series["scheduled_time_source"])
+        if scheduled is None or scheduled > recording_end or scheduled + timedelta(hours=4) < recording_start:
+            continue
+        mentions = [team for team in series["opponents"] if _team_in_text(team, evidence_text, aliases)]
+        if not mentions:
+            continue
+        row = dict(series)
+        row["scheduled_time_china"] = scheduled.isoformat()
+        row["mentioned_opponents"] = mentions
+        candidates.append(row)
+    exact = [row for row in candidates if len(row["mentioned_opponents"]) == 2]
+    selected_pool = exact or candidates
+    if len(selected_pool) != 1:
+        return {
+            "status": "not_found" if not selected_pool else "ambiguous",
+            "source": "liquipedia_mediawiki",
+            "candidate_count": len(selected_pool),
+            "reason": "没有唯一的时间与弹幕队伍交集",
+        }
+    selected = selected_pool[0]
+    match_payloads: dict[int, dict[str, Any]] = {}
+    for game in selected["maps"]:
+        if game["match_id"]:
+            match_payloads[game["match_id"]] = _fetch_json(
+                OPENDOTA_MATCH_API.format(match_id=game["match_id"]),
+                timeout=timeout, user_agent=user_agent,
+            )
+    hero_constants = _fetch_json(HERO_CONSTANTS_URL, timeout=timeout, user_agent=user_agent)
+    page = {"opponents": selected["opponents"], "maps": [
+        {"game_number": game["game_number"], "match_id": game["match_id"], "reversed": False}
+        for game in selected["maps"] if game["match_id"]
+    ]}
+    result = build_verified_match_result(page, match_payloads, hero_constants)
+    result.update({
+        "source": "liquipedia_mediawiki+opendota",
+        "source_url": "https://liquipedia.net/dota2/The_International/2026/Group_Stage",
+        "scheduled_time_china": selected["scheduled_time_china"],
+        "matched_by": ["event", "recording_time", "local_team_evidence"],
+    })
+    return result
 
 
 def _compact_team(value: Any) -> str:
@@ -151,6 +273,8 @@ def build_verified_match_result(
             "end_time_china": _china_timestamp(start_time + duration_seconds),
             "radiant": radiant,
             "dire": dire,
+            "radiant_score": int(payload.get("radiant_score") or 0),
+            "dire_score": int(payload.get("dire_score") or 0),
             "winner": winner,
             "teams_verified": teams_verified,
             "players": players,

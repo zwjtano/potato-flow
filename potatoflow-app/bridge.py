@@ -4591,6 +4591,7 @@ def generate_recording_cover_with_ai(
     recording_dir: Path | None = None,
     game_context: dict[str, Any] | None = None,
     game_context_locked: bool = False,
+    tournament_match: dict[str, Any] | None = None,
     cover_text: str = "",
     shared_reference_cache: dict[str, Any] | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
@@ -4619,6 +4620,40 @@ def generate_recording_cover_with_ai(
             "队名、选手、局次和赛果；没有已核验终局比分时不得画比分牌、晋级、淘汰、"
             "横扫、夺冠或不朽盾归属。"
         )
+    verified_match_instruction = ""
+    if isinstance(tournament_match, dict) and tournament_match.get("status") == "confirmed":
+        opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)]
+        games = [game for game in tournament_match.get("games", []) if isinstance(game, dict)]
+        relevant_games = [
+            game for game in games
+            if str(game.get("winner") or "").strip()
+            and str(game.get("winner") or "").casefold() in "\n".join((title, ai_topic, description)).casefold()
+        ] or games[-1:]
+        if len(opponents) == 2 and relevant_games:
+            game = relevant_games[-1]
+            players = [row for row in game.get("players", []) if isinstance(row, dict)]
+            lineups = {
+                team: [str(row.get("hero_name") or "") for row in players if row.get("team") == team and row.get("hero_name")]
+                for team in opponents
+            }
+            standout = [row for row in game.get("performance_candidates", []) if isinstance(row, dict)][:3]
+            verified_match_instruction = (
+                f"已由 Liquipedia Match 页面与 OpenDota 核验本段赛事：{opponents[0]} 对阵 {opponents[1]}，"
+                f"第 {game.get('game_number')} 局，胜者 {game.get('winner')}。"
+                f"双方最终阵容：{opponents[0]}：{', '.join(lineups[opponents[0]]) or '未取得'}；"
+                f"{opponents[1]}：{', '.join(lineups[opponents[1]]) or '未取得'}。"
+                f"本局击杀 {game.get('radiant_score', '未知')}:{game.get('dire_score', '未知')}。"
+                + (
+                    "突出选手候选：" + "；".join(
+                        f"{row.get('name') or '选手'} {row.get('hero_name') or ''} "
+                        f"KDA {row.get('kills')}/{row.get('deaths')}/{row.get('assists')}"
+                        for row in standout
+                    ) + "。"
+                    if standout else ""
+                )
+                + "按既定 TI 封面版式：赛事阶段置于上方；左右分别放队名与五名英雄；"
+                  "双方总击杀置于两套阵容之间；突出选手可附 KDA。不得把观战主播画成参赛选手。"
+            )
     card_hand_instruction = recording_cover_card_hand_instruction(headline)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
@@ -4630,6 +4665,9 @@ def generate_recording_cover_with_ai(
         "ai_cover_mode": cover_tournament_context.get("mode") or "standard",
         "ai_cover_card_hand_instruction": card_hand_instruction,
     }
+    if verified_match_instruction:
+        details["ai_cover_dota2_source"] = "liquipedia_verified_match"
+        details["ai_cover_tournament_match"] = tournament_match
     if not enabled:
         return None, details
     image_api_key = str(
@@ -4878,7 +4916,7 @@ def generate_recording_cover_with_ai(
         )
         dota2_item_matches = match_dota2_items(*tooltip_items)
         dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
-    elif game_context_locked:
+    elif game_context_locked and not verified_match_instruction:
         dota2_item_matches = []
         dota2_instruction = (
             "本段没有可靠匹配到主播同一场对局。禁止展示、猜测或补画任何具体 "
@@ -5060,6 +5098,7 @@ def generate_recording_cover_with_ai(
 {cover_subject_copy_instruction}
 {composition_instruction}
 {competition_cover_instruction}
+{verified_match_instruction}
 {card_hand_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
@@ -5742,6 +5781,13 @@ def _generate_danmaku_metadata_with_ai(
             base_description,
             event_date=str(cfg.get("_recording_event_date") or "") or None,
         )
+        verified_tournament_match = verified_live_context.get("tournament_match")
+        if (
+            isinstance(verified_tournament_match, dict)
+            and verified_tournament_match.get("status") == "confirmed"
+            and tournament_context.get("active")
+        ):
+            tournament_context["result_verification"] = verified_tournament_match
         payload = {
             "base_description": base_description,
             "streamer_identity": {
@@ -7144,6 +7190,59 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         if locked_game_segments:
             verified_live_context["game_segments"] = locked_game_segments
 
+        tournament_match: dict[str, Any] = {}
+        tournament_probe = build_ti2026_context(
+            comments,
+            description,
+            event_date=str(cfg.get("_recording_event_date") or "") or None,
+        )
+        if tournament_probe.get("active") and str(cfg.get("_recording_event_datetime_china") or ""):
+            current_stage = "tournament_match"
+            store.stage(key, "tournament_match", "running", {
+                "source": "liquipedia_mediawiki",
+                "recording_start_china": cfg.get("_recording_event_datetime_china"),
+            })
+            try:
+                from modules.liquipedia_result_verifier import discover_liquipedia_recording_match  # type: ignore
+
+                team_aliases = {
+                    str(team["name"]): [str(alias) for alias in team.get("aliases", [])]
+                    for team in tournament_probe.get("rules", {}).get("teams", [])
+                    if isinstance(team, dict)
+                }
+                # The canonical roster lives in ti2026_context; include detected
+                # names and player/team text in the local evidence passed here.
+                from ti2026_context import TI2026_TEAMS  # type: ignore
+                team_aliases = {
+                    str(team["name"]): [str(alias) for alias in team.get("aliases", [])]
+                    for team in TI2026_TEAMS
+                }
+                tournament_match = discover_liquipedia_recording_match(
+                    recording_start_china=str(cfg.get("_recording_event_datetime_china")),
+                    recording_duration_seconds=recording_duration_seconds,
+                    evidence_text="\n".join([description, *(str(getattr(row, "text", "") or "") for row in comments)]),
+                    team_aliases=team_aliases,
+                    timeout=float(cfg.get("liquipedia_timeout_seconds", 20) or 20),
+                )
+                verified_live_context["tournament_match"] = tournament_match
+                outcome = str(tournament_match.get("status") or "not_found")
+                store.stage(
+                    key,
+                    "tournament_match",
+                    "completed" if outcome == "confirmed" else "skipped",
+                    tournament_match,
+                )
+            except Exception as exc:
+                tournament_match = {
+                    "status": "unavailable",
+                    "source": "liquipedia_mediawiki",
+                    "reason": safe_task_error_detail(exc),
+                }
+                verified_live_context["tournament_match"] = tournament_match
+                store.stage(key, "tournament_match", "warning", tournament_match)
+        else:
+            store.stage(key, "tournament_match", "skipped", {"reason": "非 TI 录播或缺少录制时间"})
+
         current_stage = "ai"
         ai_topic = ""
         ai_details: dict[str, Any] = {}
@@ -7902,6 +8001,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     recording_dir=video.parent,
                     game_context=cover_game_context,
                     game_context_locked=True,
+                    tournament_match=tournament_match,
                     cover_text=str(ai_details.get("cover_text") or ""),
                     shared_reference_cache=cover_reference_cache,
                 )
@@ -7996,6 +8096,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     recording_dir=video.parent,
                     game_context=cover_game_context,
                     game_context_locked=True,
+                    tournament_match=tournament_match,
                     cover_text=str(ai_details.get("cover_text") or ""),
                     shared_reference_cache=cover_reference_cache,
                 )
