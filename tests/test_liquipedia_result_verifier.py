@@ -34,6 +34,15 @@ class LiquipediaResultVerifierTests(unittest.TestCase):
         self.assertEqual(parsed[0]["maps"][0]["winner_side"], 2)
         self.assertEqual(parsed[0]["maps"][0]["team2_heroes"], ["hw", "wr"])
 
+    def test_empty_team_alias_never_matches_every_recording(self):
+        self.assertFalse(
+            verifier._team_in_text(
+                "Team Falcons",
+                "Team Liquid Boxi Nisha Xm",
+                {"Team Falcons": [""]},
+            )
+        )
+
     def test_page_url_is_converted_to_mediawiki_title(self):
         self.assertEqual(
             verifier.liquipedia_page_title(

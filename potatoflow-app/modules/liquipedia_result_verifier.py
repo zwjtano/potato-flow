@@ -127,7 +127,8 @@ def _parse_liquipedia_china_schedule(value: str) -> datetime | None:
 
 def _team_in_text(team: str, text: str, aliases: dict[str, list[str]]) -> bool:
     compact_text = _compact_team(text)
-    return any(_compact_team(name) in compact_text for name in (team, *(aliases.get(team) or [])))
+    candidates = [_compact_team(name) for name in (team, *(aliases.get(team) or []))]
+    return any(candidate and candidate in compact_text for candidate in candidates)
 
 
 def discover_liquipedia_recording_match(
@@ -172,23 +173,46 @@ def discover_liquipedia_recording_match(
         }
     selected = selected_pool[0]
     match_payloads: dict[int, dict[str, Any]] = {}
+    match_errors: list[dict[str, Any]] = []
     for game in selected["maps"]:
         if game["match_id"]:
-            match_payloads[game["match_id"]] = _fetch_json(
-                OPENDOTA_MATCH_API.format(match_id=game["match_id"]),
-                timeout=timeout, user_agent=user_agent,
-            )
-    hero_constants = _fetch_json(HERO_CONSTANTS_URL, timeout=timeout, user_agent=user_agent)
+            try:
+                match_payloads[game["match_id"]] = _fetch_json(
+                    OPENDOTA_MATCH_API.format(match_id=game["match_id"]),
+                    timeout=timeout, user_agent=user_agent,
+                )
+            except Exception as exc:
+                match_errors.append({
+                    "game_number": game["game_number"],
+                    "match_id": game["match_id"],
+                    "error": type(exc).__name__,
+                })
+    try:
+        hero_constants = _fetch_json(HERO_CONSTANTS_URL, timeout=timeout, user_agent=user_agent)
+    except Exception:
+        hero_constants = {}
     page = {"opponents": selected["opponents"], "maps": [
         {"game_number": game["game_number"], "match_id": game["match_id"], "reversed": False}
-        for game in selected["maps"] if game["match_id"]
+        for game in selected["maps"] if game["match_id"] in match_payloads
     ]}
     result = build_verified_match_result(page, match_payloads, hero_constants)
+    # A newly-started map may exist on Liquipedia before OpenDota has parsed it.
+    # Preserve the unique series match so TI mode still activates, while only
+    # confirmed OpenDota games may contribute kills, winners or KDA.
+    if not result.get("games") and selected_pool:
+        result.update({
+            "status": "matched_pending_data",
+            "opponents": selected["opponents"],
+            "series_score": {team: 0 for team in selected["opponents"]},
+            "games": [],
+        })
     result.update({
         "source": "liquipedia_mediawiki+opendota",
         "source_url": "https://liquipedia.net/dota2/The_International/2026/Group_Stage",
         "scheduled_time_china": selected["scheduled_time_china"],
         "matched_by": ["event", "recording_time", "local_team_evidence"],
+        "match_data_errors": match_errors,
+        "liquipedia_maps": selected["maps"],
     })
     return result
 

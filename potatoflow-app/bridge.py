@@ -4612,6 +4612,12 @@ def generate_recording_cover_with_ai(
         "\n".join(filter(None, (title, ai_topic, description))),
         event_date=str(cfg.get("_recording_event_date") or "") or None,
     )
+    if isinstance(tournament_match, dict) and tournament_match.get("status") in {"confirmed", "matched_pending_data"}:
+        cover_tournament_context = {
+            **cover_tournament_context,
+            "active": True,
+            "mode": "ti_competition",
+        }
     competition_cover_instruction = ""
     if cover_tournament_context.get("mode") == "ti_competition":
         competition_cover_instruction = (
@@ -4621,7 +4627,7 @@ def generate_recording_cover_with_ai(
             "横扫、夺冠或不朽盾归属。"
         )
     verified_match_instruction = ""
-    if isinstance(tournament_match, dict) and tournament_match.get("status") == "confirmed":
+    if isinstance(tournament_match, dict) and tournament_match.get("status") in {"confirmed", "matched_pending_data"}:
         opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)]
         games = [game for game in tournament_match.get("games", []) if isinstance(game, dict)]
         relevant_games = [
@@ -4654,6 +4660,12 @@ def generate_recording_cover_with_ai(
                 + "按既定 TI 封面版式：赛事阶段置于上方；左右分别放队名与五名英雄；"
                   "双方总击杀置于两套阵容之间；突出选手可附 KDA。不得把观战主播画成参赛选手。"
             )
+        elif len(opponents) == 2:
+            verified_match_instruction = (
+                f"Liquipedia 已唯一匹配本段赛事为 {opponents[0]} 对阵 {opponents[1]}，"
+                "但当前小局尚未被 OpenDota 收录。封面必须使用 TI 赛事转播构图和双方队名；"
+                "不得填写未核验的比分、击杀、KDA、胜者、晋级或淘汰结论。"
+            )
     card_hand_instruction = recording_cover_card_hand_instruction(headline)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
@@ -4666,7 +4678,9 @@ def generate_recording_cover_with_ai(
         "ai_cover_card_hand_instruction": card_hand_instruction,
     }
     if verified_match_instruction:
-        details["ai_cover_dota2_source"] = "liquipedia_verified_match"
+        details["ai_cover_dota2_source"] = (
+            "liquipedia_verified_match" if games else "liquipedia_match_pending_data"
+        )
         details["ai_cover_tournament_match"] = tournament_match
     if not enabled:
         return None, details
@@ -5784,7 +5798,7 @@ def _generate_danmaku_metadata_with_ai(
         verified_tournament_match = verified_live_context.get("tournament_match")
         if (
             isinstance(verified_tournament_match, dict)
-            and verified_tournament_match.get("status") == "confirmed"
+            and verified_tournament_match.get("status") in {"confirmed", "matched_pending_data"}
             and tournament_context.get("active")
         ):
             tournament_context["result_verification"] = verified_tournament_match
@@ -7212,9 +7226,16 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 }
                 # The canonical roster lives in ti2026_context; include detected
                 # names and player/team text in the local evidence passed here.
-                from ti2026_context import TI2026_TEAMS  # type: ignore
+                from ti2026_context import TI2026_PLAYER_ALIASES, TI2026_TEAMS  # type: ignore
                 team_aliases = {
-                    str(team["name"]): [str(alias) for alias in team.get("aliases", [])]
+                    str(team["name"]): [
+                        *(str(alias) for alias in team.get("aliases", [])),
+                        *(
+                            str(alias)
+                            for player in team.get("players", [])
+                            for alias in (player, *TI2026_PLAYER_ALIASES.get(player, ()))
+                        ),
+                    ]
                     for team in TI2026_TEAMS
                 }
                 tournament_match = discover_liquipedia_recording_match(
