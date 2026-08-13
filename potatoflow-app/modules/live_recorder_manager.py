@@ -4844,17 +4844,33 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                             ]
                             for team in TI2026_TEAMS
                         }
-                        tournament_match = discover_liquipedia_recording_match(
-                            recording_start_china=str(
+                        match_args = {
+                            "recording_start_china": str(
                                 bridge_config.get("_recording_event_datetime_china")
                             ),
-                            recording_duration_seconds=float(video_duration_seconds or 0),
-                            evidence_text="\n".join((title, description)),
-                            team_aliases=team_aliases,
-                            timeout=float(
+                            "recording_duration_seconds": float(video_duration_seconds or 0),
+                            "team_aliases": team_aliases,
+                            "timeout": float(
                                 bridge_config.get("liquipedia_timeout_seconds", 20) or 20
                             ),
+                        }
+                        # A one-hour recording can contain the end of one match and
+                        # the draft of the next.  The review title describes the
+                        # selected cover moment, whereas the description may mention
+                        # players from both matches.  Prefer title-only evidence so
+                        # those later timeline notes cannot make the result ambiguous.
+                        tournament_match = discover_liquipedia_recording_match(
+                            evidence_text=title,
+                            **match_args,
                         )
+                        if tournament_match.get("status") not in {
+                            "confirmed",
+                            "matched_pending_data",
+                        }:
+                            tournament_match = discover_liquipedia_recording_match(
+                                evidence_text="\n".join((title, description)),
+                                **match_args,
+                            )
                 except Exception as exc:
                     tournament_match = {
                         "status": "unavailable",
