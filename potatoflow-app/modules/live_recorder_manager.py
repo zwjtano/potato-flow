@@ -4827,12 +4827,11 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     from .liquipedia_result_verifier import discover_liquipedia_recording_match
                     from ti2026_context import TI2026_PLAYER_ALIASES, TI2026_TEAMS
 
-                    tournament_probe = bridge.build_ti2026_context(
-                        [],
-                        "\n".join((title, description)),
-                        event_date=str(bridge_config.get("_recording_event_date") or "") or None,
-                    )
-                    if tournament_probe.get("active") and bridge_config.get("_recording_event_datetime_china"):
+                    # Liquipedia's schedule is the authority for cover rematches.
+                    # Do not gate it behind the static TI event-date helper: that
+                    # helper can lag the live schedule and previously prevented an
+                    # otherwise unique Liquid vs Vici match from being applied.
+                    if bridge_config.get("_recording_event_datetime_china"):
                         team_aliases = {
                             str(team["name"]): [
                                 *(str(alias) for alias in team.get("aliases", [])),
