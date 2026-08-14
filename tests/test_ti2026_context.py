@@ -23,6 +23,12 @@ class Ti2026ContextTests(unittest.TestCase):
         self.assertTrue(context["active"])
         self.assertEqual(context["mode"], "ti_competition")
 
+    def test_group_stage_date_overrides_incidental_main_event_words(self):
+        context = ti.build_ti2026_context(
+            [], "TI 2026 讨论淘汰赛形势", event_date="2026-08-14"
+        )
+        self.assertEqual(context["phase"], "group_stage")
+
     def test_match_end_inside_recording_sets_exact_cutoff(self):
         result = ti.recording_match_end_cutoff(
             "2026-08-20T18:00:00+08:00",

@@ -353,13 +353,22 @@ def build_ti2026_context(
             aliases = (player, *TI2026_PLAYER_ALIASES.get(player, ()))
             if any(_mentions(corpus, alias) for alias in aliases):
                 mentioned_players.append({"name": player, "team": str(team["name"])})
-    phase = "grand_final" if re.search(r"(?:总决赛|GRAND\s*FINAL|决赛第五局)", corpus, re.I) else (
-        "main_event" if re.search(r"(?:主赛事|胜者组|败者组|淘汰赛)", corpus, re.I) else "group_stage"
-    )
-    series_format = "bo5" if phase == "grand_final" else "bo3"
     event_date_value = (
         event_date.isoformat() if isinstance(event_date, date) else str(event_date or "")[:10]
     )
+    group_dates = TI2026_RULES["group_stage"]["dates"]
+    main_dates = TI2026_RULES["main_event"]["dates"]
+    if group_dates["start"] <= event_date_value <= group_dates["end"]:
+        phase = "group_stage"
+    elif re.search(r"(?:总决赛|GRAND\s*FINAL|决赛第五局)", corpus, re.I):
+        phase = "grand_final"
+    elif main_dates["start"] <= event_date_value <= main_dates["end"]:
+        phase = "main_event"
+    else:
+        phase = "main_event" if re.search(
+            r"(?:主赛事|胜者组|败者组|淘汰赛)", corpus, re.I
+        ) else "group_stage"
+    series_format = "bo5" if phase == "grand_final" else "bo3"
     return {
         "active": True,
         "mode": "ti_competition",
