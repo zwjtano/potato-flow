@@ -4822,6 +4822,21 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             )
             errors: list[str] = []
             if selected_cover_fields:
+                cached_tournament_match: dict[str, Any] = {}
+                for cached_variant in ("16x9", "4x3"):
+                    cached_details = cover_details.get(cached_variant)
+                    if not isinstance(cached_details, dict):
+                        continue
+                    candidate = cached_details.get("ai_cover_tournament_match")
+                    if (
+                        isinstance(candidate, dict)
+                        and candidate.get("status") in {
+                            "confirmed",
+                            "matched_pending_data",
+                        }
+                    ):
+                        cached_tournament_match = dict(candidate)
+                        break
                 tournament_match: dict[str, Any] = {}
                 try:
                     from .liquipedia_result_verifier import discover_liquipedia_recording_match
@@ -4858,23 +4873,42 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         # selected cover moment, whereas the description may mention
                         # players from both matches.  Prefer title-only evidence so
                         # those later timeline notes cannot make the result ambiguous.
-                        tournament_match = discover_liquipedia_recording_match(
-                            evidence_text=title,
-                            **match_args,
-                        )
-                        if tournament_match.get("status") not in {
-                            "confirmed",
-                            "matched_pending_data",
-                        }:
-                            tournament_match = discover_liquipedia_recording_match(
-                                evidence_text="\n".join((title, description)),
-                                **match_args,
-                            )
+                        evidence_candidates = [title]
+                        complete_evidence = "\n".join((title, description))
+                        if complete_evidence != title:
+                            evidence_candidates.append(complete_evidence)
+                        for evidence in evidence_candidates:
+                            for attempt in range(2):
+                                tournament_match = discover_liquipedia_recording_match(
+                                    evidence_text=evidence,
+                                    **match_args,
+                                )
+                                if tournament_match.get("status") in {
+                                    "confirmed",
+                                    "matched_pending_data",
+                                }:
+                                    break
+                                if attempt == 0:
+                                    time.sleep(0.5)
+                            if tournament_match.get("status") in {
+                                "confirmed",
+                                "matched_pending_data",
+                            }:
+                                break
                 except Exception as exc:
                     tournament_match = {
                         "status": "unavailable",
                         "source": "liquipedia_mediawiki",
                         "reason": bridge.safe_task_error_detail(exc),
+                    }
+                if (
+                    tournament_match.get("status")
+                    not in {"confirmed", "matched_pending_data"}
+                    and cached_tournament_match
+                ):
+                    tournament_match = {
+                        **cached_tournament_match,
+                        "cache_fallback": True,
                     }
                 # A cover-only regeneration follows the title currently saved
                 # in the review form. The AI-stage topic belongs to the
