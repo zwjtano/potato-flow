@@ -118,6 +118,7 @@ _TI_IDENTITY_MARKERS = re.compile(
     r"(?:TI\s*(?:15|2026)|The\s+International\s+2026|国际邀请赛|上海TI|不朽盾|Aegis)",
     re.IGNORECASE,
 )
+_GENERIC_TI_MARKER = re.compile(r"(?<![A-Za-z0-9])TI(?![A-Za-z0-9])", re.IGNORECASE)
 _SERIES_MARKERS = re.compile(r"(?:BO\s*[35]|第\s*[一二三四五1-5]\s*局|比分|赛点|BP|对阵)", re.IGNORECASE)
 _GAME_NUMBER_PATTERNS = (
     re.compile(r"第\s*([一二三四五1-5])\s*局"),
@@ -338,7 +339,10 @@ def build_ti2026_context(
     inside_event_window = _inside_ti2026_window(event_date)
     # Outside the event window, a normal tournament featuring the same teams is
     # not TI. During TI, require both opponents unless the content names TI itself.
-    active = explicit_ti_identity or (inside_event_window and len(mentioned_teams) >= 2)
+    active = explicit_ti_identity or (
+        inside_event_window
+        and (len(mentioned_teams) >= 2 or bool(_GENERIC_TI_MARKER.search(corpus)))
+    )
     if not active:
         return {"active": False}
     mentioned_players: list[dict[str, str]] = []

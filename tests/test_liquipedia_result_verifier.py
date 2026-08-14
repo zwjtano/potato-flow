@@ -20,10 +20,14 @@ class LiquipediaResultVerifierTests(unittest.TestCase):
             {"match_id": 12, "start_time": 1786682065, "duration": 3255,
              "radiant_name": "Vici Gaming", "dire_name": "HULIGANI",
              "league_name": "The International 2026"},
+            {"match_id": 13, "start_time": 1786685880, "duration": 2400,
+             "radiant_name": "Vici Gaming", "dire_name": "HULIGANI",
+             "league_name": "The International 2026"},
         ]
         match_payloads = {
             11: {**pro_matches[0], "radiant_win": False, "radiant_score": 18, "dire_score": 20, "players": []},
             12: {**pro_matches[1], "radiant_win": True, "radiant_score": 24, "dire_score": 21, "players": []},
+            13: {**pro_matches[2], "radiant_win": True, "radiant_score": 30, "dire_score": 10, "players": []},
         }
 
         def fake_fetch(url, **_kwargs):

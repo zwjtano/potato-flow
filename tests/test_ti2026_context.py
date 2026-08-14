@@ -16,6 +16,13 @@ def comment(second, text):
 
 
 class Ti2026ContextTests(unittest.TestCase):
+    def test_plain_ti_live_title_activates_during_event_window(self):
+        context = ti.build_ti2026_context(
+            [], "Ti全程解说~", event_date="2026-08-14"
+        )
+        self.assertTrue(context["active"])
+        self.assertEqual(context["mode"], "ti_competition")
+
     def test_match_end_inside_recording_sets_exact_cutoff(self):
         result = ti.recording_match_end_cutoff(
             "2026-08-20T18:00:00+08:00",

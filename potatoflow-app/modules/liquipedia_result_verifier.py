@@ -207,9 +207,17 @@ def discover_liquipedia_recording_match(
         hero_constants = _fetch_json(HERO_CONSTANTS_URL, timeout=timeout, user_agent=user_agent)
     except Exception:
         hero_constants = {}
+    completed_match_ids = {
+        match_id for match_id, match_payload in match_payloads.items()
+        if datetime.fromtimestamp(
+            float(match_payload.get("start_time") or 0)
+            + float(match_payload.get("duration") or 0),
+            tz=timezone.utc,
+        ).astimezone(CHINA_TIMEZONE) <= recording_end
+    }
     page = {"opponents": selected["opponents"], "maps": [
         {"game_number": game["game_number"], "match_id": game["match_id"], "reversed": False}
-        for game in selected["maps"] if game["match_id"] in match_payloads
+        for game in selected["maps"] if game["match_id"] in completed_match_ids
     ]}
     result = build_verified_match_result(page, match_payloads, hero_constants)
     # A newly-started map may exist on Liquipedia before OpenDota has parsed it.
@@ -282,7 +290,8 @@ def discover_opendota_recording_match(
         if actual != pair_key:
             continue
         started = datetime.fromtimestamp(float(row.get("start_time") or 0), tz=timezone.utc).astimezone(CHINA_TIMEZONE)
-        if recording_start - timedelta(hours=4) <= started <= recording_end:
+        ended = started + timedelta(seconds=float(row.get("duration") or 0))
+        if recording_start - timedelta(hours=4) <= started and ended <= recording_end:
             series_rows.append(row)
     series_rows.sort(key=lambda row: float(row.get("start_time") or 0))
     match_payloads = {
