@@ -4583,6 +4583,26 @@ def multipart_session_queue(cfg: dict[str, Any], session_key: str):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def select_ti_mvp_candidate(players: list[dict[str, Any]]) -> dict[str, Any]:
+    """Select a transparent KDA-based cover candidate, never an official MVP."""
+    candidates = [
+        row for row in players
+        if isinstance(row, dict) and row.get("name") and row.get("hero_name")
+    ]
+    if not candidates:
+        return {}
+    return max(
+        candidates,
+        key=lambda row: (
+            (int(row.get("kills") or 0) + int(row.get("assists") or 0))
+            / max(1, int(row.get("deaths") or 0)),
+            int(row.get("kills") or 0) + int(row.get("assists") or 0),
+            int(row.get("kills") or 0),
+            -int(row.get("deaths") or 0),
+        ),
+    )
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -5262,6 +5282,7 @@ def generate_recording_cover_with_ai(
     if cover_tournament_context.get("mode") == "ti_competition":
         visual_hero = ""
         visual_player = ""
+        visual_kda = ""
         ti_opponents = [str(name) for name in (tournament_match or {}).get("opponents", []) if str(name)][:2]
         ti_game: dict[str, Any] = {}
         ti_lineups: dict[str, list[str]] = dict(pending_lineups)
@@ -5269,10 +5290,13 @@ def generate_recording_cover_with_ai(
             visual_games = [row for row in tournament_match.get("games", []) if isinstance(row, dict)]
             if visual_games:
                 ti_game = visual_games[-1]
-                candidates = [row for row in visual_games[-1].get("performance_candidates", []) if isinstance(row, dict)]
-                if candidates:
-                    visual_hero = str(candidates[0].get("hero_name") or "")
-                    visual_player = str(candidates[0].get("name") or "")
+                mvp_candidate = select_ti_mvp_candidate([
+                    row for row in ti_game.get("players", []) if isinstance(row, dict)
+                ])
+                if mvp_candidate:
+                    visual_hero = str(mvp_candidate.get("hero_name") or "")
+                    visual_player = str(mvp_candidate.get("name") or "")
+                    visual_kda = "/".join(str(int(mvp_candidate.get(field) or 0)) for field in ("kills", "deaths", "assists"))
                 ti_lineups = {
                     team: [
                         str(row.get("hero_name") or "")
@@ -5307,12 +5331,14 @@ Render these exact texts clearly and verbatim:
 - top banner: "TI 2026 · {stage_text} · {str(cover_tournament_context.get('series_format') or 'bo3').upper()}"
 - main headline: "{headline}"
 - central small label: "GAME {game_number}"
+{f'- central MVP candidate ribbon over the hero: "MVP候选 · {visual_player.upper()}"' if visual_player else ''}
+{f'- central MVP candidate stats immediately below that ribbon: "KDA {visual_kda}"' if visual_kda else ''}
 - left team: "{left_team.upper()}"
 - right team: "{right_team.upper()}"
 - center series result/status: "{series_text}"
 - bottom center label: "本局击杀"
 - bottom center value: "{kills_text}"
-Place both supplied team logos as large exact logos at left and right. Place all ten official hero portraits from the lineup sheet across the bottom in exact source order, five left and five right, with the kill panel between them. Preserve official logos and hero identities without redesigning, replacing, duplicating or omitting them. No player face, streamer, extra logo, extra hero, extra score, watermark or concept-simulation label.
+The central hero, MVP candidate ribbon and KDA must form one obvious focal unit. "MVP候选" means a KDA-based editorial candidate, not an official tournament award. Place both supplied team logos as large exact logos at left and right. Place all ten official hero portraits from the lineup sheet across the bottom in exact source order, five left and five right, with the kill panel between them. Preserve official logos and hero identities without redesigning, replacing, duplicating or omitting them. No player face, streamer, extra logo, extra hero, extra score, watermark or concept-simulation label.
 """.strip()
         details["ai_cover_ti_exact_content"] = {
             "stage": stage_text, "game_number": game_number,
@@ -5320,6 +5346,8 @@ Place both supplied team logos as large exact logos at left and right. Place all
             "series": series_text, "kills": kills_text,
             "lineups": ti_lineups, "featured_hero": visual_hero,
             "featured_player": visual_player,
+            "featured_kda": visual_kda,
+            "featured_label": "MVP候选" if visual_player else "",
         }
     image_client = get_openai_client(client_config).images
     requested_ratio = (target_width / target_height) if target_height else 0

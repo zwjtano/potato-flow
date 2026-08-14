@@ -32,6 +32,15 @@ def _process_multipart_session_slot(state_db, session_key, result_queue, hold_se
 
 
 class BridgeTests(unittest.TestCase):
+    def test_ti_mvp_candidate_uses_best_kda_ratio(self):
+        candidate = bridge.select_ti_mvp_candidate([
+            {"name": "Xm", "hero_name": "Monkey King", "kills": 8, "deaths": 4, "assists": 10},
+            {"name": "Bach", "hero_name": "Magnus", "kills": 4, "deaths": 3, "assists": 15},
+            {"name": "XinQ", "hero_name": "Dark Willow", "kills": 4, "deaths": 3, "assists": 14},
+        ])
+        self.assertEqual(candidate["name"], "Bach")
+        self.assertEqual(candidate["hero_name"], "Magnus")
+
     def test_real_world_claim_from_danmaku_keeps_source_attribution(self):
         self.assertEqual(
             bridge.qualify_danmaku_only_real_world_claim(
