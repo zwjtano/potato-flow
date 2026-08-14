@@ -5321,6 +5321,24 @@ def generate_recording_cover_with_ai(
     if completed.returncode != 0 or not cover.is_file():
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
+    if (
+        cover_tournament_context.get("mode") == "ti_competition"
+        and isinstance(tournament_match, dict)
+        and tournament_match.get("status") in {"confirmed", "matched_pending_data"}
+    ):
+        from modules.ti_cover_renderer import render_ti_cover  # type: ignore
+
+        template_details = render_ti_cover(
+            cover,
+            cover,
+            app_root=root,
+            tournament_context=cover_tournament_context,
+            tournament_match=tournament_match,
+            headline=headline,
+            hero_cache_dir=resolve_path(".dota2-hero-cache", cfg),
+        )
+        details["ai_cover_ti_template"] = template_details
+        details["ai_cover_ti_template_version"] = 1
     details.update({
         "ai_cover_generated": True,
         "ai_cover_model": image_model,
