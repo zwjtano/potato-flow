@@ -1,5 +1,6 @@
 import importlib.util
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -11,6 +12,38 @@ SPEC.loader.exec_module(verifier)
 
 
 class LiquipediaResultVerifierTests(unittest.TestCase):
+    def test_opendota_fallback_resolves_vg_ti_series_by_recording_overlap(self):
+        pro_matches = [
+            {"match_id": 11, "start_time": 1786672825, "duration": 2828,
+             "radiant_name": "Vici Gaming", "dire_name": "HULIGANI",
+             "league_name": "The International 2026"},
+            {"match_id": 12, "start_time": 1786682065, "duration": 3255,
+             "radiant_name": "Vici Gaming", "dire_name": "HULIGANI",
+             "league_name": "The International 2026"},
+        ]
+        match_payloads = {
+            11: {**pro_matches[0], "radiant_win": False, "radiant_score": 18, "dire_score": 20, "players": []},
+            12: {**pro_matches[1], "radiant_win": True, "radiant_score": 24, "dire_score": 21, "players": []},
+        }
+
+        def fake_fetch(url, **_kwargs):
+            if url == verifier.OPENDOTA_PRO_MATCHES_API:
+                return pro_matches
+            if "/matches/" in url:
+                return match_payloads[int(url.rsplit("/", 1)[-1])]
+            return {}
+
+        with patch.object(verifier, "_fetch_json", side_effect=fake_fetch):
+            result = verifier.discover_opendota_recording_match(
+                recording_start_china="2026-08-14T12:59:00+08:00",
+                recording_duration_seconds=3600,
+                evidence_text="TI 2026 VG 团战翻盘",
+                team_aliases={"Vici Gaming": ["VG"]},
+            )
+        self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(result["opponents"], ["Vici Gaming", "HULIGANI"])
+        self.assertEqual([game["match_id"] for game in result["games"]], [11, 12])
+
     def test_tournament_schedule_extracts_embedded_match_maps(self):
         parsed = verifier.parse_liquipedia_tournament_matches(
             """|M1={{Match

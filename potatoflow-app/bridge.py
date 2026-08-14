@@ -4622,6 +4622,14 @@ def generate_recording_cover_with_ai(
             "active": True,
             "mode": "ti_competition",
         }
+    resolved_opponents = [
+        str(name).strip() for name in (tournament_match or {}).get("opponents", [])
+        if str(name).strip()
+    ] if isinstance(tournament_match, dict) else []
+    if cover_tournament_context.get("mode") == "ti_competition" and len(resolved_opponents) != 2:
+        # A TI-looking title is not enough to invent an opponent. Keep the AI
+        # cover usable, but do not feed it the match template or TEAM 1/2.
+        cover_tournament_context["mode"] = "ti_competition_unresolved"
     competition_cover_instruction = ""
     if cover_tournament_context.get("mode") == "ti_competition":
         competition_cover_instruction = (
@@ -7412,9 +7420,11 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             verified_live_context["game_segments"] = locked_game_segments
 
         tournament_match: dict[str, Any] = {}
+        recording_values = recording_metadata_values(video, cfg)
+        live_title = str(recording_values.get("live_title") or "").strip()
         tournament_probe = build_ti2026_context(
             comments,
-            description,
+            "\n".join(filter(None, (live_title, description))),
             event_date=str(cfg.get("_recording_event_date") or "") or None,
         )
         if tournament_probe.get("active") and str(cfg.get("_recording_event_datetime_china") or ""):
@@ -7448,7 +7458,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 tournament_match = discover_liquipedia_recording_match(
                     recording_start_china=str(cfg.get("_recording_event_datetime_china")),
                     recording_duration_seconds=recording_duration_seconds,
-                    evidence_text="\n".join([description, *(str(getattr(row, "text", "") or "") for row in comments)]),
+                    evidence_text="\n".join([live_title, description, *(str(getattr(row, "text", "") or "") for row in comments)]),
                     team_aliases=team_aliases,
                     timeout=float(cfg.get("liquipedia_timeout_seconds", 20) or 20),
                 )

@@ -12,6 +12,7 @@ from typing import Any
 
 LIQUIPEDIA_API = "https://liquipedia.net/dota2/api.php"
 OPENDOTA_MATCH_API = "https://api.opendota.com/api/matches/{match_id}"
+OPENDOTA_PRO_MATCHES_API = "https://api.opendota.com/api/proMatches"
 HERO_CONSTANTS_URL = (
     "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json"
 )
@@ -20,7 +21,7 @@ CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 TI2026_GROUP_STAGE_PAGE = "The International/2026/Group Stage"
 
 
-def _fetch_json(url: str, *, timeout: float, user_agent: str) -> dict[str, Any]:
+def _fetch_json(url: str, *, timeout: float, user_agent: str) -> Any:
     request = urllib.request.Request(
         url,
         headers={"User-Agent": user_agent, "Accept-Encoding": "gzip"},
@@ -32,8 +33,8 @@ def _fetch_json(url: str, *, timeout: float, user_agent: str) -> dict[str, Any]:
 
             raw = gzip.decompress(raw)
     payload = json.loads(raw.decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("上游接口没有返回 JSON object")
+    if not isinstance(payload, (dict, list)):
+        raise ValueError("上游接口没有返回 JSON object 或 array")
     return payload
 
 
@@ -165,11 +166,26 @@ def discover_liquipedia_recording_match(
     exact = [row for row in candidates if len(row["mentioned_opponents"]) == 2]
     selected_pool = exact or candidates
     if len(selected_pool) != 1:
+        # Liquipedia's Swiss-stage schedule is updated in-place and can stop
+        # exposing an already-played round in the current page wikitext. Use
+        # OpenDota's parsed pro-match feed as the post-recording fallback. It
+        # still requires the TI league, recording-time overlap and local team
+        # evidence, so an unrelated Dota match cannot be selected silently.
+        fallback = discover_opendota_recording_match(
+            recording_start_china=recording_start_china,
+            recording_duration_seconds=recording_duration_seconds,
+            evidence_text=evidence_text,
+            team_aliases=aliases,
+            timeout=timeout,
+            user_agent=user_agent,
+        )
+        if fallback.get("status") == "confirmed":
+            return fallback
         return {
             "status": "not_found" if not selected_pool else "ambiguous",
-            "source": "liquipedia_mediawiki",
+            "source": "liquipedia_mediawiki+opendota",
             "candidate_count": len(selected_pool),
-            "reason": "没有唯一的时间与弹幕队伍交集",
+            "reason": str(fallback.get("reason") or "没有唯一的时间与弹幕队伍交集"),
         }
     selected = selected_pool[0]
     match_payloads: dict[int, dict[str, Any]] = {}
@@ -213,6 +229,87 @@ def discover_liquipedia_recording_match(
         "matched_by": ["event", "recording_time", "local_team_evidence"],
         "match_data_errors": match_errors,
         "liquipedia_maps": selected["maps"],
+    })
+    return result
+
+
+def discover_opendota_recording_match(
+    *, recording_start_china: str, recording_duration_seconds: float,
+    evidence_text: str, team_aliases: dict[str, list[str]] | None = None,
+    timeout: float = 20, user_agent: str = DEFAULT_USER_AGENT,
+) -> dict[str, Any]:
+    """Resolve a TI series from recent parsed pro matches when the schedule moved."""
+    aliases = team_aliases or {}
+    payload = _fetch_json(OPENDOTA_PRO_MATCHES_API, timeout=timeout, user_agent=user_agent)
+    rows = payload if isinstance(payload, list) else []
+    recording_start = datetime.fromisoformat(str(recording_start_china).replace("Z", "+00:00"))
+    if recording_start.tzinfo is None:
+        recording_start = recording_start.replace(tzinfo=CHINA_TIMEZONE)
+    recording_start = recording_start.astimezone(CHINA_TIMEZONE)
+    recording_end = recording_start + timedelta(seconds=max(0.0, float(recording_duration_seconds)))
+
+    overlapping_pairs: dict[tuple[str, str], tuple[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or "international 2026" not in str(row.get("league_name") or "").casefold():
+            continue
+        radiant = str(row.get("radiant_name") or "").strip()
+        dire = str(row.get("dire_name") or "").strip()
+        if not radiant or not dire or not any(
+            _team_in_text(team, evidence_text, aliases) for team in (radiant, dire)
+        ):
+            continue
+        started = datetime.fromtimestamp(float(row.get("start_time") or 0), tz=timezone.utc).astimezone(CHINA_TIMEZONE)
+        ended = started + timedelta(seconds=float(row.get("duration") or 0))
+        if started <= recording_end and ended >= recording_start - timedelta(minutes=15):
+            key = tuple(sorted((_compact_team(radiant), _compact_team(dire))))
+            overlapping_pairs[key] = (radiant, dire)
+    if len(overlapping_pairs) != 1:
+        return {
+            "status": "not_found" if not overlapping_pairs else "ambiguous",
+            "source": "opendota_pro_matches",
+            "candidate_count": len(overlapping_pairs),
+            "reason": "OpenDota 没有唯一的 TI 时间与本地队伍证据交集",
+        }
+
+    pair_key, opponents = next(iter(overlapping_pairs.items()))
+    series_rows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        actual = tuple(sorted((
+            _compact_team(row.get("radiant_name")), _compact_team(row.get("dire_name")),
+        )))
+        if actual != pair_key:
+            continue
+        started = datetime.fromtimestamp(float(row.get("start_time") or 0), tz=timezone.utc).astimezone(CHINA_TIMEZONE)
+        if recording_start - timedelta(hours=4) <= started <= recording_end:
+            series_rows.append(row)
+    series_rows.sort(key=lambda row: float(row.get("start_time") or 0))
+    match_payloads = {
+        int(row["match_id"]): _fetch_json(
+            OPENDOTA_MATCH_API.format(match_id=int(row["match_id"])),
+            timeout=timeout, user_agent=user_agent,
+        )
+        for row in series_rows if int(row.get("match_id") or 0)
+    }
+    try:
+        hero_constants = _fetch_json(HERO_CONSTANTS_URL, timeout=timeout, user_agent=user_agent)
+    except Exception:
+        hero_constants = {}
+    page = {
+        "opponents": list(opponents),
+        "maps": [
+            {"game_number": index, "match_id": int(row["match_id"]), "reversed": False}
+            for index, row in enumerate(series_rows, start=1)
+            if int(row.get("match_id") or 0) in match_payloads
+        ],
+    }
+    result = build_verified_match_result(page, match_payloads, hero_constants)
+    result.update({
+        "source": "opendota_pro_matches",
+        "matched_by": ["event", "recording_time", "local_team_evidence"],
+        "source_url": OPENDOTA_PRO_MATCHES_API,
+        "candidate_count": 1,
     })
     return result
 
