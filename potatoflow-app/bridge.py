@@ -4630,6 +4630,10 @@ def generate_recording_cover_with_ai(
     if isinstance(tournament_match, dict) and tournament_match.get("status") in {"confirmed", "matched_pending_data"}:
         opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)]
         games = [game for game in tournament_match.get("games", []) if isinstance(game, dict)]
+        liquipedia_maps = [
+            game for game in tournament_match.get("liquipedia_maps", [])
+            if isinstance(game, dict)
+        ]
         relevant_games = [
             game for game in games
             if str(game.get("winner") or "").strip()
@@ -4661,9 +4665,34 @@ def generate_recording_cover_with_ai(
                   "双方总击杀置于两套阵容之间；突出选手可附 KDA。不得把观战主播画成参赛选手。"
             )
         elif len(opponents) == 2:
+            picked_map = next(
+                (
+                    game for game in reversed(liquipedia_maps)
+                    if game.get("team1_heroes") or game.get("team2_heroes")
+                ),
+                {},
+            )
+            team1_heroes = [
+                str(hero).strip() for hero in picked_map.get("team1_heroes", [])
+                if str(hero).strip()
+            ]
+            team2_heroes = [
+                str(hero).strip() for hero in picked_map.get("team2_heroes", [])
+                if str(hero).strip()
+            ]
+            pending_lineup_instruction = (
+                f"Liquipedia 已确认本局 BP：{opponents[0]}：{', '.join(team1_heroes)}；"
+                f"{opponents[1]}：{', '.join(team2_heroes)}。"
+                "封面最底部必须左右各排五名英雄，顺序与这两份 BP 一致；"
+                if len(team1_heroes) == 5 and len(team2_heroes) == 5
+                else "当前没有取得完整的双方五英雄 BP，不得自行补齐英雄。"
+            )
             verified_match_instruction = (
                 f"Liquipedia 已唯一匹配本段赛事为 {opponents[0]} 对阵 {opponents[1]}，"
-                "但当前小局尚未被 OpenDota 收录。封面必须使用 TI 赛事转播构图和双方队名；"
+                "赛事阶段为 TI 2026 小组赛，赛制 BO3。"
+                + pending_lineup_instruction
+                + "封面必须使用固定赛事转播构图：顶部赛事阶段，中部左右两队队名和 Logo，"
+                "底部双方英雄阵容；不得出现观战主播真人或主播姓名。"
                 "不得填写未核验的比分、击杀、KDA、胜者、晋级或淘汰结论。"
             )
     card_hand_instruction = recording_cover_card_hand_instruction(headline)
@@ -4749,6 +4778,35 @@ def generate_recording_cover_with_ai(
         reference_paths.append(path)
         reference_roles.append(role)
         return len(reference_paths)
+    if cover_tournament_context.get("mode") == "ti_competition":
+        # A TI match cover is about the competing teams, not the watch-party
+        # streamer. Supplying the streamer's portrait makes image-edit models
+        # preserve that face even when the prompt says not to show it.
+        reference_paths.clear()
+        reference_roles.clear()
+        reference_kind = ""
+        reference_instruction = (
+            "这是职业比赛封面。禁止出现观战主播的真人、头像、姓名或人物底稿；"
+            "画面主体只能是已核验的参赛双方、队标和英雄阵容。"
+        )
+        try:
+            from ti2026_context import TI2026_TEAMS  # type: ignore
+
+            team_by_name = {str(team["name"]): team for team in TI2026_TEAMS}
+            for opponent in (
+                tournament_match.get("opponents", [])
+                if isinstance(tournament_match, dict)
+                else []
+            ):
+                team = team_by_name.get(str(opponent))
+                logo_path = root / str((team or {}).get("logo_path") or "")
+                if team and logo_path.is_file():
+                    add_cover_reference(
+                        logo_path,
+                        f"参赛队伍 {opponent} 的官方队标；只可用作该队 Logo",
+                    )
+        except Exception as exc:
+            details["ai_cover_tournament_reference_error"] = str(exc)
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
     elif reference_kind == "custom":
@@ -4767,7 +4825,11 @@ def generate_recording_cover_with_ai(
     # submission title may add a guest reference. Timeline descriptions often
     # mention many players incidentally; attaching those avatars lets a clearer
     # guest photo override a stylized current-room reference.
-    guest_candidates = recording_cover_guest_candidates(streamer, title)
+    guest_candidates = (
+        []
+        if cover_tournament_context.get("mode") == "ti_competition"
+        else recording_cover_guest_candidates(streamer, title)
+    )
     guest_references: list[dict[str, str]] = []
     guest_reference_errors: list[dict[str, str]] = []
     for guest_candidate in guest_candidates:
