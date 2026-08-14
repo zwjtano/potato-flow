@@ -124,6 +124,32 @@ DOTA2_HERO_ALIASES: dict[str, str] = {
     "老奶奶": "电炎绝手",
 }
 
+# Liquipedia's compact draft template uses short codes rather than Valve's
+# internal hero slugs. Keep this mapping explicit so lineup covers never ask an
+# image model to guess what an abbreviation means.
+LIQUIPEDIA_HERO_ALIASES: dict[str, str] = {
+    "cw": "rattletrap",
+    "ww": "winter_wyvern",
+    "ul": "abyssal_underlord",
+    "esp": "earth_spirit",
+    "wr": "windrunner",
+    "vip": "viper",
+    "io": "wisp",
+}
+
+LIQUIPEDIA_HERO_METADATA: dict[str, tuple[str, str, str]] = {
+    "lina": ("莉娜", "Lina", "lina"),
+    "cw": ("发条技师", "Clockwerk", "rattletrap"),
+    "ww": ("寒冬飞龙", "Winter Wyvern", "winter_wyvern"),
+    "ul": ("孽主", "Underlord", "abyssal_underlord"),
+    "kez": ("凯斯", "Kez", "kez"),
+    "esp": ("大地之灵", "Earth Spirit", "earth_spirit"),
+    "tusk": ("巨牙海民", "Tusk", "tusk"),
+    "wr": ("风行者", "Windranger", "windrunner"),
+    "vip": ("冥界亚龙", "Viper", "viper"),
+    "io": ("艾欧", "Io", "wisp"),
+}
+
 
 @dataclass(frozen=True)
 class Dota2Hero:
@@ -179,11 +205,71 @@ def load_official_dota2_heroes() -> tuple[Dota2Hero, ...]:
 
 def find_official_dota2_hero(name: str) -> Dota2Hero | None:
     normalized = str(name or "").strip().casefold()
+    fixed = LIQUIPEDIA_HERO_METADATA.get(normalized)
+    if fixed:
+        return Dota2Hero(*fixed)
+    normalized = LIQUIPEDIA_HERO_ALIASES.get(normalized, normalized)
     normalized = DOTA2_HERO_ALIASES.get(normalized, normalized).casefold()
     for hero in load_official_dota2_heroes():
         if normalized in {hero.chinese_name.casefold(), hero.english_name.casefold(), hero.icon_slug.casefold()}:
             return hero
     return None
+
+
+def build_dota2_lineup_reference(
+    lineups: dict[str, list[str]],
+    cache_dir: Path,
+    output_path: Path,
+) -> tuple[Path | None, dict[str, list[dict[str, str]]], list[str]]:
+    """Build one deterministic two-team sheet from Valve hero portraits."""
+    resolved: dict[str, list[dict[str, str]]] = {}
+    errors: list[str] = []
+    rows: list[tuple[str, list[tuple[Dota2Hero, Path]]]] = []
+    for team, names in list(lineups.items())[:2]:
+        heroes: list[tuple[Dota2Hero, Path]] = []
+        resolved[team] = []
+        for name in names[:5]:
+            hero = find_official_dota2_hero(name)
+            if hero is None:
+                errors.append(f"{team}: Valve 英雄数据中未找到 {name}")
+                continue
+            try:
+                portrait = download_dota2_hero_image(hero, cache_dir)
+            except (OSError, ValueError, urllib.error.URLError, UnidentifiedImageError) as exc:
+                errors.append(f"{team}: {hero.english_name}: {exc}")
+                continue
+            heroes.append((hero, portrait))
+            resolved[team].append({
+                "source": str(name),
+                "chinese_name": hero.chinese_name,
+                "english_name": hero.english_name,
+                "icon_slug": hero.icon_slug,
+            })
+        rows.append((team, heroes))
+    if len(rows) != 2 or any(len(heroes) != 5 for _, heroes in rows):
+        return None, resolved, errors or ["双方阵容不是完整的 5+5 英雄"]
+    cell_width, cell_height = 256, 176
+    sheet = Image.new("RGB", (cell_width * 5, cell_height * 2 + 72), "#070b16")
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default()
+    for row_index, (team, heroes) in enumerate(rows):
+        top = 36 + row_index * cell_height
+        draw.text((12, 12 + row_index * cell_height), f"TEAM {row_index + 1}: {team}", fill="white", font=font)
+        for column, (hero, portrait_path) in enumerate(heroes):
+            with Image.open(portrait_path) as source:
+                portrait = source.convert("RGB")
+                portrait.thumbnail((cell_width - 8, cell_height - 28), Image.Resampling.LANCZOS)
+                left = column * cell_width + (cell_width - portrait.width) // 2
+                sheet.paste(portrait, (left, top))
+            draw.text(
+                (column * cell_width + 8, top + cell_height - 24),
+                f"{column + 1}. {hero.english_name}",
+                fill="white",
+                font=font,
+            )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(output_path, format="PNG")
+    return output_path, resolved, errors
 
 
 def download_dota2_hero_image(hero: Dota2Hero, cache_dir: Path) -> Path:

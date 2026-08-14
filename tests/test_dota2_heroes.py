@@ -48,6 +48,36 @@ class Dota2HeroesTests(unittest.TestCase):
         self.assertEqual(by_slug["primal_beast"].primary_attribute, "strength")
         self.assertFalse(by_slug["primal_beast"].is_intelligence)
 
+    def test_liquipedia_draft_aliases_resolve_to_valve_heroes(self):
+        heroes = tuple(
+            dota2_heroes.Dota2Hero(slug, slug, slug)
+            for slug in (
+                "rattletrap",
+                "winter_wyvern",
+                "abyssal_underlord",
+                "earth_spirit",
+                "windrunner",
+                "viper",
+                "wisp",
+            )
+        )
+        with patch.object(dota2_heroes, "load_official_dota2_heroes", return_value=heroes):
+            expected = {
+                "cw": "rattletrap",
+                "ww": "winter_wyvern",
+                "ul": "abyssal_underlord",
+                "esp": "earth_spirit",
+                "wr": "windrunner",
+                "vip": "viper",
+                "io": "wisp",
+            }
+            for alias, slug in expected.items():
+                with self.subTest(alias=alias):
+                    self.assertEqual(
+                        dota2_heroes.find_official_dota2_hero(alias).icon_slug,
+                        slug,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

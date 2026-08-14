@@ -42,7 +42,11 @@ from dota2_items import (
     dota2_item_prompt_instruction,
     match_dota2_items,
 )
-from dota2_heroes import build_dota2_hero_reference, find_official_dota2_hero
+from dota2_heroes import (
+    build_dota2_hero_reference,
+    build_dota2_lineup_reference,
+    find_official_dota2_hero,
+)
 from runtime_environment import configure_linux_ca_environment
 from ti2026_context import (
     build_ti2026_context,
@@ -4627,6 +4631,7 @@ def generate_recording_cover_with_ai(
             "横扫、夺冠或不朽盾归属。"
         )
     verified_match_instruction = ""
+    pending_lineups: dict[str, list[str]] = {}
     if isinstance(tournament_match, dict) and tournament_match.get("status") in {"confirmed", "matched_pending_data"}:
         opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)]
         games = [game for game in tournament_match.get("games", []) if isinstance(game, dict)]
@@ -4680,6 +4685,11 @@ def generate_recording_cover_with_ai(
                 str(hero).strip() for hero in picked_map.get("team2_heroes", [])
                 if str(hero).strip()
             ]
+            if len(team1_heroes) == 5 and len(team2_heroes) == 5:
+                pending_lineups = {
+                    opponents[0]: team1_heroes,
+                    opponents[1]: team2_heroes,
+                }
             pending_lineup_instruction = (
                 f"Liquipedia 已确认本局 BP：{opponents[0]}：{', '.join(team1_heroes)}；"
                 f"{opponents[1]}：{', '.join(team2_heroes)}。"
@@ -4807,6 +4817,29 @@ def generate_recording_cover_with_ai(
                     )
         except Exception as exc:
             details["ai_cover_tournament_reference_error"] = str(exc)
+        if pending_lineups:
+            lineup_reference, resolved_lineups, lineup_errors = (
+                build_dota2_lineup_reference(
+                    pending_lineups,
+                    Path("/data/cache/dota2/heroes"),
+                    work_dir / "dota2_tournament_lineups.png",
+                )
+            )
+            details["ai_cover_tournament_lineups"] = resolved_lineups
+            details["ai_cover_tournament_lineup_errors"] = lineup_errors
+            if lineup_reference is not None:
+                lineup_index = add_cover_reference(
+                    lineup_reference,
+                    (
+                        "Valve 官方双方英雄阵容表；第一行从左到右属于 Team 1，"
+                        "第二行从左到右属于 Team 2，必须逐格保持英雄身份与顺序"
+                    ),
+                )
+                reference_instruction += (
+                    f" Image {lineup_index} 是双方完整英雄阵容的唯一外观依据。"
+                    "封面底部必须直接按该图两行五列的身份和顺序排布；"
+                    "禁止改画、替换、合并或凭缩写猜测任何英雄。"
+                )
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
     elif reference_kind == "custom":
@@ -5016,6 +5049,12 @@ def generate_recording_cover_with_ai(
         )
         dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
         details["ai_cover_dota2_source"] = "text_match"
+    if cover_tournament_context.get("mode") == "ti_competition":
+        dota2_item_matches = []
+        dota2_item_instruction = (
+            "TI 比赛封面禁止展示装备、物品栏、神符图标或其他游戏 UI；"
+            "底部区域只允许双方五名英雄头像。"
+        )
     if dota2_item_matches:
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
