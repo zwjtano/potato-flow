@@ -4799,6 +4799,16 @@ def generate_recording_cover_with_ai(
             "这是职业比赛封面。禁止出现观战主播的真人、头像、姓名或人物底稿；"
             "画面主体只能是已核验的参赛双方、队标和英雄阵容。"
         )
+        layout_reference = root / "static/img/ti2026/cover-layout-reference.png"
+        if layout_reference.is_file():
+            add_cover_reference(
+                layout_reference,
+                (
+                    "TI 封面唯一构图与质感母版；只参考红绿对抗场景、中央英雄尺度、"
+                    "金色转播包装和信息层级。图中原有文字、队标、英雄、比分与模拟"
+                    "水印均为占位内容，必须移除且不得沿用"
+                ),
+            )
         try:
             from ti2026_context import TI2026_TEAMS  # type: ignore
 
@@ -4817,10 +4827,24 @@ def generate_recording_cover_with_ai(
                     )
         except Exception as exc:
             details["ai_cover_tournament_reference_error"] = str(exc)
-        if pending_lineups:
+        cover_lineups = dict(pending_lineups)
+        if not cover_lineups and isinstance(tournament_match, dict):
+            verified_games = [row for row in tournament_match.get("games", []) if isinstance(row, dict)]
+            verified_opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)][:2]
+            if verified_games and len(verified_opponents) == 2:
+                verified_players = [row for row in verified_games[-1].get("players", []) if isinstance(row, dict)]
+                cover_lineups = {
+                    team: [
+                        str(row.get("hero_name") or "")
+                        for row in verified_players
+                        if str(row.get("team") or "") == team and row.get("hero_name")
+                    ]
+                    for team in verified_opponents
+                }
+        if cover_lineups:
             lineup_reference, resolved_lineups, lineup_errors = (
                 build_dota2_lineup_reference(
-                    pending_lineups,
+                    cover_lineups,
                     Path("/data/cache/dota2/heroes"),
                     work_dir / "dota2_tournament_lineups.png",
                 )
@@ -5227,6 +5251,68 @@ def generate_recording_cover_with_ai(
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
 本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
 """.strip()
+    if cover_tournament_context.get("mode") == "ti_competition":
+        visual_hero = ""
+        visual_player = ""
+        ti_opponents = [str(name) for name in (tournament_match or {}).get("opponents", []) if str(name)][:2]
+        ti_game: dict[str, Any] = {}
+        ti_lineups: dict[str, list[str]] = dict(pending_lineups)
+        if isinstance(tournament_match, dict):
+            visual_games = [row for row in tournament_match.get("games", []) if isinstance(row, dict)]
+            if visual_games:
+                ti_game = visual_games[-1]
+                candidates = [row for row in visual_games[-1].get("performance_candidates", []) if isinstance(row, dict)]
+                if candidates:
+                    visual_hero = str(candidates[0].get("hero_name") or "")
+                    visual_player = str(candidates[0].get("name") or "")
+                ti_lineups = {
+                    team: [
+                        str(row.get("hero_name") or "")
+                        for row in ti_game.get("players", [])
+                        if str(row.get("team") or "") == team and row.get("hero_name")
+                    ]
+                    for team in ti_opponents
+                }
+            if not visual_hero and pending_lineups:
+                visual_hero = str(next(iter(next(iter(pending_lineups.values()), [])), ""))
+        confirmed = tournament_match.get("status") == "confirmed" and bool(ti_game)
+        game_number = int(ti_game.get("game_number") or 1)
+        series_score = tournament_match.get("series_score") or {}
+        series_text = (
+            f"{int(series_score.get(ti_opponents[0], 0))}:{int(series_score.get(ti_opponents[1], 0))}"
+            if confirmed and len(ti_opponents) == 2 else "进行中"
+        )
+        kills_text = "待确认"
+        if confirmed and len(ti_opponents) == 2:
+            def team_kills(team: str) -> int:
+                return int(ti_game.get("radiant_score") or 0) if ti_game.get("radiant") == team else int(ti_game.get("dire_score") or 0)
+            kills_text = f"{team_kills(ti_opponents[0])}:{team_kills(ti_opponents[1])}"
+        stage_text = "总决赛" if cover_tournament_context.get("phase") == "grand_final" else (
+            "主赛事" if cover_tournament_context.get("phase") == "main_event" else "瑞士轮"
+        )
+        left_team = ti_opponents[0] if len(ti_opponents) == 2 else "TEAM 1"
+        right_team = ti_opponents[1] if len(ti_opponents) == 2 else "TEAM 2"
+        prompt = f"""
+Produce one finished {aspect_label} premium TI 2026 Dota 2 broadcast cover, visually matching Image 1 in cinematic quality, hierarchy and black-gold/red-green tournament styling. Image 1 is the composition/style reference only. The next two images are the exact official logos for {left_team} and {right_team}. The final image is the exact official 5+5 hero lineup sheet: preserve every hero identity and order exactly; first row belongs to {left_team}, second row belongs to {right_team}.
+Create a full unified poster, not a flat UI or visibly pasted collage. Central key art: authentic game-accurate {visual_hero or 'Dota 2 hero'}, large three-quarter-body, casting signature magic, integrated into a Shanghai night skyline with a circular arcane portal; red energy on the left and emerald energy on the right.
+Render these exact texts clearly and verbatim:
+- top banner: "TI 2026 · {stage_text} · {str(cover_tournament_context.get('series_format') or 'bo3').upper()}"
+- main headline: "{headline}"
+- central small label: "GAME {game_number}"
+- left team: "{left_team.upper()}"
+- right team: "{right_team.upper()}"
+- center series result/status: "{series_text}"
+- bottom center label: "本局击杀"
+- bottom center value: "{kills_text}"
+Place both supplied team logos as large exact logos at left and right. Place all ten official hero portraits from the lineup sheet across the bottom in exact source order, five left and five right, with the kill panel between them. Preserve official logos and hero identities without redesigning, replacing, duplicating or omitting them. No player face, streamer, extra logo, extra hero, extra score, watermark or concept-simulation label.
+""".strip()
+        details["ai_cover_ti_exact_content"] = {
+            "stage": stage_text, "game_number": game_number,
+            "left_team": left_team, "right_team": right_team,
+            "series": series_text, "kills": kills_text,
+            "lineups": ti_lineups, "featured_hero": visual_hero,
+            "featured_player": visual_player,
+        }
     image_client = get_openai_client(client_config).images
     requested_ratio = (target_width / target_height) if target_height else 0
     if abs(requested_ratio - (16 / 9)) < 0.02:
@@ -5242,7 +5328,24 @@ def generate_recording_cover_with_ai(
     )
     with image_generation_queue(cfg) as queue_wait_seconds:
         details["ai_cover_queue_wait_seconds"] = round(queue_wait_seconds, 3)
-        if reference_paths:
+        if cover_tournament_context.get("mode") == "ti_competition":
+            with ExitStack() as stack:
+                reference_handles = [stack.enter_context(path.open("rb")) for path in reference_paths]
+                response = image_client.edit(
+                    model=image_model,
+                    image=reference_handles,
+                    prompt=prompt,
+                    size=image_size,
+                )
+            background_endpoint = "images.edit.full_ai_composition"
+            details.update({
+                "ai_cover_reference_used": True,
+                "ai_cover_reference_paths": [str(path) for path in reference_paths],
+                "ai_cover_reference_roles": list(reference_roles),
+                "ai_cover_reference_count": len(reference_paths),
+                "ai_cover_background_endpoint": background_endpoint,
+            })
+        elif reference_paths:
             with ExitStack() as stack:
                 reference_handles = [
                     stack.enter_context(path.open("rb"))
@@ -5321,24 +5424,9 @@ def generate_recording_cover_with_ai(
     if completed.returncode != 0 or not cover.is_file():
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
-    if (
-        cover_tournament_context.get("mode") == "ti_competition"
-        and isinstance(tournament_match, dict)
-        and tournament_match.get("status") in {"confirmed", "matched_pending_data"}
-    ):
-        from modules.ti_cover_renderer import render_ti_cover  # type: ignore
-
-        template_details = render_ti_cover(
-            cover,
-            cover,
-            app_root=root,
-            tournament_context=cover_tournament_context,
-            tournament_match=tournament_match,
-            headline=headline,
-            hero_cache_dir=resolve_path(".dota2-hero-cache", cfg),
-        )
-        details["ai_cover_ti_template"] = template_details
-        details["ai_cover_ti_template_version"] = 1
+    if cover_tournament_context.get("mode") == "ti_competition":
+        details["ai_cover_ti_composition"] = "full_ai"
+        details["ai_cover_ti_programmatic_overlay"] = False
     details.update({
         "ai_cover_generated": True,
         "ai_cover_model": image_model,
