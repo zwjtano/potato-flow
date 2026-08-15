@@ -32,6 +32,17 @@ def _process_multipart_session_slot(state_db, session_key, result_queue, hold_se
 
 
 class BridgeTests(unittest.TestCase):
+    def test_live_featured_player_requires_title_identity(self):
+        players = [
+            {"name": "Nisha", "hero_name": "Invoker"},
+            {"name": "tOfu", "hero_name": "Treant Protector"},
+        ]
+        self.assertEqual(
+            bridge.select_ti_live_featured_player(players, "Nisha卡尔关键团")["name"],
+            "Nisha",
+        )
+        self.assertEqual(bridge.select_ti_live_featured_player(players, "TI实时赛况"), {})
+
     def test_ti_mvp_candidate_uses_best_kda_ratio(self):
         candidate = bridge.select_ti_mvp_candidate([
             {"name": "Xm", "hero_name": "Monkey King", "kills": 8, "deaths": 4, "assists": 10},

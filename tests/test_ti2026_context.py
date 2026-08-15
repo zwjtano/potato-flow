@@ -75,6 +75,13 @@ class Ti2026ContextTests(unittest.TestCase):
         self.assertEqual(ti.ti2026_team_for_player("上帝之子"), "LGD Gaming")
         self.assertEqual(ti.ti2026_team_for_player("TaiLung"), "")
 
+    def test_player_portrait_alias_resolves_original_roster_slot(self):
+        slot = ti.ti2026_player_portrait_slot("Noone", "PARIVISION")
+        self.assertIsNotNone(slot)
+        self.assertEqual(slot["status"], "awaiting_official_asset")
+        self.assertIs(slot, ti.TI2026_TEAMS[8]["player_portraits"]["No[o]ne-"])
+        self.assertIsNone(ti.ti2026_player_portrait_slot("Noone", "Team Liquid"))
+
     def test_every_ti_team_has_exactly_five_current_players(self):
         self.assertTrue(all(len(team["players"]) == 5 for team in ti.TI2026_TEAMS))
         roster = {
