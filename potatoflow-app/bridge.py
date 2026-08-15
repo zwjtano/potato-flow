@@ -4935,6 +4935,7 @@ def generate_recording_cover_with_ai(
                     "team_representative": "由战队代表提供的官方定妆照",
                     "official_team_website": "当前战队官网选手图",
                     "official_event_media": "官方赛事媒体库选手照",
+                    "official_event_media_legacy": "旧届官方赛事真人照",
                 }.get(portrait.source_kind, "来源已核验的官方选手照")
                 player_reference_index = add_cover_reference(
                     Path(portrait.path),

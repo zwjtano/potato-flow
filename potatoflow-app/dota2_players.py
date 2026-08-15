@@ -10,6 +10,7 @@ AI faces and old-team portraits are deliberately rejected.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import re
 import shutil
@@ -70,12 +71,145 @@ VERIFIED_TI2026_PLAYER_PORTRAITS: dict[str, dict[str, str]] = {
         "source": "Liquipedia Commons permission record",
         "source_kind": "team_representative",
     },
+    "Erika": {
+        "team_name": "Team Resilience", "image_name": "YSR-04E_2026_Team_Resilience.jpg",
+        "url": "https://liquipedia.net/commons/images/d/d7/YSR-04E_2026_Team_Resilience.jpg",
+        "source_page": "https://liquipedia.net/commons/File:YSR-04E_2026_Team_Resilience.jpg",
+        "note": "Provided by Galahad, manager of Team Resilience",
+        "source": "Liquipedia Commons permission record", "source_kind": "team_representative",
+    },
+    "Echozz": {
+        "team_name": "Team Resilience", "image_name": "Echo_2026_Team_Resilience.jpg",
+        "url": "https://liquipedia.net/commons/images/7/71/Echo_2026_Team_Resilience.jpg",
+        "source_page": "https://liquipedia.net/commons/File:Echo_2026_Team_Resilience.jpg",
+        "note": "Provided by Galahad, manager of Team Resilience",
+        "source": "Liquipedia Commons permission record", "source_kind": "team_representative",
+    },
+    "niu": {
+        "team_name": "Team Resilience", "image_name": "Niu_2026_Team_Resilience.jpg",
+        "url": "https://liquipedia.net/commons/images/d/da/Niu_2026_Team_Resilience.jpg",
+        "source_page": "https://liquipedia.net/commons/File:Niu_2026_Team_Resilience.jpg",
+        "note": "Provided by Galahad, manager of Team Resilience",
+        "source": "Liquipedia Commons permission record", "source_kind": "team_representative",
+    },
+    "planet": {
+        "team_name": "Team Resilience", "image_name": "Planet_2026_Team_Resilience.jpg",
+        "url": "https://liquipedia.net/commons/images/d/d9/Planet_2026_Team_Resilience.jpg",
+        "source_page": "https://liquipedia.net/commons/File:Planet_2026_Team_Resilience.jpg",
+        "note": "Provided by Galahad, manager of Team Resilience",
+        "source": "Liquipedia Commons permission record", "source_kind": "team_representative",
+    },
+    "zzq": {
+        "team_name": "Team Resilience", "image_name": "Zzq_2026_Team_Resilience.jpg",
+        "url": "https://liquipedia.net/commons/images/5/58/Zzq_2026_Team_Resilience.jpg",
+        "source_page": "https://liquipedia.net/commons/File:Zzq_2026_Team_Resilience.jpg",
+        "note": "Provided by Galahad, manager of Team Resilience",
+        "source": "Liquipedia Commons permission record", "source_kind": "team_representative",
+    },
+    "sayuw": {
+        "team_name": "HULIGANI", "image_name": "Sayuw_2026_L1GA_TEAM.webp",
+        "url": "https://liquipedia.net/commons/images/6/60/Sayuw_2026_L1GA_TEAM.webp",
+        "source_page": "https://liquipedia.net/commons/File:Sayuw_2026_L1GA_TEAM.webp",
+        "note": "Provided by Vladislav, operations director for L1GA TEAM",
+        "source": "Liquipedia Commons permission record", "source_kind": "team_representative",
+    },
+    "Topson": {
+        "team_name": "LGD Gaming", "image_name": "Topson_Riyadh_Masters_2024.jpg",
+        "url": "https://liquipedia.net/commons/images/e/e1/Topson_Riyadh_Masters_2024.jpg",
+        "source_page": "https://liquipedia.net/commons/File:Topson_Riyadh_Masters_2024.jpg",
+        "note": "Official EWC event photo used as a temporary identity fallback after the late LGD transfer",
+        "source": "Esports World Cup Flickr permission record", "source_kind": "official_event_media_legacy",
+    },
+}
+
+
+# The EWC 2026 media lobby supplied current-event photos for these players.
+# Store the verified file identities locally so production cover jobs never
+# depend on dozens of live MediaWiki lookups (which quickly hit HTTP 429).
+EWC2026_PLAYER_FILES: dict[str, str] = {
+    "Nightfall": "Nightfall_Esports_World_Cup_2026_Dota_2.jpg",
+    "Mikoto": "Mikoto_Esports_World_Cup_2026_Dota_2.jpg",
+    "Ws": "Ws_Esports_World_Cup_2026_Dota_2.jpg",
+    "Mira": "Mira_Esports_World_Cup_2026_Dota_2.jpg",
+    "kaori": "Kaori_Esports_World_Cup_2026_Dota_2.jpg",
+    "Kiritych~": "Kiritych_Esports_World_Cup_2026_Dota_2.jpg",
+    "gpk~": "Gpk_Esports_World_Cup_2026_Dota_2.jpg",
+    "MieRo`": "MieRo_Esports_World_Cup_2026_Dota_2.jpg",
+    "Save-": "Save-_Esports_World_Cup_2026_Dota_2.jpg",
+    "Kataomi": "Kataomi_Esports_World_Cup_2026_Dota_2.jpg",
+    "skiter": "Skiter_Esports_World_Cup_2026_Dota_2.jpg",
+    "Malr1ne": "Malr1ne_Esports_World_Cup_2026_Dota_2.jpg",
+    "ATF": "ATF_Esports_World_Cup_2026_Dota_2.jpg",
+    "Cr1t-": "Cr1t-_Esports_World_Cup_2026_Dota_2.jpg",
+    "Sneyking": "Sneyking_Esports_World_Cup_2026_Dota_2.jpg",
+    "m1CKe": "MiCKe_Esports_World_Cup_2026_Dota_2.jpg",
+    "Nisha": "Nisha_Esports_World_Cup_2026_Dota_2.jpg",
+    "Ace": "Ace_Esports_World_Cup_2026_Dota_2.jpg",
+    "Boxi": "Boxi_Esports_World_Cup_2026_Dota_2.jpg",
+    "tOfu": "TOfu_Esports_World_Cup_2026_Dota_2.jpg",
+    "Pure": "Pure_Esports_World_Cup_2026_Dota_2.jpg",
+    "bzm": "Bzm_Esports_World_Cup_2026_Dota_2.jpg",
+    "33": "33_Esports_World_Cup_2026_Dota_2.jpg",
+    "Ari": "Ari_Esports_World_Cup_2026_Dota_2.jpg",
+    "Whitemon": "Whitemon_Esports_World_Cup_2026_Dota_2.jpg",
+    "Ame": "Ame_Esports_World_Cup_2026_Dota_2.jpg",
+    "NothingToSay": "NothingToSay_Esports_World_Cup_2026_Dota_2.jpg",
+    "Xxs": "Xxs_Esports_World_Cup_2026_Dota_2.jpg",
+    "fy": "Fy_Esports_World_Cup_2026_Dota_2.jpg",
+    "xNova": "XNova_Esports_World_Cup_2026_Dota_2.jpg",
+    "watson": "Watson_Esports_World_Cup_2026_Dota_2.jpg",
+    "CHIRA_JUNIOR": "CHIRA_JUNIOR_Esports_World_Cup_2026_Dota_2.jpg",
+    "DM": "DM_Esports_World_Cup_2026_Dota_2.jpg",
+    "Saksa": "Saksa_Esports_World_Cup_2026_Dota_2.jpg",
+    "Malady": "Malady_Esports_World_Cup_2026_Dota_2.jpg",
+    "Yatoro": "Yatoro_Esports_World_Cup_2026_Dota_2.jpg",
+    "Larl": "Larl_Esports_World_Cup_2026_Dota_2.jpg",
+    "Collapse": "Collapse_Esports_World_Cup_2026_Dota_2.jpg",
+    "not me": "Not_me_Esports_World_Cup_2026_Dota_2.jpg",
+    "rue": "Rue_Esports_World_Cup_2026_Dota_2.jpg",
+    "Satanic": "Satanic_Esports_World_Cup_2026_Dota_2.jpg",
+    "No[o]ne-": "Noone_Esports_World_Cup_2026_Dota_2.jpg",
+    "Noticed": "Noticed_Esports_World_Cup_2026_Dota_2.jpg",
+    "9Class": "9Class_Esports_World_Cup_2026_Dota_2.jpg",
+    "Dukalis": "Dukalis_Esports_World_Cup_2026_Dota_2.jpg",
+    "SumaiL": "SumaiL_Esports_World_Cup_2026_Dota_2.jpg",
+    "lorenof": "Lorenof_Esports_World_Cup_2026_Dota_2.jpg",
+    "Davai": "Davai_Esports_World_Cup_2026_Dota_2.jpg",
+    "OmaR": "OmaR_Esports_World_Cup_2026_Dota_2.jpg",
+    "GH": "GH_Esports_World_Cup_2026_Dota_2.jpg",
+    "ssnovv1": "Ssnovv1_Esports_World_Cup_2026_Dota_2.jpg",
+    "Mirage`": "Mirage_Esports_World_Cup_2026_Dota_2.jpg",
+    "Corrupted": "Corrupted_Esports_World_Cup_2026_Dota_2.jpg",
+    "RESPECT": "RESPECT_Esports_World_Cup_2026_Dota_2.jpg",
+    "shiro": "Shiro_Esports_World_Cup_2026_Dota_2.jpg",
+    "Xm": "Xm_Esports_World_Cup_2026_Dota_2.jpg",
+    "Faith_bian": "Bach_Esports_World_Cup_2026_Dota_2.jpg",
+    "XinQ": "XinQ_Esports_World_Cup_2026_Dota_2.jpg",
+    "y`": "Y`_Esports_World_Cup_2026_Dota_2.jpg",
+    "Natsumi": "Natsumi_Esports_World_Cup_2026_Dota_2.jpg",
+    "Yopaj-": "Yopaj_Esports_World_Cup_2026_Dota_2.jpg",
+    "Yuma": "Yuma_Esports_World_Cup_2026_Dota_2.jpg",
+    "Wisper": "Wisper_Esports_World_Cup_2026_Dota_2.jpg",
+    "Thiolicor": "Thiolicor_Esports_World_Cup_2026_Dota_2.jpg",
+    "KJ": "KJ_Esports_World_Cup_2026_Dota_2.jpg",
+    "Ghost": "Ghost_Esports_World_Cup_2026_Dota_2.jpg",
+    "RCY": "RCY_Esports_World_Cup_2026_Dota_2.jpg",
+    "Fayde": "Fayde_Esports_World_Cup_2026_Dota_2.jpg",
+    "Bignum": "Bignum_Esports_World_Cup_2026_Dota_2.jpg",
+    "Speeed": "Speeed_Esports_World_Cup_2026_Dota_2.jpg",
 }
 
 # Current player pages on the official OG website expose transparent roster
 # cutouts. These are preferable to action photography even when the file was
 # first published in 2025 because the same player remains on OG's current team.
 VERIFIED_OFFICIAL_TEAM_PLAYER_PORTRAITS: dict[str, dict[str, str]] = {
+    "SumaiL": {
+        "team_name": "Nigma Galaxy", "image_name": "NGX-Sumail-2025.png",
+        "url": "https://nigmagalaxy.com/wp-content/uploads/2025/04/NGX-Sumail-2025.png",
+        "source_page": "https://nigmagalaxy.com/news/players/sumail/",
+        "note": "Current player portrait on the official Nigma Galaxy roster page",
+        "source": "Nigma Galaxy", "source_kind": "official_team_website",
+    },
     "Natsumi": {
         "team_name": "OG", "image_name": "Natsumi.png",
         "url": "https://ogs.gg/wp-content/uploads/2025/05/Natsumi.png",
@@ -198,6 +332,40 @@ def _cache_slug(value: str) -> str:
     return slug or "player"
 
 
+def _commons_image_url(image_name: str) -> str:
+    digest = hashlib.md5(image_name.encode("utf-8")).hexdigest()
+    quoted = urllib.parse.quote(image_name, safe="")
+    return f"https://liquipedia.net/commons/images/{digest[0]}/{digest[:2]}/{quoted}"
+
+
+def _verified_portrait(player_name: str, team_name: str) -> dict[str, str] | None:
+    """Resolve punctuation variants such as OpenDota's ``SumaiL-`` safely."""
+    identity = _compact(player_name)
+    for portraits in (
+        VERIFIED_TI2026_PLAYER_PORTRAITS,
+        VERIFIED_OFFICIAL_TEAM_PLAYER_PORTRAITS,
+    ):
+        for known_name, metadata in portraits.items():
+            if _compact(known_name) == identity:
+                return metadata
+    for known_name, image_name in EWC2026_PLAYER_FILES.items():
+        if _compact(known_name) != identity:
+            continue
+        return {
+            "team_name": team_name,
+            "image_name": image_name,
+            "url": _commons_image_url(image_name),
+            "source_page": (
+                "https://liquipedia.net/commons/File:"
+                + urllib.parse.quote(image_name, safe="")
+            ),
+            "note": "Official Esports World Cup 2026 media-lobby player photo",
+            "source": "Esports World Cup media lobby permission record",
+            "source_kind": "official_event_media",
+        }
+    return None
+
+
 def _image_matches_current_team(image_name: str, team_name: str) -> bool:
     if "2026" not in str(image_name):
         return False
@@ -212,7 +380,9 @@ def _image_matches_current_team(image_name: str, team_name: str) -> bool:
 def _metadata_matches_current_team(metadata: dict[str, Any], team_name: str) -> bool:
     if normalize_ti2026_team(str(metadata.get("team_name") or "")) != normalize_ti2026_team(team_name):
         return False
-    if str(metadata.get("source_kind") or "") == "official_team_website":
+    if str(metadata.get("source_kind") or "") in {
+        "official_team_website", "official_event_media_legacy",
+    }:
         return True
     image_name = str(metadata.get("image_name") or "")
     return "2026" in image_name and (
@@ -379,10 +549,7 @@ def download_ti_player_portrait(
             cached_image.unlink(missing_ok=True)
             cached_metadata.unlink(missing_ok=True)
 
-    verified = (
-        VERIFIED_TI2026_PLAYER_PORTRAITS.get(player_name)
-        or VERIFIED_OFFICIAL_TEAM_PLAYER_PORTRAITS.get(player_name)
-    )
+    verified = _verified_portrait(player_name, team_name)
     if verified and str(verified.get("team_name") or "") == team_name:
         images = [str(verified["image_name"])]
     else:

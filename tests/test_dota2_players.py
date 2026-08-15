@@ -15,10 +15,19 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 import dota2_players
-from ti2026_context import ti2026_player_portrait_slot
+from ti2026_context import TI2026_TEAMS, ti2026_player_portrait_slot
 
 
 class Dota2PlayerPortraitTests(unittest.TestCase):
+    def test_every_ti2026_roster_slot_has_a_verified_static_source(self):
+        missing = [
+            f"{team['name']} / {player}"
+            for team in TI2026_TEAMS
+            for player in team["players"]
+            if dota2_players._verified_portrait(player, team["name"]) is None
+        ]
+        self.assertEqual(missing, [])
+
     def test_json_fetch_falls_back_to_curl_after_macos_tls_failure(self):
         completed = types.SimpleNamespace(returncode=0, stdout=b'{"ok": true}')
         with patch.object(
@@ -58,6 +67,8 @@ class Dota2PlayerPortraitTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp, patch.object(
             dota2_players, "_fetch_json", side_effect=fake_fetch
+        ), patch.object(
+            dota2_players, "_verified_portrait", return_value=None
         ), patch.object(
             dota2_players.urllib.request, "urlopen", return_value=raw
         ):
@@ -103,6 +114,8 @@ class Dota2PlayerPortraitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(
             dota2_players, "_fetch_json", side_effect=fake_fetch
         ), patch.object(
+            dota2_players, "_verified_portrait", return_value=None
+        ), patch.object(
             dota2_players.urllib.request, "urlopen", return_value=raw
         ):
             portrait = dota2_players.download_ti_player_portrait(
@@ -125,9 +138,28 @@ class Dota2PlayerPortraitTests(unittest.TestCase):
         self.assertEqual(portrait.source_kind, "official_team_website")
         self.assertEqual(portrait.source_page, "https://ogs.gg/players/raven/")
 
+    def test_official_team_roster_portrait_accepts_opendota_name_punctuation(self):
+        image = Image.new("RGBA", (700, 1050), (70, 80, 90, 255))
+        raw = io.BytesIO()
+        image.save(raw, format="PNG")
+        raw.seek(0)
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            dota2_players.urllib.request, "urlopen", return_value=raw
+        ):
+            portrait = dota2_players.download_ti_player_portrait(
+                "SumaiL-", "Nigma Galaxy", Path(temp)
+            )
+        self.assertEqual(portrait.source_kind, "official_team_website")
+        self.assertEqual(
+            portrait.source_page,
+            "https://nigmagalaxy.com/news/players/sumail/",
+        )
+
     def test_failed_fetch_is_visible_in_original_roster_slot(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(
             dota2_players, "_fetch_json", return_value={"parse": {"images": []}}
+        ), patch.object(
+            dota2_players, "_verified_portrait", return_value=None
         ):
             with self.assertRaisesRegex(ValueError, "未找到"):
                 dota2_players.download_ti_player_portrait(
@@ -140,6 +172,8 @@ class Dota2PlayerPortraitTests(unittest.TestCase):
     def test_rate_limit_is_visible_in_original_roster_slot(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(
             dota2_players, "_fetch_json", side_effect=RuntimeError("rate limited")
+        ), patch.object(
+            dota2_players, "_verified_portrait", return_value=None
         ):
             with self.assertRaisesRegex(RuntimeError, "rate limited"):
                 dota2_players.download_ti_player_portrait(

@@ -62,7 +62,7 @@ def main() -> int:
     manifest.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     cached = sum(row["status"] == "cached" for row in results)
     print(f"cached={cached} unavailable={len(results) - cached} manifest={manifest}")
-    return 0 if cached else 1
+    return 0 if results and cached == len(results) else 1
 
 
 if __name__ == "__main__":
