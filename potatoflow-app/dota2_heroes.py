@@ -135,6 +135,7 @@ LIQUIPEDIA_HERO_ALIASES: dict[str, str] = {
     "wr": "windrunner",
     "vip": "viper",
     "io": "wisp",
+    "ring master": "ringmaster",
 }
 
 LIQUIPEDIA_HERO_METADATA: dict[str, tuple[str, str, str]] = {

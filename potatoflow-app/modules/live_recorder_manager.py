@@ -4833,6 +4833,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                         and candidate.get("status") in {
                             "confirmed",
                             "matched_pending_data",
+                            "live_confirmed",
                         }
                     ):
                         cached_tournament_match = dict(candidate)
@@ -4886,6 +4887,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                                 if tournament_match.get("status") in {
                                     "confirmed",
                                     "matched_pending_data",
+                                    "live_confirmed",
                                 }:
                                     break
                                 if attempt == 0:
@@ -4893,6 +4895,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                             if tournament_match.get("status") in {
                                 "confirmed",
                                 "matched_pending_data",
+                                "live_confirmed",
                             }:
                                 break
                 except Exception as exc:
@@ -4903,7 +4906,7 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                     }
                 if (
                     tournament_match.get("status")
-                    not in {"confirmed", "matched_pending_data"}
+                    not in {"confirmed", "matched_pending_data", "live_confirmed"}
                     and cached_tournament_match
                 ):
                     tournament_match = {

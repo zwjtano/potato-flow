@@ -13,12 +13,14 @@ from typing import Any
 LIQUIPEDIA_API = "https://liquipedia.net/dota2/api.php"
 OPENDOTA_MATCH_API = "https://api.opendota.com/api/matches/{match_id}"
 OPENDOTA_PRO_MATCHES_API = "https://api.opendota.com/api/proMatches"
+OPENDOTA_LIVE_API = "https://api.opendota.com/api/live"
 HERO_CONSTANTS_URL = (
     "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json"
 )
 DEFAULT_USER_AGENT = "PotatoFlow/1.6.78 (+https://github.com/zwjtano/potato-flow)"
 CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 TI2026_GROUP_STAGE_PAGE = "The International/2026/Group Stage"
+TI2026_LEAGUE_ID = 19719
 
 
 def _fetch_json(url: str, *, timeout: float, user_agent: str) -> Any:
@@ -128,8 +130,25 @@ def _parse_liquipedia_china_schedule(value: str) -> datetime | None:
 
 def _team_in_text(team: str, text: str, aliases: dict[str, list[str]]) -> bool:
     compact_text = _compact_team(text)
-    candidates = [_compact_team(name) for name in (team, *(aliases.get(team) or []))]
-    return any(candidate and candidate in compact_text for candidate in candidates)
+    for raw_name in (team, *(aliases.get(team) or [])):
+        raw_candidate = str(raw_name or "").strip()
+        candidate = _compact_team(raw_candidate)
+        if not candidate:
+            continue
+        # Short handles such as y`, DM, 33 and fy must match a standalone
+        # token. Substring matching them against a full hour of chat makes
+        # almost every simultaneous TI series look relevant.
+        if re.fullmatch(r"[a-z0-9]{1,3}", candidate):
+            if re.search(
+                rf"(?<![A-Za-z0-9]){re.escape(raw_candidate)}(?![A-Za-z0-9])",
+                text,
+                re.I,
+            ):
+                return True
+            continue
+        if candidate in compact_text:
+            return True
+    return False
 
 
 def discover_liquipedia_recording_match(
@@ -181,6 +200,16 @@ def discover_liquipedia_recording_match(
         )
         if fallback.get("status") == "confirmed":
             return fallback
+        live_fallback = discover_opendota_live_recording_match(
+            recording_start_china=recording_start_china,
+            recording_duration_seconds=recording_duration_seconds,
+            evidence_text=evidence_text,
+            team_aliases=aliases,
+            timeout=timeout,
+            user_agent=user_agent,
+        )
+        if live_fallback.get("status") == "live_confirmed":
+            return live_fallback
         return {
             "status": "not_found" if not selected_pool else "ambiguous",
             "source": "liquipedia_mediawiki+opendota",
@@ -221,9 +250,28 @@ def discover_liquipedia_recording_match(
     ]}
     result = build_verified_match_result(page, match_payloads, hero_constants)
     # A newly-started map may exist on Liquipedia before OpenDota has parsed it.
-    # Preserve the unique series match so TI mode still activates, while only
-    # confirmed OpenDota games may contribute kills, winners or KDA.
+    # Enrich that unique schedule match from the live feed so current heroes
+    # and the live score are available without inventing KDA or an MVP.
     if not result.get("games") and selected_pool:
+        live_result = discover_opendota_live_recording_match(
+            recording_start_china=recording_start_china,
+            recording_duration_seconds=recording_duration_seconds,
+            evidence_text=evidence_text,
+            team_aliases=aliases,
+            timeout=timeout,
+            user_agent=user_agent,
+        )
+        expected_pair = {_compact_team(team) for team in selected["opponents"]}
+        actual_pair = {_compact_team(team) for team in live_result.get("opponents", [])}
+        if live_result.get("status") == "live_confirmed" and actual_pair == expected_pair:
+            live_result.update({
+                "source": "liquipedia_mediawiki+opendota_live",
+                "source_url": "https://liquipedia.net/dota2/The_International/2026/Group_Stage",
+                "scheduled_time_china": selected["scheduled_time_china"],
+                "liquipedia_maps": selected["maps"],
+                "match_data_errors": match_errors,
+            })
+            return live_result
         result.update({
             "status": "matched_pending_data",
             "opponents": selected["opponents"],
@@ -239,6 +287,115 @@ def discover_liquipedia_recording_match(
         "liquipedia_maps": selected["maps"],
     })
     return result
+
+
+def discover_opendota_live_recording_match(
+    *, recording_start_china: str, recording_duration_seconds: float,
+    evidence_text: str, team_aliases: dict[str, list[str]] | None = None,
+    timeout: float = 20, user_agent: str = DEFAULT_USER_AGENT,
+) -> dict[str, Any]:
+    """Resolve an in-progress TI game from OpenDota's public live feed.
+
+    The live feed exposes the current teams, score and all ten player/hero
+    identities before a parsed match exists in ``proMatches``.  It does not
+    expose reliable per-player KDA, so callers must not derive an MVP from this
+    snapshot.
+    """
+    aliases = team_aliases or {}
+    payload = _fetch_json(OPENDOTA_LIVE_API, timeout=timeout, user_agent=user_agent)
+    rows = payload if isinstance(payload, list) else []
+    recording_start = datetime.fromisoformat(str(recording_start_china).replace("Z", "+00:00"))
+    if recording_start.tzinfo is None:
+        recording_start = recording_start.replace(tzinfo=CHINA_TIMEZONE)
+    recording_start = recording_start.astimezone(CHINA_TIMEZONE)
+    recording_end = recording_start + timedelta(seconds=max(0.0, float(recording_duration_seconds)))
+
+    candidates: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or int(row.get("league_id") or 0) != TI2026_LEAGUE_ID:
+            continue
+        radiant = str(row.get("team_name_radiant") or "").strip()
+        dire = str(row.get("team_name_dire") or "").strip()
+        if not radiant or not dire or not any(
+            _team_in_text(team, evidence_text, aliases) for team in (radiant, dire)
+        ):
+            continue
+        activated = datetime.fromtimestamp(
+            float(row.get("activate_time") or 0), tz=timezone.utc
+        ).astimezone(CHINA_TIMEZONE)
+        last_update = datetime.fromtimestamp(
+            float(row.get("last_update_time") or row.get("activate_time") or 0),
+            tz=timezone.utc,
+        ).astimezone(CHINA_TIMEZONE)
+        deactivated_raw = float(row.get("deactivate_time") or 0)
+        deactivated = (
+            datetime.fromtimestamp(deactivated_raw, tz=timezone.utc).astimezone(CHINA_TIMEZONE)
+            if deactivated_raw > 0 else None
+        )
+        if activated > recording_end:
+            continue
+        if (deactivated or last_update) < recording_start - timedelta(minutes=15):
+            continue
+        key = tuple(sorted((_compact_team(radiant), _compact_team(dire))))
+        previous = candidates.get(key)
+        if previous is None or float(row.get("last_update_time") or 0) > float(previous.get("last_update_time") or 0):
+            candidates[key] = row
+    if len(candidates) != 1:
+        return {
+            "status": "not_found" if not candidates else "ambiguous",
+            "source": "opendota_live",
+            "candidate_count": len(candidates),
+            "reason": "OpenDota 实时数据没有唯一的 TI 时间与本地队伍证据交集",
+        }
+
+    row = next(iter(candidates.values()))
+    radiant = str(row.get("team_name_radiant") or "").strip()
+    dire = str(row.get("team_name_dire") or "").strip()
+    try:
+        hero_constants = _fetch_json(HERO_CONSTANTS_URL, timeout=timeout, user_agent=user_agent)
+    except Exception:
+        hero_constants = {}
+    players: list[dict[str, Any]] = []
+    for player in row.get("players") or []:
+        if not isinstance(player, dict):
+            continue
+        team = radiant if int(player.get("team") or 0) == 0 else dire
+        players.append({
+            "name": str(player.get("name") or "").strip(),
+            "account_id": player.get("account_id"),
+            "team": team,
+            **_hero_lookup(hero_constants, player.get("hero_id")),
+        })
+    activated = float(row.get("activate_time") or 0)
+    last_update = float(row.get("last_update_time") or activated)
+    game = {
+        "game_number": 0,
+        "match_id": int(row.get("match_id") or 0),
+        "start_time_china": _china_timestamp(activated),
+        "last_update_time_china": _china_timestamp(last_update),
+        "radiant": radiant,
+        "dire": dire,
+        "radiant_score": int(row.get("radiant_score") or 0),
+        "dire_score": int(row.get("dire_score") or 0),
+        "radiant_lead": int(row.get("radiant_lead") or 0),
+        "game_time_seconds": int(row.get("game_time") or 0),
+        "players": players,
+        "performance_candidates": [],
+        "teams_verified": True,
+        "live": True,
+    }
+    return {
+        "status": "live_confirmed",
+        "source": "opendota_live",
+        "source_url": OPENDOTA_LIVE_API,
+        "candidate_count": 1,
+        "opponents": [radiant, dire],
+        "series_score": {radiant: 0, dire: 0},
+        "games": [game],
+        "matched_by": ["event", "recording_time", "live_team_evidence"],
+        "live_snapshot_time_china": game["last_update_time_china"],
+        "performance_label": "实时数据无可靠 KDA，不能生成 MVP 候选",
+    }
 
 
 def discover_opendota_recording_match(

@@ -12,6 +12,41 @@ SPEC.loader.exec_module(verifier)
 
 
 class LiquipediaResultVerifierTests(unittest.TestCase):
+    def test_live_feed_resolves_current_ti_lineup_without_inventing_kda(self):
+        live = [{
+            "match_id": "99", "league_id": verifier.TI2026_LEAGUE_ID,
+            "activate_time": 1786800000, "last_update_time": 1786801800,
+            "game_time": 1800, "radiant_score": 20, "dire_score": 17,
+            "radiant_lead": 4200,
+            "team_name_radiant": "Team Liquid", "team_name_dire": "Aurora Gaming",
+            "players": [
+                {"account_id": 1, "name": "Nisha", "hero_id": 74, "team": 0},
+                {"account_id": 2, "name": "Mikoto", "hero_id": 25, "team": 1},
+            ],
+        }]
+
+        def fake_fetch(url, **_kwargs):
+            if url == verifier.OPENDOTA_LIVE_API:
+                return live
+            if url == verifier.HERO_CONSTANTS_URL:
+                return {
+                    "74": {"localized_name": "Invoker", "name": "npc_dota_hero_invoker"},
+                    "25": {"localized_name": "Lina", "name": "npc_dota_hero_lina"},
+                }
+            return {}
+
+        with patch.object(verifier, "_fetch_json", side_effect=fake_fetch):
+            result = verifier.discover_opendota_live_recording_match(
+                recording_start_china="2026-08-15T20:37:00+08:00",
+                recording_duration_seconds=3600,
+                evidence_text="Nisha Invoker关键团",
+                team_aliases={"Team Liquid": ["Nisha"], "Aurora Gaming": ["Mikoto"]},
+            )
+        self.assertEqual(result["status"], "live_confirmed")
+        self.assertEqual(result["games"][0]["radiant_score"], 20)
+        self.assertEqual(result["games"][0]["players"][0]["hero_name"], "Invoker")
+        self.assertEqual(result["games"][0]["performance_candidates"], [])
+
     def test_opendota_fallback_resolves_vg_ti_series_by_recording_overlap(self):
         pro_matches = [
             {"match_id": 11, "start_time": 1786672825, "duration": 2828,
@@ -79,6 +114,11 @@ class LiquipediaResultVerifierTests(unittest.TestCase):
                 {"Team Falcons": [""]},
             )
         )
+
+    def test_short_player_alias_requires_a_standalone_token(self):
+        aliases = {"Vici Gaming": ["y`"]}
+        self.assertFalse(verifier._team_in_text("Vici Gaming", "today is exciting", aliases))
+        self.assertTrue(verifier._team_in_text("Vici Gaming", "这波 y` 发挥很好", aliases))
 
     def test_page_url_is_converted_to_mediawiki_title(self):
         self.assertEqual(

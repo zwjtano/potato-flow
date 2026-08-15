@@ -47,6 +47,7 @@ from dota2_heroes import (
     build_dota2_lineup_reference,
     find_official_dota2_hero,
 )
+from dota2_players import download_ti_player_portrait
 from runtime_environment import configure_linux_ca_environment
 from ti2026_context import (
     build_ti2026_context,
@@ -4603,6 +4604,20 @@ def select_ti_mvp_candidate(players: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
+def select_ti_live_featured_player(
+    players: list[dict[str, Any]], title: str
+) -> dict[str, Any]:
+    """Use only a title-named live player; live feeds do not expose KDA."""
+    compact_title = re.sub(r"[^a-z0-9]+", "", str(title or "").casefold())
+    for row in players:
+        if not isinstance(row, dict) or not row.get("name") or not row.get("hero_name"):
+            continue
+        compact_name = re.sub(r"[^a-z0-9]+", "", str(row.get("name") or "").casefold())
+        if compact_name and compact_name in compact_title:
+            return row
+    return {}
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -4636,7 +4651,8 @@ def generate_recording_cover_with_ai(
         "\n".join(filter(None, (title, ai_topic, description))),
         event_date=str(cfg.get("_recording_event_date") or "") or None,
     )
-    if isinstance(tournament_match, dict) and tournament_match.get("status") in {"confirmed", "matched_pending_data"}:
+    accepted_match_statuses = {"confirmed", "matched_pending_data", "live_confirmed"}
+    if isinstance(tournament_match, dict) and tournament_match.get("status") in accepted_match_statuses:
         cover_tournament_context = {
             **cover_tournament_context,
             "active": True,
@@ -4660,7 +4676,8 @@ def generate_recording_cover_with_ai(
         )
     verified_match_instruction = ""
     pending_lineups: dict[str, list[str]] = {}
-    if isinstance(tournament_match, dict) and tournament_match.get("status") in {"confirmed", "matched_pending_data"}:
+    cover_featured_player: dict[str, Any] = {}
+    if isinstance(tournament_match, dict) and tournament_match.get("status") in accepted_match_statuses:
         opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)]
         games = [game for game in tournament_match.get("games", []) if isinstance(game, dict)]
         liquipedia_maps = [
@@ -4680,6 +4697,11 @@ def generate_recording_cover_with_ai(
                 for team in opponents
             }
             standout = [row for row in game.get("performance_candidates", []) if isinstance(row, dict)][:3]
+            cover_featured_player = (
+                select_ti_live_featured_player(players, title)
+                if game.get("live")
+                else select_ti_mvp_candidate(players)
+            )
             verified_match_instruction = (
                 f"已由 Liquipedia Match 页面与 OpenDota 核验本段赛事：{opponents[0]} 对阵 {opponents[1]}，"
                 f"第 {game.get('game_number')} 局，胜者 {game.get('winner')}。"
@@ -4816,6 +4838,8 @@ def generate_recording_cover_with_ai(
         reference_paths.append(path)
         reference_roles.append(role)
         return len(reference_paths)
+    lineup_reference_index = 0
+    player_reference_index = 0
     if cover_tournament_context.get("mode") == "ti_competition":
         # A TI match cover is about the competing teams, not the watch-party
         # streamer. Supplying the streamer's portrait makes image-edit models
@@ -4892,6 +4916,51 @@ def generate_recording_cover_with_ai(
                     "封面底部必须直接按该图两行五列的身份和顺序排布；"
                     "禁止改画、替换、合并或凭缩写猜测任何英雄。"
                 )
+                lineup_reference_index = lineup_index
+            else:
+                reference_instruction += (
+                    " 当前没有完整可靠的 5+5 英雄阵容图，封面必须省略底部英雄头像，"
+                    "不得根据文字、技能图标或旧模板自行补齐。"
+                )
+        if cover_featured_player:
+            featured_name = str(cover_featured_player.get("name") or "").strip()
+            featured_team = str(cover_featured_player.get("team") or "").strip()
+            try:
+                portrait = download_ti_player_portrait(
+                    featured_name,
+                    featured_team,
+                    Path("/data/cache/dota2/players"),
+                )
+                portrait_source_label = {
+                    "team_representative": "由战队代表提供的官方定妆照",
+                    "official_team_website": "当前战队官网选手图",
+                    "official_event_media": "官方赛事媒体库选手照",
+                    "official_event_media_legacy": "旧届官方赛事真人照",
+                }.get(portrait.source_kind, "来源已核验的官方选手照")
+                player_reference_index = add_cover_reference(
+                    Path(portrait.path),
+                    (
+                        f"{featured_team} 选手 {featured_name} 的{portrait_source_label}；"
+                        "这是该选手脸部、发型、队服和人物身份的唯一依据"
+                    ),
+                )
+                details.update({
+                    "ai_cover_player_portrait_used": True,
+                    "ai_cover_player_portrait_name": featured_name,
+                    "ai_cover_player_portrait_team": featured_team,
+                    "ai_cover_player_portrait_path": portrait.path,
+                    "ai_cover_player_portrait_source": portrait.source_url,
+                    "ai_cover_player_portrait_source_page": portrait.source_page,
+                    "ai_cover_player_portrait_source_note": portrait.source_note,
+                    "ai_cover_player_portrait_source_kind": portrait.source_kind,
+                    "ai_cover_player_portrait_reference_index": player_reference_index,
+                })
+            except Exception as exc:
+                details.update({
+                    "ai_cover_player_portrait_used": False,
+                    "ai_cover_player_portrait_name": featured_name,
+                    "ai_cover_player_portrait_error": f"{type(exc).__name__}: {exc}",
+                })
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
     elif reference_kind == "custom":
@@ -5290,13 +5359,12 @@ def generate_recording_cover_with_ai(
             visual_games = [row for row in tournament_match.get("games", []) if isinstance(row, dict)]
             if visual_games:
                 ti_game = visual_games[-1]
-                mvp_candidate = select_ti_mvp_candidate([
-                    row for row in ti_game.get("players", []) if isinstance(row, dict)
-                ])
+                mvp_candidate = cover_featured_player
                 if mvp_candidate:
                     visual_hero = str(mvp_candidate.get("hero_name") or "")
                     visual_player = str(mvp_candidate.get("name") or "")
-                    visual_kda = "/".join(str(int(mvp_candidate.get(field) or 0)) for field in ("kills", "deaths", "assists"))
+                    if not ti_game.get("live"):
+                        visual_kda = "/".join(str(int(mvp_candidate.get(field) or 0)) for field in ("kills", "deaths", "assists"))
                 ti_lineups = {
                     team: [
                         str(row.get("hero_name") or "")
@@ -5308,37 +5376,57 @@ def generate_recording_cover_with_ai(
             if not visual_hero and pending_lineups:
                 visual_hero = str(next(iter(next(iter(pending_lineups.values()), [])), ""))
         confirmed = tournament_match.get("status") == "confirmed" and bool(ti_game)
-        game_number = int(ti_game.get("game_number") or 1)
+        live_confirmed = tournament_match.get("status") == "live_confirmed" and bool(ti_game)
+        game_number = int(ti_game.get("game_number") or 0)
+        game_label = str(game_number) if game_number > 0 else "LIVE"
         series_score = tournament_match.get("series_score") or {}
         series_text = (
             f"{int(series_score.get(ti_opponents[0], 0))}:{int(series_score.get(ti_opponents[1], 0))}"
             if confirmed and len(ti_opponents) == 2 else "进行中"
         )
         kills_text = "待确认"
+        kills_label = "本局击杀"
         if confirmed and len(ti_opponents) == 2:
             def team_kills(team: str) -> int:
                 return int(ti_game.get("radiant_score") or 0) if ti_game.get("radiant") == team else int(ti_game.get("dire_score") or 0)
             kills_text = f"{team_kills(ti_opponents[0])}:{team_kills(ti_opponents[1])}"
+        elif live_confirmed and len(ti_opponents) == 2:
+            kills_label = "实时击杀"
+            kills_text = f"{int(ti_game.get('radiant_score') or 0)}:{int(ti_game.get('dire_score') or 0)}"
         stage_text = "总决赛" if cover_tournament_context.get("phase") == "grand_final" else (
             "主赛事" if cover_tournament_context.get("phase") == "main_event" else "瑞士轮"
         )
         left_team = ti_opponents[0] if len(ti_opponents) == 2 else "TEAM 1"
         right_team = ti_opponents[1] if len(ti_opponents) == 2 else "TEAM 2"
+        player_visual_instruction = (
+            f"Central key art must use the exact player from Image {player_reference_index}: {visual_player}, "
+            f"preserving face, hair and team jersey. Place game-accurate {visual_hero or 'assigned hero'} "
+            "as secondary supporting art; never replace the player's face with a hero or another person."
+            if player_reference_index and visual_player else
+            f"No verified player portrait is supplied. Do not invent a player face; use authentic game-accurate {visual_hero or 'Dota 2 hero'} as the central key art."
+        )
+        lineup_visual_instruction = (
+            f"Image {lineup_reference_index} is the exact official 5+5 hero lineup sheet. Place all ten portraits across the bottom in exact row and source order, five left and five right, without replacing, duplicating or omitting any hero."
+            if lineup_reference_index else
+            "No complete 5+5 lineup image is supplied. Omit the bottom hero portrait strip entirely; never infer heroes from an ability sheet or the layout template."
+        )
+        featured_label = "焦点选手" if live_confirmed and visual_player else ("MVP候选" if visual_player else "")
         prompt = f"""
-Produce one finished {aspect_label} premium TI 2026 Dota 2 broadcast cover, visually matching Image 1 in cinematic quality, hierarchy and black-gold/red-green tournament styling. Image 1 is the composition/style reference only. The next two images are the exact official logos for {left_team} and {right_team}. The final image is the exact official 5+5 hero lineup sheet: preserve every hero identity and order exactly; first row belongs to {left_team}, second row belongs to {right_team}.
-Create a full unified poster, not a flat UI or visibly pasted collage. Central key art: authentic game-accurate {visual_hero or 'Dota 2 hero'}, large three-quarter-body, casting signature magic, integrated into a Shanghai night skyline with a circular arcane portal; red energy on the left and emerald energy on the right.
+Produce one finished {aspect_label} premium TI 2026 Dota 2 broadcast cover, visually matching Image 1 in cinematic quality, hierarchy and black-gold/red-green tournament styling. Image 1 is the composition/style reference only. Follow the explicit image-role map below; never assume that the final input image is a lineup.
+Create a full unified poster, not a flat UI or visibly pasted collage. {player_visual_instruction} Integrate the subject into a Shanghai night skyline with a circular arcane portal; red energy on the left and emerald energy on the right.
+{lineup_visual_instruction}
 Render these exact texts clearly and verbatim:
 - top banner: "TI 2026 · {stage_text} · {str(cover_tournament_context.get('series_format') or 'bo3').upper()}"
 - main headline: "{headline}"
-- central small label: "GAME {game_number}"
-{f'- central MVP candidate ribbon over the hero: "MVP候选 · {visual_player.upper()}"' if visual_player else ''}
-{f'- central MVP candidate stats immediately below that ribbon: "KDA {visual_kda}"' if visual_kda else ''}
+- central small label: "GAME {game_label}"
+{f'- central player ribbon: "{featured_label} · {visual_player.upper()}"' if visual_player else ''}
+{f'- central MVP candidate stats immediately below that ribbon: "KDA {visual_kda}"' if visual_kda and not live_confirmed else ''}
 - left team: "{left_team.upper()}"
 - right team: "{right_team.upper()}"
 - center series result/status: "{series_text}"
-- bottom center label: "本局击杀"
+- bottom center label: "{kills_label}"
 - bottom center value: "{kills_text}"
-The central hero, MVP candidate ribbon and KDA must form one obvious focal unit. "MVP候选" means a KDA-based editorial candidate, not an official tournament award. Place both supplied team logos as large exact logos at left and right. Place all ten official hero portraits from the lineup sheet across the bottom in exact source order, five left and five right, with the kill panel between them. Preserve official logos and hero identities without redesigning, replacing, duplicating or omitting them. No player face, streamer, extra logo, extra hero, extra score, watermark or concept-simulation label.
+The central subject, player ribbon and optional KDA must form one obvious focal unit. "MVP候选" means a KDA-based editorial candidate, not an official tournament award. "焦点选手" means title-selected live coverage and must not imply an MVP. Place both supplied team logos as large exact logos at left and right. No streamer, extra person, extra logo, extra hero, extra score, watermark or concept-simulation label.
 """.strip()
         details["ai_cover_ti_exact_content"] = {
             "stage": stage_text, "game_number": game_number,
@@ -5347,7 +5435,10 @@ The central hero, MVP candidate ribbon and KDA must form one obvious focal unit.
             "lineups": ti_lineups, "featured_hero": visual_hero,
             "featured_player": visual_player,
             "featured_kda": visual_kda,
-            "featured_label": "MVP候选" if visual_player else "",
+            "featured_label": featured_label,
+            "live": live_confirmed,
+            "lineup_reference_index": lineup_reference_index,
+            "player_reference_index": player_reference_index,
         }
     image_client = get_openai_client(client_config).images
     requested_ratio = (target_width / target_height) if target_height else 0
@@ -6041,7 +6132,7 @@ def _generate_danmaku_metadata_with_ai(
         verified_tournament_match = verified_live_context.get("tournament_match")
         if (
             isinstance(verified_tournament_match, dict)
-            and verified_tournament_match.get("status") in {"confirmed", "matched_pending_data"}
+            and verified_tournament_match.get("status") in {"confirmed", "matched_pending_data", "live_confirmed"}
             and tournament_context.get("active")
         ):
             tournament_context["result_verification"] = verified_tournament_match
@@ -7483,13 +7574,28 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     ]
                     for team in TI2026_TEAMS
                 }
-                tournament_match = discover_liquipedia_recording_match(
-                    recording_start_china=str(cfg.get("_recording_event_datetime_china")),
-                    recording_duration_seconds=recording_duration_seconds,
-                    evidence_text="\n".join([live_title, description, *(str(getattr(row, "text", "") or "") for row in comments)]),
-                    team_aliases=team_aliases,
-                    timeout=float(cfg.get("liquipedia_timeout_seconds", 20) or 20),
-                )
+                match_args = {
+                    "recording_start_china": str(cfg.get("_recording_event_datetime_china")),
+                    "recording_duration_seconds": recording_duration_seconds,
+                    "team_aliases": team_aliases,
+                    "timeout": float(cfg.get("liquipedia_timeout_seconds", 20) or 20),
+                }
+                # The title describes the selected cover moment. A one-hour
+                # description and raw chat can mention several simultaneous
+                # TI series, making an otherwise unique match ambiguous.
+                evidence_candidates = [live_title]
+                complete_evidence = "\n".join(filter(None, (live_title, description)))
+                if complete_evidence and complete_evidence != live_title:
+                    evidence_candidates.append(complete_evidence)
+                for evidence in evidence_candidates:
+                    tournament_match = discover_liquipedia_recording_match(
+                        evidence_text=evidence,
+                        **match_args,
+                    )
+                    if tournament_match.get("status") in {
+                        "confirmed", "matched_pending_data", "live_confirmed"
+                    }:
+                        break
                 verified_live_context["tournament_match"] = tournament_match
                 outcome = str(tournament_match.get("status") or "not_found")
                 store.stage(

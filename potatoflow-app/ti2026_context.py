@@ -158,6 +158,25 @@ def ti2026_team_for_player(value: str) -> str:
     return ""
 
 
+def ti2026_player_portrait_slot(
+    value: str,
+    team_name: str = "",
+) -> dict[str, str] | None:
+    """Return the original TI roster portrait slot for one player alias."""
+    key = _compact(value)
+    expected_team = normalize_ti2026_team(team_name) if team_name else ""
+    if not key:
+        return None
+    for team in TI2026_TEAMS:
+        if expected_team and str(team["name"]) != expected_team:
+            continue
+        for player in team["players"]:
+            aliases = (player, *TI2026_PLAYER_ALIASES.get(player, ()))
+            if any(key == _compact(alias) for alias in aliases):
+                return team["player_portraits"][player]
+    return None
+
+
 def _game_number(text: str) -> int | None:
     for pattern in _GAME_NUMBER_PATTERNS:
         match = pattern.search(text)
