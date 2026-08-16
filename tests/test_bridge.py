@@ -52,6 +52,19 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(candidate["name"], "Bach")
         self.assertEqual(candidate["hero_name"], "Magnus")
 
+    def test_completed_cover_prefers_title_named_player_over_best_kda(self):
+        players = [
+            {"name": "Yatoro", "hero_name": "Terrorblade", "kills": 11, "deaths": 0, "assists": 3},
+            {"name": "planet", "hero_name": "Hoodwink", "kills": 5, "deaths": 3, "assists": 39},
+        ]
+        candidate = bridge.select_ti_cover_featured_player(
+            players,
+            "Yatoro恐怖利刃紫苑连续制造击杀",
+            live=False,
+        )
+        self.assertEqual(candidate["name"], "Yatoro")
+        self.assertEqual(candidate["hero_name"], "Terrorblade")
+
     def test_real_world_claim_from_danmaku_keeps_source_attribution(self):
         self.assertEqual(
             bridge.qualify_danmaku_only_real_world_claim(
