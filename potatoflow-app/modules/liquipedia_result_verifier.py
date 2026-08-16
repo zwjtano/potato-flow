@@ -233,18 +233,11 @@ def discover_liquipedia_recording_match(
     exact = [row for row in candidates if len(row["mentioned_opponents"]) == 2]
     selected_pool = exact or candidates
     matched_by = ["event", "recording_time", "local_team_evidence"]
-    # Sequential elimination/main-event series can be identified safely from
-    # the official schedule alone when exactly one series overlaps the entire
-    # recording. This keeps fresh live segments usable while OpenDota and the
-    # local title/evidence lag behind, without guessing during parallel rounds.
-    # Do not prefer a newly scheduled series merely because its start time is
-    # close to an hourly recording boundary. TI series overlap in wall-clock
-    # time, and a streamer can still be covering the previous BO3 after the
-    # next official series starts. Let the caller retry with the full local
-    # title/description so team evidence decides between overlapping series.
-    if len(selected_pool) != 1 and len(time_candidates) == 1:
-        selected_pool = time_candidates
-        matched_by = ["event", "recording_time"]
+    # Never resolve a cover from the schedule clock alone. Liquipedia can drop
+    # the just-finished series from its live wikitext while the recording still
+    # contains that match, leaving the next series as the only time candidate.
+    # The caller retries after AI metadata is available; require that local
+    # title/description evidence names a team or player before selecting it.
     if len(selected_pool) != 1:
         # Liquipedia's Swiss-stage schedule is updated in-place and can stop
         # exposing an already-played round in the current page wikitext. Use
