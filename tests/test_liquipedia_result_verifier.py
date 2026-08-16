@@ -120,7 +120,7 @@ class LiquipediaResultVerifierTests(unittest.TestCase):
         self.assertEqual(parsed[0]["maps"][0]["winner_side"], 2)
         self.assertEqual(parsed[0]["maps"][0]["team2_heroes"], ["hw", "wr"])
 
-    def test_unique_official_schedule_overlap_resolves_before_live_data_arrives(self):
+    def test_unique_official_schedule_overlap_requires_local_evidence(self):
         schedule = """|R1M3={{Match
 |opponent1={{TeamOpponent|Team Spirit}}
 |opponent2={{TeamOpponent|Team Resilience}}
@@ -143,9 +143,7 @@ class LiquipediaResultVerifierTests(unittest.TestCase):
                 recording_duration_seconds=3233,
                 evidence_text="TI 2026 全程解说",
             )
-        self.assertEqual(result["status"], "matched_pending_data")
-        self.assertEqual(result["opponents"], ["Team Spirit", "Team Resilience"])
-        self.assertEqual(result["matched_by"], ["event", "recording_time"])
+        self.assertEqual(result["status"], "not_found")
 
     def test_hourly_segment_does_not_guess_new_match_at_overlapping_boundary(self):
         schedule = """|R1M3={{Match
