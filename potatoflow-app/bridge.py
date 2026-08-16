@@ -8285,6 +8285,46 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         if pause_for_review_if_requested():
             return True
 
+        # The original recording filename often has no team names.  The AI
+        # metadata stage now has a grounded title and description derived from
+        # the full danmaku timeline, so retry an unresolved overlapping TI
+        # schedule before either cover is generated.  This is intentionally
+        # after metadata generation: consecutive BO3 series can overlap in
+        # wall-clock time and must not be selected from start time alone.
+        accepted_tournament_statuses = {
+            "confirmed", "matched_pending_data", "live_confirmed",
+        }
+        if (
+            tournament_probe.get("active")
+            and str(cfg.get("_recording_event_datetime_china") or "")
+            and tournament_match.get("status") not in accepted_tournament_statuses
+        ):
+            try:
+                refreshed_evidence = [title]
+                complete_evidence = "\n".join(filter(None, (title, description_body)))
+                if complete_evidence and complete_evidence != title:
+                    refreshed_evidence.append(complete_evidence)
+                for evidence in refreshed_evidence:
+                    refreshed_match = discover_liquipedia_recording_match(
+                        evidence_text=evidence,
+                        **match_args,
+                    )
+                    if refreshed_match.get("status") in accepted_tournament_statuses:
+                        tournament_match = refreshed_match
+                        verified_live_context["tournament_match"] = tournament_match
+                        store.stage(
+                            key,
+                            "tournament_match",
+                            "completed",
+                            tournament_match,
+                        )
+                        break
+            except Exception as exc:
+                print(
+                    f"WARN AI 元数据生成后重新匹配 TI 比赛失败: {exc}",
+                    file=sys.stderr,
+                )
+
         cover_game_context = locked_game_context if locked_gameplay_verified else None
         if cover_game_context is None:
             cover_game_context = recording_cover_danmaku_game_context(
