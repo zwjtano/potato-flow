@@ -237,18 +237,12 @@ def discover_liquipedia_recording_match(
     # the official schedule alone when exactly one series overlaps the entire
     # recording. This keeps fresh live segments usable while OpenDota and the
     # local title/evidence lag behind, without guessing during parallel rounds.
-    near_start_candidates = [
-        row
-        for row in time_candidates
-        if abs(
-            _parse_liquipedia_china_schedule(row["scheduled_time_source"])
-            - recording_start
-        ) <= timedelta(minutes=30)
-    ]
-    if len(selected_pool) != 1 and len(near_start_candidates) == 1:
-        selected_pool = near_start_candidates
-        matched_by = ["event", "recording_time"]
-    elif len(selected_pool) != 1 and len(time_candidates) == 1:
+    # Do not prefer a newly scheduled series merely because its start time is
+    # close to an hourly recording boundary. TI series overlap in wall-clock
+    # time, and a streamer can still be covering the previous BO3 after the
+    # next official series starts. Let the caller retry with the full local
+    # title/description so team evidence decides between overlapping series.
+    if len(selected_pool) != 1 and len(time_candidates) == 1:
         selected_pool = time_candidates
         matched_by = ["event", "recording_time"]
     if len(selected_pool) != 1:
