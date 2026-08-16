@@ -4631,6 +4631,25 @@ def select_ti_cover_featured_player(
     return {} if live else select_ti_mvp_candidate(players)
 
 
+def select_ti_cover_game(
+    games: list[dict[str, Any]], title: str
+) -> dict[str, Any]:
+    """Lock the cover game when the title uniquely names a player and hero."""
+    title_locked: list[dict[str, Any]] = []
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        players = [row for row in game.get("players", []) if isinstance(row, dict)]
+        named = select_ti_live_featured_player(players, title)
+        if named and recording_cover_hero_matches_title(
+            str(named.get("hero_name") or ""), title
+        ):
+            title_locked.append(game)
+    if len(title_locked) == 1:
+        return title_locked[0]
+    return games[-1] if games else {}
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -4701,13 +4720,9 @@ def generate_recording_cover_with_ai(
             game for game in tournament_match.get("liquipedia_maps", [])
             if isinstance(game, dict)
         ]
-        relevant_games = [
-            game for game in games
-            if str(game.get("winner") or "").strip()
-            and str(game.get("winner") or "").casefold() in "\n".join((title, ai_topic, description)).casefold()
-        ] or games[-1:]
-        if len(opponents) == 2 and relevant_games:
-            game = relevant_games[-1]
+        selected_game = select_ti_cover_game(games, title)
+        if len(opponents) == 2 and selected_game:
+            game = selected_game
             players = [row for row in game.get("players", []) if isinstance(row, dict)]
             lineups = {
                 team: [str(row.get("hero_name") or "") for row in players if row.get("team") == team and row.get("hero_name")]
@@ -5376,8 +5391,15 @@ def generate_recording_cover_with_ai(
         if isinstance(tournament_match, dict):
             visual_games = [row for row in tournament_match.get("games", []) if isinstance(row, dict)]
             if visual_games:
-                ti_game = visual_games[-1]
-                mvp_candidate = cover_featured_player
+                ti_game = select_ti_cover_game(visual_games, title)
+                ti_players = [
+                    row for row in ti_game.get("players", []) if isinstance(row, dict)
+                ]
+                mvp_candidate = select_ti_cover_featured_player(
+                    ti_players,
+                    title,
+                    live=bool(ti_game.get("live")),
+                )
                 if mvp_candidate:
                     visual_hero = str(mvp_candidate.get("hero_name") or "")
                     visual_player = str(mvp_candidate.get("name") or "")
