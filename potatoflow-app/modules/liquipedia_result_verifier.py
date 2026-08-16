@@ -237,7 +237,18 @@ def discover_liquipedia_recording_match(
     # the official schedule alone when exactly one series overlaps the entire
     # recording. This keeps fresh live segments usable while OpenDota and the
     # local title/evidence lag behind, without guessing during parallel rounds.
-    if len(selected_pool) != 1 and len(time_candidates) == 1:
+    near_start_candidates = [
+        row
+        for row in time_candidates
+        if abs(
+            _parse_liquipedia_china_schedule(row["scheduled_time_source"])
+            - recording_start
+        ) <= timedelta(minutes=30)
+    ]
+    if len(selected_pool) != 1 and len(near_start_candidates) == 1:
+        selected_pool = near_start_candidates
+        matched_by = ["event", "recording_time"]
+    elif len(selected_pool) != 1 and len(time_candidates) == 1:
         selected_pool = time_candidates
         matched_by = ["event", "recording_time"]
     if len(selected_pool) != 1:

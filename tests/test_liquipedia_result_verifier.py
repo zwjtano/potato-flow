@@ -147,6 +147,38 @@ class LiquipediaResultVerifierTests(unittest.TestCase):
         self.assertEqual(result["opponents"], ["Team Spirit", "Team Resilience"])
         self.assertEqual(result["matched_by"], ["event", "recording_time"])
 
+    def test_hourly_segment_prefers_the_unique_match_starting_near_its_boundary(self):
+        schedule = """|R1M3={{Match
+|opponent1={{TeamOpponent|Team Spirit}}
+|opponent2={{TeamOpponent|Team Resilience}}
+|date=August 16, 2026 - 12:30 {{Abbr/CST}}
+}}
+|R1M4={{Match
+|opponent1={{TeamOpponent|Iron Wing}}
+|opponent2={{TeamOpponent|GamerLegion}}
+|date=August 16, 2026 - 13:45 {{Abbr/CST}}
+}}
+"""
+
+        def fake_fetch(url, **_kwargs):
+            if url.startswith(verifier.LIQUIPEDIA_API):
+                return {"parse": {"wikitext": schedule}}
+            if url in (verifier.OPENDOTA_PRO_MATCHES_API, verifier.OPENDOTA_LIVE_API):
+                return []
+            if url == verifier.HERO_CONSTANTS_URL:
+                return {}
+            return {}
+
+        with patch.object(verifier, "_fetch_json", side_effect=fake_fetch):
+            result = verifier.discover_liquipedia_recording_match(
+                recording_start_china="2026-08-16T13:41:00+08:00",
+                recording_duration_seconds=3500,
+                evidence_text="TI 2026 全程解说",
+            )
+        self.assertEqual(result["status"], "matched_pending_data")
+        self.assertEqual(result["opponents"], ["Iron Wing", "GamerLegion"])
+        self.assertEqual(result["matched_by"], ["event", "recording_time"])
+
     def test_main_event_bracket_key_exposes_round(self):
         parsed = verifier.parse_liquipedia_tournament_matches(
             """|R5M1={{Match
