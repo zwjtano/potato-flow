@@ -452,10 +452,13 @@ def build_ti2026_context(
     )
     if rest_dates["start"] <= event_date_value <= rest_dates["end"]:
         phase = "intermission"
-    elif re.search(r"(?:总决赛|GRAND\s*FINAL|决赛第五局)", corpus, re.I):
-        phase = "grand_final"
     elif main_dates["start"] <= event_date_value <= main_dates["end"]:
-        phase = "main_event"
+        phase = (
+            "grand_final"
+            if event_date_value == main_dates["end"]
+            and re.search(r"(?:总决赛|GRAND\s*FINAL|决赛第五局)", corpus, re.I)
+            else "main_event"
+        )
     elif (
         elimination_marker
         or _is_elimination_pair(mentioned_teams)
@@ -469,6 +472,8 @@ def build_ti2026_context(
         phase = "elimination_round"
     elif group_dates["start"] <= event_date_value <= group_dates["end"]:
         phase = "group_stage"
+    elif re.search(r"(?:总决赛|GRAND\s*FINAL|决赛第五局)", corpus, re.I):
+        phase = "grand_final"
     else:
         phase = "main_event" if re.search(
             r"(?:主赛事|胜者组|败者组|淘汰赛)", corpus, re.I

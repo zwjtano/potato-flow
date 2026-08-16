@@ -216,20 +216,30 @@ def discover_liquipedia_recording_match(
         recording_start = recording_start.replace(tzinfo=CHINA_TIMEZONE)
     recording_start = recording_start.astimezone(CHINA_TIMEZONE)
     recording_end = recording_start + timedelta(seconds=max(0.0, float(recording_duration_seconds)))
+    time_candidates: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     for series in schedule:
         scheduled = _parse_liquipedia_china_schedule(series["scheduled_time_source"])
         if scheduled is None or scheduled > recording_end or scheduled + timedelta(hours=4) < recording_start:
             continue
+        row = dict(series)
+        row["scheduled_time_china"] = scheduled.isoformat()
+        time_candidates.append(row)
         mentions = [team for team in series["opponents"] if _team_in_text(team, evidence_text, aliases)]
         if not mentions:
             continue
-        row = dict(series)
-        row["scheduled_time_china"] = scheduled.isoformat()
         row["mentioned_opponents"] = mentions
         candidates.append(row)
     exact = [row for row in candidates if len(row["mentioned_opponents"]) == 2]
     selected_pool = exact or candidates
+    matched_by = ["event", "recording_time", "local_team_evidence"]
+    # Sequential elimination/main-event series can be identified safely from
+    # the official schedule alone when exactly one series overlaps the entire
+    # recording. This keeps fresh live segments usable while OpenDota and the
+    # local title/evidence lag behind, without guessing during parallel rounds.
+    if len(selected_pool) != 1 and len(time_candidates) == 1:
+        selected_pool = time_candidates
+        matched_by = ["event", "recording_time"]
     if len(selected_pool) != 1:
         # Liquipedia's Swiss-stage schedule is updated in-place and can stop
         # exposing an already-played round in the current page wikitext. Use
@@ -328,7 +338,7 @@ def discover_liquipedia_recording_match(
         "source": "liquipedia_mediawiki+opendota",
         "source_url": schedule_url,
         "scheduled_time_china": selected["scheduled_time_china"],
-        "matched_by": ["event", "recording_time", "local_team_evidence"],
+        "matched_by": matched_by,
         "match_data_errors": match_errors,
         "liquipedia_maps": selected["maps"],
     })
