@@ -4621,6 +4621,16 @@ def select_ti_live_featured_player(
     return {}
 
 
+def select_ti_cover_featured_player(
+    players: list[dict[str, Any]], title: str, *, live: bool
+) -> dict[str, Any]:
+    """Prefer a title-named player; use KDA only when no player is named."""
+    title_named = select_ti_live_featured_player(players, title)
+    if title_named:
+        return title_named
+    return {} if live else select_ti_mvp_candidate(players)
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -4704,10 +4714,10 @@ def generate_recording_cover_with_ai(
                 for team in opponents
             }
             standout = [row for row in game.get("performance_candidates", []) if isinstance(row, dict)][:3]
-            cover_featured_player = (
-                select_ti_live_featured_player(players, title)
-                if game.get("live")
-                else select_ti_mvp_candidate(players)
+            cover_featured_player = select_ti_cover_featured_player(
+                players,
+                title,
+                live=bool(game.get("live")),
             )
             verified_match_instruction = (
                 f"已由 Liquipedia Match 页面与 OpenDota 核验本段赛事：{opponents[0]} 对阵 {opponents[1]}，"
