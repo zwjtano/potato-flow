@@ -36,6 +36,15 @@ class Ti2026ContextTests(unittest.TestCase):
         self.assertEqual(context["phase"], "elimination_round")
         self.assertEqual(ti.ti2026_phase_label(context["phase"]), "淘汰轮")
 
+    def test_august_16_schedule_overrides_incidental_grand_final_chat(self):
+        context = ti.build_ti2026_context(
+            [],
+            "TI 2026 Spirit 对阵 Resilience，弹幕顺带讨论总决赛",
+            event_date="2026-08-16T12:47:00+08:00",
+        )
+        self.assertEqual(context["phase"], "elimination_round")
+        self.assertEqual(context["series_format"], "bo3")
+
     def test_august_16_early_recording_remains_group_stage_without_pairing(self):
         context = ti.build_ti2026_context(
             [], "TI 2026 赛程回顾", event_date="2026-08-16T08:00:00+08:00"
