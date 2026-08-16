@@ -12,6 +12,20 @@ SPEC.loader.exec_module(verifier)
 
 
 class LiquipediaResultVerifierTests(unittest.TestCase):
+    def test_schedule_page_follows_tournament_stage(self):
+        self.assertEqual(
+            verifier.ti2026_liquipedia_schedule_page(
+                "2026-08-16T13:00:00+08:00"
+            ),
+            verifier.TI2026_GROUP_STAGE_PAGE,
+        )
+        self.assertEqual(
+            verifier.ti2026_liquipedia_schedule_page(
+                "2026-08-20T00:00:00+08:00"
+            ),
+            verifier.TI2026_MAIN_EVENT_PAGE,
+        )
+
     def test_live_feed_resolves_current_ti_lineup_without_inventing_kda(self):
         live = [{
             "match_id": "99", "league_id": verifier.TI2026_LEAGUE_ID,
@@ -105,6 +119,18 @@ class LiquipediaResultVerifierTests(unittest.TestCase):
         self.assertEqual(parsed[0]["maps"][0]["match_id"], 8942993144)
         self.assertEqual(parsed[0]["maps"][0]["winner_side"], 2)
         self.assertEqual(parsed[0]["maps"][0]["team2_heroes"], ["hw", "wr"])
+
+    def test_main_event_bracket_key_exposes_round(self):
+        parsed = verifier.parse_liquipedia_tournament_matches(
+            """|R5M1={{Match
+|opponent1={{TeamOpponent|Team Spirit}}
+|opponent2={{TeamOpponent|Team Liquid}}
+|date=August 23, 2026 - 17:00 {{Abbr/CST}}
+}}
+"""
+        )
+        self.assertEqual(parsed[0]["match_key"], "R5M1")
+        self.assertEqual(parsed[0]["round_label"], "Grand Final")
 
     def test_empty_team_alias_never_matches_every_recording(self):
         self.assertFalse(

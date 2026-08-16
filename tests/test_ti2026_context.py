@@ -29,6 +29,44 @@ class Ti2026ContextTests(unittest.TestCase):
         )
         self.assertEqual(context["phase"], "group_stage")
 
+    def test_august_16_pregame_rolls_into_elimination_round(self):
+        context = ti.build_ti2026_context(
+            [], "TI 2026 Falcons 对阵 VG", event_date="2026-08-16T09:47:00+08:00"
+        )
+        self.assertEqual(context["phase"], "elimination_round")
+        self.assertEqual(ti.ti2026_phase_label(context["phase"]), "淘汰轮")
+
+    def test_august_16_early_recording_remains_group_stage_without_pairing(self):
+        context = ti.build_ti2026_context(
+            [], "TI 2026 赛程回顾", event_date="2026-08-16T08:00:00+08:00"
+        )
+        self.assertEqual(context["phase"], "group_stage")
+
+    def test_elimination_pairing_overrides_early_recording_time(self):
+        context = ti.build_ti2026_context(
+            [], "TI 2026 Spirit 对阵 Resilience", event_date="2026-08-16T09:00:00+08:00"
+        )
+        self.assertEqual(context["phase"], "elimination_round")
+
+    def test_august_17_to_19_are_rest_days(self):
+        for day in (17, 18, 19):
+            with self.subTest(day=day):
+                context = ti.build_ti2026_context(
+                    [],
+                    "TI 2026 Falcons 对阵 VG 总决赛预测",
+                    event_date=f"2026-08-{day:02d}T14:00:00+08:00",
+                )
+                self.assertEqual(context["phase"], "intermission")
+                self.assertEqual(ti.ti2026_phase_label(context["phase"]), "休赛日")
+
+    def test_verified_grand_final_uses_specific_label_and_bo5(self):
+        context = ti.build_ti2026_context(
+            [], "TI 2026 决赛日", event_date="2026-08-23T18:00:00+08:00"
+        )
+        match = {"round_label": "Grand Final"}
+        self.assertEqual(ti.ti2026_match_round_label(match["round_label"]), "总决赛")
+        self.assertEqual(ti.ti2026_match_series_format(context, match), "bo5")
+
     def test_match_end_inside_recording_sets_exact_cutoff(self):
         result = ti.recording_match_end_cutoff(
             "2026-08-20T18:00:00+08:00",
@@ -60,7 +98,9 @@ class Ti2026ContextTests(unittest.TestCase):
         self.assertEqual(ti.ti2026_team_for_player("哥哥"), "Xtreme Gaming")
         self.assertEqual(ti.ti2026_team_for_player("责任神"), "Xtreme Gaming")
         self.assertEqual(ti.ti2026_team_for_player("豆腐"), "Team Liquid")
-        self.assertEqual(ti.ti2026_team_for_player("普洱"), "1win Team")
+        self.assertEqual(ti.ti2026_team_for_player("普洱"), "Iron Wing")
+        self.assertEqual(ti.normalize_ti2026_team("1win Team"), "Iron Wing")
+        self.assertEqual(ti.normalize_ti2026_team("IW"), "Iron Wing")
         self.assertEqual(ti.ti2026_team_for_player("小学生"), "Xtreme Gaming")
         self.assertEqual(ti.ti2026_team_for_player("Noone"), "TEAM VISION")
         self.assertEqual(ti.ti2026_team_for_player("心情"), "Vici Gaming")

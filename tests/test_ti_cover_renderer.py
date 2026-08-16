@@ -55,6 +55,12 @@ class TiCoverRendererTests(unittest.TestCase):
             self.assertEqual(len(details["lineups"]["Team Liquid"]), 5)
             self.assertEqual(len(details["lineups"]["Vici Gaming"]), 5)
 
+    def test_elimination_round_uses_elimination_label(self):
+        from modules.ti_cover_renderer import PHASE_LABELS
+
+        self.assertEqual(PHASE_LABELS["elimination_round"], "淘汰轮")
+        self.assertEqual(PHASE_LABELS["intermission"], "休赛日")
+
     def test_confirmed_match_maps_kills_to_displayed_team_order(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

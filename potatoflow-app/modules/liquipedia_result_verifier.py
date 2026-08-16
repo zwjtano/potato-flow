@@ -20,6 +20,10 @@ HERO_CONSTANTS_URL = (
 DEFAULT_USER_AGENT = "PotatoFlow/1.6.78 (+https://github.com/zwjtano/potato-flow)"
 CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 TI2026_GROUP_STAGE_PAGE = "The International/2026/Group Stage"
+TI2026_MAIN_EVENT_PAGE = "The International/2026/Main Event"
+TI2026_MAIN_EVENT_START_CHINA = datetime(
+    2026, 8, 20, tzinfo=CHINA_TIMEZONE
+)
 TI2026_LEAGUE_ID = 19719
 
 
@@ -78,7 +82,11 @@ def parse_liquipedia_match_wikitext(wikitext: str) -> dict[str, Any]:
 def parse_liquipedia_tournament_matches(wikitext: str) -> list[dict[str, Any]]:
     """Extract embedded Match blocks from a tournament schedule page."""
     text = str(wikitext or "")
-    starts = list(re.finditer(r"(?m)^\|M\d+\s*=\s*\{\{Match\s*$", text, re.I))
+    starts = list(re.finditer(
+        r"(?m)^\|(?P<match_key>(?:R\d+)?M\d+)\s*=\s*\{\{Match\s*$",
+        text,
+        re.I,
+    ))
     matches: list[dict[str, Any]] = []
     for index, start in enumerate(starts):
         block = text[start.start() : starts[index + 1].start() if index + 1 < len(starts) else len(text)]
@@ -112,7 +120,26 @@ def parse_liquipedia_tournament_matches(wikitext: str) -> list[dict[str, Any]]:
                 "team1_heroes": re.findall(r"(?:^|\|)t1h\d+\s*=\s*([^|\n]+)", body, re.I),
                 "team2_heroes": re.findall(r"(?:^|\|)t2h\d+\s*=\s*([^|\n]+)", body, re.I),
             })
+        match_key = str(start.group("match_key") or "").upper()
+        round_label = {
+            "R1M1": "Upper Bracket Quarterfinals",
+            "R1M2": "Upper Bracket Quarterfinals",
+            "R1M3": "Upper Bracket Quarterfinals",
+            "R1M4": "Upper Bracket Quarterfinals",
+            "R1M5": "Lower Bracket Round 1",
+            "R1M6": "Lower Bracket Round 1",
+            "R2M1": "Upper Bracket Semifinals",
+            "R2M2": "Upper Bracket Semifinals",
+            "R2M3": "Lower Bracket Quarterfinals",
+            "R2M4": "Lower Bracket Quarterfinals",
+            "R3M1": "Lower Bracket Semifinal",
+            "R4M1": "Upper Bracket Final",
+            "R4M2": "Lower Bracket Final",
+            "R5M1": "Grand Final",
+        }.get(match_key, "")
         matches.append({
+            "match_key": match_key,
+            "round_label": round_label,
             "opponents": opponents,
             "scheduled_time_source": date_match.group(1).strip(),
             "maps": maps,
@@ -151,6 +178,23 @@ def _team_in_text(team: str, text: str, aliases: dict[str, list[str]]) -> bool:
     return False
 
 
+def ti2026_liquipedia_schedule_page(recording_start_china: str) -> str:
+    """Select the schedule page that owns the recording's tournament stage."""
+    recording_start = datetime.fromisoformat(
+        str(recording_start_china).replace("Z", "+00:00")
+    )
+    if recording_start.tzinfo is None:
+        recording_start = recording_start.replace(tzinfo=CHINA_TIMEZONE)
+    if recording_start.astimezone(CHINA_TIMEZONE) >= TI2026_MAIN_EVENT_START_CHINA:
+        return TI2026_MAIN_EVENT_PAGE
+    # Liquipedia keeps the August 16 elimination round on the Group Stage page.
+    return TI2026_GROUP_STAGE_PAGE
+
+
+def liquipedia_page_url(page: str) -> str:
+    return "https://liquipedia.net/dota2/" + str(page).replace(" ", "_")
+
+
 def discover_liquipedia_recording_match(
     *, recording_start_china: str, recording_duration_seconds: float, evidence_text: str,
     team_aliases: dict[str, list[str]] | None = None, timeout: float = 20,
@@ -158,8 +202,10 @@ def discover_liquipedia_recording_match(
 ) -> dict[str, Any]:
     """Find the unique TI series supported by both recording time and local text."""
     aliases = team_aliases or {}
+    schedule_page = ti2026_liquipedia_schedule_page(recording_start_china)
+    schedule_url = liquipedia_page_url(schedule_page)
     query = urllib.parse.urlencode({
-        "action": "parse", "page": TI2026_GROUP_STAGE_PAGE,
+        "action": "parse", "page": schedule_page,
         "prop": "wikitext", "format": "json", "formatversion": 2,
     })
     payload = _fetch_json(f"{LIQUIPEDIA_API}?{query}", timeout=timeout, user_agent=user_agent)
@@ -266,7 +312,7 @@ def discover_liquipedia_recording_match(
         if live_result.get("status") == "live_confirmed" and actual_pair == expected_pair:
             live_result.update({
                 "source": "liquipedia_mediawiki+opendota_live",
-                "source_url": "https://liquipedia.net/dota2/The_International/2026/Group_Stage",
+                "source_url": schedule_url,
                 "scheduled_time_china": selected["scheduled_time_china"],
                 "liquipedia_maps": selected["maps"],
                 "match_data_errors": match_errors,
@@ -280,7 +326,7 @@ def discover_liquipedia_recording_match(
         })
     result.update({
         "source": "liquipedia_mediawiki+opendota",
-        "source_url": "https://liquipedia.net/dota2/The_International/2026/Group_Stage",
+        "source_url": schedule_url,
         "scheduled_time_china": selected["scheduled_time_china"],
         "matched_by": ["event", "recording_time", "local_team_evidence"],
         "match_data_errors": match_errors,

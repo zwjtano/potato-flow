@@ -5613,6 +5613,66 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("直播间头像", image_edit.call_args.kwargs["prompt"])
         self.assertIn("不要替换成无关人物或角色", image_edit.call_args.kwargs["prompt"])
 
+    def test_ti_elimination_cover_prompt_uses_recording_stage(self):
+        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            character_base = root / "character-base.png"
+            character_base.write_bytes(b"character-base")
+            response = types.SimpleNamespace(data=[
+                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
+            ])
+            image_edit = Mock(return_value=response)
+            client = types.SimpleNamespace(images=types.SimpleNamespace(
+                edit=image_edit,
+                generate=Mock(),
+            ))
+            ai_module = types.ModuleType("modules.ai_enhancer")
+            ai_module.get_openai_client = Mock(return_value=client)
+            config_module = types.ModuleType("modules.config_manager")
+            config_module.load_config = Mock(return_value={
+                "AI_GENERATE_RECORDING_COVER": True,
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
+                "OPENAI_IMAGE_SIZE": "1536x1024",
+            })
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"jpeg")
+                return types.SimpleNamespace(returncode=0, stderr="")
+
+            with patch.dict(sys.modules, {
+                "modules.ai_enhancer": ai_module,
+                "modules.config_manager": config_module,
+            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
+                _, details = bridge.generate_recording_cover_with_ai(
+                    title="TI 2026 Iron Wing 对阵 GamerLegion",
+                    ai_topic="TI 2026 Iron Wing 对阵 GamerLegion",
+                    description="TI 2026 淘汰轮比赛",
+                    streamer="谢彬DD",
+                    cfg={
+                        "_config_dir": str(root),
+                        "app_root": str(app_root),
+                        "ffmpeg": "ffmpeg",
+                        "cover_reference_path": str(character_base),
+                        "_recording_event_datetime_china": "2026-08-16T14:00:00+08:00",
+                    },
+                    work_dir=root / "artifacts",
+                    target_size=(1920, 1080),
+                    tournament_match={
+                        "status": "matched_pending_data",
+                        "opponents": ["Iron Wing", "GamerLegion"],
+                        "games": [],
+                        "liquipedia_maps": [],
+                    },
+                )
+
+        prompt = image_edit.call_args.kwargs["prompt"]
+        self.assertIn('top banner: "TI 2026 · 淘汰轮 · BO3"', prompt)
+        self.assertNotIn("TI 2026 · 瑞士轮", prompt)
+        self.assertNotIn("TI 2026 小组赛", prompt)
+        self.assertEqual(details["ai_cover_ti_exact_content"]["stage"], "淘汰轮")
+
     def test_unknown_streamer_without_room_avatar_still_stops_cover_generation(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
         ai_module = types.ModuleType("modules.ai_enhancer")

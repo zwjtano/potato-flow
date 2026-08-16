@@ -52,6 +52,9 @@ from runtime_environment import configure_linux_ca_environment
 from ti2026_context import (
     build_ti2026_context,
     ti2026_event_date_from_filename,
+    ti2026_match_round_label,
+    ti2026_match_series_format,
+    ti2026_phase_label,
     ti2026_recording_datetime_from_filename,
     unsupported_ti2026_claim,
 )
@@ -4649,7 +4652,11 @@ def generate_recording_cover_with_ai(
     cover_tournament_context = build_ti2026_context(
         [],
         "\n".join(filter(None, (title, ai_topic, description))),
-        event_date=str(cfg.get("_recording_event_date") or "") or None,
+        event_date=str(
+            cfg.get("_recording_event_datetime_china")
+            or cfg.get("_recording_event_date")
+            or ""
+        ) or None,
     )
     accepted_match_statuses = {"confirmed", "matched_pending_data", "live_confirmed"}
     if isinstance(tournament_match, dict) and tournament_match.get("status") in accepted_match_statuses:
@@ -4749,7 +4756,8 @@ def generate_recording_cover_with_ai(
             )
             verified_match_instruction = (
                 f"Liquipedia 已唯一匹配本段赛事为 {opponents[0]} 对阵 {opponents[1]}，"
-                "赛事阶段为 TI 2026 小组赛，赛制 BO3。"
+                f"赛事阶段为 TI 2026 {ti2026_match_round_label(tournament_match.get('round_label')) or ti2026_phase_label(cover_tournament_context.get('phase'))}，"
+                f"赛制 {ti2026_match_series_format(cover_tournament_context, tournament_match).upper()}。"
                 + pending_lineup_instruction
                 + "封面必须使用固定赛事转播构图：顶部赛事阶段，中部左右两队队名和 Logo，"
                 "底部双方英雄阵容；不得出现观战主播真人或主播姓名。"
@@ -5393,9 +5401,13 @@ def generate_recording_cover_with_ai(
         elif live_confirmed and len(ti_opponents) == 2:
             kills_label = "实时击杀"
             kills_text = f"{int(ti_game.get('radiant_score') or 0)}:{int(ti_game.get('dire_score') or 0)}"
-        stage_text = "总决赛" if cover_tournament_context.get("phase") == "grand_final" else (
-            "主赛事" if cover_tournament_context.get("phase") == "main_event" else "瑞士轮"
+        stage_text = (
+            ti2026_match_round_label((tournament_match or {}).get("round_label"))
+            or ti2026_phase_label(cover_tournament_context.get("phase"))
         )
+        series_format = ti2026_match_series_format(
+            cover_tournament_context, tournament_match
+        ).upper()
         left_team = ti_opponents[0] if len(ti_opponents) == 2 else "TEAM 1"
         right_team = ti_opponents[1] if len(ti_opponents) == 2 else "TEAM 2"
         player_visual_instruction = (
@@ -5416,7 +5428,7 @@ Produce one finished {aspect_label} premium TI 2026 Dota 2 broadcast cover, visu
 Create a full unified poster, not a flat UI or visibly pasted collage. {player_visual_instruction} Integrate the subject into a Shanghai night skyline with a circular arcane portal; red energy on the left and emerald energy on the right.
 {lineup_visual_instruction}
 Render these exact texts clearly and verbatim:
-- top banner: "TI 2026 · {stage_text} · {str(cover_tournament_context.get('series_format') or 'bo3').upper()}"
+- top banner: "TI 2026 · {stage_text} · {series_format}"
 - main headline: "{headline}"
 - central small label: "GAME {game_label}"
 {f'- central player ribbon: "{featured_label} · {visual_player.upper()}"' if visual_player else ''}
@@ -6127,7 +6139,11 @@ def _generate_danmaku_metadata_with_ai(
         tournament_context = build_ti2026_context(
             comments,
             base_description,
-            event_date=str(cfg.get("_recording_event_date") or "") or None,
+            event_date=str(
+                cfg.get("_recording_event_datetime_china")
+                or cfg.get("_recording_event_date")
+                or ""
+            ) or None,
         )
         verified_tournament_match = verified_live_context.get("tournament_match")
         if (
@@ -7544,7 +7560,11 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         tournament_probe = build_ti2026_context(
             comments,
             "\n".join(filter(None, (live_title, description))),
-            event_date=str(cfg.get("_recording_event_date") or "") or None,
+            event_date=str(
+                cfg.get("_recording_event_datetime_china")
+                or cfg.get("_recording_event_date")
+                or ""
+            ) or None,
         )
         if tournament_probe.get("active") and str(cfg.get("_recording_event_datetime_china") or ""):
             current_stage = "tournament_match"

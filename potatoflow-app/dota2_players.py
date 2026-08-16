@@ -53,7 +53,7 @@ LIQUIPEDIA_PLAYER_PAGES: dict[str, str] = {
 
 PLAYER_MEDIA_TEAM_ALIASES: dict[str, tuple[str, ...]] = {
     "TEAM VISION": ("TEAM VISION", "PARIVISION"),
-    "1win Team": ("1win", "Tundra"),
+    "Iron Wing": ("Iron Wing", "1win", "1w Team", "Tundra"),
     "BoomBoys": ("BoomBoys", "BetBoom"),
     "HULIGANI": ("HULIGANI", "L1GA TEAM"),
 }

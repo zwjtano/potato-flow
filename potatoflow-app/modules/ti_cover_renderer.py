@@ -10,6 +10,8 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 PHASE_LABELS = {
     "group_stage": "瑞士轮",
+    "elimination_round": "淘汰轮",
+    "intermission": "休赛日",
     "main_event": "主赛事",
     "grand_final": "总决赛",
 }
@@ -94,6 +96,7 @@ def render_ti_cover(
 ) -> dict[str, Any]:
     """Overlay the fixed TI layout on an AI-created textless background."""
     from dota2_heroes import download_dota2_hero_image, find_official_dota2_hero
+    from ti2026_context import ti2026_match_round_label, ti2026_match_series_format
 
     with Image.open(background_path) as source:
         base = source.convert("RGB")
@@ -118,8 +121,10 @@ def render_ti_cover(
                   (banner[2], banner[3]), (banner[0], banner[3]), (banner[0]-45*scale, (banner[1]+banner[3])//2)],
                  fill=(70, 4, 2, 235), outline=(218, 166, 75, 255), width=max(2, int(3*scale)))
     phase = PHASE_LABELS.get(str(tournament_context.get("phase") or ""), "瑞士轮")
-    round_label = str(tournament_match.get("round_label") or phase)
-    series_format = str(tournament_context.get("series_format") or "bo3").upper()
+    round_label = ti2026_match_round_label(tournament_match.get("round_label")) or phase
+    series_format = ti2026_match_series_format(
+        tournament_context, tournament_match
+    ).upper()
     _center_text(draw, (width//2, int(60*scale)), f"TI 2026 · {round_label} · {series_format}",
                  _font(app_root, int(34*scale), bold=True), "#F8E5B5", stroke_width=max(1, int(scale)), stroke_fill="#2B0903")
 
