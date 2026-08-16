@@ -21,8 +21,23 @@ TI2026_RULES: dict[str, Any] = {
         "eliminated_places": [14, 15, 16],
     },
     "elimination_round": {
+        # The first elimination broadcast starts at 10:00 China time on
+        # August 16. Treat the preceding half hour as the same stage so a
+        # recording that begins during the desk/pregame segment is labelled
+        # correctly.
+        "broadcast_start_china": "2026-08-16T09:30:00+08:00",
         "series_format": "bo3",
         "playoff_places_awarded": 5,
+        "pairings": [
+            ["Team Falcons", "Vici Gaming"],
+            ["Aurora Gaming", "BoomBoys"],
+            ["Team Spirit", "Team Resilience"],
+            ["Iron Wing", "GamerLegion"],
+            ["LGD Gaming", "Team Yandex"],
+        ],
+    },
+    "rest_days": {
+        "dates": {"start": "2026-08-17", "end": "2026-08-19"},
     },
     "main_event": {
         "dates": {"start": "2026-08-20", "end": "2026-08-23"},
@@ -41,7 +56,7 @@ TI2026_TEAMS: tuple[dict[str, Any], ...] = (
     {"name": "BoomBoys", "aliases": ["BoomBoys", "BetBoom Team", "BetBoom", "BB Team", "BB"], "players": ["Kiritych~", "gpk~", "MieRo`", "Save-", "Kataomi"]},
     {"name": "Team Falcons", "aliases": ["Falcons", "猎鹰", "石油队"], "players": ["skiter", "Malr1ne", "ATF", "Cr1t-", "Sneyking"]},
     {"name": "Team Liquid", "aliases": ["Liquid", "TL", "液体"], "players": ["m1CKe", "Nisha", "Ace", "Boxi", "tOfu"]},
-    {"name": "1win Team", "aliases": ["1win", "1w Team", "1w", "Tundra", "Tundra Esports"], "players": ["Pure", "bzm", "33", "Ari", "Whitemon"]},
+    {"name": "Iron Wing", "aliases": ["Iron Wing", "IW", "1win Team", "1win", "1w Team", "1w", "Tundra", "Tundra Esports"], "players": ["Pure", "bzm", "33", "Ari", "Whitemon"]},
     {"name": "Xtreme Gaming", "aliases": ["Xtreme Gaming", "Xtreme", "XG"], "players": ["Ame", "NothingToSay", "Xxs", "fy", "xNova"]},
     {"name": "Team Yandex", "aliases": ["Yandex", "Yandex Team", "杨德克斯"], "players": ["watson", "CHIRA_JUNIOR", "DM", "Saksa", "Malady"]},
     {"name": "Team Spirit", "aliases": ["Spirit", "TS", "雪碧"], "players": ["Yatoro", "Larl", "Collapse", "not me", "rue"]},
@@ -60,7 +75,7 @@ TI2026_TEAM_MEDIA: dict[str, dict[str, Any]] = {
     "BoomBoys": {"team_id": 8255888, "slug": "boomboys", "logo_source": "https://cdn.steamusercontent.com/ugc/9995426432403529725/51E13136D4CCC8C7D8062861541A1D13B8ED87E0/"},
     "Team Falcons": {"team_id": 9247354, "slug": "team-falcons", "logo_source": "https://cdn.steamusercontent.com/ugc/2314350571781870059/2B5C9FE9BA0A2DC303A13261444532AA08352843/"},
     "Team Liquid": {"team_id": 2163, "slug": "team-liquid", "logo_source": "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/2163.png"},
-    "1win Team": {"team_id": 10182357, "slug": "1win", "logo_source": "https://cdn.steamusercontent.com/ugc/10678669599334676082/E48827F4A163D4D02F817EA3C32166D5F1D5FC98/"},
+    "Iron Wing": {"team_id": 10182357, "slug": "iron-wing", "logo_source": "https://assets.blast.tv/images/teams/1a91ca2c-514a-493d-9e8f-074b1b380736?format=webp&height=512"},
     "Xtreme Gaming": {"team_id": 8261500, "slug": "xtreme-gaming", "logo_source": "https://cdn.steamusercontent.com/ugc/2402194226059610590/E3CF4B6C4B2CFB974A9B415141E4A37317AD4D80/"},
     "Team Yandex": {"team_id": 9823272, "slug": "team-yandex", "logo_source": "https://cdn.steamusercontent.com/ugc/12970505637628494427/B04C3358F4E815ADFC2F8B1B8BE3AB0CE75C8881/"},
     "Team Spirit": {"team_id": 7119388, "slug": "team-spirit", "logo_source": "https://cdn.steamusercontent.com/ugc/1839179120711951766/CD7E0885CB527334205CC7885E9C101B7BC17702/"},
@@ -297,6 +312,57 @@ def _aware_china_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(CHINA_TIMEZONE)
 
 
+def ti2026_phase_label(phase: Any) -> str:
+    """Return the broadcast label shared by AI and deterministic covers."""
+    return {
+        "group_stage": "瑞士轮",
+        "elimination_round": "淘汰轮",
+        "intermission": "休赛日",
+        "main_event": "主赛事",
+        "grand_final": "总决赛",
+    }.get(str(phase or ""), "瑞士轮")
+
+
+def ti2026_match_round_label(value: Any) -> str:
+    """Return a concise Chinese broadcast label for a verified bracket round."""
+    raw = " ".join(str(value or "").replace("_", " ").split()).casefold()
+    return {
+        "upper bracket quarterfinals": "胜者组首轮",
+        "upper bracket semifinals": "胜者组半决赛",
+        "upper bracket final": "胜者组决赛",
+        "lower bracket round 1": "败者组首轮",
+        "lower bracket quarterfinals": "败者组次轮",
+        "lower bracket semifinal": "败者组半决赛",
+        "lower bracket final": "败者组决赛",
+        "grand final": "总决赛",
+    }.get(raw, str(value or "").strip())
+
+
+def ti2026_match_series_format(
+    tournament_context: dict[str, Any],
+    tournament_match: dict[str, Any] | None,
+) -> str:
+    """Use BO5 only for a verified grand final; all other TI series are BO3."""
+    round_label = " ".join(
+        str((tournament_match or {}).get("round_label") or "")
+        .replace("_", " ")
+        .split()
+    ).casefold()
+    if round_label == "grand final":
+        return "bo5"
+    return str(tournament_context.get("series_format") or "bo3").casefold()
+
+
+def _is_elimination_pair(mentioned_teams: Iterable[str]) -> bool:
+    pair = {normalize_ti2026_team(team) for team in mentioned_teams if str(team).strip()}
+    if len(pair) != 2:
+        return False
+    return any(
+        pair == {normalize_ti2026_team(team) for team in pairing}
+        for pairing in TI2026_RULES["elimination_round"]["pairings"]
+    )
+
+
 def recording_match_end_cutoff(
     recording_start_china: Any,
     recording_duration_seconds: float,
@@ -372,17 +438,37 @@ def build_ti2026_context(
             aliases = (player, *TI2026_PLAYER_ALIASES.get(player, ()))
             if any(_mentions(corpus, alias) for alias in aliases):
                 mentioned_players.append({"name": player, "team": str(team["name"])})
-    event_date_value = (
-        event_date.isoformat() if isinstance(event_date, date) else str(event_date or "")[:10]
-    )
+    event_raw = event_date.isoformat() if isinstance(event_date, date) else str(event_date or "")
+    event_date_value = event_raw[:10]
+    event_datetime_china = _aware_china_datetime(event_raw)
     group_dates = TI2026_RULES["group_stage"]["dates"]
+    rest_dates = TI2026_RULES["rest_days"]["dates"]
     main_dates = TI2026_RULES["main_event"]["dates"]
-    if group_dates["start"] <= event_date_value <= group_dates["end"]:
-        phase = "group_stage"
+    elimination_marker = re.search(
+        r"(?:淘汰轮|生死赛|ELIMINATION\s*ROUND)", corpus, re.I
+    )
+    elimination_start = _aware_china_datetime(
+        TI2026_RULES["elimination_round"]["broadcast_start_china"]
+    )
+    if rest_dates["start"] <= event_date_value <= rest_dates["end"]:
+        phase = "intermission"
     elif re.search(r"(?:总决赛|GRAND\s*FINAL|决赛第五局)", corpus, re.I):
         phase = "grand_final"
     elif main_dates["start"] <= event_date_value <= main_dates["end"]:
         phase = "main_event"
+    elif (
+        elimination_marker
+        or _is_elimination_pair(mentioned_teams)
+        or (
+            event_datetime_china is not None
+            and elimination_start is not None
+            and event_datetime_china >= elimination_start
+            and event_date_value < main_dates["start"]
+        )
+    ):
+        phase = "elimination_round"
+    elif group_dates["start"] <= event_date_value <= group_dates["end"]:
+        phase = "group_stage"
     else:
         phase = "main_event" if re.search(
             r"(?:主赛事|胜者组|败者组|淘汰赛)", corpus, re.I
@@ -395,6 +481,9 @@ def build_ti2026_context(
         "inside_event_window": inside_event_window,
         "recording_timezone": "Asia/Shanghai",
         "recording_date_china": event_date_value,
+        "recording_datetime_china": (
+            event_datetime_china.isoformat() if event_datetime_china else ""
+        ),
         "liquipedia_query_window": (
             liquipedia_utc_window_for_china_date(event_date_value)
             if event_date_value
