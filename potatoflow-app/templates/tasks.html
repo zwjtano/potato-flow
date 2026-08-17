@@ -714,6 +714,10 @@
                         <i class="bi bi-hourglass-split"></i>
                         <span>B站 AI 通常需要几十秒，请保持页面开启。</span>
                     </div>
+                    <div class="chapter-confirm-fallback d-none" data-role="chapter-confirm-fallback">
+                        <i class="bi bi-info-circle"></i>
+                        <span data-role="chapter-confirm-fallback-message">B站 AI 暂不支持这条视频，可以改用 PotatoFlow 已验证的简介时间线。</span>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1347,15 +1351,17 @@ html[data-theme="dark"] .task-datetime { color: #d1deea; border-bottom-color: #6
 .chapter-confirm-copy h5 { margin: 3px 0 8px; font-size: 1.2rem; font-weight: 750; }
 .chapter-confirm-copy > p { margin: 0; color: #667085; line-height: 1.65; }
 .chapter-confirm-copy > p strong { color: #086db8; }
-.chapter-confirm-impact, .chapter-confirm-wait { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 11px 12px; border-radius: 11px; font-size: .84rem; line-height: 1.55; }
+.chapter-confirm-impact, .chapter-confirm-wait, .chapter-confirm-fallback { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 11px 12px; border-radius: 11px; font-size: .84rem; line-height: 1.55; }
 .chapter-confirm-impact { color: #584716; border: 1px solid #f0dfac; background: #fff9e8; }
 .chapter-confirm-wait { color: #31506d; border: 1px solid #cfe0f1; background: #f2f8fd; }
-.chapter-confirm-impact i, .chapter-confirm-wait i { margin-top: 2px; }
+.chapter-confirm-fallback { color: #31506d; border: 1px solid #a8d1f0; background: #eaf6ff; }
+.chapter-confirm-impact i, .chapter-confirm-wait i, .chapter-confirm-fallback i { margin-top: 2px; }
 .chapter-confirm-modal .modal-footer { padding: 16px 28px 22px; border-top: 1px solid #eef0f3; background: #fbfcfd; }
 html[data-theme="dark"] .chapter-confirm-copy > p { color: #afc0ce; }
 html[data-theme="dark"] .chapter-confirm-copy > p strong { color: #75bfff; }
 html[data-theme="dark"] .chapter-confirm-impact { color: #ead28b; border-color: #574a25; background: #332d1d; }
 html[data-theme="dark"] .chapter-confirm-wait { color: #b8d3e9; border-color: #31516a; background: #172b3a; }
+html[data-theme="dark"] .chapter-confirm-fallback { color: #b9dcf7; border-color: #346b91; background: #173249; }
 html[data-theme="dark"] .chapter-confirm-modal .modal-footer { border-color: #2b4153; background: #121e28; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-loading {
     color: var(--studio-muted);
@@ -2238,6 +2244,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         pendingRecordingChapterGeneration = {job, mode, button, sourceName};
         modal.querySelector('[data-role="chapter-confirm-source"]').textContent = sourceName;
         modal.querySelector('[data-role="chapter-confirm-wait"]').classList.toggle('d-none', mode !== 'bilibili_ai');
+        modal.querySelector('[data-role="chapter-confirm-fallback"]').classList.add('d-none');
         bootstrap.Modal.getOrCreateInstance(modal).show();
     }
 
@@ -2252,6 +2259,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         group.querySelectorAll('button').forEach(item => item.disabled = true);
         confirmButton.disabled = true;
         confirmButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>正在生成';
+        let fallbackOffered = false;
         try {
             const response = await fetch(`/live-recording/jobs/${encodeURIComponent(job.id)}/chapters`, {
                 method: 'POST',
@@ -2259,6 +2267,20 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
                 body: JSON.stringify({mode}),
             });
             const result = await response.json();
+            if (!response.ok && result.fallback_mode === 'timeline') {
+                fallbackOffered = true;
+                pendingRecordingChapterGeneration = {
+                    ...pending,
+                    mode: 'timeline',
+                    sourceName: '简介时间线',
+                };
+                modal.querySelector('[data-role="chapter-confirm-source"]').textContent = '简介时间线';
+                modal.querySelector('[data-role="chapter-confirm-wait"]').classList.add('d-none');
+                modal.querySelector('[data-role="chapter-confirm-fallback-message"]').textContent =
+                    `${result.error || 'B站 AI 暂不支持这条视频'}，可以改用 PotatoFlow 已验证的简介时间线。`;
+                modal.querySelector('[data-role="chapter-confirm-fallback"]').classList.remove('d-none');
+                return;
+            }
             if (!response.ok) throw new Error(result.error || '章节生成失败');
             bootstrap.Modal.getOrCreateInstance(modal).hide();
             pendingRecordingChapterGeneration = null;
@@ -2270,7 +2292,9 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         } finally {
             group.querySelectorAll('button').forEach(item => item.disabled = false);
             confirmButton.disabled = false;
-            confirmButton.innerHTML = '<i class="bi bi-magic"></i> 确认生成';
+            confirmButton.innerHTML = fallbackOffered
+                ? '<i class="bi bi-arrow-right-circle"></i> 改用简介时间线'
+                : '<i class="bi bi-magic"></i> 确认生成';
         }
     }
 

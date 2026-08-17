@@ -1663,9 +1663,10 @@ def live_recording_job(fingerprint):
 @login_required
 def live_recording_job_chapters(fingerprint):
     payload = request.get_json(silent=True) or request.form
+    requested_mode = str(payload.get('mode') or 'auto')
     try:
         result = live_recorder_manager.generate_pipeline_job_chapters(
-            fingerprint, mode=str(payload.get('mode') or 'auto')
+            fingerprint, mode=requested_mode
         )
         return jsonify({
             'ok': True,
@@ -1673,7 +1674,12 @@ def live_recording_job_chapters(fingerprint):
             'message': f"已用{result['source_label']}生成 {result['chapter_count']} 个章节。",
         })
     except RecorderConfigError as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 400
+        return jsonify({
+            'ok': False,
+            'error': str(exc),
+            'fallback_mode': 'timeline' if requested_mode == 'bilibili_ai' else None,
+            'fallback_label': '改用简介时间线' if requested_mode == 'bilibili_ai' else None,
+        }), 400
 
 
 @app.route('/live-recording/jobs/<fingerprint>/cover')
