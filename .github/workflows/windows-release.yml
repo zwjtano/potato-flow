@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   build-windows-installer:
+    if: ${{ github.event_name != 'release' || !contains(github.event.release.body, '[skip-desktop]') }}
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:

@@ -111,6 +111,7 @@ DEFAULT_CONFIG = {
     "BILIBILI_UPLOAD_ENGINE": "recorder", # B站投稿默认使用内置投稿引擎
     "BILIBILI_UPLOAD_LINE": "bldsa", # 全局缓存的投稿线路，可在系统设置手动测速更换
     "BILIBILI_UPLOAD_LIMIT": 3, # 单文件上传并发数
+    "BILIBILI_AI_CHAPTERS_ENABLED": True, # 投稿后调用B站原生AI生成并保存章节
     "DOUYIN_COOKIES_PATH": "cookies/douyin_cookies.json", # 可选的抖音录制 Cookie
     "RECORDINGS_PATH": "docker-data/recordings", # 录播保存目录；相对路径以 PotatoFlow 项目根目录为准
     # CookieCloud 同步 YouTube Cookies

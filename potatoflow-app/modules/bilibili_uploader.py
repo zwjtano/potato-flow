@@ -1012,6 +1012,124 @@ class BilibiliUploader:
         except Exception as exc:
             return False, f"读取 B站稿件失败: {_compact_exception_text(str(exc))}"
 
+    def _chapter_api(self, *, url: str, method: str = "GET", params=None, data=None):
+        """Call the authenticated creator-center chapter API."""
+        configure_bilibili_runtime()
+        credential = load_credential_from_file(self.cookie_file)
+        credential_ok, credential_msg = validate_credential_remote(credential)
+        if not credential_ok:
+            raise RuntimeError(f"Bilibili登录态无效: {credential_msg}")
+
+        async def _request():
+            api = Api(url=url, method=method, verify=True, credential=credential)
+            if params:
+                api.update_params(**params)
+            if data:
+                api.update_data(**data)
+            return await api.result
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(_request())
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, _request()).result()
+
+    def chapter_rules(self, *, bvid: str, aid: int, cid: int) -> Tuple[bool, Union[dict, str]]:
+        """Read creator-center limits for chapters on one published page."""
+        try:
+            payload = self._chapter_api(
+                url="https://member.bilibili.com/x/web/viewpoint/rule",
+                params={"bvid": str(bvid), "aid": int(aid), "cid": int(cid)},
+            )
+            return True, payload if isinstance(payload, dict) else {}
+        except Exception as exc:
+            return False, f"读取B站章节规则失败: {_compact_exception_text(str(exc))}"
+
+    def list_chapters(self, *, aid: int, cid: int) -> Tuple[bool, Union[dict, str]]:
+        """Read saved chapters for one published page."""
+        try:
+            payload = self._chapter_api(
+                url="https://member.bilibili.com/x/web/allcards",
+                params={"aid": int(aid), "cid": int(cid)},
+            )
+            payload = payload if isinstance(payload, dict) else {}
+            chapters = payload.get("chapters") or []
+            return True, {"chapters": chapters if isinstance(chapters, list) else []}
+        except Exception as exc:
+            return False, f"读取B站章节失败: {_compact_exception_text(str(exc))}"
+
+    def save_chapters(
+        self, *, aid: int, cid: int, chapters: List[dict], permanent: bool = False
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Validate and save chapters through the creator-center endpoint."""
+        try:
+            normalized = []
+            for item in chapters or []:
+                start = int(round(float(item.get("from", 0))))
+                end = int(round(float(item.get("to", 0))))
+                content = str(item.get("content") or item.get("title") or "").strip()
+                if not content or end <= start:
+                    return False, "章节标题不能为空，且结束时间必须晚于开始时间"
+                normalized.append({"from": start, "to": end, "content": content[:16]})
+            if len(normalized) < 2:
+                return False, "B站章节数量不能少于2个"
+            if normalized[0]["from"] != 0:
+                return False, "第一个章节必须从00:00开始"
+            if any(right["from"] < left["to"] for left, right in zip(normalized, normalized[1:])):
+                return False, "章节时间不能重叠"
+            payload = self._chapter_api(
+                url="https://member.bilibili.com/x/web/card/submit",
+                method="POST",
+                data={
+                    "aid": int(aid),
+                    "cid": int(cid),
+                    "type": 2,
+                    "cards": json.dumps(normalized, ensure_ascii=False, separators=(",", ":")),
+                    "permanent": 1 if permanent else 0,
+                },
+            )
+            return True, {"saved": True, "chapters": normalized, "response": payload}
+        except Exception as exc:
+            return False, f"保存B站章节失败: {_compact_exception_text(str(exc))}"
+
+    def generate_ai_chapters(
+        self, *, aid: int, cid: int, timeout_seconds: int = 60, save: bool = True
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Run Bilibili's native AI chapter task and optionally save its result."""
+        try:
+            created = self._chapter_api(
+                url="https://member.bilibili.com/x/web/card/task/create",
+                method="POST",
+                data={"cid": int(cid)},
+            )
+            created = created if isinstance(created, dict) else {}
+            poll_seconds = max(0.2, min(5.0, float(created.get("poll_time") or 1000) / 1000.0))
+            deadline = time.monotonic() + max(1, min(300, int(timeout_seconds)))
+            result = {}
+            while time.monotonic() < deadline:
+                result = self._chapter_api(
+                    url="https://member.bilibili.com/x/web/card/task/result",
+                    params={"cid": int(cid)},
+                )
+                result = result if isinstance(result, dict) else {}
+                state = int(result.get("state") or 0)
+                chapters = result.get("chapters") or []
+                if chapters:
+                    if not save:
+                        return True, {"generated": True, "saved": False, "chapters": chapters}
+                    return self.save_chapters(aid=aid, cid=cid, chapters=chapters)
+                if state < 0 or result.get("fail_content"):
+                    return False, str(result.get("fail_content") or "B站AI章节生成失败")
+                time.sleep(poll_seconds)
+            self._chapter_api(
+                url="https://member.bilibili.com/x/web/card/task/cancel",
+                params={"cid": int(cid)},
+            )
+            return False, "B站AI章节生成超时，任务已取消"
+        except Exception as exc:
+            return False, f"B站AI章节生成失败: {_compact_exception_text(str(exc))}"
+
     def archive_detail(self, bvid: str) -> Tuple[bool, Union[dict, str]]:
         """Read one owned archive and its exact page list."""
         clean_bvid = str(bvid or "").strip()

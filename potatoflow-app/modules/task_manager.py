@@ -8170,6 +8170,41 @@ class TaskProcessor:
             )
 
             if success:
+                if (
+                    isinstance(result, dict)
+                    and result.get('bvid')
+                    and _as_bool(self.config.get('BILIBILI_AI_CHAPTERS_ENABLED', True))
+                ):
+                    chapter_detail = None
+                    chapter_error = ''
+                    for attempt in range(3):
+                        detail_ok, detail_result = uploader.archive_detail(str(result['bvid']))
+                        if detail_ok and isinstance(detail_result, dict) and detail_result.get('pages'):
+                            chapter_detail = detail_result
+                            break
+                        chapter_error = str(detail_result)
+                        if attempt < 2:
+                            time.sleep(2)
+                    if chapter_detail:
+                        first_page = chapter_detail['pages'][0]
+                        chapter_ok, chapter_result = uploader.generate_ai_chapters(
+                            aid=int(chapter_detail.get('aid') or result.get('aid') or 0),
+                            cid=int(first_page.get('cid') or 0),
+                            timeout_seconds=60,
+                            save=True,
+                        )
+                        result['ai_chapters'] = (
+                            chapter_result
+                            if chapter_ok and isinstance(chapter_result, dict)
+                            else {'saved': False, 'error': str(chapter_result)}
+                        )
+                        if chapter_ok:
+                            task_logger.info('B站AI章节已生成并保存')
+                        else:
+                            task_logger.warning(f'B站AI章节生成失败（不影响投稿）: {chapter_result}')
+                    else:
+                        result['ai_chapters'] = {'saved': False, 'error': chapter_error or '稿件分P尚不可读取'}
+                        task_logger.warning(f'暂时无法读取稿件分P，跳过AI章节: {chapter_error}')
                 task_logger.info(f"bilibili上传成功: {result}")
                 update_task(
                     task_id,

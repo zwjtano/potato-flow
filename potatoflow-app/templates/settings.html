@@ -520,6 +520,26 @@
                                     </div>
 
                                     <div class="col-12">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">BILIBILI CHAPTERS</span>
+                                                    <h4>投稿后自动生成章节</h4>
+                                                </div>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" role="switch"
+                                                           id="bilibili-ai-chapters" name="BILIBILI_AI_CHAPTERS_ENABLED"
+                                                           {% if config.get('BILIBILI_AI_CHAPTERS_ENABLED', True) %}checked{% endif %}>
+                                                    <label class="form-check-label" for="bilibili-ai-chapters">使用B站原生AI生成并保存播放器章节</label>
+                                                </div>
+                                                <p class="help-text mb-0">投稿完成后处理第一个分P；生成失败不影响稿件发布，结果会写入任务日志。</p>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12">
                                         <article class="settings-card" id="upload-line-card">
                                             <div class="settings-card-header">
                                                 <div>

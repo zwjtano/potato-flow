@@ -1113,6 +1113,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
         checkboxes = [
             'AUTO_MODE_ENABLED', 'TRANSLATE_TITLE', 'TRANSLATE_DESCRIPTION',
+            'BILIBILI_AI_CHAPTERS_ENABLED',
             'UPLOAD_APPEND_REPOST_NOTICE',
             'GENERATE_TAGS', 'YOUTUBE_UPLOADER_AS_FIRST_TAG', 'RECOMMEND_PARTITION',
             'RECOMMEND_PARTITION_WITH_COVER', 'AI_GENERATE_RECORDING_COVER',

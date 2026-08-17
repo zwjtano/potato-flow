@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   build-macos-apple-silicon:
+    if: ${{ github.event_name != 'release' || !contains(github.event.release.body, '[skip-desktop]') }}
     runs-on: macos-14
     timeout-minutes: 90
     permissions:
