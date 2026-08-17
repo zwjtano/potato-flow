@@ -1093,6 +1093,75 @@ class BilibiliUploader:
         except Exception as exc:
             return False, f"保存B站章节失败: {_compact_exception_text(str(exc))}"
 
+    @staticmethod
+    def chapters_from_timeline_lines(
+        lines: List[str], *, duration_seconds: int = 0
+    ) -> List[dict]:
+        """Convert PotatoFlow's verified description timeline into Bilibili chapters."""
+        points = []
+        for line in lines or []:
+            match = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?\s+(.+?)\s*$", str(line))
+            if not match:
+                continue
+            if match.group(3) is None:
+                seconds = int(match.group(1)) * 60 + int(match.group(2))
+            else:
+                seconds = (
+                    int(match.group(1)) * 3600
+                    + int(match.group(2)) * 60
+                    + int(match.group(3))
+                )
+            title = match.group(4).strip()
+            if title and (not points or seconds - points[-1][0] >= 5):
+                points.append((seconds, title))
+        if len(points) < 2:
+            return []
+        # Bilibili requires the first chapter to begin at zero. The first verified
+        # event remains its title; only its chapter boundary is extended to 00:00.
+        points[0] = (0, points[0][1])
+        end_of_video = max(
+            int(duration_seconds or 0),
+            points[-1][0] + max(5, points[-1][0] - points[-2][0]),
+        )
+        return [
+            {
+                "from": start,
+                "to": points[index + 1][0] if index + 1 < len(points) else end_of_video,
+                "content": title,
+            }
+            for index, (start, title) in enumerate(points)
+        ]
+
+    def generate_preferred_chapters(
+        self,
+        *,
+        aid: int,
+        cid: int,
+        timeline_lines: List[str],
+        duration_seconds: int = 0,
+        mode: str = "auto",
+    ) -> Tuple[bool, Union[dict, str]]:
+        """Save verified timeline chapters first, or explicitly run Bilibili AI."""
+        clean_mode = str(mode or "auto").strip().lower()
+        if clean_mode not in {"auto", "timeline", "bilibili_ai"}:
+            return False, "不支持的章节生成方式"
+        if clean_mode in {"auto", "timeline"}:
+            chapters = self.chapters_from_timeline_lines(
+                timeline_lines, duration_seconds=duration_seconds
+            )
+            if chapters:
+                ok, result = self.save_chapters(aid=aid, cid=cid, chapters=chapters)
+                if ok and isinstance(result, dict):
+                    return True, {**result, "source": "verified_timeline"}
+                if clean_mode == "timeline":
+                    return False, result
+            elif clean_mode == "timeline":
+                return False, "简介中少于2个可靠时间点，无法生成章节"
+        ok, result = self.generate_ai_chapters(aid=aid, cid=cid, timeout_seconds=60, save=True)
+        if ok and isinstance(result, dict):
+            return True, {**result, "source": "bilibili_ai"}
+        return False, result
+
     def generate_ai_chapters(
         self, *, aid: int, cid: int, timeout_seconds: int = 60, save: bool = True
     ) -> Tuple[bool, Union[dict, str]]:
@@ -1205,6 +1274,7 @@ class BilibiliUploader:
                         "title": str(video.get("title") or f"P{index}"),
                         "description": str(video.get("desc") or ""),
                         "cid": video.get("cid"),
+                        "duration": int(video.get("duration") or 0),
                         "filename": str(video.get("filename") or ""),
                     }
                     for index, video in enumerate(videos, 1)

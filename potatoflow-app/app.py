@@ -1659,6 +1659,23 @@ def live_recording_job(fingerprint):
     return jsonify(job)
 
 
+@app.route('/live-recording/jobs/<fingerprint>/chapters', methods=['POST'])
+@login_required
+def live_recording_job_chapters(fingerprint):
+    payload = request.get_json(silent=True) or request.form
+    try:
+        result = live_recorder_manager.generate_pipeline_job_chapters(
+            fingerprint, mode=str(payload.get('mode') or 'auto')
+        )
+        return jsonify({
+            'ok': True,
+            **result,
+            'message': f"已用{result['source_label']}生成 {result['chapter_count']} 个章节。",
+        })
+    except RecorderConfigError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+
+
 @app.route('/live-recording/jobs/<fingerprint>/cover')
 @login_required
 def live_recording_job_cover(fingerprint):
@@ -2378,6 +2395,7 @@ def live_recording_room_recording_settings(room_id):
             recording_quality=request.form.get('recording_quality', 'source'),
             bilibili_account_id=request.form.get('bilibili_account_id', ''),
             bilibili_collection_id=request.form.get('bilibili_collection_id', ''),
+            bilibili_chapter_mode=request.form.get('bilibili_chapter_mode', 'auto'),
             recording_schedule_enabled=_coerce_checkbox_value(
                 request.form.get('recording_schedule_enabled', 'off')
             ),

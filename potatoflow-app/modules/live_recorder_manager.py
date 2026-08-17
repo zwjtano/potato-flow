@@ -950,6 +950,7 @@ class LiveRecorderManager:
             room.setdefault("recording_quality", DEFAULT_RECORDING_QUALITY)
             room.setdefault("bilibili_account_id", "")
             room.setdefault("bilibili_collection_id", "")
+            room.setdefault("bilibili_chapter_mode", "auto")
             room.setdefault("ai_danmaku_reaction_delay_seconds", 8)
             room.setdefault("recording_schedule_enabled", False)
             room.setdefault("recording_schedule_start", "00:00")
@@ -1871,6 +1872,13 @@ class LiveRecorderManager:
             return text
         raise RecorderConfigError("B站合集请填写数字合集 ID，或包含 sid/列表 ID 的合集链接")
 
+    @staticmethod
+    def _normalize_bilibili_chapter_mode(value: Any) -> str:
+        mode = str(value or "auto").strip().lower()
+        if mode not in {"auto", "timeline", "bilibili_ai", "off"}:
+            raise RecorderConfigError("不支持的 B站章节生成方式")
+        return mode
+
     def add_room_from_url(
         self,
         url: str,
@@ -2255,6 +2263,7 @@ class LiveRecorderManager:
         recording_quality: str = DEFAULT_RECORDING_QUALITY,
         bilibili_account_id: str = "",
         bilibili_collection_id: str = "",
+        bilibili_chapter_mode: str = "auto",
         recording_schedule_enabled: bool = False,
         recording_schedule_start: str = "00:00",
         recording_schedule_end: str = "23:59",
@@ -2314,6 +2323,9 @@ class LiveRecorderManager:
                 "bilibili_account_id": str(bilibili_account_id or "").strip(),
                 "bilibili_collection_id": self._normalize_bilibili_collection_id(
                     bilibili_collection_id
+                ),
+                "bilibili_chapter_mode": self._normalize_bilibili_chapter_mode(
+                    bilibili_chapter_mode
                 ),
                 "recording_schedule_enabled": bool(recording_schedule_enabled),
                 "recording_schedule_start": schedule_start,
@@ -2583,6 +2595,9 @@ class LiveRecorderManager:
                 "bilibili_cookies": str(resolve_cookie_path(account.get("cookies_path"))),
                 "bilibili_collection_id": str(
                     room.get("bilibili_collection_id") or ""
+                ),
+                "bilibili_chapter_mode": self._normalize_bilibili_chapter_mode(
+                    room.get("bilibili_chapter_mode")
                 ),
             }
             # Empty room values inherit the global setting. Only an actual room
@@ -5265,6 +5280,41 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         if not ok or not isinstance(result, dict):
             raise RecorderConfigError(str(result))
         return result
+
+    def generate_pipeline_job_chapters(
+        self, fingerprint: str, *, mode: str = "auto"
+    ) -> dict[str, Any]:
+        """Generate chapters for a published recording job using the selected source."""
+        job = self.pipeline_job(fingerprint)
+        if not job:
+            raise RecorderConfigError("没有找到该录播任务")
+        if not job.get("bvid"):
+            raise RecorderConfigError("该录播任务还没有已发布的 B站稿件")
+        account_id = str(job.get("bilibili_account_id") or "").strip()
+        detail = self.bilibili_archive_detail(account_id, str(job["bvid"]))
+        pages = detail.get("pages") or []
+        if not pages or not pages[0].get("cid"):
+            raise RecorderConfigError("B站没有返回该稿件第一分P的信息")
+        import bridge
+
+        timeline = bridge.timeline_lines(str(job.get("description") or detail.get("description") or ""))
+        first_page = pages[0]
+        _account, uploader = self._bilibili_archive_uploader(account_id)
+        ok, result = uploader.generate_preferred_chapters(
+            aid=int(detail.get("aid") or 0),
+            cid=int(first_page.get("cid") or 0),
+            timeline_lines=timeline,
+            duration_seconds=int(first_page.get("duration") or job.get("duration_seconds") or 0),
+            mode=mode,
+        )
+        if not ok or not isinstance(result, dict):
+            raise RecorderConfigError(str(result))
+        source = str(result.get("source") or "")
+        return {
+            **result,
+            "source_label": "简介时间线" if source == "verified_timeline" else "B站 AI",
+            "chapter_count": len(result.get("chapters") or []),
+        }
 
     def delete_bilibili_archive(
         self,

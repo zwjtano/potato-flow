@@ -207,6 +207,16 @@
                                    value="{{ room.bilibili_collection_id|default('') }}"
                                    placeholder="例如 123456 或包含 sid 的合集链接">
                         </label>
+                        <label class="room-recording-duration{% if room.record_only %} d-none{% endif %}"
+                               data-role="bilibili-chapter-field">
+                            <span><strong>B站章节生成</strong><small>投稿前选择默认章节来源，发布后仍可在任务详情中重新生成</small></span>
+                            <select class="form-select" name="bilibili_chapter_mode">
+                                <option value="auto" {% if room.bilibili_chapter_mode|default('auto') == 'auto' %}selected{% endif %}>自动：简介时间线优先，失败后用 B站 AI</option>
+                                <option value="timeline" {% if room.bilibili_chapter_mode == 'timeline' %}selected{% endif %}>只用 PotatoFlow 简介时间线</option>
+                                <option value="bilibili_ai" {% if room.bilibili_chapter_mode == 'bilibili_ai' %}selected{% endif %}>只用 B站 AI</option>
+                                <option value="off" {% if room.bilibili_chapter_mode == 'off' %}selected{% endif %}>关闭自动章节</option>
+                            </select>
+                        </label>
                         <label class="room-recording-setting-option">
                             <span class="room-setting-switch">
                                 <input type="checkbox" name="segment_enabled" value="on"

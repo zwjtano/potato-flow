@@ -679,6 +679,15 @@
                     <i class="bi bi-arrow-clockwise"></i> 刷新详情
                 </button>
                 <a class="btn btn-warning d-none" data-role="recording-detail-review"><i class="bi bi-pencil-square"></i> 人工审核</a>
+                <div class="btn-group d-none" data-role="recording-detail-chapters">
+                    <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-list-ol"></i> 生成章节
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><button class="dropdown-item" type="button" data-chapter-mode="timeline">按简介时间线生成</button></li>
+                        <li><button class="dropdown-item" type="button" data-chapter-mode="bilibili_ai">用 B站 AI 生成</button></li>
+                    </ul>
+                </div>
                 <a class="btn btn-outline-success d-none" data-role="recording-detail-bilibili" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> 查看 B站稿件</a>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
             </div>
@@ -2162,6 +2171,36 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         const bilibili = modal.querySelector('[data-role="recording-detail-bilibili"]');
         bilibili.href = job.bilibili_url || (job.bvid ? `https://www.bilibili.com/video/${encodeURIComponent(job.bvid)}` : '#');
         bilibili.classList.toggle('d-none', !job.bvid);
+        const chapters = modal.querySelector('[data-role="recording-detail-chapters"]');
+        chapters.classList.toggle('d-none', !job.bvid);
+        chapters.querySelectorAll('[data-chapter-mode]').forEach(button => {
+            button.onclick = () => generateRecordingChapters(job, button.dataset.chapterMode, button);
+        });
+    }
+
+    async function generateRecordingChapters(job, mode, button) {
+        if (!job?.id || !button || button.disabled) return;
+        const sourceName = mode === 'timeline' ? '简介时间线' : 'B站 AI';
+        if (!window.confirm(`将使用${sourceName}重新生成并覆盖当前章节，是否继续？`)) return;
+        const original = button.textContent;
+        const group = button.closest('[data-role="recording-detail-chapters"]');
+        group.querySelectorAll('button').forEach(item => item.disabled = true);
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成中';
+        try {
+            const response = await fetch(`/live-recording/jobs/${encodeURIComponent(job.id)}/chapters`, {
+                method: 'POST',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                body: JSON.stringify({mode}),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '章节生成失败');
+            window.alert(result.message || '章节已生成');
+        } catch (error) {
+            showTaskErrorMessage(job.display_id || job.id.slice(0, 12), `${sourceName}章节生成失败`, error.message);
+        } finally {
+            button.textContent = original;
+            group.querySelectorAll('button').forEach(item => item.disabled = false);
+        }
     }
 
     async function loadRecordingJobDetail(jobId, showLoading = false, preserveView = false) {

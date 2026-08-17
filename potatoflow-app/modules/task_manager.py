@@ -8170,10 +8170,12 @@ class TaskProcessor:
             )
 
             if success:
+                chapter_mode = str(self.config.get('bilibili_chapter_mode') or 'auto').strip().lower()
                 if (
                     isinstance(result, dict)
                     and result.get('bvid')
                     and _as_bool(self.config.get('BILIBILI_AI_CHAPTERS_ENABLED', True))
+                    and chapter_mode != 'off'
                 ):
                     chapter_detail = None
                     chapter_error = ''
@@ -8187,11 +8189,13 @@ class TaskProcessor:
                             time.sleep(2)
                     if chapter_detail:
                         first_page = chapter_detail['pages'][0]
-                        chapter_ok, chapter_result = uploader.generate_ai_chapters(
+                        import bridge
+                        chapter_ok, chapter_result = uploader.generate_preferred_chapters(
                             aid=int(chapter_detail.get('aid') or result.get('aid') or 0),
                             cid=int(first_page.get('cid') or 0),
-                            timeout_seconds=60,
-                            save=True,
+                            timeline_lines=bridge.timeline_lines(description),
+                            duration_seconds=int(first_page.get('duration') or 0),
+                            mode=chapter_mode,
                         )
                         result['ai_chapters'] = (
                             chapter_result
@@ -8199,7 +8203,11 @@ class TaskProcessor:
                             else {'saved': False, 'error': str(chapter_result)}
                         )
                         if chapter_ok:
-                            task_logger.info('B站AI章节已生成并保存')
+                            chapter_source = chapter_result.get('source') if isinstance(chapter_result, dict) else ''
+                            task_logger.info(
+                                'B站章节已生成并保存（%s）',
+                                '简介时间线' if chapter_source == 'verified_timeline' else 'B站AI',
+                            )
                         else:
                             task_logger.warning(f'B站AI章节生成失败（不影响投稿）: {chapter_result}')
                     else:
