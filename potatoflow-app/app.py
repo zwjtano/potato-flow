@@ -1788,6 +1788,21 @@ def live_recording_job_review(fingerprint):
     if request.method == 'POST':
         try:
             action = request.form.get('action', 'save').strip().lower()
+            chapter_modes = {
+                'generate_chapters_timeline': 'timeline',
+                'generate_chapters_bilibili_ai': 'bilibili_ai',
+            }
+            if action in chapter_modes:
+                result = live_recorder_manager.generate_pipeline_job_chapters(
+                    fingerprint,
+                    mode=chapter_modes[action],
+                    description=request.form.get('description', job.get('description', '')),
+                )
+                flash(
+                    f"已用{result['source_label']}生成 {result['chapter_count']} 个章节。",
+                    'success',
+                )
+                return redirect(url_for('live_recording_job_review', fingerprint=fingerprint))
             tags_submitted = 'tags_json' in request.form
             try:
                 tags = json.loads(

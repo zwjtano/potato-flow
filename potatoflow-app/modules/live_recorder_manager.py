@@ -5282,7 +5282,11 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         return result
 
     def generate_pipeline_job_chapters(
-        self, fingerprint: str, *, mode: str = "auto"
+        self,
+        fingerprint: str,
+        *,
+        mode: str = "auto",
+        description: str | None = None,
     ) -> dict[str, Any]:
         """Generate chapters for a published recording job using the selected source."""
         job = self.pipeline_job(fingerprint)
@@ -5297,7 +5301,13 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             raise RecorderConfigError("B站没有返回该稿件第一分P的信息")
         import bridge
 
-        timeline = bridge.timeline_lines(str(job.get("description") or detail.get("description") or ""))
+        timeline = bridge.timeline_lines(
+            str(
+                description
+                if description is not None
+                else job.get("description") or detail.get("description") or ""
+            )
+        )
         first_page = pages[0]
         _account, uploader = self._bilibili_archive_uploader(account_id)
         ok, result = uploader.generate_preferred_chapters(

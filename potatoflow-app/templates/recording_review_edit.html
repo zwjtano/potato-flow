@@ -146,6 +146,16 @@
                                 <button type="submit" name="action" value="regenerate_all" class="btn btn-sm btn-primary ai-generate-btn">
                                     先简介后标题，全部重新生成
                                 </button>
+                                {% if job.bvid %}
+                                <button type="submit" name="action" value="generate_chapters_timeline" class="btn btn-sm btn-outline-success ai-generate-btn"
+                                        data-confirm-chapter-update="true" data-chapter-source="简介时间线">
+                                    <i class="bi bi-list-ol"></i> 按简介时间线生成章节
+                                </button>
+                                <button type="submit" name="action" value="generate_chapters_bilibili_ai" class="btn btn-sm btn-outline-success ai-generate-btn"
+                                        data-confirm-chapter-update="true" data-chapter-source="B站 AI">
+                                    <i class="bi bi-stars"></i> 用 B站 AI 生成章节
+                                </button>
+                                {% endif %}
                             </div>
                         </div>
                         {% set timeline = job.review_override.timeline_diagnostics or {} %}
@@ -277,7 +287,7 @@
                 <div class="published-update-copy">
                     <div class="page-eyebrow">CONFIRM UPDATE</div>
                     <h5 id="publishedUpdateConfirmTitle">确认更新 B站稿件？</h5>
-                    <p>当前预览中的标题、简介、标签、分区和两种封面将同步到 <strong>{{ job.bvid }}</strong>。</p>
+                    <p id="publishedUpdateConfirmDescription">当前预览中的标题、简介、标签、分区和两种封面将同步到 <strong>{{ job.bvid }}</strong>。</p>
                     <div class="published-update-items">
                         <span><i class="bi bi-type"></i> 标题</span>
                         <span><i class="bi bi-card-text"></i> 简介</span>
@@ -313,6 +323,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const form = document.getElementById('recording-review-form');
     const publishedUpdateModalElement = document.getElementById('publishedUpdateConfirmModal');
     const confirmPublishedUpdateButton = document.getElementById('confirmPublishedUpdateBtn');
+    const confirmTitle = document.getElementById('publishedUpdateConfirmTitle');
+    const confirmDescription = document.getElementById('publishedUpdateConfirmDescription');
     const applyPublishedUpdateButtons = Array.from(form.querySelectorAll('[data-confirm-published-update="true"]'));
     const pinnedCommentConfirmItem = document.querySelector('[data-role="pinned-comment-confirm-item"]');
     let pendingPublishedUpdateButton = null;
@@ -336,6 +348,15 @@ document.addEventListener('DOMContentLoaded', function () {
     form.addEventListener('submit', function (event) {
         collectTags();
         const submitter = event.submitter;
+        if (submitter && submitter.dataset.confirmChapterUpdate === 'true' && !publishedUpdateConfirmed) {
+            event.preventDefault();
+            pendingPublishedUpdateButton = submitter;
+            confirmTitle.textContent = '确认覆盖 B站章节？';
+            confirmDescription.textContent = `将使用${submitter.dataset.chapterSource}重新生成并覆盖当前章节。视频内容和简介不会改变。`;
+            pinnedCommentConfirmItem?.classList.add('d-none');
+            bootstrap.Modal.getOrCreateInstance(publishedUpdateModalElement).show();
+            return;
+        }
         if (
             submitter
             && submitter.dataset.confirmPublishedUpdate === 'true'
@@ -369,6 +390,8 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     publishedUpdateModalElement?.addEventListener('hidden.bs.modal', function () {
         if (publishedUpdateConfirmed) return;
+        confirmTitle.textContent = '确认更新 B站稿件？';
+        confirmDescription.innerHTML = '当前预览中的标题、简介、标签、分区和两种封面将同步到 <strong>{{ job.bvid }}</strong>。';
         confirmPublishedUpdateButton.disabled = false;
         confirmPublishedUpdateButton.innerHTML =
             '<i class="bi bi-cloud-arrow-up"></i> 确认同步';
