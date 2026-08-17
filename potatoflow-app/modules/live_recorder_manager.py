@@ -5310,11 +5310,22 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
         )
         first_page = pages[0]
         _account, uploader = self._bilibili_archive_uploader(account_id)
+        rules_ok, rules = uploader.chapter_rules(
+            bvid=str(job["bvid"]),
+            aid=int(detail.get("aid") or 0),
+            cid=int(first_page.get("cid") or 0),
+        )
+        chapter_rules = (
+            rules.get("chapters")
+            if rules_ok and isinstance(rules, dict) and isinstance(rules.get("chapters"), dict)
+            else {}
+        )
         ok, result = uploader.generate_preferred_chapters(
             aid=int(detail.get("aid") or 0),
             cid=int(first_page.get("cid") or 0),
             timeline_lines=timeline,
             duration_seconds=int(first_page.get("duration") or job.get("duration_seconds") or 0),
+            chapter_limit=int(chapter_rules.get("limit") or 10),
             mode=mode,
         )
         if not ok or not isinstance(result, dict):

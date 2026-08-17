@@ -8190,11 +8190,23 @@ class TaskProcessor:
                     if chapter_detail:
                         first_page = chapter_detail['pages'][0]
                         import bridge
+                        rules_ok, rules_result = uploader.chapter_rules(
+                            bvid=str(result['bvid']),
+                            aid=int(chapter_detail.get('aid') or result.get('aid') or 0),
+                            cid=int(first_page.get('cid') or 0),
+                        )
+                        chapter_rules = (
+                            rules_result.get('chapters')
+                            if rules_ok and isinstance(rules_result, dict)
+                            and isinstance(rules_result.get('chapters'), dict)
+                            else {}
+                        )
                         chapter_ok, chapter_result = uploader.generate_preferred_chapters(
                             aid=int(chapter_detail.get('aid') or result.get('aid') or 0),
                             cid=int(first_page.get('cid') or 0),
                             timeline_lines=bridge.timeline_lines(description),
                             duration_seconds=int(first_page.get('duration') or 0),
+                            chapter_limit=int(chapter_rules.get('limit') or 10),
                             mode=chapter_mode,
                         )
                         result['ai_chapters'] = (

@@ -1095,7 +1095,7 @@ class BilibiliUploader:
 
     @staticmethod
     def chapters_from_timeline_lines(
-        lines: List[str], *, duration_seconds: int = 0
+        lines: List[str], *, duration_seconds: int = 0, chapter_limit: int = 10
     ) -> List[dict]:
         """Convert PotatoFlow's verified description timeline into Bilibili chapters."""
         points = []
@@ -1112,16 +1112,25 @@ class BilibiliUploader:
                     + int(match.group(3))
                 )
             title = match.group(4).strip()
-            if title and (not points or seconds - points[-1][0] >= 5):
+            if (
+                title
+                and (not duration_seconds or seconds <= int(duration_seconds) - 5)
+                and (not points or seconds - points[-1][0] >= 5)
+            ):
                 points.append((seconds, title))
         if len(points) < 2:
             return []
+        limit = max(2, int(chapter_limit or 10))
+        if len(points) > limit:
+            indexes = [round(index * (len(points) - 1) / (limit - 1)) for index in range(limit)]
+            points = [points[index] for index in indexes]
         # Bilibili requires the first chapter to begin at zero. The first verified
         # event remains its title; only its chapter boundary is extended to 00:00.
         points[0] = (0, points[0][1])
-        end_of_video = max(
-            int(duration_seconds or 0),
-            points[-1][0] + max(5, points[-1][0] - points[-2][0]),
+        end_of_video = (
+            int(duration_seconds)
+            if int(duration_seconds or 0) > points[-1][0]
+            else points[-1][0] + max(5, points[-1][0] - points[-2][0])
         )
         return [
             {
@@ -1139,6 +1148,7 @@ class BilibiliUploader:
         cid: int,
         timeline_lines: List[str],
         duration_seconds: int = 0,
+        chapter_limit: int = 10,
         mode: str = "auto",
     ) -> Tuple[bool, Union[dict, str]]:
         """Save verified timeline chapters first, or explicitly run Bilibili AI."""
@@ -1147,7 +1157,9 @@ class BilibiliUploader:
             return False, "不支持的章节生成方式"
         if clean_mode in {"auto", "timeline"}:
             chapters = self.chapters_from_timeline_lines(
-                timeline_lines, duration_seconds=duration_seconds
+                timeline_lines,
+                duration_seconds=duration_seconds,
+                chapter_limit=chapter_limit,
             )
             if chapters:
                 ok, result = self.save_chapters(aid=aid, cid=cid, chapters=chapters)

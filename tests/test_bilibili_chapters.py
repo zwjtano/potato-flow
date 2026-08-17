@@ -27,6 +27,15 @@ class BilibiliChapterTests(TestCase):
         self.assertEqual(chapters[0], {"from": 0, "to": 1120, "content": "第一波团战"})
         self.assertEqual(chapters[-1]["to"], 7200)
 
+    def test_verified_timeline_obeys_bilibili_limit_and_video_duration(self):
+        lines = [f"{minute:02d}:00 事件{minute}" for minute in range(12)]
+        chapters = BilibiliUploader.chapters_from_timeline_lines(
+            lines, duration_seconds=665, chapter_limit=10
+        )
+        self.assertEqual(len(chapters), 10)
+        self.assertEqual(chapters[-1]["to"], 665)
+        self.assertLess(chapters[-1]["from"], chapters[-1]["to"])
+
     def test_preferred_generation_uses_timeline_before_ai(self):
         uploader = BilibiliUploader("cookies.json")
         with (
