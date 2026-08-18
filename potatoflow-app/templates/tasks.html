@@ -1363,6 +1363,17 @@ html[data-theme="dark"] .chapter-confirm-impact { color: #ead28b; border-color: 
 html[data-theme="dark"] .chapter-confirm-wait { color: #b8d3e9; border-color: #31516a; background: #172b3a; }
 html[data-theme="dark"] .chapter-confirm-fallback { color: #b9dcf7; border-color: #346b91; background: #173249; }
 html[data-theme="dark"] .chapter-confirm-modal .modal-footer { border-color: #2b4153; background: #121e28; }
+html[data-theme="dark"] #recordingJobDetailModal [data-role="recording-detail-chapters"] .dropdown-menu {
+    color: #e5edf5;
+    border-color: #33485a;
+    background: #172532;
+}
+html[data-theme="dark"] #recordingJobDetailModal [data-role="recording-detail-chapters"] .dropdown-item { color: #e5edf5; }
+html[data-theme="dark"] #recordingJobDetailModal [data-role="recording-detail-chapters"] .dropdown-item:hover,
+html[data-theme="dark"] #recordingJobDetailModal [data-role="recording-detail-chapters"] .dropdown-item:focus {
+    color: #fff;
+    background: #244258;
+}
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-loading {
     color: var(--studio-muted);
 }
@@ -1645,6 +1656,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         cover: {name: '生成录制文件封面', description: '为仅录制文件生成内嵌封面', icon: 'bi-image'},
         cover_16x9: {name: '16:9 个人空间封面', description: '独立生成并保存 B站个人空间封面', icon: 'bi-aspect-ratio'},
         cover_4x3: {name: '4:3 首页推荐封面', description: '独立生成 B站首页推荐封面，失败不阻断投稿', icon: 'bi-grid'},
+        chapters: {name: '生成 B站章节', description: '按直播间设置自动使用简介时间线或 B站 AI 生成播放器章节', icon: 'bi-list-ol'},
         collection: {name: '加入 B站合集', description: '投稿成功后独立加入直播间配置的合集，失败可单独重试', icon: 'bi-collection-play'},
         comment: {name: '发布简介评论', description: '投稿成功后发布并按配置置顶简介评论，失败时只重试评论', icon: 'bi-chat-left-text'},
         remux: {name: '无损封装 MP4', description: '使用 -c copy 转封装，不重新编码视频', icon: 'bi-file-earmark-play'},

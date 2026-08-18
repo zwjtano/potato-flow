@@ -5966,6 +5966,75 @@ def import_app(cfg: dict[str, Any]):
     return BilibiliUploader, load_app_config
 
 
+def generate_automatic_bilibili_chapters(
+    uploader: Any,
+    *,
+    bvid: str,
+    aid: int = 0,
+    description: str,
+    mode: str = "auto",
+    part_number: int = 1,
+    detail_attempts: int = 10,
+    retry_delay_seconds: float = 3.0,
+) -> tuple[bool, dict[str, Any] | str]:
+    """Generate chapters after a recording upload becomes readable on Bilibili."""
+    chapter_mode = str(mode or "auto").strip().lower()
+    if chapter_mode not in {"auto", "timeline", "bilibili_ai"}:
+        return False, "不支持的章节生成方式"
+
+    detail: dict[str, Any] | None = None
+    detail_error = "稿件分P尚不可读取"
+    attempts = max(1, int(detail_attempts or 1))
+    for attempt in range(attempts):
+        detail_ok, detail_result = uploader.archive_detail(str(bvid))
+        if detail_ok and isinstance(detail_result, dict) and detail_result.get("pages"):
+            detail = detail_result
+            break
+        detail_error = str(detail_result or detail_error)
+        if attempt + 1 < attempts:
+            time.sleep(max(0.0, float(retry_delay_seconds or 0)))
+    if not detail:
+        return False, detail_error
+
+    pages = [page for page in detail["pages"] if isinstance(page, dict)]
+    if not pages:
+        return False, "稿件分P尚不可读取"
+    page_index = min(max(1, int(part_number or 1)) - 1, len(pages) - 1)
+    page = pages[page_index]
+    resolved_aid = int(detail.get("aid") or aid or 0)
+    cid = int(page.get("cid") or 0)
+    if resolved_aid <= 0 or cid <= 0:
+        return False, "稿件章节参数尚不可读取"
+
+    rules_ok, rules_result = uploader.chapter_rules(
+        bvid=str(bvid), aid=resolved_aid, cid=cid
+    )
+    chapter_rules = (
+        rules_result.get("chapters")
+        if rules_ok
+        and isinstance(rules_result, dict)
+        and isinstance(rules_result.get("chapters"), dict)
+        else {}
+    )
+    ok, result = uploader.generate_preferred_chapters(
+        aid=resolved_aid,
+        cid=cid,
+        timeline_lines=timeline_lines(description),
+        duration_seconds=int(page.get("duration") or 0),
+        chapter_limit=int(chapter_rules.get("limit") or 10),
+        mode=chapter_mode,
+    )
+    if not ok:
+        return False, result
+    return True, {
+        **(result if isinstance(result, dict) else {}),
+        "bvid": str(bvid),
+        "aid": resolved_aid,
+        "cid": cid,
+        "part_number": page_index + 1,
+    }
+
+
 def enhance_recording_metadata(
     title: str,
     description: str,
@@ -8778,6 +8847,65 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         # Keeping the top-level status at video_uploaded also prevents file
         # management endpoints from treating the source as deletable.
         store.finish(key, "video_uploaded", previous)
+
+        chapter_mode = str(cfg.get("bilibili_chapter_mode") or "auto").strip().lower()
+        chapters_enabled = cfg.get("BILIBILI_AI_CHAPTERS_ENABLED", True) is not False
+        existing_chapters = previous.get("bilibili_chapters")
+        if chapter_mode == "off" or not chapters_enabled:
+            store.stage(key, "chapters", "skipped", {
+                "reason": "直播间已关闭自动章节",
+                "mode": chapter_mode,
+            })
+        elif not (isinstance(existing_chapters, dict) and existing_chapters.get("saved")):
+            current_stage = "chapters"
+            store.stage(key, "chapters", "running", {"mode": chapter_mode})
+            if uploader is None:
+                uploader = BilibiliUploader(cookie_file=str(cookie))
+            bilibili_upload = previous.get("bilibili")
+            bilibili_upload = bilibili_upload if isinstance(bilibili_upload, dict) else {}
+            try:
+                chapter_ok, chapter_result = generate_automatic_bilibili_chapters(
+                    uploader,
+                    bvid=str(bilibili_upload.get("bvid") or ""),
+                    aid=int(bilibili_upload.get("aid") or 0),
+                    description=description,
+                    mode=chapter_mode,
+                    part_number=part_number,
+                )
+            except Exception as exc:
+                # Chapters are a post-upload enhancement. A creator-center
+                # outage or an older uploader implementation must not turn a
+                # successful video submission into a failed recording task.
+                chapter_ok, chapter_result = False, str(exc)
+            if chapter_ok:
+                previous["bilibili_chapters"] = chapter_result
+                store.stage(key, "chapters", "completed", chapter_result)
+                source = chapter_result.get("source") if isinstance(chapter_result, dict) else ""
+                print(
+                    "OK B站章节已自动生成（%s）"
+                    % ("简介时间线" if source == "verified_timeline" else "B站AI")
+                )
+            else:
+                previous["bilibili_chapters"] = {
+                    "saved": False,
+                    "mode": chapter_mode,
+                    "error": str(chapter_result),
+                }
+                store.stage(
+                    key,
+                    "chapters",
+                    "warning",
+                    previous["bilibili_chapters"],
+                    error=str(chapter_result),
+                )
+                print(
+                    f"WARN B站章节自动生成失败（不影响投稿）: {chapter_result}",
+                    file=sys.stderr,
+                )
+            # Keep the chapter outcome durable before collection and cleanup.
+            store.finish(key, "video_uploaded", previous)
+        else:
+            store.stage(key, "chapters", "completed", existing_chapters)
 
         collection_id = str(cfg.get("bilibili_collection_id") or "").strip()
         bilibili_result = previous.get("bilibili")

@@ -10,9 +10,49 @@ if str(APP_ROOT) not in sys.path:
 
 from modules.bilibili_uploader import BilibiliUploader  # noqa: E402
 from modules.live_recorder_manager import LiveRecorderManager, RecorderConfigError  # noqa: E402
+from bridge import generate_automatic_bilibili_chapters  # noqa: E402
 
 
 class BilibiliChapterTests(TestCase):
+    def test_recording_pipeline_generates_chapters_for_uploaded_part(self):
+        uploader = mock.Mock()
+        uploader.archive_detail.return_value = (
+            True,
+            {
+                "aid": 123,
+                "pages": [
+                    {"cid": 456, "duration": 600},
+                    {"cid": 789, "duration": 900},
+                ],
+            },
+        )
+        uploader.chapter_rules.return_value = (True, {"chapters": {"limit": 8}})
+        uploader.generate_preferred_chapters.return_value = (
+            True,
+            {"saved": True, "source": "verified_timeline", "chapters": [{}, {}]},
+        )
+
+        ok, result = generate_automatic_bilibili_chapters(
+            uploader,
+            bvid="BV1test",
+            description="00:10 开场\n10:00 团战",
+            mode="auto",
+            part_number=2,
+            retry_delay_seconds=0,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(result["cid"], 789)
+        self.assertEqual(result["part_number"], 2)
+        uploader.generate_preferred_chapters.assert_called_once_with(
+            aid=123,
+            cid=789,
+            timeline_lines=["00:10 开场", "10:00 团战"],
+            duration_seconds=900,
+            chapter_limit=8,
+            mode="auto",
+        )
+
     def test_room_chapter_modes_are_normalized(self):
         for mode in ("auto", "timeline", "bilibili_ai", "off"):
             self.assertEqual(LiveRecorderManager._normalize_bilibili_chapter_mode(mode), mode)

@@ -185,6 +185,7 @@ RECORDING_STAGE_LABELS = {
     "cover": "生成录制文件封面",
     "cover_16x9": "生成 16:9 个人空间封面",
     "cover_4x3": "生成 4:3 首页推荐封面",
+    "chapters": "生成 B站章节",
     "collection": "加入 B站合集",
     "comment": "发布简介评论",
     "remux": "FLV 转 MP4",
@@ -2573,6 +2574,9 @@ class LiveRecorderManager:
         config["douyu_stats_cover_context_enabled"] = bool(
             app_config.get("DOUYU_STATS_COVER_CONTEXT_ENABLED", True)
         )
+        config["BILIBILI_AI_CHAPTERS_ENABLED"] = bool(
+            app_config.get("BILIBILI_AI_CHAPTERS_ENABLED", True)
+        )
         profiles = []
         for room in rooms:
             account = resolve_account(
@@ -3508,7 +3512,7 @@ class LiveRecorderManager:
             ),
             "bilibili": (
                 "detect", "record", "ass", "burn", "live_stats", "xml_identity", "ai",
-                "cover", "cover_16x9", "cover_4x3", "upload", "collection", "comment", "cleanup",
+                "cover", "cover_16x9", "cover_4x3", "upload", "chapters", "collection", "comment", "cleanup",
             ),
         }
         from .bilibili_accounts import resolve_account
