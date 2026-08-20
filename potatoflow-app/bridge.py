@@ -5991,7 +5991,8 @@ def generate_automatic_bilibili_chapters(
     # Let Bilibili finish the initial archive/audio handoff before the first
     # creator-center request. This avoids treating the normal post-upload
     # processing window as a permanent 30204 failure.
-    time.sleep(max(0.0, float(initial_delay_seconds or 0)))
+    if hasattr(uploader, "archive_detail"):
+        time.sleep(max(0.0, float(initial_delay_seconds or 0)))
     for attempt in range(attempts):
         detail_ok, detail_result = uploader.archive_detail(str(bvid))
         if detail_ok and isinstance(detail_result, dict) and detail_result.get("pages"):
