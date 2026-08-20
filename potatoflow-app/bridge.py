@@ -4650,6 +4650,120 @@ def select_ti_cover_game(
     return games[-1] if games else {}
 
 
+def build_neutral_ti_layout_reference(source: Path, output: Path) -> Path:
+    """Remove every identity from the TI style guide before image editing.
+
+    The original layout reference contains a real LGD/Falcons example. Image
+    edit models tend to preserve those visually strong logos even when the
+    prompt calls them placeholders. A deliberately defocused copy preserves
+    only the broad red/green composition and information hierarchy.
+    """
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+
+    with Image.open(source) as opened:
+        base = opened.convert("RGB")
+    width, height = base.size
+    preview_width = max(48, width // 24)
+    preview_height = max(32, height // 24)
+    neutral = base.resize(
+        (preview_width, preview_height), Image.Resampling.LANCZOS
+    ).resize((width, height), Image.Resampling.BICUBIC)
+    neutral = neutral.filter(
+        ImageFilter.GaussianBlur(radius=max(8, int(min(width, height) * 0.018)))
+    )
+    neutral = ImageEnhance.Brightness(neutral).enhance(0.58)
+    neutral = ImageEnhance.Contrast(neutral).enhance(0.82)
+
+    # Explicit blank medallions erase the colored trace of the example logos
+    # and tell the model where the deterministic overlays will be placed.
+    draw = ImageDraw.Draw(neutral)
+    badge_size = int(min(width * 0.145, height * 0.255))
+    badge_y = int(height * 0.43)
+    for center_x, fill in (
+        (int(width * 0.16), (38, 6, 7)),
+        (int(width * 0.84), (4, 34, 23)),
+    ):
+        half = badge_size // 2
+        draw.ellipse(
+            (center_x - half, badge_y - half, center_x + half, badge_y + half),
+            fill=fill,
+            outline=(157, 119, 55),
+            width=max(2, width // 500),
+        )
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    neutral.save(output, format="PNG", optimize=True)
+    return output
+
+
+def overlay_verified_ti_team_logos(
+    cover: Path,
+    app_root: Path,
+    opponents: list[str],
+) -> dict[str, Any]:
+    """Replace AI logo regions with the exact bundled official team assets."""
+    from PIL import Image, ImageDraw
+    from ti2026_context import TI2026_TEAMS
+
+    if len(opponents) != 2:
+        raise RuntimeError("TI 官方队标覆盖需要两支已核验队伍")
+    team_by_name = {str(team["name"]): team for team in TI2026_TEAMS}
+    logo_paths: list[Path] = []
+    for team_name in opponents:
+        team = team_by_name.get(str(team_name))
+        logo_path = app_root / str((team or {}).get("logo_path") or "")
+        if not team or not logo_path.is_file():
+            raise RuntimeError(f"缺少 {team_name} 的官方队标素材")
+        logo_paths.append(logo_path)
+
+    with Image.open(cover) as opened:
+        canvas = opened.convert("RGBA")
+    width, height = canvas.size
+    draw = ImageDraw.Draw(canvas)
+    badge_size = int(min(width * 0.145, height * 0.255))
+    logo_limit = int(badge_size * 0.82)
+    badge_y = int(height * 0.43)
+    placements: list[dict[str, Any]] = []
+    for index, (team_name, logo_path) in enumerate(zip(opponents, logo_paths)):
+        center_x = int(width * (0.16 if index == 0 else 0.84))
+        half = badge_size // 2
+        badge_box = (
+            center_x - half,
+            badge_y - half,
+            center_x + half,
+            badge_y + half,
+        )
+        fill = (38, 6, 7, 255) if index == 0 else (4, 34, 23, 255)
+        draw.ellipse(
+            badge_box,
+            fill=fill,
+            outline=(214, 169, 78, 255),
+            width=max(3, width // 420),
+        )
+        with Image.open(logo_path) as opened_logo:
+            logo = opened_logo.convert("RGBA")
+        alpha_box = logo.getchannel("A").getbbox()
+        if alpha_box:
+            logo = logo.crop(alpha_box)
+        logo.thumbnail((logo_limit, logo_limit), Image.Resampling.LANCZOS)
+        position = (
+            center_x - logo.width // 2,
+            badge_y - logo.height // 2,
+        )
+        canvas.alpha_composite(logo, position)
+        placements.append({
+            "team": team_name,
+            "path": str(logo_path),
+            "box": list(badge_box),
+        })
+
+    if cover.suffix.lower() in {".jpg", ".jpeg"}:
+        canvas.convert("RGB").save(cover, quality=94, subsampling=0)
+    else:
+        canvas.save(cover)
+    return {"teams": list(opponents), "placements": placements}
+
+
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -4886,18 +5000,25 @@ def generate_recording_cover_with_ai(
         )
         layout_reference = root / "static/img/ti2026/cover-layout-reference.png"
         if layout_reference.is_file():
-            add_cover_reference(
+            neutral_layout_reference = build_neutral_ti_layout_reference(
                 layout_reference,
+                work_dir / "ti_cover_layout_neutral.png",
+            )
+            add_cover_reference(
+                neutral_layout_reference,
                 (
-                    "TI 封面唯一构图与质感母版；只参考红绿对抗场景、中央英雄尺度、"
-                    "金色转播包装和信息层级。图中原有文字、队标、英雄、比分与模拟"
-                    "水印均为占位内容，必须移除且不得沿用"
+                    "已彻底模糊并清除身份的 TI 构图与配色参考；只参考红绿对抗场景、"
+                    "中央主体尺度、金色转播包装和信息层级。此图不含任何可用的队标、"
+                    "队名、比分、英雄、选手或阵容身份"
                 ),
             )
+            details["ai_cover_ti_layout_reference_sanitized"] = True
+            details["ai_cover_ti_layout_reference_source"] = str(layout_reference)
         try:
             from ti2026_context import TI2026_TEAMS  # type: ignore
 
             team_by_name = {str(team["name"]): team for team in TI2026_TEAMS}
+            verified_logo_paths: dict[str, str] = {}
             for opponent in (
                 tournament_match.get("opponents", [])
                 if isinstance(tournament_match, dict)
@@ -4906,10 +5027,8 @@ def generate_recording_cover_with_ai(
                 team = team_by_name.get(str(opponent))
                 logo_path = root / str((team or {}).get("logo_path") or "")
                 if team and logo_path.is_file():
-                    add_cover_reference(
-                        logo_path,
-                        f"参赛队伍 {opponent} 的官方队标；只可用作该队 Logo",
-                    )
+                    verified_logo_paths[str(opponent)] = str(logo_path)
+            details["ai_cover_ti_verified_logo_paths"] = verified_logo_paths
         except Exception as exc:
             details["ai_cover_tournament_reference_error"] = str(exc)
         cover_lineups = dict(pending_lineups)
@@ -5456,7 +5575,7 @@ def generate_recording_cover_with_ai(
         )
         featured_label = "焦点选手" if live_confirmed and visual_player else ("MVP候选" if visual_player else "")
         prompt = f"""
-Produce one finished {aspect_label} premium TI 2026 Dota 2 broadcast cover, visually matching Image 1 in cinematic quality, hierarchy and black-gold/red-green tournament styling. Image 1 is the composition/style reference only. Follow the explicit image-role map below; never assume that the final input image is a lineup.
+Produce one finished {aspect_label} premium TI 2026 Dota 2 broadcast cover, using the deliberately defocused Image 1 only for cinematic hierarchy and black-gold/red-green tournament styling. Image 1 contains no valid identity. Follow the explicit image-role map below; never infer a team, logo, player, hero, score or lineup from Image 1, and never assume that the final input image is a lineup.
 Create a full unified poster, not a flat UI or visibly pasted collage. {player_visual_instruction} Integrate the subject into a Shanghai night skyline with a circular arcane portal; red energy on the left and emerald energy on the right.
 {lineup_visual_instruction}
 Render these exact texts clearly and verbatim:
@@ -5470,7 +5589,7 @@ Render these exact texts clearly and verbatim:
 - center series result/status: "{series_text}"
 - bottom center label: "{kills_label}"
 - bottom center value: "{kills_text}"
-The central subject, player ribbon and optional KDA must form one obvious focal unit. "MVP候选" means a KDA-based editorial candidate, not an official tournament award. "焦点选手" means title-selected live coverage and must not imply an MVP. Place both supplied team logos as large exact logos at left and right. No streamer, extra person, extra logo, extra hero, extra score, watermark or concept-simulation label.
+The central subject, player ribbon and optional KDA must form one obvious focal unit. "MVP候选" means a KDA-based editorial candidate, not an official tournament award. "焦点选手" means title-selected live coverage and must not imply an MVP. Do not draw, imitate, spell, transform or invent either team logo. Leave one clean empty dark logo medallion at the left and one at the right; exact official PNG logos will be composited there after generation. No streamer, extra person, extra logo, extra hero, extra score, watermark or concept-simulation label.
 """.strip()
         details["ai_cover_ti_exact_content"] = {
             "stage": stage_text, "game_number": game_number,
@@ -5596,8 +5715,17 @@ The central subject, player ribbon and optional KDA must form one obvious focal 
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
     if cover_tournament_context.get("mode") == "ti_competition":
+        opponents = [
+            str(name) for name in (tournament_match or {}).get("opponents", [])
+            if str(name)
+        ][:2]
+        details["ai_cover_ti_logo_overlay"] = overlay_verified_ti_team_logos(
+            cover,
+            root,
+            opponents,
+        )
         details["ai_cover_ti_composition"] = "full_ai"
-        details["ai_cover_ti_programmatic_overlay"] = False
+        details["ai_cover_ti_programmatic_overlay"] = True
     details.update({
         "ai_cover_generated": True,
         "ai_cover_model": image_model,

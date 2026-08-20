@@ -5643,7 +5643,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("不要替换成无关人物或角色", image_edit.call_args.kwargs["prompt"])
 
     def test_ti_elimination_cover_prompt_uses_recording_stage(self):
-        app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
+        app_root = APP_ROOT
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             character_base = root / "character-base.png"
@@ -5667,7 +5667,9 @@ class BridgeTests(unittest.TestCase):
             })
 
             def fake_ffmpeg(command, **_kwargs):
-                Path(command[-1]).write_bytes(b"jpeg")
+                from PIL import Image
+
+                Image.new("RGB", (1920, 1080), (12, 12, 12)).save(command[-1])
                 return types.SimpleNamespace(returncode=0, stderr="")
 
             with patch.dict(sys.modules, {
@@ -5701,6 +5703,21 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn("TI 2026 · 瑞士轮", prompt)
         self.assertNotIn("TI 2026 小组赛", prompt)
         self.assertEqual(details["ai_cover_ti_exact_content"]["stage"], "淘汰轮")
+        self.assertTrue(details["ai_cover_ti_layout_reference_sanitized"])
+        self.assertTrue(details["ai_cover_ti_programmatic_overlay"])
+        self.assertEqual(
+            details["ai_cover_ti_logo_overlay"]["teams"],
+            ["Iron Wing", "GamerLegion"],
+        )
+        edit_images = image_edit.call_args.kwargs["image"]
+        edit_paths = [Path(handle.name) for handle in edit_images]
+        self.assertEqual(edit_paths[0].name, "ti_cover_layout_neutral.png")
+        self.assertNotIn("iron-wing.png", {path.name for path in edit_paths})
+        self.assertNotIn("gamerlegion.png", {path.name for path in edit_paths})
+        self.assertIn(
+            "Do not draw, imitate, spell, transform or invent either team logo",
+            prompt,
+        )
 
     def test_unknown_streamer_without_room_avatar_still_stops_cover_generation(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"
