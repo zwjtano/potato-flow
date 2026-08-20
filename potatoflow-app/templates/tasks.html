@@ -2300,7 +2300,15 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
             window.setTimeout(() => { button.textContent = original; }, 2400);
         } catch (error) {
             bootstrap.Modal.getOrCreateInstance(modal).hide();
-            showTaskErrorMessage(job.display_id || job.id.slice(0, 12), `${sourceName}章节生成失败`, error.message);
+            const recordingTitle = String(job.title || job.video_name || '录播任务').trim();
+            const titlePreview = recordingTitle.length > 120
+                ? `${recordingTitle.slice(0, 119)}…`
+                : recordingTitle;
+            showTaskErrorMessage(
+                job.display_id || job.id.slice(0, 12),
+                `${sourceName}章节生成失败 · ${titlePreview}`,
+                error.message,
+            );
         } finally {
             group.querySelectorAll('button').forEach(item => item.disabled = false);
             confirmButton.disabled = false;

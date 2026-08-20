@@ -6328,6 +6328,10 @@ class BridgeTests(unittest.TestCase):
                 "谢彬在BP阶段吃下大量ban位｜08-01 23:07",
             )
             ai_stage = store.stage_state(key, "ai")
+            self.assertEqual(ai_stage["status"], "completed")
+            self.assertFalse(ai_stage["error"])
+            self.assertTrue(ai_stage["details"]["fallback_recovered"])
+            self.assertFalse(ai_stage["details"].get("continued_with_fallback", False))
             self.assertTrue(
                 ai_stage["details"]["title_topic_recovered_from_description"]
             )

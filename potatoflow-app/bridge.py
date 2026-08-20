@@ -8077,7 +8077,24 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     "title": title,
                     "title_topic_recovered_from_description": True,
                     "title_topic_recovery_source": "verified_description_timeline",
+                    "fallback_recovered": True,
                 })
+                # The first quality gate may have marked the AI stage as an
+                # exhausted fallback before the verified description was
+                # available. Once a concrete, non-vague title is recovered
+                # from that timeline, the final metadata is valid and should
+                # not continue to surface the stale "title is empty/default"
+                # warning as if the published title were missing.
+                if ai_generation_exhausted:
+                    ai_generation_exhausted = False
+                    ai_stage_error = ""
+                    ai_details.update({
+                        "continued_with_fallback": False,
+                        "title_topic_is_fallback": False,
+                        "fallback_recovery_note": (
+                            "AI 标题未通过质量校验，已根据已验证简介时间线生成标题"
+                        ),
+                    })
 
         post_filter_fallback_topic = str(
             recording_metadata_values(video, cfg)["ai_topic"] or ""
