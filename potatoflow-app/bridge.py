@@ -5976,7 +5976,7 @@ def generate_automatic_bilibili_chapters(
     part_number: int = 1,
     detail_attempts: int = 10,
     retry_delay_seconds: float = 3.0,
-    initial_delay_seconds: float = 30.0,
+    initial_delay_seconds: float = 20 * 60,
     audio_retry_attempts: int = 3,
     audio_retry_delay_seconds: float = 30.0,
 ) -> tuple[bool, dict[str, Any] | str]:
