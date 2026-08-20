@@ -5976,6 +5976,7 @@ def generate_automatic_bilibili_chapters(
     part_number: int = 1,
     detail_attempts: int = 10,
     retry_delay_seconds: float = 3.0,
+    initial_delay_seconds: float = 30.0,
     audio_retry_attempts: int = 3,
     audio_retry_delay_seconds: float = 30.0,
 ) -> tuple[bool, dict[str, Any] | str]:
@@ -5987,6 +5988,10 @@ def generate_automatic_bilibili_chapters(
     detail: dict[str, Any] | None = None
     detail_error = "稿件分P尚不可读取"
     attempts = max(1, int(detail_attempts or 1))
+    # Let Bilibili finish the initial archive/audio handoff before the first
+    # creator-center request. This avoids treating the normal post-upload
+    # processing window as a permanent 30204 failure.
+    time.sleep(max(0.0, float(initial_delay_seconds or 0)))
     for attempt in range(attempts):
         detail_ok, detail_result = uploader.archive_detail(str(bvid))
         if detail_ok and isinstance(detail_result, dict) and detail_result.get("pages"):

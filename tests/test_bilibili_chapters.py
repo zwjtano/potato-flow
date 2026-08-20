@@ -38,6 +38,7 @@ class BilibiliChapterTests(TestCase):
             description="00:10 开场\n10:00 团战",
             mode="auto",
             part_number=2,
+            initial_delay_seconds=0,
             retry_delay_seconds=0,
         )
 
