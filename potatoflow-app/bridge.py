@@ -5976,6 +5976,8 @@ def generate_automatic_bilibili_chapters(
     part_number: int = 1,
     detail_attempts: int = 10,
     retry_delay_seconds: float = 3.0,
+    audio_retry_attempts: int = 3,
+    audio_retry_delay_seconds: float = 30.0,
 ) -> tuple[bool, dict[str, Any] | str]:
     """Generate chapters after a recording upload becomes readable on Bilibili."""
     chapter_mode = str(mode or "auto").strip().lower()
@@ -6016,14 +6018,24 @@ def generate_automatic_bilibili_chapters(
         and isinstance(rules_result.get("chapters"), dict)
         else {}
     )
-    ok, result = uploader.generate_preferred_chapters(
-        aid=resolved_aid,
-        cid=cid,
-        timeline_lines=timeline_lines(description),
-        duration_seconds=int(page.get("duration") or 0),
-        chapter_limit=int(chapter_rules.get("limit") or 10),
-        mode=chapter_mode,
-    )
+    generation_kwargs = {
+        "aid": resolved_aid,
+        "cid": cid,
+        "timeline_lines": timeline_lines(description),
+        "duration_seconds": int(page.get("duration") or 0),
+        "chapter_limit": int(chapter_rules.get("limit") or 10),
+        "mode": chapter_mode,
+    }
+    ok, result = uploader.generate_preferred_chapters(**generation_kwargs)
+    # Bilibili exposes the archive before its audio extraction is ready. 30204
+    # is transient in that window; retry the AI task instead of recording a
+    # permanent chapter failure immediately after upload.
+    retries = max(0, int(audio_retry_attempts or 0))
+    for attempt in range(retries):
+        if ok or "30204" not in str(result):
+            break
+        time.sleep(max(0.0, float(audio_retry_delay_seconds or 0)))
+        ok, result = uploader.generate_preferred_chapters(**generation_kwargs)
     if not ok:
         return False, result
     return True, {
