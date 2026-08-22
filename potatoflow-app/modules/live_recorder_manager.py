@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -173,6 +173,7 @@ RECORDING_QUALITY_OVERRIDES = {
 }
 AUTO_UPLOAD_RETRY_DELAY_SECONDS = 5 * 60
 AUTO_UPLOAD_RETRY_MAX_RETRIES = 3
+BILIBILI_UPLOAD_STALL_TIMEOUT_SECONDS = 10 * 60
 RECORDING_NOTIFICATION_POLL_SECONDS = 2
 RECORDING_SCHEDULE_POLL_SECONDS = 15
 RECORDING_STAGE_LABELS = {
@@ -3102,6 +3103,169 @@ class LiveRecorderManager:
                 continue
         return retried
 
+    def fail_stalled_upload_jobs(
+        self,
+        stall_seconds: float = BILIBILI_UPLOAD_STALL_TIMEOUT_SECONDS,
+    ) -> int:
+        """Fail an upload that stopped reporting progress and release its slot.
+
+        Upload progress callbacks update ``upload_stages.updated_at`` on every
+        chunk.  A running upload whose timestamp has not moved for the timeout
+        is therefore safe to treat as wedged.  Uploads explicitly paused after
+        they started are converted to a visible failure after the same grace
+        period, while pre-upload review pauses and queued uploads are ignored.
+        """
+        state_path = self._pipeline_state_path()
+        if not state_path.is_file():
+            return 0
+        timeout = max(60.0, float(stall_seconds or 0))
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout)
+        try:
+            with closing(sqlite3.connect(state_path, timeout=5)) as db:
+                db.row_factory = sqlite3.Row
+                rows = db.execute(
+                    """SELECT uploads.fingerprint, uploads.video_path,
+                              uploads.status AS upload_status,
+                              uploads.result_json,
+                              upload_stages.status AS stage_status,
+                              upload_stages.details_json,
+                              upload_stages.updated_at AS stage_updated_at
+                       FROM uploads
+                       JOIN upload_stages
+                         ON upload_stages.fingerprint = uploads.fingerprint
+                       WHERE uploads.platform='bilibili'
+                         AND upload_stages.stage='upload'
+                         AND (
+                           (uploads.status IN ('processing', 'video_uploaded')
+                            AND upload_stages.status='running')
+                           OR
+                           (uploads.status='paused'
+                            AND upload_stages.status='paused')
+                         )"""
+                ).fetchall()
+        except sqlite3.Error:
+            return 0
+
+        failed = 0
+        for row in rows:
+            updated_at = self._state_datetime(row["stage_updated_at"])
+            if updated_at is None or updated_at > cutoff:
+                continue
+            details = self._decode_json(row["details_json"])
+            progress = details.get("upload_progress")
+            # A paused pre-upload review also uses the top-level paused state.
+            # Only expire a pause that has actually transferred video bytes.
+            if row["upload_status"] == "paused" and not isinstance(progress, dict):
+                continue
+
+            fingerprint = str(row["fingerprint"] or "")
+            expected_stage_status = str(row["stage_status"] or "")
+            expected_updated_at = str(row["stage_updated_at"] or "")
+            try:
+                with closing(sqlite3.connect(state_path, timeout=5)) as db:
+                    current = db.execute(
+                        """SELECT uploads.status, upload_stages.status,
+                                  upload_stages.updated_at
+                           FROM uploads JOIN upload_stages
+                             ON upload_stages.fingerprint=uploads.fingerprint
+                           WHERE uploads.fingerprint=?
+                             AND upload_stages.stage='upload'""",
+                        (fingerprint,),
+                    ).fetchone()
+                if (
+                    not current
+                    or str(current[0] or "") != str(row["upload_status"] or "")
+                    or str(current[1] or "") != expected_stage_status
+                    or str(current[2] or "") != expected_updated_at
+                ):
+                    continue
+            except sqlite3.Error:
+                continue
+
+            if row["upload_status"] in {"processing", "video_uploaded"}:
+                try:
+                    result = self._decode_json(row["result_json"])
+                    job = {
+                        "id": fingerprint,
+                        "video_path": str(row["video_path"] or ""),
+                        "status": str(row["upload_status"] or ""),
+                        "result": result,
+                        "stages": [{"key": "upload", "details": details}],
+                    }
+                    worker_pid = self._pipeline_worker_pid(job)
+                    if worker_pid > 1:
+                        self._terminate_pipeline_worker(job)
+                    elif self._pipeline_bridge_processes():
+                        # Do not report success while an unmatched bridge process
+                        # may still own the cross-process upload lock.
+                        logger.warning(
+                            "上传任务 %s 已超时，但无法安全定位其进程，将稍后重试",
+                            fingerprint[:12],
+                        )
+                        continue
+                except RecorderConfigError as exc:
+                    logger.warning(
+                        "终止超时上传任务 %s 失败：%s",
+                        fingerprint[:12],
+                        exc,
+                    )
+                    continue
+
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            minutes = max(1, int(round(timeout / 60)))
+            if row["upload_status"] == "paused":
+                reason = (
+                    f"B站上传暂停超过 {minutes} 分钟，已自动标记失败；"
+                    "后续任务已放行，可手动重试"
+                )
+            else:
+                reason = (
+                    f"B站上传连续 {minutes} 分钟没有进度，已自动终止并标记失败；"
+                    "后续任务已放行，可手动重试"
+                )
+            stalled_details = {
+                **details,
+                "auto_retry_disabled": True,
+                "stall_timeout_seconds": int(timeout),
+                "stalled_at": now,
+            }
+            try:
+                with self._lock, closing(sqlite3.connect(state_path, timeout=30)) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    stage_cursor = db.execute(
+                        """UPDATE upload_stages
+                           SET status='failed', details_json=?, error=?,
+                               finished_at=?, updated_at=?
+                           WHERE fingerprint=? AND stage='upload'
+                             AND status=? AND updated_at=?""",
+                        (
+                            json.dumps(stalled_details, ensure_ascii=False, default=str),
+                            reason,
+                            now,
+                            now,
+                            fingerprint,
+                            expected_stage_status,
+                            expected_updated_at,
+                        ),
+                    )
+                    if stage_cursor.rowcount != 1:
+                        db.rollback()
+                        continue
+                    parent_cursor = db.execute(
+                        """UPDATE uploads SET status='failed', error=?, updated_at=?
+                           WHERE fingerprint=? AND status=?""",
+                        (reason, now, fingerprint, str(row["upload_status"] or "")),
+                    )
+                    if parent_cursor.rowcount != 1:
+                        db.rollback()
+                        continue
+                    db.commit()
+            except sqlite3.Error:
+                continue
+            failed += 1
+            logger.error("%s（任务 %s）", reason, fingerprint[:12])
+        return failed
+
     def _ensure_upload_retry_thread(self) -> None:
         if self._upload_retry_thread is not None and self._upload_retry_thread.is_alive():
             return
@@ -3110,6 +3274,10 @@ class LiveRecorderManager:
             # Allow the application and recorder state database to finish starting first.
             time.sleep(15)
             while True:
+                try:
+                    self.fail_stalled_upload_jobs()
+                except Exception:
+                    pass
                 try:
                     self.retry_due_upload_jobs()
                 except Exception:
@@ -3751,10 +3919,14 @@ class LiveRecorderManager:
                     )
             attempts = int(row["attempts"] or 0)
             automatic_retries_used = max(0, attempts - 1)
+            upload_auto_retry_disabled = bool(
+                upload_details.get("auto_retry_disabled")
+            )
             auto_retry_scheduled = bool(
                 job_status == "failed"
                 and row["platform"] == "bilibili"
                 and failed_stage in {"upload", "collection", "comment", "cleanup"}
+                and not upload_auto_retry_disabled
                 and automatic_retries_used < AUTO_UPLOAD_RETRY_MAX_RETRIES
             )
             retry_base = self._state_datetime(row["updated_at"])
@@ -3867,6 +4039,7 @@ class LiveRecorderManager:
                 "auto_retry_remaining_seconds": auto_retry_remaining_seconds,
                 "auto_retry_number": attempts if auto_retry_scheduled else None,
                 "auto_retry_max_retries": AUTO_UPLOAD_RETRY_MAX_RETRIES,
+                "auto_retry_disabled": upload_auto_retry_disabled,
                 "auto_retry_exhausted": bool(
                     job_status == "failed"
                     and row["platform"] == "bilibili"

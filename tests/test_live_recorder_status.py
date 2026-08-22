@@ -2641,6 +2641,178 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(upload[0], "failed")
         self.assertIn("点击重试", upload[1])
 
+    def test_stalled_running_upload_is_terminated_failed_and_not_auto_retried(self):
+        manager = LiveRecorderManager()
+        fingerprint = "a" * 64
+        old = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat(
+            timespec="seconds"
+        )
+        details = {
+            "worker_pid": 4321,
+            "upload_progress": {
+                "uploaded_bytes": 64 * 1024 * 1024,
+                "total_bytes": 6 * 1024 * 1024 * 1024,
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT,
+                        platform TEXT, status TEXT, result_json TEXT,
+                        error TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT,
+                        details_json TEXT, error TEXT, finished_at TEXT,
+                        updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', '{}', NULL, ?)",
+                    (fingerprint, "recording.flv", old),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'running', ?, NULL, NULL, ?)",
+                    (fingerprint, json.dumps(details), old),
+                )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(
+                manager, "_pipeline_worker_pid", return_value=4321
+            ), mock.patch.object(
+                manager, "_terminate_pipeline_worker", return_value=4321
+            ) as terminate:
+                failed = manager.fail_stalled_upload_jobs()
+
+            with closing(sqlite3.connect(state_path)) as db:
+                upload = db.execute(
+                    "SELECT status, error FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                stage = db.execute(
+                    "SELECT status, details_json, error FROM upload_stages WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+
+        self.assertEqual(failed, 1)
+        terminate.assert_called_once()
+        self.assertEqual(upload[0], "failed")
+        self.assertIn("连续 10 分钟没有进度", upload[1])
+        self.assertEqual(stage[0], "failed")
+        self.assertIn("后续任务已放行", stage[2])
+        stalled_details = json.loads(stage[1])
+        self.assertTrue(stalled_details["auto_retry_disabled"])
+        self.assertEqual(stalled_details["stall_timeout_seconds"], 600)
+
+    def test_recent_running_upload_is_not_failed(self):
+        manager = LiveRecorderManager()
+        fingerprint = "b" * 64
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(
+            timespec="seconds"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT,
+                        platform TEXT, status TEXT, result_json TEXT,
+                        error TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT,
+                        details_json TEXT, error TEXT, finished_at TEXT,
+                        updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'processing', '{}', NULL, ?)",
+                    (fingerprint, "recording.flv", recent),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'running', '{}', NULL, NULL, ?)",
+                    (fingerprint, recent),
+                )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "_terminate_pipeline_worker") as terminate:
+                failed = manager.fail_stalled_upload_jobs()
+
+            with closing(sqlite3.connect(state_path)) as db:
+                status = db.execute(
+                    "SELECT status FROM uploads WHERE fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()[0]
+
+        self.assertEqual(failed, 0)
+        terminate.assert_not_called()
+        self.assertEqual(status, "processing")
+
+    def test_paused_started_upload_expires_but_review_pause_is_preserved(self):
+        manager = LiveRecorderManager()
+        upload_fingerprint = "c" * 64
+        review_fingerprint = "d" * 64
+        old = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat(
+            timespec="seconds"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT,
+                        platform TEXT, status TEXT, result_json TEXT,
+                        error TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT,
+                        details_json TEXT, error TEXT, finished_at TEXT,
+                        updated_at TEXT
+                    );
+                    """
+                )
+                for fingerprint in (upload_fingerprint, review_fingerprint):
+                    db.execute(
+                        "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'paused', '{}', NULL, ?)",
+                        (fingerprint, "recording.flv", old),
+                    )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'paused', ?, NULL, NULL, ?)",
+                    (
+                        upload_fingerprint,
+                        json.dumps({"upload_progress": {"uploaded_bytes": 1}}),
+                        old,
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'paused', '{}', NULL, NULL, ?)",
+                    (review_fingerprint, old),
+                )
+
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "_terminate_pipeline_worker") as terminate:
+                failed = manager.fail_stalled_upload_jobs()
+
+            with closing(sqlite3.connect(state_path)) as db:
+                statuses = dict(
+                    db.execute("SELECT fingerprint, status FROM uploads").fetchall()
+                )
+
+        self.assertEqual(failed, 1)
+        terminate.assert_not_called()
+        self.assertEqual(statuses[upload_fingerprint], "failed")
+        self.assertEqual(statuses[review_fingerprint], "paused")
+
     def test_add_room_reloads_running_idle_worker(self):
         manager = LiveRecorderManager()
         new_room = {"id": "cccccc333333", "name": "新主播"}
@@ -4008,6 +4180,55 @@ class LiveRecorderStatusTests(unittest.TestCase):
         self.assertEqual(job["auto_retry_max_retries"], 3)
         self.assertGreater(job["auto_retry_remaining_seconds"], 150)
         self.assertLessEqual(job["auto_retry_remaining_seconds"], 180)
+
+    def test_stalled_upload_failure_waits_for_manual_retry(self):
+        manager = LiveRecorderManager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.sqlite3"
+            failed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.executescript(
+                    """
+                    CREATE TABLE uploads (
+                        fingerprint TEXT PRIMARY KEY, video_path TEXT, platform TEXT,
+                        status TEXT, attempts INTEGER, result_json TEXT, error TEXT,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE upload_stages (
+                        fingerprint TEXT, stage TEXT, status TEXT, details_json TEXT,
+                        error TEXT, started_at TEXT, finished_at TEXT, updated_at TEXT
+                    );
+                    """
+                )
+                db.execute(
+                    "INSERT INTO uploads VALUES (?, ?, 'bilibili', 'failed', 1, '{}', ?, ?, ?)",
+                    (
+                        "e" * 64,
+                        "/data/recordings/stalled.flv",
+                        "上传长时间无进展",
+                        failed_at,
+                        failed_at,
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO upload_stages VALUES (?, 'upload', 'failed', ?, ?, ?, ?, ?)",
+                    (
+                        "e" * 64,
+                        json.dumps({"auto_retry_disabled": True}),
+                        "上传长时间无进展",
+                        failed_at,
+                        failed_at,
+                        failed_at,
+                    ),
+                )
+            with mock.patch.object(
+                manager, "_pipeline_state_path", return_value=state_path
+            ), mock.patch.object(manager, "list_rooms", return_value=[]):
+                job = manager.pipeline_jobs()[0]
+
+        self.assertTrue(job["auto_retry_disabled"])
+        self.assertFalse(job["auto_retry_scheduled"])
+        self.assertFalse(job["auto_retry_exhausted"])
 
     def test_manual_retry_atomically_claims_task_before_starting_process(self):
         manager = LiveRecorderManager()
