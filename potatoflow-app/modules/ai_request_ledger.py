@@ -182,6 +182,24 @@ class AiRequestLedger:
                     _INITIALIZED_PATHS.add(cache_key)
         return connection
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Commit or roll back a short-lived connection, then always close it.
+
+        ``sqlite3.Connection``'s own context manager does not close the
+        connection.  That leaks a file handle on Windows and prevents ledger
+        rotation, cleanup, and temporary-directory removal.
+        """
+        connection = self._connect()
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     @staticmethod
     def _ensure_schema(connection: sqlite3.Connection) -> None:
         connection.executescript(
@@ -243,7 +261,7 @@ class AiRequestLedger:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         run_id = uuid.uuid4().hex
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """INSERT INTO ai_runs
                    (id, created_at, kind, scene_name, provider, model, task_id,
@@ -266,7 +284,7 @@ class AiRequestLedger:
     def finish_run(self, run_id: str, *, status: str, error: Exception | None = None) -> None:
         if not run_id:
             return
-        with self._connect() as connection:
+        with self._connection() as connection:
             count = connection.execute(
                 "SELECT COUNT(*) FROM ai_requests WHERE run_id=?", (run_id,)
             ).fetchone()[0]
@@ -296,7 +314,7 @@ class AiRequestLedger:
         if days <= 0:
             return 0
         cutoff = (time.time() if now is None else float(now)) - days * 86400
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
                 """SELECT id FROM ai_runs
@@ -338,7 +356,7 @@ class AiRequestLedger:
             return "", time.monotonic()
         request_id = uuid.uuid4().hex
         started = time.monotonic()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             attempt = int(
                 connection.execute(
@@ -364,7 +382,7 @@ class AiRequestLedger:
         if not request_id:
             return
         usage = response_usage(response)
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 """SELECT r.provider, r.model, q.metadata_json
                    FROM ai_requests q JOIN ai_runs r ON r.id=q.run_id
@@ -413,7 +431,7 @@ def summarize_task_ai_usage(task_id: str) -> dict[str, Any]:
         return {}
     try:
         ledger = get_ai_request_ledger()
-        with ledger._connect() as connection:
+        with ledger._connection() as connection:
             row = connection.execute(
                 """SELECT
                        COUNT(DISTINCT r.id),

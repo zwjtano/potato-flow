@@ -213,6 +213,7 @@ def export_transcript_srt(
         transcript_document_to_srt(document),
         encoding="utf-8-sig",
         private=private,
+        newline="",
     )
 
 
