@@ -33,6 +33,10 @@ def sqlite_connection(path):
     connection = sqlite3.connect(path)
     try:
         yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 
