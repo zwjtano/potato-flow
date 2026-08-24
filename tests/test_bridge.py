@@ -33,55 +33,6 @@ def _process_multipart_session_slot(state_db, session_key, result_queue, hold_se
 
 
 class BridgeTests(unittest.TestCase):
-    def test_live_featured_player_requires_title_identity(self):
-        players = [
-            {"name": "Nisha", "hero_name": "Invoker"},
-            {"name": "tOfu", "hero_name": "Treant Protector"},
-        ]
-        self.assertEqual(
-            bridge.select_ti_live_featured_player(players, "Nisha卡尔关键团")["name"],
-            "Nisha",
-        )
-        self.assertEqual(bridge.select_ti_live_featured_player(players, "TI实时赛况"), {})
-
-    def test_ti_mvp_candidate_uses_best_kda_ratio(self):
-        candidate = bridge.select_ti_mvp_candidate([
-            {"name": "Xm", "hero_name": "Monkey King", "kills": 8, "deaths": 4, "assists": 10},
-            {"name": "Bach", "hero_name": "Magnus", "kills": 4, "deaths": 3, "assists": 15},
-            {"name": "XinQ", "hero_name": "Dark Willow", "kills": 4, "deaths": 3, "assists": 14},
-        ])
-        self.assertEqual(candidate["name"], "Bach")
-        self.assertEqual(candidate["hero_name"], "Magnus")
-
-    def test_completed_cover_prefers_title_named_player_over_best_kda(self):
-        players = [
-            {"name": "Yatoro", "hero_name": "Terrorblade", "kills": 11, "deaths": 0, "assists": 3},
-            {"name": "planet", "hero_name": "Hoodwink", "kills": 5, "deaths": 3, "assists": 39},
-        ]
-        candidate = bridge.select_ti_cover_featured_player(
-            players,
-            "Yatoro恐怖利刃紫苑连续制造击杀",
-            live=False,
-        )
-        self.assertEqual(candidate["name"], "Yatoro")
-        self.assertEqual(candidate["hero_name"], "Terrorblade")
-
-    def test_cover_game_uses_title_named_player_and_hero_from_same_game(self):
-        games = [
-            {"game_number": 2, "players": [
-                {"name": "Yatoro", "hero_name": "Drow Ranger", "kills": 6, "deaths": 8, "assists": 5},
-            ]},
-            {"game_number": 3, "players": [
-                {"name": "Yatoro", "hero_name": "Terrorblade", "kills": 11, "deaths": 0, "assists": 3},
-            ]},
-        ]
-        selected = bridge.select_ti_cover_game(
-            games,
-            "Yatoro恐怖利刃紫苑连续制造击杀",
-        )
-        self.assertEqual(selected["game_number"], 3)
-        self.assertEqual(selected["players"][0]["hero_name"], "Terrorblade")
-
     def test_real_world_claim_from_danmaku_keeps_source_attribution(self):
         self.assertEqual(
             bridge.qualify_danmaku_only_real_world_claim(
@@ -3193,7 +3144,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(
                 set(stages),
                 {
-                    "detect", "record", "ass", "burn", "ai", "xml_identity", "live_stats",
+                    "detect", "record", "ass", "burn", "ai_subtitle", "ai", "xml_identity", "live_stats",
                     "cover_16x9", "cover_4x3", "upload", "collection", "comment", "cleanup",
                 },
             )
@@ -3225,8 +3176,41 @@ class BridgeTests(unittest.TestCase):
             key = bridge.fingerprint(video)
             self.assertEqual(store.stage_state(key, "xml_identity")["status"], "skipped")
             self.assertEqual(store.stage_state(key, "live_stats")["status"], "skipped")
+            self.assertEqual(store.stage_state(key, "ai_subtitle")["status"], "skipped")
             self.assertEqual(store.stage_state(key, "cover_16x9")["status"], "skipped")
             self.assertEqual(store.stage_state(key, "cover_4x3")["status"], "skipped")
+
+    def test_recording_upload_reuses_ai_subtitle_as_an_independent_stage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "clip.mp4"
+            cover = root / "cover.jpg"
+            video.write_bytes(b"video")
+            cover.write_bytes(b"cover")
+            (root / "clip_AI字幕.srt").write_text(
+                "1\n00:00:01,000 --> 00:00:03,000\n主播开始复盘本局\n",
+                encoding="utf-8",
+            )
+            cfg = {
+                "_config_dir": str(root),
+                "source_url": "https://example.com/live",
+                "bilibili_partition_id": "171",
+                "stable_checks": 1,
+                "stable_interval_seconds": 0.01,
+                "danmaku_enabled": False,
+                "douyu_stats_enabled": False,
+                "ai_danmaku_summary_enabled": False,
+            }
+            store = bridge.StateStore(root / "state.sqlite3")
+
+            with patch.object(bridge, "find_cover", return_value=cover):
+                self.assertTrue(bridge.upload_one(video, cfg, store, dry_run=True))
+
+            stage = store.stage_state(bridge.fingerprint(video), "ai_subtitle")
+            self.assertEqual(stage["status"], "completed")
+            self.assertEqual(stage["details"]["ai_caption_count"], 1)
+            self.assertEqual(stage["details"]["ai_caption_source"], "sidecar_srt")
+            self.assertTrue(stage["details"]["reused_existing_asset"])
 
     def test_armed_ai_review_stops_before_cover_generation_and_upload(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -5810,83 +5794,6 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(Path(image_edit.call_args.kwargs["image"].name), avatar)
         self.assertIn("直播间头像", image_edit.call_args.kwargs["prompt"])
         self.assertIn("不要替换成无关人物或角色", image_edit.call_args.kwargs["prompt"])
-
-    def test_ti_elimination_cover_prompt_uses_recording_stage(self):
-        app_root = APP_ROOT
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            character_base = root / "character-base.png"
-            character_base.write_bytes(b"character-base")
-            response = types.SimpleNamespace(data=[
-                types.SimpleNamespace(b64_json="aW1hZ2UtYnl0ZXM=", url=None)
-            ])
-            image_edit = Mock(return_value=response)
-            client = types.SimpleNamespace(images=types.SimpleNamespace(
-                edit=image_edit,
-                generate=Mock(),
-            ))
-            ai_module = types.ModuleType("modules.ai_enhancer")
-            ai_module.get_openai_client = Mock(return_value=client)
-            config_module = types.ModuleType("modules.config_manager")
-            config_module.load_config = Mock(return_value={
-                "AI_GENERATE_RECORDING_COVER": True,
-                "OPENAI_API_KEY": "test-key",
-                "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
-                "OPENAI_IMAGE_SIZE": "1536x1024",
-            })
-
-            def fake_ffmpeg(command, **_kwargs):
-                from PIL import Image
-
-                Image.new("RGB", (1920, 1080), (12, 12, 12)).save(command[-1])
-                return types.SimpleNamespace(returncode=0, stderr="")
-
-            with patch.dict(sys.modules, {
-                "modules.ai_enhancer": ai_module,
-                "modules.config_manager": config_module,
-            }), patch.object(bridge.subprocess, "run", side_effect=fake_ffmpeg):
-                _, details = bridge.generate_recording_cover_with_ai(
-                    title="TI 2026 Iron Wing 对阵 GamerLegion",
-                    ai_topic="TI 2026 Iron Wing 对阵 GamerLegion",
-                    description="TI 2026 淘汰轮比赛",
-                    streamer="谢彬DD",
-                    cfg={
-                        "_config_dir": str(root),
-                        "app_root": str(app_root),
-                        "ffmpeg": "ffmpeg",
-                        "cover_reference_path": str(character_base),
-                        "_recording_event_datetime_china": "2026-08-16T14:00:00+08:00",
-                    },
-                    work_dir=root / "artifacts",
-                    target_size=(1920, 1080),
-                    tournament_match={
-                        "status": "matched_pending_data",
-                        "opponents": ["Iron Wing", "GamerLegion"],
-                        "games": [],
-                        "liquipedia_maps": [],
-                    },
-                )
-
-        prompt = image_edit.call_args.kwargs["prompt"]
-        self.assertIn('top banner: "TI 2026 · 淘汰轮 · BO3"', prompt)
-        self.assertNotIn("TI 2026 · 瑞士轮", prompt)
-        self.assertNotIn("TI 2026 小组赛", prompt)
-        self.assertEqual(details["ai_cover_ti_exact_content"]["stage"], "淘汰轮")
-        self.assertTrue(details["ai_cover_ti_layout_reference_sanitized"])
-        self.assertTrue(details["ai_cover_ti_programmatic_overlay"])
-        self.assertEqual(
-            details["ai_cover_ti_logo_overlay"]["teams"],
-            ["Iron Wing", "GamerLegion"],
-        )
-        edit_images = image_edit.call_args.kwargs["image"]
-        edit_paths = [Path(handle.name) for handle in edit_images]
-        self.assertEqual(edit_paths[0].name, "ti_cover_layout_neutral.png")
-        self.assertNotIn("iron-wing.png", {path.name for path in edit_paths})
-        self.assertNotIn("gamerlegion.png", {path.name for path in edit_paths})
-        self.assertIn(
-            "Do not draw, imitate, spell, transform or invent either team logo",
-            prompt,
-        )
 
     def test_unknown_streamer_without_room_avatar_still_stops_cover_generation(self):
         app_root = Path(bridge.__file__).resolve().parent / "potatoflow-app"

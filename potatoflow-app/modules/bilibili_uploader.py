@@ -207,6 +207,17 @@ def _is_bilibili_http_406(exc: Exception) -> bool:
     return code == 406 or "状态码：406" in text or "status code: 406" in text.lower()
 
 
+def _is_collection_membership_duplicate(exc: Exception) -> bool:
+    """Recognize B站's idempotent "archive already in collection" result."""
+    code = _extract_response_code_from_exception(exc)
+    text = _compact_exception_text(str(exc))
+    return code == 20080 or bool(
+        re.search(r"(?:^|\D)20080(?:\D|$)", text)
+        and "已存在" in text
+        and "合集" in text
+    )
+
+
 def _bilibili_406_hint() -> str:
     return (
         "bilibili上传被 preupload 接口返回 406 拒绝。"
@@ -514,29 +525,37 @@ class BilibiliUploader:
                 )
                 already_added = archive_season_id == season_id
                 if not already_added:
-                    await (
-                        Api(
-                            url=(
-                                "https://member.bilibili.com/x2/creative/web/"
-                                "season/section/episodes/add"
-                            ),
-                            method="POST",
-                            verify=True,
-                            json_body=True,
-                            credential=credential,
+                    try:
+                        await (
+                            Api(
+                                url=(
+                                    "https://member.bilibili.com/x2/creative/web/"
+                                    "season/section/episodes/add"
+                                ),
+                                method="POST",
+                                verify=True,
+                                json_body=True,
+                                credential=credential,
+                            )
+                            .update_params(csrf=credential.bili_jct)
+                            .update_data(
+                                sectionId=section_id,
+                                episodes=[{
+                                    "aid": aid,
+                                    "cid": cid,
+                                    "title": archive_title,
+                                    "charging_pay": 0,
+                                }],
+                            )
+                            .result
                         )
-                        .update_params(csrf=credential.bili_jct)
-                        .update_data(
-                            sectionId=section_id,
-                            episodes=[{
-                                "aid": aid,
-                                "cid": cid,
-                                "title": archive_title,
-                                "charging_pay": 0,
-                            }],
-                        )
-                        .result
-                    )
+                    except Exception as exc:
+                        if not _is_collection_membership_duplicate(exc):
+                            raise
+                        # 20080 is not a failed mutation: the requested final
+                        # state already exists.  Continue with the read-back so
+                        # the stage can still verify/reorder the target item.
+                        already_added = True
                 positioned_first = await _position_first(section_id)
                 return section_id, archive_title, already_added, positioned_first
 
@@ -553,6 +572,12 @@ class BilibiliUploader:
             details.update({
                 "added": True,
                 "already_added": already_added,
+                "idempotent_skip": already_added,
+                "reason": (
+                    "当前稿件已存在于合集中，已按幂等结果跳过重复加入"
+                    if already_added
+                    else ""
+                ),
                 "positioned_first": positioned_first,
                 "section_id": section_id,
                 "title": title,

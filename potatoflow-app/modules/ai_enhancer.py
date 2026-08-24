@@ -21,6 +21,14 @@ from .utils import (
     get_chat_message_text,
 )
 from .ai_request_ledger import input_fingerprint, logical_ai_request
+from .llm_orchestrator import (
+    LLMRequestPolicy,
+    acquire_request_slot,
+    apply_prompt_cache_policy,
+    is_retryable_llm_error,
+    llm_retry_delay,
+    resolve_llm_request_policy,
+)
 
 import openai
 
@@ -28,6 +36,7 @@ import openai
 _OPENAI_CLIENT_POOL_LOCK = threading.Lock()
 _OPENAI_CLIENT_POOL: Dict[tuple[str, str, float], Any] = {}
 _OPENAI_CLIENT_POOL_LIMIT = 8
+_OPENAI_CLIENT_REQUEST_POLICIES: Dict[tuple[int, str], LLMRequestPolicy] = {}
 
 # Pre-compiled regex patterns for _pre_clean (performance optimization)
 _URL_PATTERNS = [
@@ -180,23 +189,35 @@ def get_openai_client(openai_config):
         timeout_seconds = 600.0
     if timeout_seconds > 0:
         options['timeout'] = timeout_seconds
+    # SDK retries are intentionally disabled.  The shared orchestrator records
+    # and rate-limits every physical attempt, including Retry-After handling.
+    options['max_retries'] = 0
     pool_key = (
         hashlib.sha256(api_key.encode('utf-8')).hexdigest(),
         base_url,
         timeout_seconds if timeout_seconds > 0 else 0.0,
     )
+    model_name = str(openai_config.get('OPENAI_MODEL_NAME') or '').strip()
+    policy = resolve_llm_request_policy(openai_config, model_name=model_name)
     with _OPENAI_CLIENT_POOL_LOCK:
         cached = _OPENAI_CLIENT_POOL.get(pool_key)
         if cached is not None:
             # Refresh insertion order so rarely used configurations are evicted.
             _OPENAI_CLIENT_POOL.pop(pool_key)
             _OPENAI_CLIENT_POOL[pool_key] = cached
+            _OPENAI_CLIENT_REQUEST_POLICIES[(id(cached), model_name)] = policy
             return cached
         client = openai.OpenAI(api_key=api_key, **options)
         _OPENAI_CLIENT_POOL[pool_key] = client
+        _OPENAI_CLIENT_REQUEST_POLICIES[(id(client), model_name)] = policy
         while len(_OPENAI_CLIENT_POOL) > _OPENAI_CLIENT_POOL_LIMIT:
             _old_key = next(iter(_OPENAI_CLIENT_POOL))
-            _OPENAI_CLIENT_POOL.pop(_old_key, None)
+            evicted = _OPENAI_CLIENT_POOL.pop(_old_key, None)
+            if evicted is not None:
+                evicted_id = id(evicted)
+                for policy_key in tuple(_OPENAI_CLIENT_REQUEST_POLICIES):
+                    if policy_key[0] == evicted_id:
+                        _OPENAI_CLIENT_REQUEST_POLICIES.pop(policy_key, None)
             # A caller may still be using the evicted client in another thread.
             # Removing it from the cache is safe; closing it here is not.
         return client
@@ -207,6 +228,7 @@ def _clear_openai_client_pool() -> None:
     with _OPENAI_CLIENT_POOL_LOCK:
         clients = list(_OPENAI_CLIENT_POOL.values())
         _OPENAI_CLIENT_POOL.clear()
+        _OPENAI_CLIENT_REQUEST_POLICIES.clear()
     for client in clients:
         close = getattr(client, 'close', None)
         if callable(close):
@@ -639,51 +661,102 @@ def _request_chat_completion(
         create_kwargs["max_tokens"] = max_tokens
     if response_format is not None:
         create_kwargs["response_format"] = response_format
+    request_policy = _OPENAI_CLIENT_REQUEST_POLICIES.get((id(client), model_name))
+    apply_prompt_cache_policy(
+        create_kwargs,
+        request_policy,
+        model_name=model_name,
+        scene_name=scene_name,
+        system_prompt=system_prompt,
+        user_content=user_message_content,
+    )
     request_start = time.time()
     mode_label = "JSON模式" if response_format else "纯文本模式"
-    request_id = ""
-    ledger_started = time.monotonic()
-    if request_ledger and logical_request_id:
-        try:
-            request_id, ledger_started = request_ledger.begin_request(
-                logical_request_id,
-                mode="json" if response_format else "text",
-                metadata={"scene_name": scene_name},
-            )
-        except Exception:
+
+    def physical_create(physical_kwargs):
+        max_retries = request_policy.max_retries if request_policy else 0
+        for attempt in range(max_retries + 1):
+            governor_wait_seconds = 0.0
+            try:
+                governor_wait_seconds = acquire_request_slot(request_policy)
+            except Exception as exc:
+                # Fail open: the provider remains the final limit boundary.
+                if logger_obj:
+                    logger_obj.warning("AI RPM 治理器不可用，本次请求直接发送: %s", exc)
             request_id = ""
-    if logger_obj:
-        logger_obj.info(f"发起模型请求（{mode_label}）")
+            ledger_started = time.monotonic()
+            if request_ledger and logical_request_id:
+                try:
+                    request_id, ledger_started = request_ledger.begin_request(
+                        logical_request_id,
+                        mode="json" if response_format else "text",
+                        metadata={
+                            "scene_name": scene_name,
+                            "retry_attempt": attempt,
+                            "governor_wait_ms": round(governor_wait_seconds * 1000),
+                            "prompt_cache_mode": (
+                                request_policy.prompt_cache_mode if request_policy else "off"
+                            ),
+                            "prompt_cache_key": physical_kwargs.get("prompt_cache_key", ""),
+                        },
+                    )
+                except Exception:
+                    request_id = ""
+            if logger_obj:
+                logger_obj.info(
+                    "发起模型请求（%s，物理尝试 %d/%d）",
+                    mode_label,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+            try:
+                response = client.chat.completions.create(**physical_kwargs)
+            except Exception as exc:
+                if request_ledger and request_id:
+                    try:
+                        request_ledger.finish_request(
+                            request_id, ledger_started, error=exc
+                        )
+                    except Exception:
+                        pass
+                if attempt >= max_retries or not is_retryable_llm_error(exc):
+                    raise
+                delay = llm_retry_delay(
+                    exc,
+                    attempt=attempt,
+                    base_seconds=request_policy.retry_base_seconds,
+                )
+                if logger_obj:
+                    logger_obj.warning(
+                        "模型请求可重试错误（%s），%.2f 秒后重试",
+                        exc.__class__.__name__,
+                        delay,
+                    )
+                time.sleep(delay)
+            else:
+                if request_ledger and request_id:
+                    try:
+                        request_ledger.finish_request(
+                            request_id, ledger_started, response=response
+                        )
+                    except Exception:
+                        pass
+                return response
+        raise RuntimeError("模型请求重试循环异常结束")
+
     try:
-        response = openai_chat_create_with_thinking_control(
+        return openai_chat_create_with_thinking_control(
             client=client,
             create_kwargs=create_kwargs,
             thinking_enabled=thinking_enabled,
             logger=logger_obj,
             scene_name=scene_name,
+            create_callable=physical_create,
+            attempt_disable_thinking=(
+                request_policy.attempt_compatible_thinking_control
+                if request_policy else True
+            ),
         )
-    except Exception as exc:
-        if request_ledger and request_id:
-            try:
-                request_ledger.finish_request(
-                    request_id,
-                    ledger_started,
-                    error=exc,
-                )
-            except Exception:
-                pass
-        raise
-    else:
-        if request_ledger and request_id:
-            try:
-                request_ledger.finish_request(
-                    request_id,
-                    ledger_started,
-                    response=response,
-                )
-            except Exception:
-                pass
-        return response
     finally:
         if logger_obj:
             logger_obj.info(f"模型请求结束，耗时: {time.time() - request_start:.2f}秒")

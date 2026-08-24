@@ -128,6 +128,13 @@ DEFAULT_CONFIG = {
     "OPENAI_API_KEY": "",
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
     "OPENAI_MODEL_NAME": "gpt-3.5-turbo",
+    # 统一文本模型调用治理。auto 仅对官方 OpenAI 端点发送缓存参数；兼容端点默认关闭。
+    "OPENAI_PROMPT_CACHE_MODE": "auto",  # auto / explicit / off
+    "OPENAI_PROMPT_CACHE_TTL": "30m",  # in-memory / 30m / 24h
+    "OPENAI_PROMPT_CACHE_KEY_SHARDS": 2,  # 高吞吐时分片，避免单一缓存键过热
+    "OPENAI_RPM_LIMIT": 30,  # 所有进程共享的文本模型物理请求上限；0 表示关闭
+    "OPENAI_REQUEST_MAX_RETRIES": 2,  # 统一调用层重试；SDK 内部重试固定关闭以保证准确计数
+    "OPENAI_RETRY_BASE_SECONDS": 0.75,
     # 录播封面可独立指定 Images API 凭据；留空则回退到全局 OpenAI 配置。
     "OPENAI_IMAGE_API_KEY": "",
     "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",

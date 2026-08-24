@@ -16,7 +16,6 @@ from threading import Lock
 from modules.task_manager import TaskCancelledError
 from .utils import (
     get_app_subdir,
-    openai_chat_create_with_thinking_control,
     extract_chat_message_json,
     get_chat_message_text,
 )
@@ -111,6 +110,12 @@ class TranslationConfig:
     max_workers: int = 2  # 减少最大并发线程数以降低内存使用
     thinking_enabled: bool = False
     timeout_seconds: int = 600  # API请求超时秒数；思考模型输出可达64k token，建议不低于300
+    prompt_cache_mode: str = "auto"
+    prompt_cache_ttl: str = "30m"
+    prompt_cache_key_shards: int = 2
+    rpm_limit: int = 30
+    request_max_retries: int = 2
+    retry_base_seconds: float = 0.75
     # Prompt 中心配置
     prompt_mode: str = "builtin"
     prompt_text: str = ""         # 字幕翻译主 Prompt 用户文本
@@ -391,21 +396,19 @@ class LLMRequester:
                     f"开始翻译批次 {batch_id}，包含 {len(texts)} 条字幕"
                 )
             
-            # 使用与ai_enhancer.py相同的API调用方式，添加JSON输出格式
-            response = openai_chat_create_with_thinking_control(
-                client=self.client,
-                create_kwargs={
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    "max_tokens": 4096,
-                    "response_format": {"type": "json_object"},  # 强制JSON输出
-                },
+            from .ai_enhancer import _request_chat_completion
+            response = _request_chat_completion(
+                self.client,
+                model_name,
+                system_prompt,
+                {},
+                max_tokens=4096,
+                temperature=0.0,
                 thinking_enabled=self.openai_config.get('OPENAI_THINKING_ENABLED', False),
-                logger=self.logger,
+                logger_obj=self.logger,
                 scene_name='subtitle_translate_batch',
+                user_content=user_prompt,
+                response_format={"type": "json_object"},
             )
             
             response_time = time.time() - start_time
@@ -455,20 +458,19 @@ class LLMRequester:
             model_name = self.openai_config.get('OPENAI_MODEL_NAME', 'gpt-3.5-turbo')
             with self._log_lock:
                 self.logger.info(f"开始严格模式翻译批次 {batch_id}，包含 {len(texts)} 条字幕")
-            response = openai_chat_create_with_thinking_control(
-                client=self.client,
-                create_kwargs={
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    "max_tokens": 4096,
-                    "response_format": {"type": "json_object"},
-                },
+            from .ai_enhancer import _request_chat_completion
+            response = _request_chat_completion(
+                self.client,
+                model_name,
+                system_prompt,
+                {},
+                max_tokens=4096,
+                temperature=0.0,
                 thinking_enabled=self.openai_config.get('OPENAI_THINKING_ENABLED', False),
-                logger=self.logger,
+                logger_obj=self.logger,
                 scene_name='subtitle_translate_batch_strict',
+                user_content=user_prompt,
+                response_format={"type": "json_object"},
             )
             
             # 检查响应是否有效
@@ -592,6 +594,12 @@ class SubtitleTranslator:
             'OPENAI_MODEL_NAME': config.model_name or 'gpt-3.5-turbo',
             'OPENAI_THINKING_ENABLED': str(config.thinking_enabled).strip().lower() in ('true', '1', 'on', 'yes'),
             'OPENAI_TIMEOUT_SECONDS': config.timeout_seconds,
+            'OPENAI_PROMPT_CACHE_MODE': config.prompt_cache_mode,
+            'OPENAI_PROMPT_CACHE_TTL': config.prompt_cache_ttl,
+            'OPENAI_PROMPT_CACHE_KEY_SHARDS': config.prompt_cache_key_shards,
+            'OPENAI_RPM_LIMIT': config.rpm_limit,
+            'OPENAI_REQUEST_MAX_RETRIES': config.request_max_retries,
+            'OPENAI_RETRY_BASE_SECONDS': config.retry_base_seconds,
             # Prompt 中心配置（快照，避免热修改影响进行中的翻译）
             'PROMPT_MODE': getattr(config, 'prompt_mode', 'builtin'),
             'PROMPT_TEXT': getattr(config, 'prompt_text', ''),
@@ -1149,6 +1157,12 @@ def create_translator_from_config(app_config: Dict, task_id: Optional[str] = Non
             max_workers=max_workers,
             thinking_enabled=app_config.get('SUBTITLE_OPENAI_THINKING_ENABLED', False),
             timeout_seconds=int(app_config.get('OPENAI_TIMEOUT_SECONDS', 600)),
+            prompt_cache_mode=str(app_config.get('OPENAI_PROMPT_CACHE_MODE', 'auto')),
+            prompt_cache_ttl=str(app_config.get('OPENAI_PROMPT_CACHE_TTL', '30m')),
+            prompt_cache_key_shards=int(app_config.get('OPENAI_PROMPT_CACHE_KEY_SHARDS', 2)),
+            rpm_limit=int(app_config.get('OPENAI_RPM_LIMIT', 30)),
+            request_max_retries=int(app_config.get('OPENAI_REQUEST_MAX_RETRIES', 2)),
+            retry_base_seconds=float(app_config.get('OPENAI_RETRY_BASE_SECONDS', 0.75)),
             prompt_mode=prompt_mode,
             prompt_text=prompt_text,
             prompt_strict_mode=prompt_strict_mode,

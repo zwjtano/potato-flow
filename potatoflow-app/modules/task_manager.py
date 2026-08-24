@@ -3275,6 +3275,12 @@ class TaskProcessor:
             'OPENAI_BASE_URL': self.config.get('OPENAI_BASE_URL', ''),
             'OPENAI_MODEL_NAME': self.config.get('OPENAI_MODEL_NAME', 'gpt-3.5-turbo'),
             'OPENAI_THINKING_ENABLED': self.config.get('OPENAI_THINKING_ENABLED', False),
+            'OPENAI_PROMPT_CACHE_MODE': self.config.get('OPENAI_PROMPT_CACHE_MODE', 'auto'),
+            'OPENAI_PROMPT_CACHE_TTL': self.config.get('OPENAI_PROMPT_CACHE_TTL', '30m'),
+            'OPENAI_PROMPT_CACHE_KEY_SHARDS': self.config.get('OPENAI_PROMPT_CACHE_KEY_SHARDS', 2),
+            'OPENAI_RPM_LIMIT': self.config.get('OPENAI_RPM_LIMIT', 30),
+            'OPENAI_REQUEST_MAX_RETRIES': self.config.get('OPENAI_REQUEST_MAX_RETRIES', 2),
+            'OPENAI_RETRY_BASE_SECONDS': self.config.get('OPENAI_RETRY_BASE_SECONDS', 0.75),
         }
         # 传递 Prompt 中心配置（元数据翻译）
         for prompt_key in (
@@ -7283,6 +7289,12 @@ class TaskProcessor:
             'OPENAI_BASE_URL': self.config.get('OPENAI_BASE_URL', ''),
             'OPENAI_MODEL_NAME': self.config.get('OPENAI_MODEL_NAME', 'gpt-3.5-turbo'),
             'OPENAI_THINKING_ENABLED': self.config.get('OPENAI_THINKING_ENABLED', False),
+            'OPENAI_PROMPT_CACHE_MODE': self.config.get('OPENAI_PROMPT_CACHE_MODE', 'auto'),
+            'OPENAI_PROMPT_CACHE_TTL': self.config.get('OPENAI_PROMPT_CACHE_TTL', '30m'),
+            'OPENAI_PROMPT_CACHE_KEY_SHARDS': self.config.get('OPENAI_PROMPT_CACHE_KEY_SHARDS', 2),
+            'OPENAI_RPM_LIMIT': self.config.get('OPENAI_RPM_LIMIT', 30),
+            'OPENAI_REQUEST_MAX_RETRIES': self.config.get('OPENAI_REQUEST_MAX_RETRIES', 2),
+            'OPENAI_RETRY_BASE_SECONDS': self.config.get('OPENAI_RETRY_BASE_SECONDS', 0.75),
         }
         
         if self.config.get('GENERATE_TAGS', True) and (title or description):
@@ -7333,6 +7345,12 @@ class TaskProcessor:
             'OPENAI_MODEL_NAME': self.config.get('OPENAI_MODEL_NAME', 'gpt-3.5-turbo'),
             'OPENAI_THINKING_ENABLED': self.config.get('OPENAI_THINKING_ENABLED', False),
             'OPENAI_TIMEOUT_SECONDS': self.config.get('OPENAI_TIMEOUT_SECONDS', 600),
+            'OPENAI_PROMPT_CACHE_MODE': self.config.get('OPENAI_PROMPT_CACHE_MODE', 'auto'),
+            'OPENAI_PROMPT_CACHE_TTL': self.config.get('OPENAI_PROMPT_CACHE_TTL', '30m'),
+            'OPENAI_PROMPT_CACHE_KEY_SHARDS': self.config.get('OPENAI_PROMPT_CACHE_KEY_SHARDS', 2),
+            'OPENAI_RPM_LIMIT': self.config.get('OPENAI_RPM_LIMIT', 30),
+            'OPENAI_REQUEST_MAX_RETRIES': self.config.get('OPENAI_REQUEST_MAX_RETRIES', 2),
+            'OPENAI_RETRY_BASE_SECONDS': self.config.get('OPENAI_RETRY_BASE_SECONDS', 0.75),
             'FIXED_PARTITION_ID_BILIBILI': self.config.get('FIXED_PARTITION_ID_BILIBILI', ''),
             'RECOMMEND_PARTITION_WITH_COVER': self.config.get('RECOMMEND_PARTITION_WITH_COVER', False),
         }

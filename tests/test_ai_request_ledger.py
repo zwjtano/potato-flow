@@ -57,6 +57,7 @@ class AiRequestLedgerTests(unittest.TestCase):
             "output_tokens": 20,
             "total_tokens": 120,
             "cached_tokens": 60,
+            "cache_write_tokens": None,
         })
         self.assertEqual(len(input_fingerprint("secret prompt")), 64)
 
@@ -268,16 +269,15 @@ class AiRequestLedgerTests(unittest.TestCase):
                     message=SimpleNamespace(content='{"description":"ok"}', parsed=None)
                 )],
             )
+            client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+                create=Mock(side_effect=[TimeoutError("json timeout"), response])
+            )))
             with tempfile.TemporaryDirectory() as temporary, patch.dict(
                 "os.environ",
                 {"POTATOFLOW_AI_LEDGER_PATH": str(Path(temporary) / "ledger.sqlite3")},
-            ), patch.object(
-                ai_enhancer,
-                "openai_chat_create_with_thinking_control",
-                side_effect=[TimeoutError("json timeout"), response],
             ):
                 parsed = ai_enhancer._request_json_object(
-                    object(),
+                    client,
                     "test-model",
                     "system",
                     {"private": "payload"},

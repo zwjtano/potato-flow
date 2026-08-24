@@ -269,10 +269,22 @@ def openai_chat_create_with_thinking_control(
     thinking_enabled=False,
     logger=None,
     scene_name='unknown',
+    create_callable=None,
+    attempt_disable_thinking=True,
 ):
     """统一 chat.completions 请求，支持“尝试关闭思考 + 自动降级”策略。"""
-    if _coerce_bool(thinking_enabled, default=False):
-        return client.chat.completions.create(**create_kwargs)
+    request_create = create_callable or (
+        lambda kwargs: client.chat.completions.create(**kwargs)
+    )
+    if _coerce_bool(thinking_enabled, default=False) or not attempt_disable_thinking:
+        return request_create(create_kwargs)
+
+    model_name = safe_str((create_kwargs or {}).get('model'), default='unknown')
+    endpoint_label = _mask_base_url(getattr(client, 'base_url', None))
+    scene = safe_str(scene_name, default='unknown')
+    warn_key = f"{scene}:{model_name}:{endpoint_label}"
+    if warn_key in _THINKING_FALLBACK_WARNED_SCENES:
+        return request_create(create_kwargs)
 
     disabled_kwargs = copy.deepcopy(create_kwargs or {})
     extra_body = disabled_kwargs.get('extra_body')
@@ -287,26 +299,17 @@ def openai_chat_create_with_thinking_control(
     disabled_kwargs['extra_body'] = extra_body
 
     try:
-        return client.chat.completions.create(**disabled_kwargs)
+        return request_create(disabled_kwargs)
     except Exception as exc:
         if not _is_thinking_param_unsupported_error(exc):
             raise
 
-        model_name = safe_str((create_kwargs or {}).get('model'), default='unknown')
-        endpoint_label = _mask_base_url(getattr(client, 'base_url', None))
-        scene = safe_str(scene_name, default='unknown')
-        warn_key = f"{scene}:{model_name}:{endpoint_label}"
         if logger:
-            if warn_key not in _THINKING_FALLBACK_WARNED_SCENES:
-                logger.warning(
-                    "模型不支持 thinking 控制参数，已降级为普通请求"
-                )
-                _THINKING_FALLBACK_WARNED_SCENES.add(warn_key)
-                # 防止集合无限增长
-                if len(_THINKING_FALLBACK_WARNED_SCENES) > _THINKING_FALLBACK_WARNED_SCENES_MAX:
-                    _THINKING_FALLBACK_WARNED_SCENES.clear()
-            else:
-                logger.debug(
-                    "thinking 控制参数不受支持，继续普通请求"
-                )
-        return client.chat.completions.create(**create_kwargs)
+            logger.warning(
+                "模型不支持 thinking 控制参数，已降级为普通请求"
+            )
+        _THINKING_FALLBACK_WARNED_SCENES.add(warn_key)
+        # 防止集合无限增长
+        if len(_THINKING_FALLBACK_WARNED_SCENES) > _THINKING_FALLBACK_WARNED_SCENES_MAX:
+            _THINKING_FALLBACK_WARNED_SCENES.clear()
+        return request_create(create_kwargs)

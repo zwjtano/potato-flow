@@ -128,6 +128,12 @@ class AISegmentationConfig:
     temperature: float = 0.1
     max_retries: int = 2
     request_timeout_s: float = 600.0
+    prompt_cache_mode: str = 'auto'
+    prompt_cache_ttl: str = '30m'
+    prompt_cache_key_shards: int = 2
+    rpm_limit: int = 30
+    request_max_retries: int = 2
+    retry_base_seconds: float = 0.75
     # Agent 上下文感知
     context_window: int = 3          # 前一批末尾 N 条 cue 注入下一批 prompt
     boundary_refine_enabled: bool = False   # 边界精炼 pass（索引制下通常不需要）
@@ -154,6 +160,12 @@ class AISegmentationConfig:
             temperature=float(app_config.get('AI_SEGMENTATION_TEMPERATURE', 0.1) or 0.1),
             max_retries=int(app_config.get('AI_SEGMENTATION_MAX_RETRIES', 2) or 2),
             request_timeout_s=float(app_config.get('OPENAI_TIMEOUT_SECONDS', 600) or 600),
+            prompt_cache_mode=str(app_config.get('OPENAI_PROMPT_CACHE_MODE', 'auto') or 'auto'),
+            prompt_cache_ttl=str(app_config.get('OPENAI_PROMPT_CACHE_TTL', '30m') or '30m'),
+            prompt_cache_key_shards=int(app_config.get('OPENAI_PROMPT_CACHE_KEY_SHARDS', 2) or 2),
+            rpm_limit=int(app_config.get('OPENAI_RPM_LIMIT', 30) or 0),
+            request_max_retries=int(app_config.get('OPENAI_REQUEST_MAX_RETRIES', 2) or 0),
+            retry_base_seconds=float(app_config.get('OPENAI_RETRY_BASE_SECONDS', 0.75) or 0.75),
             context_window=int(app_config.get('AI_SEGMENTATION_CONTEXT_WINDOW', 3) or 3),
             boundary_refine_enabled=coerce_bool(app_config.get('AI_SEGMENTATION_BOUNDARY_REFINE_ENABLED', False)),
             boundary_window=int(app_config.get('AI_SEGMENTATION_BOUNDARY_WINDOW', 3) or 3),
@@ -1561,7 +1573,14 @@ class AISegmenter:
         client_config = {
             'OPENAI_API_KEY': self.config.resolved_api_key,
             'OPENAI_BASE_URL': self.config.resolved_base_url,
+            'OPENAI_MODEL_NAME': self.config.resolved_model_name,
             'OPENAI_TIMEOUT_SECONDS': self.config.request_timeout_s,
+            'OPENAI_PROMPT_CACHE_MODE': self.config.prompt_cache_mode,
+            'OPENAI_PROMPT_CACHE_TTL': self.config.prompt_cache_ttl,
+            'OPENAI_PROMPT_CACHE_KEY_SHARDS': self.config.prompt_cache_key_shards,
+            'OPENAI_RPM_LIMIT': self.config.rpm_limit,
+            'OPENAI_REQUEST_MAX_RETRIES': self.config.request_max_retries,
+            'OPENAI_RETRY_BASE_SECONDS': self.config.retry_base_seconds,
         }
         return get_openai_client(client_config)
 

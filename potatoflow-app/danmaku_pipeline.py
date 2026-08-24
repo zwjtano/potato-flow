@@ -155,6 +155,8 @@ def _nvidia_devices() -> list[dict[str, str]]:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=8,
             **_hidden_subprocess_kwargs(),
         )
@@ -191,6 +193,8 @@ def _cpu_device() -> dict[str, Any]:
                 ["sysctl", "-n", "machdep.cpu.brand_string"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 **_hidden_subprocess_kwargs(),
             )
@@ -226,9 +230,11 @@ def _windows_graphics_devices() -> list[dict[str, str]]:
     try:
         result = subprocess.run(
             [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
             **_hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
@@ -276,6 +282,8 @@ def _is_apple_silicon() -> bool:
             [executable, "-in", "hw.optional.arm64"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             **_hidden_subprocess_kwargs(),
         )
@@ -387,6 +395,8 @@ def probe_encoding_capabilities(
                 command,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=20,
                 **_hidden_subprocess_kwargs(),
             )
@@ -735,9 +745,11 @@ def probe_video_size(video: Path, ffprobe: str = "ffprobe") -> tuple[int, int]:
     try:
         result = subprocess.run(
             command,
-            capture_output=True,
-            text=True,
-            timeout=30,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
             **_hidden_subprocess_kwargs(),
         )
         match = re.search(r"(\d+)x(\d+)", result.stdout)
@@ -802,6 +814,8 @@ def burn_ass(
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
                 **_hidden_subprocess_kwargs(),
             )
@@ -823,6 +837,8 @@ def burn_ass(
                 # both streams so every line is drained as it arrives.
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 **_background_subprocess_kwargs(),
             )

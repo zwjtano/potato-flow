@@ -180,6 +180,7 @@ RECORDING_STAGE_LABELS = {
     "detect": "监控开播",
     "record": "自动录制",
     "ass": "生成 ASS",
+    "ai_subtitle": "处理 AI 字幕",
     "ai": "生成 AI 简介",
     "xml_identity": "主播英雄识别",
     "live_stats": "直播数据整理",
@@ -2710,6 +2711,8 @@ class LiveRecorderManager:
                     stdout=self._log_handle,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=process_env,
                     **_background_process_kwargs(),
                 )
@@ -2789,7 +2792,8 @@ class LiveRecorderManager:
                         except (OSError, SystemError, subprocess.TimeoutExpired):
                             subprocess.run(
                                 ["taskkill", "/PID", str(pid), "/T", "/F"],
-                                capture_output=True, text=True, timeout=15, check=False,
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=15, check=False,
                                 **_hidden_process_kwargs(),
                             )
                     else:
@@ -2807,7 +2811,8 @@ class LiveRecorderManager:
                         except (OSError, SystemError, TimeoutError):
                             subprocess.run(
                                 ["taskkill", "/PID", str(pid), "/T", "/F"],
-                                capture_output=True, text=True, timeout=15, check=False,
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=15, check=False,
                                 **_hidden_process_kwargs(),
                             )
                 else:
@@ -3679,7 +3684,7 @@ class LiveRecorderManager:
                 "record", "ass", "burn", "cover", "remux", "verify", "cleanup",
             ),
             "bilibili": (
-                "detect", "record", "ass", "burn", "live_stats", "xml_identity", "ai",
+                "detect", "record", "ass", "burn", "ai_subtitle", "live_stats", "xml_identity", "ai",
                 "cover", "cover_16x9", "cover_4x3", "upload", "chapters", "collection", "comment", "cleanup",
             ),
         }
@@ -5014,97 +5019,6 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
             )
             errors: list[str] = []
             if selected_cover_fields:
-                cached_tournament_match: dict[str, Any] = {}
-                for cached_variant in ("16x9", "4x3"):
-                    cached_details = cover_details.get(cached_variant)
-                    if not isinstance(cached_details, dict):
-                        continue
-                    candidate = cached_details.get("ai_cover_tournament_match")
-                    if (
-                        isinstance(candidate, dict)
-                        and candidate.get("status") in {
-                            "confirmed",
-                            "matched_pending_data",
-                            "live_confirmed",
-                        }
-                    ):
-                        cached_tournament_match = dict(candidate)
-                        break
-                tournament_match: dict[str, Any] = {}
-                try:
-                    from .liquipedia_result_verifier import discover_liquipedia_recording_match
-                    from ti2026_context import TI2026_PLAYER_ALIASES, TI2026_TEAMS
-
-                    # Liquipedia's schedule is the authority for cover rematches.
-                    # Do not gate it behind the static TI event-date helper: that
-                    # helper can lag the live schedule and previously prevented an
-                    # otherwise unique Liquid vs Vici match from being applied.
-                    if bridge_config.get("_recording_event_datetime_china"):
-                        team_aliases = {
-                            str(team["name"]): [
-                                *(str(alias) for alias in team.get("aliases", [])),
-                                *(
-                                    str(alias)
-                                    for player in team.get("players", [])
-                                    for alias in (player, *TI2026_PLAYER_ALIASES.get(player, ()))
-                                ),
-                            ]
-                            for team in TI2026_TEAMS
-                        }
-                        match_args = {
-                            "recording_start_china": str(
-                                bridge_config.get("_recording_event_datetime_china")
-                            ),
-                            "recording_duration_seconds": float(video_duration_seconds or 0),
-                            "team_aliases": team_aliases,
-                            "timeout": float(
-                                bridge_config.get("liquipedia_timeout_seconds", 20) or 20
-                            ),
-                        }
-                        # A one-hour recording can contain the end of one match and
-                        # the draft of the next.  The review title describes the
-                        # selected cover moment, whereas the description may mention
-                        # players from both matches.  Prefer title-only evidence so
-                        # those later timeline notes cannot make the result ambiguous.
-                        evidence_candidates = [title]
-                        complete_evidence = "\n".join((title, description))
-                        if complete_evidence != title:
-                            evidence_candidates.append(complete_evidence)
-                        for evidence in evidence_candidates:
-                            for attempt in range(2):
-                                tournament_match = discover_liquipedia_recording_match(
-                                    evidence_text=evidence,
-                                    **match_args,
-                                )
-                                if tournament_match.get("status") in {
-                                    "confirmed",
-                                    "matched_pending_data",
-                                    "live_confirmed",
-                                }:
-                                    break
-                                if attempt == 0:
-                                    time.sleep(0.5)
-                            if tournament_match.get("status") in {
-                                "confirmed",
-                                "matched_pending_data",
-                                "live_confirmed",
-                            }:
-                                break
-                except Exception as exc:
-                    tournament_match = {
-                        "status": "unavailable",
-                        "source": "liquipedia_mediawiki",
-                        "reason": bridge.safe_task_error_detail(exc),
-                    }
-                if (
-                    tournament_match.get("status")
-                    not in {"confirmed", "matched_pending_data", "live_confirmed"}
-                    and cached_tournament_match
-                ):
-                    tournament_match = {
-                        **cached_tournament_match,
-                        "cache_fallback": True,
-                    }
                 # A cover-only regeneration follows the title currently saved
                 # in the review form. The AI-stage topic belongs to the
                 # original upload and may be stale after a manual title edit.
@@ -5182,7 +5096,6 @@ description 是可直接用于B站投稿的完整中文简介，保留有价值�
                                 output_path=staged_output,
                                 game_context=cover_game_context,
                                 game_context_locked=True,
-                                tournament_match=tournament_match,
                                 cover_text=cover_text,
                                 shared_reference_cache=cover_reference_cache,
                             )

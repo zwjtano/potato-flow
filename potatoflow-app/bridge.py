@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from danmaku_pipeline import (
     batch_summary_comments,
@@ -44,20 +44,9 @@ from dota2_items import (
 )
 from dota2_heroes import (
     build_dota2_hero_reference,
-    build_dota2_lineup_reference,
     find_official_dota2_hero,
 )
-from dota2_players import download_ti_player_portrait
 from runtime_environment import configure_linux_ca_environment
-from ti2026_context import (
-    build_ti2026_context,
-    ti2026_event_date_from_filename,
-    ti2026_match_round_label,
-    ti2026_match_series_format,
-    ti2026_phase_label,
-    ti2026_recording_datetime_from_filename,
-    unsupported_ti2026_claim,
-)
 
 VIDEO_EXTENSIONS = {".mp4", ".flv", ".mkv", ".webm", ".ts", ".m2ts", ".mov"}
 _IMAGE_GENERATION_THREAD_LOCK = threading.Lock()
@@ -1010,10 +999,6 @@ def effective_config(base: dict[str, Any], video: Path) -> dict[str, Any]:
         if isinstance(profile, dict) and fnmatch.fnmatch(video.name, str(profile.get("match", ""))):
             cfg.update({key: value for key, value in profile.items() if key != "match"})
             break
-    cfg["_recording_event_date"] = ti2026_event_date_from_filename(video.name)
-    cfg["_recording_event_datetime_china"] = ti2026_recording_datetime_from_filename(
-        video.name
-    )
     return cfg
 
 
@@ -1141,10 +1126,16 @@ def stdin_paths() -> list[Path]:
     # Chinese Windows locale otherwise wraps stdin with the active ANSI code
     # page and corrupts non-ASCII recording paths before Path sees them.
     binary_stream = getattr(sys.stdin, "buffer", None)
-    if binary_stream is not None:
-        text = binary_stream.read().decode("utf-8")
-    else:
-        text = sys.stdin.read()
+    try:
+        if binary_stream is not None:
+            text = binary_stream.read().decode("utf-8")
+        else:
+            text = sys.stdin.read()
+    except OSError:
+        # Test runners and windowed launchers may expose a non-interactive
+        # stdin object that deliberately rejects reads.  Treat it exactly like
+        # an absent stdin stream instead of failing an otherwise valid command.
+        return []
     return [Path(line.strip()).expanduser() for line in text.splitlines() if line.strip()]
 
 
@@ -1264,6 +1255,8 @@ def reusable_burned_video(
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
             **_hidden_subprocess_kwargs(),
         )
@@ -2966,7 +2959,8 @@ class StateStore:
             )
             for stage, status in (
                 ("detect", "completed"), ("record", "completed"),
-                ("ass", "pending"), ("burn", "pending"), ("live_stats", "pending"),
+                ("ass", "pending"), ("burn", "pending"),
+                ("ai_subtitle", "pending"), ("live_stats", "pending"),
                 ("xml_identity", "pending"), ("ai", "pending"),
                 ("cover_16x9", "pending"), ("cover_4x3", "pending"),
                 ("upload", "pending"), ("collection", "pending"),
@@ -3279,6 +3273,8 @@ def find_cover(video: Path, cfg: dict[str, Any], work_dir: Path) -> Path:
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             **_hidden_subprocess_kwargs(),
         )
@@ -4733,183 +4729,6 @@ def multipart_session_queue(cfg: dict[str, Any], session_key: str):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def select_ti_mvp_candidate(players: list[dict[str, Any]]) -> dict[str, Any]:
-    """Select a transparent KDA-based cover candidate, never an official MVP."""
-    candidates = [
-        row for row in players
-        if isinstance(row, dict) and row.get("name") and row.get("hero_name")
-    ]
-    if not candidates:
-        return {}
-    return max(
-        candidates,
-        key=lambda row: (
-            (int(row.get("kills") or 0) + int(row.get("assists") or 0))
-            / max(1, int(row.get("deaths") or 0)),
-            int(row.get("kills") or 0) + int(row.get("assists") or 0),
-            int(row.get("kills") or 0),
-            -int(row.get("deaths") or 0),
-        ),
-    )
-
-
-def select_ti_live_featured_player(
-    players: list[dict[str, Any]], title: str
-) -> dict[str, Any]:
-    """Use only a title-named live player; live feeds do not expose KDA."""
-    compact_title = re.sub(r"[^a-z0-9]+", "", str(title or "").casefold())
-    for row in players:
-        if not isinstance(row, dict) or not row.get("name") or not row.get("hero_name"):
-            continue
-        compact_name = re.sub(r"[^a-z0-9]+", "", str(row.get("name") or "").casefold())
-        if compact_name and compact_name in compact_title:
-            return row
-    return {}
-
-
-def select_ti_cover_featured_player(
-    players: list[dict[str, Any]], title: str, *, live: bool
-) -> dict[str, Any]:
-    """Prefer a title-named player; use KDA only when no player is named."""
-    title_named = select_ti_live_featured_player(players, title)
-    if title_named:
-        return title_named
-    return {} if live else select_ti_mvp_candidate(players)
-
-
-def select_ti_cover_game(
-    games: list[dict[str, Any]], title: str
-) -> dict[str, Any]:
-    """Lock the cover game when the title uniquely names a player and hero."""
-    title_locked: list[dict[str, Any]] = []
-    for game in games:
-        if not isinstance(game, dict):
-            continue
-        players = [row for row in game.get("players", []) if isinstance(row, dict)]
-        named = select_ti_live_featured_player(players, title)
-        if named and recording_cover_hero_matches_title(
-            str(named.get("hero_name") or ""), title
-        ):
-            title_locked.append(game)
-    if len(title_locked) == 1:
-        return title_locked[0]
-    return games[-1] if games else {}
-
-
-def build_neutral_ti_layout_reference(source: Path, output: Path) -> Path:
-    """Remove every identity from the TI style guide before image editing.
-
-    The original layout reference contains a real LGD/Falcons example. Image
-    edit models tend to preserve those visually strong logos even when the
-    prompt calls them placeholders. A deliberately defocused copy preserves
-    only the broad red/green composition and information hierarchy.
-    """
-    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
-
-    with Image.open(source) as opened:
-        base = opened.convert("RGB")
-    width, height = base.size
-    preview_width = max(48, width // 24)
-    preview_height = max(32, height // 24)
-    neutral = base.resize(
-        (preview_width, preview_height), Image.Resampling.LANCZOS
-    ).resize((width, height), Image.Resampling.BICUBIC)
-    neutral = neutral.filter(
-        ImageFilter.GaussianBlur(radius=max(8, int(min(width, height) * 0.018)))
-    )
-    neutral = ImageEnhance.Brightness(neutral).enhance(0.58)
-    neutral = ImageEnhance.Contrast(neutral).enhance(0.82)
-
-    # Explicit blank medallions erase the colored trace of the example logos
-    # and tell the model where the deterministic overlays will be placed.
-    draw = ImageDraw.Draw(neutral)
-    badge_size = int(min(width * 0.145, height * 0.255))
-    badge_y = int(height * 0.43)
-    for center_x, fill in (
-        (int(width * 0.16), (38, 6, 7)),
-        (int(width * 0.84), (4, 34, 23)),
-    ):
-        half = badge_size // 2
-        draw.ellipse(
-            (center_x - half, badge_y - half, center_x + half, badge_y + half),
-            fill=fill,
-            outline=(157, 119, 55),
-            width=max(2, width // 500),
-        )
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    neutral.save(output, format="PNG", optimize=True)
-    return output
-
-
-def overlay_verified_ti_team_logos(
-    cover: Path,
-    app_root: Path,
-    opponents: list[str],
-) -> dict[str, Any]:
-    """Replace AI logo regions with the exact bundled official team assets."""
-    from PIL import Image, ImageDraw
-    from ti2026_context import TI2026_TEAMS
-
-    if len(opponents) != 2:
-        raise RuntimeError("TI 官方队标覆盖需要两支已核验队伍")
-    team_by_name = {str(team["name"]): team for team in TI2026_TEAMS}
-    logo_paths: list[Path] = []
-    for team_name in opponents:
-        team = team_by_name.get(str(team_name))
-        logo_path = app_root / str((team or {}).get("logo_path") or "")
-        if not team or not logo_path.is_file():
-            raise RuntimeError(f"缺少 {team_name} 的官方队标素材")
-        logo_paths.append(logo_path)
-
-    with Image.open(cover) as opened:
-        canvas = opened.convert("RGBA")
-    width, height = canvas.size
-    draw = ImageDraw.Draw(canvas)
-    badge_size = int(min(width * 0.145, height * 0.255))
-    logo_limit = int(badge_size * 0.82)
-    badge_y = int(height * 0.43)
-    placements: list[dict[str, Any]] = []
-    for index, (team_name, logo_path) in enumerate(zip(opponents, logo_paths)):
-        center_x = int(width * (0.16 if index == 0 else 0.84))
-        half = badge_size // 2
-        badge_box = (
-            center_x - half,
-            badge_y - half,
-            center_x + half,
-            badge_y + half,
-        )
-        fill = (38, 6, 7, 255) if index == 0 else (4, 34, 23, 255)
-        draw.ellipse(
-            badge_box,
-            fill=fill,
-            outline=(214, 169, 78, 255),
-            width=max(3, width // 420),
-        )
-        with Image.open(logo_path) as opened_logo:
-            logo = opened_logo.convert("RGBA")
-        alpha_box = logo.getchannel("A").getbbox()
-        if alpha_box:
-            logo = logo.crop(alpha_box)
-        logo.thumbnail((logo_limit, logo_limit), Image.Resampling.LANCZOS)
-        position = (
-            center_x - logo.width // 2,
-            badge_y - logo.height // 2,
-        )
-        canvas.alpha_composite(logo, position)
-        placements.append({
-            "team": team_name,
-            "path": str(logo_path),
-            "box": list(badge_box),
-        })
-
-    if cover.suffix.lower() in {".jpg", ".jpeg"}:
-        canvas.convert("RGB").save(cover, quality=94, subsampling=0)
-    else:
-        canvas.save(cover)
-    return {"teams": list(opponents), "placements": placements}
-
-
 def generate_recording_cover_with_ai(
     title: str,
     ai_topic: str,
@@ -4922,7 +4741,6 @@ def generate_recording_cover_with_ai(
     recording_dir: Path | None = None,
     game_context: dict[str, Any] | None = None,
     game_context_locked: bool = False,
-    tournament_match: dict[str, Any] | None = None,
     cover_text: str = "",
     shared_reference_cache: dict[str, Any] | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
@@ -4944,116 +4762,6 @@ def generate_recording_cover_with_ai(
     cover_event_context, cover_context_source = recording_cover_event_context(description)
     cover_subject_name = recording_cover_subject_name(streamer, title)
     headline = recording_cover_headline(title, "", streamer)
-    cover_tournament_context = build_ti2026_context(
-        [],
-        "\n".join(filter(None, (title, ai_topic, description))),
-        event_date=str(
-            cfg.get("_recording_event_datetime_china")
-            or cfg.get("_recording_event_date")
-            or ""
-        ) or None,
-    )
-    accepted_match_statuses = {"confirmed", "matched_pending_data", "live_confirmed"}
-    if isinstance(tournament_match, dict) and tournament_match.get("status") in accepted_match_statuses:
-        cover_tournament_context = {
-            **cover_tournament_context,
-            "active": True,
-            "mode": "ti_competition",
-        }
-    resolved_opponents = [
-        str(name).strip() for name in (tournament_match or {}).get("opponents", [])
-        if str(name).strip()
-    ] if isinstance(tournament_match, dict) else []
-    if cover_tournament_context.get("mode") == "ti_competition" and len(resolved_opponents) != 2:
-        # A TI-looking title is not enough to invent an opponent. Keep the AI
-        # cover usable, but do not feed it the match template or TEAM 1/2.
-        cover_tournament_context["mode"] = "ti_competition_unresolved"
-    competition_cover_instruction = ""
-    if cover_tournament_context.get("mode") == "ti_competition":
-        competition_cover_instruction = (
-            "这是 TI 2026 比赛模式封面：以对阵双方、核心选手和比赛冲突为视觉中心，"
-            "使用电竞赛事转播级构图；不得把观战主播画成参赛选手。只可使用输入中已确认的"
-            "队名、选手、局次和赛果；没有已核验终局比分时不得画比分牌、晋级、淘汰、"
-            "横扫、夺冠或不朽盾归属。"
-        )
-    verified_match_instruction = ""
-    pending_lineups: dict[str, list[str]] = {}
-    cover_featured_player: dict[str, Any] = {}
-    if isinstance(tournament_match, dict) and tournament_match.get("status") in accepted_match_statuses:
-        opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)]
-        games = [game for game in tournament_match.get("games", []) if isinstance(game, dict)]
-        liquipedia_maps = [
-            game for game in tournament_match.get("liquipedia_maps", [])
-            if isinstance(game, dict)
-        ]
-        selected_game = select_ti_cover_game(games, title)
-        if len(opponents) == 2 and selected_game:
-            game = selected_game
-            players = [row for row in game.get("players", []) if isinstance(row, dict)]
-            lineups = {
-                team: [str(row.get("hero_name") or "") for row in players if row.get("team") == team and row.get("hero_name")]
-                for team in opponents
-            }
-            standout = [row for row in game.get("performance_candidates", []) if isinstance(row, dict)][:3]
-            cover_featured_player = select_ti_cover_featured_player(
-                players,
-                title,
-                live=bool(game.get("live")),
-            )
-            verified_match_instruction = (
-                f"已由 Liquipedia Match 页面与 OpenDota 核验本段赛事：{opponents[0]} 对阵 {opponents[1]}，"
-                f"第 {game.get('game_number')} 局，胜者 {game.get('winner')}。"
-                f"双方最终阵容：{opponents[0]}：{', '.join(lineups[opponents[0]]) or '未取得'}；"
-                f"{opponents[1]}：{', '.join(lineups[opponents[1]]) or '未取得'}。"
-                f"本局击杀 {game.get('radiant_score', '未知')}:{game.get('dire_score', '未知')}。"
-                + (
-                    "突出选手候选：" + "；".join(
-                        f"{row.get('name') or '选手'} {row.get('hero_name') or ''} "
-                        f"KDA {row.get('kills')}/{row.get('deaths')}/{row.get('assists')}"
-                        for row in standout
-                    ) + "。"
-                    if standout else ""
-                )
-                + "按既定 TI 封面版式：赛事阶段置于上方；左右分别放队名与五名英雄；"
-                  "双方总击杀置于两套阵容之间；突出选手可附 KDA。不得把观战主播画成参赛选手。"
-            )
-        elif len(opponents) == 2:
-            picked_map = next(
-                (
-                    game for game in reversed(liquipedia_maps)
-                    if game.get("team1_heroes") or game.get("team2_heroes")
-                ),
-                {},
-            )
-            team1_heroes = [
-                str(hero).strip() for hero in picked_map.get("team1_heroes", [])
-                if str(hero).strip()
-            ]
-            team2_heroes = [
-                str(hero).strip() for hero in picked_map.get("team2_heroes", [])
-                if str(hero).strip()
-            ]
-            if len(team1_heroes) == 5 and len(team2_heroes) == 5:
-                pending_lineups = {
-                    opponents[0]: team1_heroes,
-                    opponents[1]: team2_heroes,
-                }
-            pending_lineup_instruction = (
-                f"Liquipedia 已确认本局 BP：{opponents[0]}：{', '.join(team1_heroes)}；"
-                f"{opponents[1]}：{', '.join(team2_heroes)}。"
-                "封面最底部必须左右各排五名英雄，顺序与这两份 BP 一致；"
-                if len(team1_heroes) == 5 and len(team2_heroes) == 5
-                else "当前没有取得完整的双方五英雄 BP，不得自行补齐英雄。"
-            )
-            verified_match_instruction = (
-                f"Liquipedia 已唯一匹配本段赛事为 {opponents[0]} 对阵 {opponents[1]}，"
-                f"赛事阶段为 TI 2026 {ti2026_match_round_label(tournament_match.get('round_label')) or ti2026_phase_label(cover_tournament_context.get('phase'))}，"
-                f"赛制 {ti2026_match_series_format(cover_tournament_context, tournament_match).upper()}。"
-                + pending_lineup_instruction
-                + "封面必须使用固定赛事转播构图：顶部赛事阶段，中部左右两队队名和 Logo，"
-                "底部双方英雄阵容；不得出现观战主播真人或主播姓名。"
-                "不得填写未核验的比分、击杀、KDA、胜者、晋级或淘汰结论。"
-            )
     card_hand_instruction = recording_cover_card_hand_instruction(headline)
     details: dict[str, Any] = {
         "ai_cover_enabled": enabled,
@@ -5062,14 +4770,9 @@ def generate_recording_cover_with_ai(
         "ai_cover_excludes_time": True,
         "ai_cover_context_source": cover_context_source,
         "ai_cover_event_context": cover_event_context,
-        "ai_cover_mode": cover_tournament_context.get("mode") or "standard",
+        "ai_cover_mode": "standard",
         "ai_cover_card_hand_instruction": card_hand_instruction,
     }
-    if verified_match_instruction:
-        details["ai_cover_dota2_source"] = (
-            "liquipedia_verified_match" if games else "liquipedia_match_pending_data"
-        )
-        details["ai_cover_tournament_match"] = tournament_match
     if not enabled:
         return None, details
     image_api_key = str(
@@ -5137,134 +4840,6 @@ def generate_recording_cover_with_ai(
         reference_paths.append(path)
         reference_roles.append(role)
         return len(reference_paths)
-    lineup_reference_index = 0
-    player_reference_index = 0
-    if cover_tournament_context.get("mode") == "ti_competition":
-        # A TI match cover is about the competing teams, not the watch-party
-        # streamer. Supplying the streamer's portrait makes image-edit models
-        # preserve that face even when the prompt says not to show it.
-        reference_paths.clear()
-        reference_roles.clear()
-        reference_kind = ""
-        reference_instruction = (
-            "这是职业比赛封面。禁止出现观战主播的真人、头像、姓名或人物底稿；"
-            "画面主体只能是已核验的参赛双方、队标和英雄阵容。"
-        )
-        layout_reference = root / "static/img/ti2026/cover-layout-reference.png"
-        if layout_reference.is_file():
-            neutral_layout_reference = build_neutral_ti_layout_reference(
-                layout_reference,
-                work_dir / "ti_cover_layout_neutral.png",
-            )
-            add_cover_reference(
-                neutral_layout_reference,
-                (
-                    "已彻底模糊并清除身份的 TI 构图与配色参考；只参考红绿对抗场景、"
-                    "中央主体尺度、金色转播包装和信息层级。此图不含任何可用的队标、"
-                    "队名、比分、英雄、选手或阵容身份"
-                ),
-            )
-            details["ai_cover_ti_layout_reference_sanitized"] = True
-            details["ai_cover_ti_layout_reference_source"] = str(layout_reference)
-        try:
-            from ti2026_context import TI2026_TEAMS  # type: ignore
-
-            team_by_name = {str(team["name"]): team for team in TI2026_TEAMS}
-            verified_logo_paths: dict[str, str] = {}
-            for opponent in (
-                tournament_match.get("opponents", [])
-                if isinstance(tournament_match, dict)
-                else []
-            ):
-                team = team_by_name.get(str(opponent))
-                logo_path = root / str((team or {}).get("logo_path") or "")
-                if team and logo_path.is_file():
-                    verified_logo_paths[str(opponent)] = str(logo_path)
-            details["ai_cover_ti_verified_logo_paths"] = verified_logo_paths
-        except Exception as exc:
-            details["ai_cover_tournament_reference_error"] = str(exc)
-        cover_lineups = dict(pending_lineups)
-        if not cover_lineups and isinstance(tournament_match, dict):
-            verified_games = [row for row in tournament_match.get("games", []) if isinstance(row, dict)]
-            verified_opponents = [str(name) for name in tournament_match.get("opponents", []) if str(name)][:2]
-            if verified_games and len(verified_opponents) == 2:
-                verified_players = [row for row in verified_games[-1].get("players", []) if isinstance(row, dict)]
-                cover_lineups = {
-                    team: [
-                        str(row.get("hero_name") or "")
-                        for row in verified_players
-                        if str(row.get("team") or "") == team and row.get("hero_name")
-                    ]
-                    for team in verified_opponents
-                }
-        if cover_lineups:
-            lineup_reference, resolved_lineups, lineup_errors = (
-                build_dota2_lineup_reference(
-                    cover_lineups,
-                    Path("/data/cache/dota2/heroes"),
-                    work_dir / "dota2_tournament_lineups.png",
-                )
-            )
-            details["ai_cover_tournament_lineups"] = resolved_lineups
-            details["ai_cover_tournament_lineup_errors"] = lineup_errors
-            if lineup_reference is not None:
-                lineup_index = add_cover_reference(
-                    lineup_reference,
-                    (
-                        "Valve 官方双方英雄阵容表；第一行从左到右属于 Team 1，"
-                        "第二行从左到右属于 Team 2，必须逐格保持英雄身份与顺序"
-                    ),
-                )
-                reference_instruction += (
-                    f" Image {lineup_index} 是双方完整英雄阵容的唯一外观依据。"
-                    "封面底部必须直接按该图两行五列的身份和顺序排布；"
-                    "禁止改画、替换、合并或凭缩写猜测任何英雄。"
-                )
-                lineup_reference_index = lineup_index
-            else:
-                reference_instruction += (
-                    " 当前没有完整可靠的 5+5 英雄阵容图，封面必须省略底部英雄头像，"
-                    "不得根据文字、技能图标或旧模板自行补齐。"
-                )
-        if cover_featured_player:
-            featured_name = str(cover_featured_player.get("name") or "").strip()
-            featured_team = str(cover_featured_player.get("team") or "").strip()
-            try:
-                portrait = download_ti_player_portrait(
-                    featured_name,
-                    featured_team,
-                    Path("/data/cache/dota2/players"),
-                )
-                portrait_source_label = {
-                    "team_representative": "由战队代表提供的官方定妆照",
-                    "official_team_website": "当前战队官网选手图",
-                    "official_event_media": "官方赛事媒体库选手照",
-                    "official_event_media_legacy": "旧届官方赛事真人照",
-                }.get(portrait.source_kind, "来源已核验的官方选手照")
-                player_reference_index = add_cover_reference(
-                    Path(portrait.path),
-                    (
-                        f"{featured_team} 选手 {featured_name} 的{portrait_source_label}；"
-                        "这是该选手脸部、发型、队服和人物身份的唯一依据"
-                    ),
-                )
-                details.update({
-                    "ai_cover_player_portrait_used": True,
-                    "ai_cover_player_portrait_name": featured_name,
-                    "ai_cover_player_portrait_team": featured_team,
-                    "ai_cover_player_portrait_path": portrait.path,
-                    "ai_cover_player_portrait_source": portrait.source_url,
-                    "ai_cover_player_portrait_source_page": portrait.source_page,
-                    "ai_cover_player_portrait_source_note": portrait.source_note,
-                    "ai_cover_player_portrait_source_kind": portrait.source_kind,
-                    "ai_cover_player_portrait_reference_index": player_reference_index,
-                })
-            except Exception as exc:
-                details.update({
-                    "ai_cover_player_portrait_used": False,
-                    "ai_cover_player_portrait_name": featured_name,
-                    "ai_cover_player_portrait_error": f"{type(exc).__name__}: {exc}",
-                })
     if reference_kind == "dedicated":
         reference_instruction = recording_cover_reference_instruction(reference_name)
     elif reference_kind == "custom":
@@ -5283,11 +4858,7 @@ def generate_recording_cover_with_ai(
     # submission title may add a guest reference. Timeline descriptions often
     # mention many players incidentally; attaching those avatars lets a clearer
     # guest photo override a stylized current-room reference.
-    guest_candidates = (
-        []
-        if cover_tournament_context.get("mode") == "ti_competition"
-        else recording_cover_guest_candidates(streamer, title)
-    )
+    guest_candidates = recording_cover_guest_candidates(streamer, title)
     guest_references: list[dict[str, str]] = []
     guest_reference_errors: list[dict[str, str]] = []
     for guest_candidate in guest_candidates:
@@ -5450,7 +5021,7 @@ def generate_recording_cover_with_ai(
         )
         dota2_item_matches = match_dota2_items(*tooltip_items)
         dota2_item_instruction += dota2_item_prompt_instruction(dota2_item_matches)
-    elif game_context_locked and not verified_match_instruction:
+    elif game_context_locked:
         dota2_item_matches = []
         dota2_instruction = (
             "本段没有可靠匹配到主播同一场对局。禁止展示、猜测或补画任何具体 "
@@ -5474,12 +5045,6 @@ def generate_recording_cover_with_ai(
         )
         dota2_item_instruction = dota2_item_prompt_instruction(dota2_item_matches)
         details["ai_cover_dota2_source"] = "text_match"
-    if cover_tournament_context.get("mode") == "ti_competition":
-        dota2_item_matches = []
-        dota2_item_instruction = (
-            "TI 比赛封面禁止展示装备、物品栏、神符图标或其他游戏 UI；"
-            "底部区域只允许双方五名英雄头像。"
-        )
     if dota2_item_matches:
         item_reference_path, item_reference_errors = build_dota2_item_reference_sheet(
             dota2_item_matches,
@@ -5637,8 +5202,6 @@ def generate_recording_cover_with_ai(
 只围绕核心标题设计画面，将“{headline}”作为唯一标题文字；不要出现完整投稿标题。
 {cover_subject_copy_instruction}
 {composition_instruction}
-{competition_cover_instruction}
-{verified_match_instruction}
 {card_hand_instruction}
 {dota2_instruction}
 {dota2_item_instruction}
@@ -5652,109 +5215,6 @@ def generate_recording_cover_with_ai(
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
 本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
 """.strip()
-    if cover_tournament_context.get("mode") == "ti_competition":
-        visual_hero = ""
-        visual_player = ""
-        visual_kda = ""
-        ti_opponents = [str(name) for name in (tournament_match or {}).get("opponents", []) if str(name)][:2]
-        ti_game: dict[str, Any] = {}
-        ti_lineups: dict[str, list[str]] = dict(pending_lineups)
-        if isinstance(tournament_match, dict):
-            visual_games = [row for row in tournament_match.get("games", []) if isinstance(row, dict)]
-            if visual_games:
-                ti_game = select_ti_cover_game(visual_games, title)
-                ti_players = [
-                    row for row in ti_game.get("players", []) if isinstance(row, dict)
-                ]
-                mvp_candidate = select_ti_cover_featured_player(
-                    ti_players,
-                    title,
-                    live=bool(ti_game.get("live")),
-                )
-                if mvp_candidate:
-                    visual_hero = str(mvp_candidate.get("hero_name") or "")
-                    visual_player = str(mvp_candidate.get("name") or "")
-                    if not ti_game.get("live"):
-                        visual_kda = "/".join(str(int(mvp_candidate.get(field) or 0)) for field in ("kills", "deaths", "assists"))
-                ti_lineups = {
-                    team: [
-                        str(row.get("hero_name") or "")
-                        for row in ti_game.get("players", [])
-                        if str(row.get("team") or "") == team and row.get("hero_name")
-                    ]
-                    for team in ti_opponents
-                }
-            if not visual_hero and pending_lineups:
-                visual_hero = str(next(iter(next(iter(pending_lineups.values()), [])), ""))
-        confirmed = tournament_match.get("status") == "confirmed" and bool(ti_game)
-        live_confirmed = tournament_match.get("status") == "live_confirmed" and bool(ti_game)
-        game_number = int(ti_game.get("game_number") or 0)
-        game_label = str(game_number) if game_number > 0 else "LIVE"
-        series_score = tournament_match.get("series_score") or {}
-        series_text = (
-            f"{int(series_score.get(ti_opponents[0], 0))}:{int(series_score.get(ti_opponents[1], 0))}"
-            if confirmed and len(ti_opponents) == 2 else "进行中"
-        )
-        kills_text = "待确认"
-        kills_label = "本局击杀"
-        if confirmed and len(ti_opponents) == 2:
-            def team_kills(team: str) -> int:
-                return int(ti_game.get("radiant_score") or 0) if ti_game.get("radiant") == team else int(ti_game.get("dire_score") or 0)
-            kills_text = f"{team_kills(ti_opponents[0])}:{team_kills(ti_opponents[1])}"
-        elif live_confirmed and len(ti_opponents) == 2:
-            kills_label = "实时击杀"
-            kills_text = f"{int(ti_game.get('radiant_score') or 0)}:{int(ti_game.get('dire_score') or 0)}"
-        stage_text = (
-            ti2026_match_round_label((tournament_match or {}).get("round_label"))
-            or ti2026_phase_label(cover_tournament_context.get("phase"))
-        )
-        series_format = ti2026_match_series_format(
-            cover_tournament_context, tournament_match
-        ).upper()
-        left_team = ti_opponents[0] if len(ti_opponents) == 2 else "TEAM 1"
-        right_team = ti_opponents[1] if len(ti_opponents) == 2 else "TEAM 2"
-        player_visual_instruction = (
-            f"Central key art must use the exact player from Image {player_reference_index}: {visual_player}, "
-            f"preserving face, hair and team jersey. Place game-accurate {visual_hero or 'assigned hero'} "
-            "as secondary supporting art; never replace the player's face with a hero or another person."
-            if player_reference_index and visual_player else
-            f"No verified player portrait is supplied. Do not invent a player face; use authentic game-accurate {visual_hero or 'Dota 2 hero'} as the central key art."
-        )
-        lineup_visual_instruction = (
-            f"Image {lineup_reference_index} is the exact official 5+5 hero lineup sheet. Place all ten portraits across the bottom in exact row and source order, five left and five right, without replacing, duplicating or omitting any hero."
-            if lineup_reference_index else
-            "No complete 5+5 lineup image is supplied. Omit the bottom hero portrait strip entirely; never infer heroes from an ability sheet or the layout template."
-        )
-        featured_label = "焦点选手" if live_confirmed and visual_player else ("MVP候选" if visual_player else "")
-        prompt = f"""
-Produce one finished {aspect_label} premium TI 2026 Dota 2 broadcast cover, using the deliberately defocused Image 1 only for cinematic hierarchy and black-gold/red-green tournament styling. Image 1 contains no valid identity. Follow the explicit image-role map below; never infer a team, logo, player, hero, score or lineup from Image 1, and never assume that the final input image is a lineup.
-Create a full unified poster, not a flat UI or visibly pasted collage. {player_visual_instruction} Integrate the subject into a Shanghai night skyline with a circular arcane portal; red energy on the left and emerald energy on the right.
-{lineup_visual_instruction}
-Render these exact texts clearly and verbatim:
-- top banner: "TI 2026 · {stage_text} · {series_format}"
-- main headline: "{headline}"
-- central small label: "GAME {game_label}"
-{f'- central player ribbon: "{featured_label} · {visual_player.upper()}"' if visual_player else ''}
-{f'- central MVP candidate stats immediately below that ribbon: "KDA {visual_kda}"' if visual_kda and not live_confirmed else ''}
-- left team: "{left_team.upper()}"
-- right team: "{right_team.upper()}"
-- center series result/status: "{series_text}"
-- bottom center label: "{kills_label}"
-- bottom center value: "{kills_text}"
-The central subject, player ribbon and optional KDA must form one obvious focal unit. "MVP候选" means a KDA-based editorial candidate, not an official tournament award. "焦点选手" means title-selected live coverage and must not imply an MVP. Do not draw, imitate, spell, transform or invent either team logo. Leave one clean empty dark logo medallion at the left and one at the right; exact official PNG logos will be composited there after generation. No streamer, extra person, extra logo, extra hero, extra score, watermark or concept-simulation label.
-""".strip()
-        details["ai_cover_ti_exact_content"] = {
-            "stage": stage_text, "game_number": game_number,
-            "left_team": left_team, "right_team": right_team,
-            "series": series_text, "kills": kills_text,
-            "lineups": ti_lineups, "featured_hero": visual_hero,
-            "featured_player": visual_player,
-            "featured_kda": visual_kda,
-            "featured_label": featured_label,
-            "live": live_confirmed,
-            "lineup_reference_index": lineup_reference_index,
-            "player_reference_index": player_reference_index,
-        }
     image_client = get_openai_client(client_config).images
     requested_ratio = (target_width / target_height) if target_height else 0
     if abs(requested_ratio - (16 / 9)) < 0.02:
@@ -5803,27 +5263,7 @@ The central subject, player ribbon and optional KDA must form one obvious focal 
 
     with image_generation_queue(cfg) as queue_wait_seconds:
         details["ai_cover_queue_wait_seconds"] = round(queue_wait_seconds, 3)
-        if cover_tournament_context.get("mode") == "ti_competition":
-            with ExitStack() as stack:
-                reference_handles = [stack.enter_context(path.open("rb")) for path in reference_paths]
-                response = tracked_image_request(
-                    lambda: image_client.edit(
-                        model=image_model,
-                        image=reference_handles,
-                        prompt=prompt,
-                        size=image_size,
-                    ),
-                    "images_edit",
-                )
-            background_endpoint = "images.edit.full_ai_composition"
-            details.update({
-                "ai_cover_reference_used": True,
-                "ai_cover_reference_paths": [str(path) for path in reference_paths],
-                "ai_cover_reference_roles": list(reference_roles),
-                "ai_cover_reference_count": len(reference_paths),
-                "ai_cover_background_endpoint": background_endpoint,
-            })
-        elif reference_paths:
+        if reference_paths:
             with ExitStack() as stack:
                 reference_handles = [
                     stack.enter_context(path.open("rb"))
@@ -5896,6 +5336,8 @@ The central subject, player ribbon and optional KDA must form one obvious focal 
         command,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
         **_hidden_subprocess_kwargs(),
     )
@@ -5908,18 +5350,6 @@ The central subject, player ribbon and optional KDA must form one obvious focal 
     if completed.returncode != 0 or not cover.is_file():
         message = completed.stderr.strip()[-1000:]
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
-    if cover_tournament_context.get("mode") == "ti_competition":
-        opponents = [
-            str(name) for name in (tournament_match or {}).get("opponents", [])
-            if str(name)
-        ][:2]
-        details["ai_cover_ti_logo_overlay"] = overlay_verified_ti_team_logos(
-            cover,
-            root,
-            opponents,
-        )
-        details["ai_cover_ti_composition"] = "full_ai"
-        details["ai_cover_ti_programmatic_overlay"] = True
     details.update({
         "ai_cover_generated": True,
         "ai_cover_model": image_model,
@@ -6404,6 +5834,12 @@ def enhance_recording_metadata(
         "OPENAI_MODEL_NAME": ai_cfg.get("OPENAI_MODEL_NAME", "gpt-3.5-turbo"),
         "OPENAI_THINKING_ENABLED": ai_cfg.get("OPENAI_THINKING_ENABLED", False),
         "OPENAI_TIMEOUT_SECONDS": ai_cfg.get("OPENAI_TIMEOUT_SECONDS", 600),
+        "OPENAI_PROMPT_CACHE_MODE": ai_cfg.get("OPENAI_PROMPT_CACHE_MODE", "auto"),
+        "OPENAI_PROMPT_CACHE_TTL": ai_cfg.get("OPENAI_PROMPT_CACHE_TTL", "30m"),
+        "OPENAI_PROMPT_CACHE_KEY_SHARDS": ai_cfg.get("OPENAI_PROMPT_CACHE_KEY_SHARDS", 2),
+        "OPENAI_RPM_LIMIT": ai_cfg.get("OPENAI_RPM_LIMIT", 30),
+        "OPENAI_REQUEST_MAX_RETRIES": ai_cfg.get("OPENAI_REQUEST_MAX_RETRIES", 2),
+        "OPENAI_RETRY_BASE_SECONDS": ai_cfg.get("OPENAI_RETRY_BASE_SECONDS", 0.75),
         "FIXED_PARTITION_ID_BILIBILI": ai_cfg.get("FIXED_PARTITION_ID_BILIBILI", ""),
         "RECOMMEND_PARTITION_WITH_COVER": include_cover,
     }
@@ -6594,22 +6030,6 @@ def _generate_danmaku_metadata_with_ai(
         if not streamer_gameplay_verified:
             verified_live_context.pop("game", None)
             verified_live_context.pop("game_segments", None)
-        tournament_context = build_ti2026_context(
-            comments,
-            base_description,
-            event_date=str(
-                cfg.get("_recording_event_datetime_china")
-                or cfg.get("_recording_event_date")
-                or ""
-            ) or None,
-        )
-        verified_tournament_match = verified_live_context.get("tournament_match")
-        if (
-            isinstance(verified_tournament_match, dict)
-            and verified_tournament_match.get("status") in {"confirmed", "matched_pending_data", "live_confirmed"}
-            and tournament_context.get("active")
-        ):
-            tournament_context["result_verification"] = verified_tournament_match
         payload = {
             "base_description": base_description,
             "streamer_identity": {
@@ -6641,7 +6061,6 @@ def _generate_danmaku_metadata_with_ai(
             "sampled_comment_evidence": [],
             "danmaku_salience_peaks": salience_peaks,
             "verified_live_context": verified_live_context,
-            "tournament_context": tournament_context,
             "streamer_participation": {
                 "gameplay_verified": streamer_gameplay_verified,
                 "mode": participation_mode,
@@ -6669,6 +6088,10 @@ def _generate_danmaku_metadata_with_ai(
             if legacy_prompt
             else ""
         )
+        payload["editorial_preferences"] = {
+            "description": description_prompt,
+            "legacy": legacy_instruction,
+        }
         system_prompt = f"""
 你是直播录播编辑。优先根据平台字幕、内嵌字幕或人工字幕理解主播、解说和现场语音内容，为哔哩哔哩录播生成中文简介。
 sampled_primary_evidence 是主要内容来源；当 primary_evidence_source 不是 danmaku_xml 时，它来自
@@ -6717,10 +6140,6 @@ preferred_description_name（例如谢彬/谢彬DD统一写“奶哥”，YYF默
 其中 name 或 aliases 可确定为对应参赛主播，并在文案中统一使用 name。该表只能证明人物身份，不能单独证明
 人物执行了某动作、与谁对阵或获得何种结果；动作和关系仍须由同一事件窗口的原始弹幕明确支持。不得把表外的
  弹幕用户名或相似称呼强行匹配为参赛主播。
- tournament_context.active=true 时，本段按 TI 2026 赛事观战处理。必须使用其中的战队、选手、赛制和局次
- 边界做身份消歧；当前主播、解说或导播不是画面英雄的操作者。series_markers 只证明明确出现的局次边界，
- 不证明胜负。赛点、晋级、淘汰、掉入败者组、横扫和夺冠必须由同一事件窗口的原始弹幕明确支持，或由已核验
- 比分与对应 BO3/BO5 规则严格推出；不得根据欢呼、经济领先、基地画面或历史荣誉猜测。
 弹幕中确实提到的其他主播、选手或嘉宾可以写入，但必须有能明确指向该人物的原文证据；
 不得把弹幕用户名、模糊外号、英雄名或同名对象当成真实人物。涉及人物的句子必须写清“谁做了什么”。
 对每个关键事件按5W1H检查：When 由程序回到 XML 自动定位；event 尽量交代 Who（谁）、What（做了什么）、
@@ -6748,8 +6167,8 @@ evidence_keywords 是这些输入原文中足以支持整个 event 的 1 至 4 �
 	“宣布了”，event 也必须明确保留来源限定；较负面、未经证实、可能损害人物名誉的现实传言必须整条删除，
 	不得通过添加“弹幕称”继续保留；中性现实消息使用“观众讨论”，明显玩笑使用“直播间调侃”，不得改写成“页面显示”或
 	无来源限定的事实结论。只有 verified_live_context 中明确提供的结构化事实才可直接陈述。
-如果证据充足，timeline 应覆盖录播开头、中段和结尾，并返回 {timeline_minimum} 至
-{timeline_maximum} 个彼此不同的关键看点。这个区间是覆盖目标而不是凑数命令：看点密集、事件彼此独立且证据充分时，
+如果证据充足，timeline 应覆盖录播开头、中段和结尾，并按 payload.timeline_target_count 的 minimum 至
+maximum 返回彼此不同的关键看点。这个区间是覆盖目标而不是凑数命令：看点密集、事件彼此独立且证据充分时，
 尽量接近上限；内容平淡、重复或证据不足时允许低于下限，绝不能用普通问候、无变化的持续过程、重复弹幕、
 “继续游戏/继续聊天”等无信息条目补齐数量。适用于所有直播类型：优先选择内容推进、关键决定、
 意外变化、精彩表现、重要互动、节目效果、争议讨论、情绪高潮和阶段切换。只有输入明确属于
@@ -6797,8 +6216,7 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
 当 payload 含 batch_context 时，本次只分析该批弹幕，并以 payload.timeline_target_count 为准，
 每批返回 1 至 3 个最重要的候选事件；程序会在全部批次完成后统一合并和筛选。
 {DOTA2_METADATA_DISAMBIGUATION}
-本直播间的简介要求：{description_prompt}
-{legacy_instruction}
+	editorial_preferences 是本直播间可选的文案偏好，只能在所有事实、安全和输出规则之后渐进披露并应用。
 	本直播间自定义要求只能补充题材重点、语气和风格，不能推翻事实证据、人物归属、时间顺序、5W1H缺证省略和风险过滤规则；
 	较负面的未经证实现实传言无论自定义要求如何指定来源词都必须删除；
 	具体比赛、游戏表现和现场事件不得使用“直播间热议/讨论/关注”作为兜底主语。
@@ -7189,7 +6607,7 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
             "video_duration_seconds": timeline_duration_seconds,
             "final_description": final_description,
             "verified_timeline": timeline_lines(final_description),
-            "tournament_context": payload["tournament_context"],
+            "editorial_preferences": {"title": title_prompt},
         }
         title_system_prompt = f"""
 你是哔哩哔哩直播录播标题编辑。简介已经生成并通过时间点校验，现在只能根据 final_description
@@ -7218,8 +6636,6 @@ spectating 禁止写成当前主播正在操刀任何英雄；unknown 也不得�
 选择时依次比较：明确结果或强反差、关键操作或决定、阶段性转折、可复述的节目效果、信息明确的重要讨论。
 若 verified_live_context 的 game/game_segments 标记 ended_confirmed，它只用于确定对局边界，不能单独作为标题；
  只有 verified_timeline 同时明确写出胜负、翻盘、基地告破或决定性收尾时，具体结束结果才提升为最高优先级。
- tournament_context.active=true 时，必须使用其中的 TI 2026 赛制。赛点、晋级、淘汰、掉入败者组、横扫和
- 夺冠等结论只能原样沿用 verified_timeline 已核验事实，不能根据局次、领先或单局胜负自行外推系列赛结果。
 禁止生成“本局结束”“转入下一局”“开始下一把”等没有具体结果的信息。
 即使标题还有其他看点，也不得用“结束后转入下一局、进入某英雄对局”等过场语串联；直接写两局各自的具体事件。
 弹幕很多但没有具体动作、对象或结果，不等于标题价值高。“进入后段/进入环节/继续进行/第几圈左右”只是过程状态，
@@ -7254,7 +6670,7 @@ streamer_identity.preferred_title_name，并自然融入“谁做了什么”的
 才可更短，绝不能为凑字补猜。标题最多48个字符；
 双事件标题也必须在48字内
 分别表达完整，超长时优先删除较弱事件或重新改写，禁止截断半句话。
-{title_prompt}
+editorial_preferences 是本直播间可选的标题风格偏好，只能在所有事实、安全和输出规则之后应用。
 本直播间自定义要求只能补充题材重点、语气和风格，不能推翻标题长度、证据边界、人物关系、主播名使用、
 观众反应数量、长录播覆盖范围和风险过滤规则；较负面的未经证实现实传言无论自定义要求如何指定都不得入题；
 具体比赛、游戏表现和现场事件不得使用“直播间热议/讨论/关注”作为兜底主语。
@@ -7311,13 +6727,6 @@ verified_timeline 按0开始编号。返回标题时必须同时返回 selected_
                     rejection_reason = "标题只描述过程或使用空泛套话"
                 elif recording_title_uses_opaque_attribution(candidate_topic):
                     rejection_reason = "标题使用了被指、被曝或据称等模糊来源词"
-                elif unsupported_claim := unsupported_ti2026_claim(
-                    candidate_topic,
-                    final_description,
-                    title_payload.get("tournament_context"),
-                ):
-                    diagnostics["title_topic_unsupported_ti2026_claim"] = unsupported_claim
-                    rejection_reason = "TI赛事强结论没有已核验时间线或比分支持"
                 elif recording_title_topic_is_underfilled(
                     candidate_topic,
                     timeline_duration_seconds,
@@ -7943,17 +7352,187 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             )
             store.stage(key, "burn", "skipped", {"reason": "未生成 ASS 字幕"})
 
-        # Collect stable live context before AI so metadata and both cover
-        # variants are grounded in the same recording and the same game.
+        # Resolve AI subtitles as a first-class stage.  A reusable sidecar,
+        # embedded stream, persisted transcript, or platform caption always
+        # wins; ASR is only invoked when every cheaper source is absent.
         app_root = resolve_app_root(cfg)
         if str(app_root) not in sys.path:
             sys.path.insert(0, str(app_root))
+        from modules.config_manager import load_config as load_app_config  # type: ignore
+        from modules.subtitle_source_resolver import (  # type: ignore
+            resolve_transcript_document,
+            transcript_document_path,
+        )
+
+        app_config = load_app_config()
+        ai_captions: list[Any] = []
+        transcript_document: Any | None = None
+        current_stage = "ai_subtitle"
+        store.stage(key, "ai_subtitle", "running", {
+            "video_path": str(video),
+            "source_priority": [
+                "sidecar_subtitle",
+                "persisted_transcript",
+                "embedded_subtitle",
+                "platform_auto_caption",
+                "asr_fallback",
+            ],
+        })
+        try:
+            transcript_document = resolve_transcript_document(
+                str(video.parent),
+                video_path=video,
+                duration_seconds=recording_duration_seconds,
+                ffprobe=str(cfg.get("ffprobe", "ffprobe")),
+                ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
+            )
+            generated_by_asr = False
+            speech_enabled_raw = app_config.get("SPEECH_RECOGNITION_ENABLED", False)
+            speech_enabled = (
+                speech_enabled_raw
+                if isinstance(speech_enabled_raw, bool)
+                else str(speech_enabled_raw).strip().casefold() in {"1", "true", "yes", "on"}
+            )
+            if transcript_document is None and speech_enabled and not dry_run:
+                from modules.ai_request_ledger import (  # type: ignore
+                    ai_job_context,
+                    ai_task_context,
+                )
+                from modules.speech_recognition import (  # type: ignore
+                    create_speech_recognizer_from_config,
+                )
+
+                recognizer = create_speech_recognizer_from_config(app_config, key)
+                if recognizer is None:
+                    raise RuntimeError("语音识别已启用，但无法创建 ASR 客户端")
+                asr_subtitle_path = video.with_name(f"{video.stem}_AI字幕.srt")
+                with ai_task_context(key), ai_job_context(
+                    purpose="recording_ai_subtitle_asr",
+                    job_id=f"{key}:ai-subtitle:asr",
+                ):
+                    generated_path = recognizer.transcribe_video_to_subtitles(
+                        str(video),
+                        str(asr_subtitle_path),
+                    )
+                if not generated_path or not Path(generated_path).is_file():
+                    raise RuntimeError(
+                        str(getattr(recognizer, "last_error_message", "") or "ASR 未生成字幕")
+                    )
+                generated_by_asr = True
+
+                qc_enabled_raw = app_config.get("SUBTITLE_QC_ENABLED", False)
+                qc_enabled = (
+                    qc_enabled_raw
+                    if isinstance(qc_enabled_raw, bool)
+                    else str(qc_enabled_raw).strip().casefold() in {"1", "true", "yes", "on"}
+                )
+                qc_details: dict[str, Any] = {"enabled": qc_enabled}
+                if qc_enabled:
+                    from modules.subtitle_qc import run_subtitle_qc  # type: ignore
+
+                    with ai_task_context(key), ai_job_context(
+                        purpose="recording_ai_subtitle_qc",
+                        job_id=f"{key}:ai-subtitle:qc",
+                    ):
+                        qc_result = run_subtitle_qc(str(asr_subtitle_path), app_config)
+                    qc_details.update({
+                        "passed": bool(qc_result.passed),
+                        "decision": str(qc_result.decision or ""),
+                        "reason": str(qc_result.reason or ""),
+                        "score": float(qc_result.score),
+                        "rule_score": float(qc_result.rule_score),
+                    })
+                    if not qc_result.passed:
+                        store.stage(
+                            key,
+                            "ai_subtitle",
+                            "warning",
+                            {
+                                "generated_by_asr": True,
+                                "subtitle_path": str(asr_subtitle_path),
+                                "quality_control": qc_details,
+                                "reason": "AI 字幕质检未通过，保留字幕文件但不作为投稿内容证据",
+                                "outcome": "qc_rejected_non_blocking",
+                            },
+                        )
+                        transcript_document = None
+                    else:
+                        transcript_document = resolve_transcript_document(
+                            str(video.parent),
+                            video_path=video,
+                            duration_seconds=recording_duration_seconds,
+                            ffprobe=str(cfg.get("ffprobe", "ffprobe")),
+                            ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
+                        )
+                else:
+                    transcript_document = resolve_transcript_document(
+                        str(video.parent),
+                        video_path=video,
+                        duration_seconds=recording_duration_seconds,
+                        ffprobe=str(cfg.get("ffprobe", "ffprobe")),
+                        ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
+                    )
+            else:
+                qc_details = {"enabled": False, "not_run": True}
+
+            ai_captions = list(
+                getattr(transcript_document, "segments", ()) or ()
+            )
+            if ai_captions:
+                quality = transcript_document.metadata.get("quality", {})
+                source_reference = str(
+                    transcript_document.metadata.get("subtitle_path")
+                    or transcript_document.metadata.get("video_path")
+                    or transcript_document_path(video.parent, video)
+                )
+                store.stage(key, "ai_subtitle", "completed", {
+                    "ai_caption_count": len(ai_captions),
+                    "ai_caption_source": str(transcript_document.source),
+                    "source_kind": str(transcript_document.source_kind),
+                    "provider": str(transcript_document.provider),
+                    "model": str(transcript_document.model),
+                    "transcript_schema_version": str(transcript_document.schema_version),
+                    "transcript_quality_score": quality.get("score"),
+                    "transcript_quality_tier": quality.get("tier"),
+                    "transcript_path": str(transcript_document_path(video.parent, video)),
+                    "source_reference": source_reference,
+                    "generated_by_asr": generated_by_asr,
+                    "quality_control": qc_details,
+                    "reused_existing_asset": not generated_by_asr,
+                })
+            elif store.stage_state(key, "ai_subtitle").get("status") != "warning":
+                reason = (
+                    "试运行不调用 ASR，且没有找到已有 AI 字幕"
+                    if dry_run and speech_enabled
+                    else "没有找到已有 AI 字幕，且语音识别未启用"
+                    if not speech_enabled
+                    else "AI 字幕处理没有生成可用字幕"
+                )
+                store.stage(key, "ai_subtitle", "skipped", {
+                    "reason": reason,
+                    "speech_recognition_enabled": speech_enabled,
+                    "outcome": "no_transcript",
+                })
+        except Exception as exc:
+            transcript_document = None
+            ai_captions = []
+            store.stage(
+                key,
+                "ai_subtitle",
+                "warning",
+                {
+                    "reason": "AI 字幕处理失败，但不阻断弹幕分析与投稿",
+                    "outcome": "failed_non_blocking",
+                },
+                error=safe_task_error_detail(exc),
+            )
+
+        # Collect stable live context before AI so metadata and both cover
+        # variants are grounded in the same recording and the same game.
         stats_enabled = bool(cfg.get("douyu_stats_enabled", True))
         append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
         cover_context_enabled = bool(cfg.get("douyu_stats_cover_context_enabled", True))
         stats_text = ""
-        ai_captions: list[Any] = []
-        transcript_document: Any | None = None
         live_stats_prepared = True
         current_stage = "live_stats"
         if not stats_enabled:
@@ -7962,21 +7541,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             store.stage(key, "live_stats", "running", {"description_before_length": len(description)})
             try:
                 from modules.douyu_stats_formatter import get_stats_for_description  # type: ignore
-                from modules.subtitle_source_resolver import (  # type: ignore
-                    resolve_transcript_document,
-                    transcript_document_path,
-                )
                 stats_text = str(get_stats_for_description(str(video.parent)) or "")[:1900]
-                transcript_document = resolve_transcript_document(
-                    str(video.parent),
-                    video_path=video,
-                    duration_seconds=recording_duration_seconds,
-                    ffprobe=str(cfg.get("ffprobe", "ffprobe")),
-                    ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
-                )
-                ai_captions = list(
-                    getattr(transcript_document, "segments", ()) or ()
-                )
                 if stats_text:
                     store.stage(
                         key,
@@ -7986,24 +7551,6 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     )
                 else:
                     store.stage(key, "live_stats", "skipped", {"reason": "本次录播时间内没有匹配的直播数据", "outcome": "no_data"})
-                if ai_captions:
-                    store.stage(key, "live_stats", "completed", {
-                        **live_stats_stage_details(stats_text),
-                        "ai_caption_count": len(ai_captions),
-                        "ai_caption_source": str(transcript_document.source),
-                        "transcript_schema_version": str(
-                            transcript_document.schema_version
-                        ),
-                        "transcript_quality_score": (
-                            transcript_document.metadata.get("quality", {}).get("score")
-                        ),
-                        "transcript_quality_tier": (
-                            transcript_document.metadata.get("quality", {}).get("tier")
-                        ),
-                        "transcript_path": str(
-                            transcript_document_path(video.parent, video)
-                        ),
-                    })
             except Exception as exc:
                 store.stage(key, "live_stats", "warning", {"reason": "直播数据整理失败，但不阻断投稿", "outcome": "failed_non_blocking"}, error=str(exc))
 
@@ -8079,89 +7626,9 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         if locked_game_segments:
             verified_live_context["game_segments"] = locked_game_segments
 
-        tournament_match: dict[str, Any] = {}
-        recording_values = recording_metadata_values(video, cfg)
-        live_title = str(recording_values.get("live_title") or "").strip()
-        tournament_probe = build_ti2026_context(
-            comments,
-            "\n".join(filter(None, (live_title, description))),
-            event_date=str(
-                cfg.get("_recording_event_datetime_china")
-                or cfg.get("_recording_event_date")
-                or ""
-            ) or None,
-        )
-        if tournament_probe.get("active") and str(cfg.get("_recording_event_datetime_china") or ""):
-            current_stage = "tournament_match"
-            store.stage(key, "tournament_match", "running", {
-                "source": "liquipedia_mediawiki",
-                "recording_start_china": cfg.get("_recording_event_datetime_china"),
-            })
-            try:
-                from modules.liquipedia_result_verifier import discover_liquipedia_recording_match  # type: ignore
-
-                team_aliases = {
-                    str(team["name"]): [str(alias) for alias in team.get("aliases", [])]
-                    for team in tournament_probe.get("rules", {}).get("teams", [])
-                    if isinstance(team, dict)
-                }
-                # The canonical roster lives in ti2026_context; include detected
-                # names and player/team text in the local evidence passed here.
-                from ti2026_context import TI2026_PLAYER_ALIASES, TI2026_TEAMS  # type: ignore
-                team_aliases = {
-                    str(team["name"]): [
-                        *(str(alias) for alias in team.get("aliases", [])),
-                        *(
-                            str(alias)
-                            for player in team.get("players", [])
-                            for alias in (player, *TI2026_PLAYER_ALIASES.get(player, ()))
-                        ),
-                    ]
-                    for team in TI2026_TEAMS
-                }
-                match_args = {
-                    "recording_start_china": str(cfg.get("_recording_event_datetime_china")),
-                    "recording_duration_seconds": recording_duration_seconds,
-                    "team_aliases": team_aliases,
-                    "timeout": float(cfg.get("liquipedia_timeout_seconds", 20) or 20),
-                }
-                # The title describes the selected cover moment. A one-hour
-                # description and raw chat can mention several simultaneous
-                # TI series, making an otherwise unique match ambiguous.
-                evidence_candidates = [live_title]
-                complete_evidence = "\n".join(filter(None, (live_title, description)))
-                if complete_evidence and complete_evidence != live_title:
-                    evidence_candidates.append(complete_evidence)
-                for evidence in evidence_candidates:
-                    tournament_match = discover_liquipedia_recording_match(
-                        evidence_text=evidence,
-                        **match_args,
-                    )
-                    if tournament_match.get("status") in {
-                        "confirmed", "matched_pending_data", "live_confirmed"
-                    }:
-                        break
-                verified_live_context["tournament_match"] = tournament_match
-                outcome = str(tournament_match.get("status") or "not_found")
-                store.stage(
-                    key,
-                    "tournament_match",
-                    "completed" if outcome == "confirmed" else "skipped",
-                    tournament_match,
-                )
-            except Exception as exc:
-                tournament_match = {
-                    "status": "unavailable",
-                    "source": "liquipedia_mediawiki",
-                    "reason": safe_task_error_detail(exc),
-                }
-                verified_live_context["tournament_match"] = tournament_match
-                store.stage(key, "tournament_match", "warning", tournament_match)
-        else:
-            store.stage(key, "tournament_match", "skipped", {"reason": "非 TI 录播或缺少录制时间"})
-
         current_stage = "ai"
         from modules.ai_request_ledger import (  # type: ignore
+            ai_job_context,
             ai_task_context,
             summarize_task_ai_usage,
         )
@@ -8301,7 +7768,10 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                         })
 
                     attempt_timeline_details: dict[str, Any] = {}
-                    with ai_task_context(key):
+                    with ai_task_context(key), ai_job_context(
+                        purpose="recording_metadata",
+                        job_id=f"{key}:metadata",
+                    ):
                         candidate_description, candidate_topic = generate_danmaku_metadata_with_ai(
                             comments,
                             base_ai_description,
@@ -8402,7 +7872,10 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             if not dry_run and not existing_submission:
                 store.stage(key, "ai", "running", ai_details)
                 try:
-                    with ai_task_context(key):
+                    with ai_task_context(key), ai_job_context(
+                        purpose="recording_enrichment",
+                        job_id=f"{key}:enrichment",
+                    ):
                         tags, partition, metadata_automation = enhance_recording_metadata(
                             title,
                             description,
@@ -8846,46 +8319,6 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         if pause_for_review_if_requested():
             return True
 
-        # The original recording filename often has no team names.  The AI
-        # metadata stage now has a grounded title and description derived from
-        # the full danmaku timeline, so retry an unresolved overlapping TI
-        # schedule before either cover is generated.  This is intentionally
-        # after metadata generation: consecutive BO3 series can overlap in
-        # wall-clock time and must not be selected from start time alone.
-        accepted_tournament_statuses = {
-            "confirmed", "matched_pending_data", "live_confirmed",
-        }
-        if (
-            tournament_probe.get("active")
-            and str(cfg.get("_recording_event_datetime_china") or "")
-            and tournament_match.get("status") not in accepted_tournament_statuses
-        ):
-            try:
-                refreshed_evidence = [title]
-                complete_evidence = "\n".join(filter(None, (title, description_body)))
-                if complete_evidence and complete_evidence != title:
-                    refreshed_evidence.append(complete_evidence)
-                for evidence in refreshed_evidence:
-                    refreshed_match = discover_liquipedia_recording_match(
-                        evidence_text=evidence,
-                        **match_args,
-                    )
-                    if refreshed_match.get("status") in accepted_tournament_statuses:
-                        tournament_match = refreshed_match
-                        verified_live_context["tournament_match"] = tournament_match
-                        store.stage(
-                            key,
-                            "tournament_match",
-                            "completed",
-                            tournament_match,
-                        )
-                        break
-            except Exception as exc:
-                print(
-                    f"WARN AI 元数据生成后重新匹配 TI 比赛失败: {exc}",
-                    file=sys.stderr,
-                )
-
         cover_game_context = locked_game_context if locked_gameplay_verified else None
         if cover_game_context is None:
             cover_game_context = recording_cover_danmaku_game_context(
@@ -8982,7 +8415,10 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 "original_cover_path": str(original_cover),
             })
             try:
-                with ai_task_context(key):
+                with ai_task_context(key), ai_job_context(
+                    purpose="cover_16x9",
+                    job_id=f"{key}:cover:16x9",
+                ):
                     generated_cover, cover_generation = generate_recording_cover_with_ai(
                         title=title,
                         ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
@@ -8995,7 +8431,6 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                         recording_dir=video.parent,
                         game_context=cover_game_context,
                         game_context_locked=True,
-                        tournament_match=tournament_match,
                         cover_text=str(ai_details.get("cover_text") or ""),
                         shared_reference_cache=cover_reference_cache,
                     )
@@ -9078,7 +8513,10 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
             })
             try:
-                with ai_task_context(key):
+                with ai_task_context(key), ai_job_context(
+                    purpose="cover_4x3",
+                    job_id=f"{key}:cover:4x3",
+                ):
                     generated_cover43, cover43_details = generate_recording_cover_with_ai(
                         title=title,
                         ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
@@ -9091,7 +8529,6 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                         recording_dir=video.parent,
                         game_context=cover_game_context,
                         game_context_locked=True,
-                        tournament_match=tournament_match,
                         cover_text=str(ai_details.get("cover_text") or ""),
                         shared_reference_cache=cover_reference_cache,
                     )
@@ -9412,8 +8849,16 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             store.stage(
                 key,
                 "collection",
-                "completed",
-                {**existing_collection, "reused_on_retry": True},
+                "skipped" if existing_collection.get("already_added") else "completed",
+                {
+                    **existing_collection,
+                    "reused_on_retry": True,
+                    **(
+                        {"reason": "当前稿件已存在于合集中，无需重复加入"}
+                        if existing_collection.get("already_added")
+                        else {}
+                    ),
+                },
             )
         else:
             current_stage = "collection"
@@ -9452,7 +8897,12 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     error=collection_error,
                 )
                 raise RuntimeError(f"B站合集处理失败：{collection_error}")
-            store.stage(key, "collection", "completed", collection_result)
+            store.stage(
+                key,
+                "collection",
+                "skipped" if collection_result.get("idempotent_skip") else "completed",
+                collection_result,
+            )
             if session_key:
                 session_state["bilibili"] = bilibili_result
                 store.save_multipart_session(
@@ -9782,6 +9232,8 @@ def remux_record_only_flv_with_cover(
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=float(cfg.get("record_only_remux_timeout_seconds", 3600)),
             **_hidden_subprocess_kwargs(),
         )
@@ -9815,6 +9267,8 @@ def remux_record_only_flv_with_cover(
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
             **_hidden_subprocess_kwargs(),
         )
@@ -9900,6 +9354,8 @@ def video_duration_seconds(path: Path, ffprobe: str = "ffprobe") -> float | None
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             check=False,
             **_hidden_subprocess_kwargs(),

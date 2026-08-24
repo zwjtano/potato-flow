@@ -24,6 +24,10 @@ _CURRENT_LEDGER: ContextVar["AiRequestLedger | None"] = ContextVar(
 )
 _CURRENT_RUN_ID: ContextVar[str] = ContextVar("potatoflow_ai_run_id", default="")
 _CURRENT_TASK_ID: ContextVar[str] = ContextVar("potatoflow_ai_task_id", default="")
+_CURRENT_JOB_ID: ContextVar[str] = ContextVar("potatoflow_ai_job_id", default="")
+_CURRENT_JOB_PURPOSE: ContextVar[str] = ContextVar(
+    "potatoflow_ai_job_purpose", default=""
+)
 _SCHEMA_LOCK = threading.Lock()
 _INITIALIZED_PATHS: set[str] = set()
 _RETENTION_LOCK = threading.Lock()
@@ -73,11 +77,15 @@ def response_usage(response: Any) -> dict[str, int | None]:
     if details is None:
         details = _field(usage, "input_tokens_details")
     cached_tokens = _field(details, "cached_tokens")
+    cache_write_tokens = _field(details, "cache_write_tokens")
     return {
         "input_tokens": int(input_tokens) if input_tokens is not None else None,
         "output_tokens": int(output_tokens) if output_tokens is not None else None,
         "total_tokens": int(total_tokens) if total_tokens is not None else None,
         "cached_tokens": int(cached_tokens) if cached_tokens is not None else None,
+        "cache_write_tokens": (
+            int(cache_write_tokens) if cache_write_tokens is not None else None
+        ),
     }
 
 
@@ -113,6 +121,9 @@ def resolve_ai_model_pricing(provider: str, model: str) -> dict[str, Any]:
         cached_rate = max(0.0, float(
             raw.get("cached_input_per_million", input_rate)
         ))
+        cache_write_rate = max(0.0, float(
+            raw.get("cache_write_input_per_million", input_rate)
+        ))
     except (TypeError, ValueError):
         return {}
     return {
@@ -120,6 +131,7 @@ def resolve_ai_model_pricing(provider: str, model: str) -> dict[str, Any]:
         "currency": str(raw.get("currency") or "USD").upper(),
         "input_per_million": input_rate,
         "cached_input_per_million": cached_rate,
+        "cache_write_input_per_million": cache_write_rate,
         "output_per_million": output_rate,
         "formula_version": "1",
     }
@@ -134,10 +146,15 @@ def estimate_ai_request_cost(
     input_tokens = max(0, int(usage.get("input_tokens") or 0))
     output_tokens = max(0, int(usage.get("output_tokens") or 0))
     cached_tokens = min(input_tokens, max(0, int(usage.get("cached_tokens") or 0)))
-    regular_input_tokens = input_tokens - cached_tokens
+    cache_write_tokens = min(
+        input_tokens - cached_tokens,
+        max(0, int(usage.get("cache_write_tokens") or 0)),
+    )
+    regular_input_tokens = input_tokens - cached_tokens - cache_write_tokens
     cost = (
         regular_input_tokens * float(pricing["input_per_million"])
         + cached_tokens * float(pricing["cached_input_per_million"])
+        + cache_write_tokens * float(pricing["cache_write_input_per_million"])
         + output_tokens * float(pricing["output_per_million"])
     ) / 1_000_000
     return round(cost, 10)
@@ -213,6 +230,8 @@ class AiRequestLedger:
                 provider TEXT NOT NULL,
                 model TEXT NOT NULL,
                 task_id TEXT NOT NULL DEFAULT '',
+                job_id TEXT NOT NULL DEFAULT '',
+                job_purpose TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
                 physical_request_count INTEGER NOT NULL DEFAULT 0,
                 input_fingerprint TEXT NOT NULL,
@@ -234,6 +253,7 @@ class AiRequestLedger:
                 output_tokens INTEGER,
                 total_tokens INTEGER,
                 cached_tokens INTEGER,
+                cache_write_tokens INTEGER,
                 cost_usd REAL,
                 error_type TEXT NOT NULL DEFAULT '',
                 error_message TEXT NOT NULL DEFAULT '',
@@ -247,6 +267,24 @@ class AiRequestLedger:
                 ON ai_requests(run_id, attempt);
             """
         )
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(ai_requests)")
+        }
+        if "cache_write_tokens" not in columns:
+            connection.execute(
+                "ALTER TABLE ai_requests ADD COLUMN cache_write_tokens INTEGER"
+            )
+        run_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(ai_runs)")
+        }
+        if "job_id" not in run_columns:
+            connection.execute(
+                "ALTER TABLE ai_runs ADD COLUMN job_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "job_purpose" not in run_columns:
+            connection.execute(
+                "ALTER TABLE ai_runs ADD COLUMN job_purpose TEXT NOT NULL DEFAULT ''"
+            )
         connection.commit()
 
     def begin_run(
@@ -258,6 +296,8 @@ class AiRequestLedger:
         model: str,
         fingerprint: str,
         task_id: str = "",
+        job_id: str = "",
+        job_purpose: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> str:
         run_id = uuid.uuid4().hex
@@ -265,8 +305,9 @@ class AiRequestLedger:
             connection.execute(
                 """INSERT INTO ai_runs
                    (id, created_at, kind, scene_name, provider, model, task_id,
+                    job_id, job_purpose,
                     status, input_fingerprint, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)""",
                 (
                     run_id,
                     _utc_timestamp(),
@@ -275,6 +316,8 @@ class AiRequestLedger:
                     provider,
                     model,
                     task_id,
+                    job_id,
+                    job_purpose,
                     fingerprint,
                     _json(metadata),
                 ),
@@ -401,7 +444,7 @@ class AiRequestLedger:
                 """UPDATE ai_requests SET
                    completed_at=?, status=?, provider_request_id=?, latency_ms=?,
                    input_tokens=?, output_tokens=?, total_tokens=?, cached_tokens=?,
-                   cost_usd=?, error_type=?, error_message=?, metadata_json=?
+                   cache_write_tokens=?, cost_usd=?, error_type=?, error_message=?, metadata_json=?
                    WHERE id=?""",
                 (
                     _utc_timestamp(),
@@ -412,6 +455,7 @@ class AiRequestLedger:
                     usage["output_tokens"],
                     usage["total_tokens"],
                     usage["cached_tokens"],
+                    usage["cache_write_tokens"],
                     cost_usd,
                     error.__class__.__name__ if error else "",
                     str(error)[:1000] if error else "",
@@ -441,6 +485,7 @@ def summarize_task_ai_usage(task_id: str) -> dict[str, Any]:
                        COALESCE(SUM(q.output_tokens), 0),
                        COALESCE(SUM(q.total_tokens), 0),
                        COALESCE(SUM(q.cached_tokens), 0),
+                       COALESCE(SUM(q.cache_write_tokens), 0),
                        COALESCE(SUM(q.latency_ms), 0),
                        COALESCE(SUM(q.cost_usd), 0)
                    FROM ai_runs r
@@ -458,8 +503,9 @@ def summarize_task_ai_usage(task_id: str) -> dict[str, Any]:
         "output_tokens": int(row[4] or 0),
         "total_tokens": int(row[5] or 0),
         "cached_tokens": int(row[6] or 0),
-        "physical_latency_ms": int(row[7] or 0),
-        "cost_usd": round(float(row[8] or 0), 10),
+        "cache_write_tokens": int(row[7] or 0),
+        "physical_latency_ms": int(row[8] or 0),
+        "cost_usd": round(float(row[9] or 0), 10),
     }
 
 
@@ -470,6 +516,19 @@ def ai_task_context(task_id: str) -> Iterator[None]:
         yield
     finally:
         _CURRENT_TASK_ID.reset(token)
+
+
+@contextmanager
+def ai_job_context(*, purpose: str, job_id: str = "") -> Iterator[str]:
+    """Isolate one AI purpose inside a broader recording/process task."""
+    effective_job_id = str(job_id or uuid.uuid4().hex).strip()
+    job_token = _CURRENT_JOB_ID.set(effective_job_id)
+    purpose_token = _CURRENT_JOB_PURPOSE.set(str(purpose or "").strip())
+    try:
+        yield effective_job_id
+    finally:
+        _CURRENT_JOB_PURPOSE.reset(purpose_token)
+        _CURRENT_JOB_ID.reset(job_token)
 
 
 def begin_current_physical_request(
@@ -527,6 +586,8 @@ def logical_ai_request(
     ledger: AiRequestLedger | None = None
     run_id = ""
     effective_task_id = str(task_id or _CURRENT_TASK_ID.get() or "").strip()
+    effective_job_id = str(_CURRENT_JOB_ID.get() or "").strip()
+    effective_job_purpose = str(_CURRENT_JOB_PURPOSE.get() or "").strip()
     try:
         ledger = get_ai_request_ledger()
         run_id = ledger.begin_run(
@@ -536,6 +597,8 @@ def logical_ai_request(
             model=model,
             fingerprint=fingerprint,
             task_id=effective_task_id,
+            job_id=effective_job_id,
+            job_purpose=effective_job_purpose,
             metadata=metadata,
         )
     except Exception:

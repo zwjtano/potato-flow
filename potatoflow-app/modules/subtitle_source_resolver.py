@@ -45,9 +45,13 @@ def _sidecar_candidates(video_dir: Path, video_path: str | Path | None) -> list[
     video = Path(video_path)
     candidates = [
         video.with_suffix(".srt"),
+        video.with_name(f"{video.stem}_AI字幕.srt"),
+        video.with_name(f"{video.stem}.ai.srt"),
         video.with_suffix(".zh.srt"),
         video.with_suffix(".zh-CN.srt"),
         video.with_suffix(".vtt"),
+        video.with_name(f"{video.stem}_AI字幕.vtt"),
+        video.with_name(f"{video.stem}.ai.vtt"),
         video.with_suffix(".zh.vtt"),
         video.with_suffix(".zh-CN.vtt"),
     ]
@@ -142,6 +146,8 @@ def _embedded_srt(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     if probe.returncode != 0:
@@ -175,6 +181,8 @@ def _embedded_srt(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
     if extracted.returncode != 0 or not str(extracted.stdout or "").strip():

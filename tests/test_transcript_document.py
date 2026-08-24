@@ -316,6 +316,24 @@ class TranscriptDocumentTests(unittest.TestCase):
         self.assertEqual(document.segments[0].text, "内嵌中文字幕")
         self.assertIn("0:3", run.call_args_list[1].args[0])
 
+    def test_ai_named_sidecar_is_reused_without_platform_or_asr_call(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / "recording.flv"
+            video.write_bytes(b"video")
+            (root / "recording_AI字幕.srt").write_text(
+                "1\n00:00:01,000 --> 00:00:03,000\n复用现有 AI 字幕\n",
+                encoding="utf-8",
+            )
+            with patch(
+                "modules.subtitle_source_resolver.get_ai_captions_for_recording"
+            ) as platform_captions:
+                document = resolve_transcript_document(root, video_path=video)
+
+        self.assertEqual(document.source, "sidecar_srt")
+        self.assertEqual(document.segments[0].text, "复用现有 AI 字幕")
+        platform_captions.assert_not_called()
+
     def test_existing_asr_result_normalizes_to_transcript_document(self):
         result = AsrTranscriptionResult(
             provider="voxtral",

@@ -686,6 +686,70 @@ class PublishedMetadataEditorTests(unittest.TestCase):
             title="标题",
         )
 
+    def test_collection_code_20080_is_an_idempotent_skip(self):
+        class DuplicateCollectionApi(_FakeApi):
+            calls = []
+            episodes = [
+                {"id": 22, "aid": 123, "title": "录播标题"},
+                {"id": 11, "aid": 111, "title": "旧稿件"},
+            ]
+
+            @property
+            def result(self):
+                async def resolve():
+                    self.__class__.calls.append(self)
+                    if self.url.endswith("/creative/web/seasons"):
+                        return {
+                            "seasons": [{
+                                "season": {"id": 7320255},
+                                "sections": {"sections": [{"id": 8081933}]},
+                            }]
+                        }
+                    if self.url.endswith("/x/vupre/web/archive/view"):
+                        return {
+                            "archive": {"title": "录播标题"},
+                            "videos": [{"cid": 456}],
+                        }
+                    if self.url.endswith("/season/section/episodes/add"):
+                        raise bilibili_uploader.ResponseCodeException(
+                            20080,
+                            "当前稿件已存在在合集中",
+                            {"code": 20080, "message": "当前稿件已存在在合集中"},
+                        )
+                    if self.url.endswith("/season/section"):
+                        return {
+                            "section": {
+                                "id": 8081933,
+                                "type": 0,
+                                "title": "默认分区",
+                            },
+                            "episodes": list(self.__class__.episodes),
+                        }
+                    return {}
+
+                return resolve()
+
+        uploader = bilibili_uploader.BilibiliUploader("cookies.json")
+        with (
+            patch.object(bilibili_uploader, "configure_bilibili_runtime"),
+            patch.object(
+                bilibili_uploader,
+                "load_credential_from_file",
+                return_value=_Credential(),
+            ),
+            patch.object(bilibili_uploader, "Api", DuplicateCollectionApi),
+        ):
+            result = uploader.add_to_collection(
+                {"aid": 123, "bvid": "BV1test"},
+                "7320255",
+            )
+
+        self.assertTrue(result["added"])
+        self.assertTrue(result["already_added"])
+        self.assertTrue(result["idempotent_skip"])
+        self.assertIn("已存在", result["reason"])
+        self.assertNotIn("error", result)
+
 
 if __name__ == "__main__":
     unittest.main()

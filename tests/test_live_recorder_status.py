@@ -22,6 +22,14 @@ import bridge  # noqa: E402
 
 
 class LiveRecorderStatusTests(unittest.TestCase):
+    def _symlink_or_skip(self, link: Path, target: Path) -> None:
+        try:
+            link.symlink_to(target)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Windows symlink privilege is unavailable")
+            raise
+
     def setUp(self):
         self.rooms = [
             {
@@ -1331,7 +1339,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             target = data_dir / "bridge.config.json"
             target.write_text("{}", encoding="utf-8")
             link = app_dir / "bridge.config.json"
-            link.symlink_to(target)
+            self._symlink_or_skip(link, target)
 
             recorder_module._atomic_json(link, {"enabled": True})
 
@@ -2393,7 +2401,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
                 encoding="utf-8",
             )
             config_link = app_root / "bridge.config.json"
-            config_link.symlink_to(real_config)
+            self._symlink_or_skip(config_link, real_config)
 
             with mock.patch.object(recorder_module, "BRIDGE_CONFIG_PATH", config_link):
                 state_path = manager._pipeline_state_path()
@@ -4822,7 +4830,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            '"detect", "record", "ass", "burn", "live_stats"',
+            '"detect", "record", "ass", "burn", "ai_subtitle", "live_stats"',
             source,
         )
         self.assertIn("已烧录视频完成封装且校验通过后", template)

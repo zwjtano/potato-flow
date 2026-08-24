@@ -64,6 +64,7 @@ nav:
       - 参考资料: reference/index.md
       - 配置说明: reference/configuration.md
       - 存储结构: reference/storage.md
+      - AI 调用编排: ai-orchestration/方案设计.md
 
 markdown_extensions:
   - admonition

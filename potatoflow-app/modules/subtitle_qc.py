@@ -187,16 +187,6 @@ def _classify_suspicious_text(text: str, normalized: str) -> Optional[str]:
     return None
 
 
-def _build_openai_client(api_key: str, base_url: str):
-    import openai
-
-    options: Dict[str, Any] = {}
-    if base_url:
-        options['base_url'] = base_url
-    options['timeout'] = 120.0
-    return openai.OpenAI(api_key=api_key, **options)
-
-
 def _build_item_stats(items: List[Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     stats: List[Dict[str, Any]] = []
     usable_normalized: List[str] = []
@@ -713,8 +703,19 @@ def _call_ai_judge(
     if not api_key:
         return None, None, None, 'missing_openai_api_key'
 
-    client = _build_openai_client(api_key=api_key, base_url=base_url)
-    from .utils import openai_chat_create_with_thinking_control
+    from .ai_enhancer import _request_chat_completion, get_openai_client
+    client = get_openai_client({
+        'OPENAI_API_KEY': api_key,
+        'OPENAI_BASE_URL': base_url,
+        'OPENAI_MODEL_NAME': model_name,
+        'OPENAI_TIMEOUT_SECONDS': 120,
+        'OPENAI_PROMPT_CACHE_MODE': config.get('OPENAI_PROMPT_CACHE_MODE', 'auto'),
+        'OPENAI_PROMPT_CACHE_TTL': config.get('OPENAI_PROMPT_CACHE_TTL', '30m'),
+        'OPENAI_PROMPT_CACHE_KEY_SHARDS': config.get('OPENAI_PROMPT_CACHE_KEY_SHARDS', 2),
+        'OPENAI_RPM_LIMIT': config.get('OPENAI_RPM_LIMIT', 30),
+        'OPENAI_REQUEST_MAX_RETRIES': config.get('OPENAI_REQUEST_MAX_RETRIES', 2),
+        'OPENAI_RETRY_BASE_SECONDS': config.get('OPENAI_RETRY_BASE_SECONDS', 0.75),
+    })
 
     system = (
         "你是严格的字幕质检员。判断字幕是否可进入翻译和烧录。"
@@ -735,21 +736,17 @@ def _call_ai_judge(
     }
 
     try:
-        resp = openai_chat_create_with_thinking_control(
-            client=client,
-            create_kwargs={
-                'model': model_name,
-                'messages': [
-                    {'role': 'system', 'content': system},
-                    {'role': 'user', 'content': json.dumps(user, ensure_ascii=False)}
-                ],
-                'temperature': 0.0,
-                'max_tokens': 120,
-                'response_format': {'type': 'json_object'},
-            },
+        resp = _request_chat_completion(
+            client,
+            model_name,
+            system,
+            user,
+            max_tokens=120,
+            temperature=0.0,
             thinking_enabled=config.get('SUBTITLE_QC_THINKING_ENABLED', False),
-            logger=logger,
+            logger_obj=logger,
             scene_name='subtitle_qc',
+            response_format={'type': 'json_object'},
         )
         message = resp.choices[0].message
         parsed_raw = extract_chat_message_json(message, expected_type=dict)
