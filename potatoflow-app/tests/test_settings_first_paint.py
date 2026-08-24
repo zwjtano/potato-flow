@@ -47,6 +47,26 @@ class SettingsFirstPaintTests(unittest.TestCase):
         self.assertIn('name="CLOUDFLARE_API_TOKEN"', template)
         self.assertIn("免费额度不等于免密钥", template)
 
+    def test_settings_use_status_first_progressive_disclosure(self):
+        template = self._template()
+
+        self.assertIn("id: 'vtab-overview'", template)
+        self.assertIn("settings-overview-grid", template)
+        self.assertIn("data-card-toggle", template)
+        self.assertIn("body.hidden = true", template)
+        self.assertIn("未展开的设置不会占用注意力", template)
+
+    def test_model_providers_are_compact_editable_registries(self):
+        template = self._template()
+
+        self.assertIn('data-provider-registry="text"', template)
+        self.assertIn('data-provider-registry="image"', template)
+        self.assertIn("data-provider-add", template)
+        self.assertIn("provider-registry-editor", template)
+        self.assertIn("额度、鉴权或容量异常时自动熔断并切换", template)
+        self.assertNotIn("文本 Profile {{ slot }}", template)
+        self.assertNotIn("图片 Profile {{ slot }}", template)
+
 
 if __name__ == "__main__":
     unittest.main()

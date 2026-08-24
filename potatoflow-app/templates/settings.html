@@ -838,36 +838,82 @@
                                                     </div>
                                                 </div>
 
-                                                <div class="settings-subcard">
-                                                    <div class="settings-subcard-header">
-                                                        <h5>文本 Provider Registry</h5>
-                                                        <span class="settings-status-badge is-info">按 Profile 1 → 4 路由</span>
-                                                    </div>
-                                                    <p class="help-text">每个 Profile 是独立的 Key、端点、模型与 RPM 配额桶。遇到额度、鉴权或容量错误会跨进程熔断并自动切换；场景可填 <code>*</code>，或用逗号列出 <code>subtitle_qc</code>、<code>metadata_translation</code> 等。</p>
-                                                    {% for slot in [1, 2, 3, 4] %}
-                                                        {% set prefix = 'OPENAI_PROVIDER_' ~ slot ~ '_' %}
-                                                        <div class="border rounded p-3 mb-3">
-                                                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                                                <strong>文本 Profile {{ slot }}</strong>
-                                                                <div class="form-check form-switch mb-0">
-                                                                    <input class="form-check-input" type="checkbox" id="llm-provider-{{ slot }}-enabled" name="{{ prefix }}ENABLED" {% if config.get(prefix ~ 'ENABLED', False) %}checked{% endif %}>
-                                                                    <label class="form-check-label" for="llm-provider-{{ slot }}-enabled">启用</label>
-                                                                </div>
-                                                            </div>
-                                                            <div class="row g-3">
-                                                                <div class="col-md-3"><label class="form-label" for="llm-provider-{{ slot }}-id">Provider ID</label><input class="form-control" id="llm-provider-{{ slot }}-id" name="{{ prefix }}ID" value="{{ config.get(prefix ~ 'ID', '') }}"></div>
-                                                                <div class="col-md-5"><label class="form-label" for="llm-provider-{{ slot }}-url">接口地址</label><input class="form-control" id="llm-provider-{{ slot }}-url" name="{{ prefix }}BASE_URL" value="{{ config.get(prefix ~ 'BASE_URL', '') }}" placeholder="https://api.openai.com/v1"></div>
-                                                                <div class="col-md-4"><label class="form-label" for="llm-provider-{{ slot }}-model">模型</label><input class="form-control" id="llm-provider-{{ slot }}-model" name="{{ prefix }}MODEL_NAME" value="{{ config.get(prefix ~ 'MODEL_NAME', '') }}"></div>
-                                                                <div class="col-md-5"><label class="form-label" for="llm-provider-{{ slot }}-key">API Key</label><input type="password" class="form-control" id="llm-provider-{{ slot }}-key" name="{{ prefix }}API_KEY" value="{{ secret_field_value(prefix ~ 'API_KEY') }}" autocomplete="off"></div>
-                                                                <div class="col-md-2"><label class="form-label" for="llm-provider-{{ slot }}-rpm">RPM</label><input type="number" min="0" class="form-control" id="llm-provider-{{ slot }}-rpm" name="{{ prefix }}RPM_LIMIT" value="{{ config.get(prefix ~ 'RPM_LIMIT', 30) }}"></div>
-                                                                <div class="col-md-5"><label class="form-label" for="llm-provider-{{ slot }}-scenes">场景</label><input class="form-control" id="llm-provider-{{ slot }}-scenes" name="{{ prefix }}SCENES" value="{{ config.get(prefix ~ 'SCENES', '*') }}"></div>
-                                                            </div>
+                                                {% set text_registry = namespace(enabled=0, configured=0) %}
+                                                {% for slot in [1, 2, 3, 4] %}
+                                                    {% set prefix = 'OPENAI_PROVIDER_' ~ slot ~ '_' %}
+                                                    {% if config.get(prefix ~ 'ENABLED', False) %}{% set text_registry.enabled = text_registry.enabled + 1 %}{% endif %}
+                                                    {% if config.get(prefix ~ 'API_KEY') or config.get(prefix ~ 'BASE_URL') or config.get(prefix ~ 'MODEL_NAME') %}{% set text_registry.configured = text_registry.configured + 1 %}{% endif %}
+                                                {% endfor %}
+                                                <div class="settings-subcard provider-control-plane" data-provider-registry="text">
+                                                    <div class="provider-registry-toolbar">
+                                                        <div>
+                                                            <span class="section-eyebrow">LLM · 文本能力</span>
+                                                            <h5>文本模型服务</h5>
+                                                            <p>按优先级路由；额度、鉴权或容量异常时自动熔断并切换。</p>
                                                         </div>
-                                                    {% endfor %}
-                                                    <label class="checkbox-label mb-0">
-                                                        <input type="checkbox" name="OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED" {% if config.get('OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED', True) %}checked{% endif %}>
-                                                        Profile 可用时仍允许回退到上方旧全局 Key（迁移完成后建议关闭）
-                                                    </label>
+                                                        <div class="provider-registry-actions">
+                                                            <span class="provider-count" data-provider-count>{{ text_registry.enabled }} 个启用 · {{ text_registry.configured }} 个已配置</span>
+                                                            <button class="btn btn-sm btn-primary provider-add-button" type="button" data-provider-add>
+                                                                <i class="bi bi-plus-lg"></i> 添加服务
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <div class="provider-registry-list">
+                                                        {% for slot in [1, 2, 3, 4] %}
+                                                            {% set prefix = 'OPENAI_PROVIDER_' ~ slot ~ '_' %}
+                                                            {% set provider_enabled = config.get(prefix ~ 'ENABLED', False) %}
+                                                            {% set provider_configured = config.get(prefix ~ 'API_KEY') or config.get(prefix ~ 'BASE_URL') or config.get(prefix ~ 'MODEL_NAME') %}
+                                                            <section class="provider-registry-item {{ 'is-enabled' if provider_enabled else '' }}" data-provider-item data-provider-slot="{{ slot }}">
+                                                                <div class="provider-registry-row">
+                                                                    <span class="provider-order">{{ slot }}</span>
+                                                                    <div class="provider-identity">
+                                                                        <strong data-provider-summary="id">{{ config.get(prefix ~ 'ID', 'text-' ~ slot) }}</strong>
+                                                                        <small>{{ '首选路由' if slot == 1 else '故障转移 ' ~ (slot - 1) }}</small>
+                                                                    </div>
+                                                                    <div class="provider-fact">
+                                                                        <span>模型</span>
+                                                                        <strong data-provider-summary="model">{{ config.get(prefix ~ 'MODEL_NAME', '') or '未设置' }}</strong>
+                                                                    </div>
+                                                                    <div class="provider-fact provider-fact-wide">
+                                                                        <span>端点</span>
+                                                                        <strong data-provider-summary="url">{{ config.get(prefix ~ 'BASE_URL', '') or '继承全局端点' }}</strong>
+                                                                    </div>
+                                                                    <div class="provider-fact">
+                                                                        <span>限流</span>
+                                                                        <strong><span data-provider-summary="rpm">{{ config.get(prefix ~ 'RPM_LIMIT', 30) }}</span> RPM</strong>
+                                                                    </div>
+                                                                    <span class="settings-status-badge {{ 'is-success' if provider_configured else 'is-warning' }}" data-provider-key-status>{{ 'Key 已配置' if config.get(prefix ~ 'API_KEY') else ('端点已配置' if provider_configured else '待配置') }}</span>
+                                                                    <button class="provider-row-toggle" type="button" aria-expanded="false" aria-controls="text-provider-editor-{{ slot }}" data-provider-toggle>
+                                                                        <span>编辑</span><i class="bi bi-chevron-down"></i>
+                                                                    </button>
+                                                                </div>
+                                                                <div class="provider-registry-editor" id="text-provider-editor-{{ slot }}" hidden>
+                                                                    <div class="provider-editor-heading">
+                                                                        <div><strong>编辑文本服务</strong><small>保存后路由器自动加载，无需重启。</small></div>
+                                                                        <div class="form-check form-switch mb-0">
+                                                                            <input class="form-check-input" type="checkbox" id="llm-provider-{{ slot }}-enabled" name="{{ prefix }}ENABLED" {% if provider_enabled %}checked{% endif %}>
+                                                                            <label class="form-check-label" for="llm-provider-{{ slot }}-enabled">参与路由</label>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div class="provider-fields-grid">
+                                                                        <div><label class="form-label" for="llm-provider-{{ slot }}-id">服务名称</label><input class="form-control" id="llm-provider-{{ slot }}-id" name="{{ prefix }}ID" value="{{ config.get(prefix ~ 'ID', '') }}" data-provider-field="id"></div>
+                                                                        <div class="is-span-2"><label class="form-label" for="llm-provider-{{ slot }}-url">接口地址</label><input class="form-control" id="llm-provider-{{ slot }}-url" name="{{ prefix }}BASE_URL" value="{{ config.get(prefix ~ 'BASE_URL', '') }}" placeholder="https://api.openai.com/v1" data-provider-field="url"></div>
+                                                                        <div><label class="form-label" for="llm-provider-{{ slot }}-model">模型</label><input class="form-control" id="llm-provider-{{ slot }}-model" name="{{ prefix }}MODEL_NAME" value="{{ config.get(prefix ~ 'MODEL_NAME', '') }}" data-provider-field="model"></div>
+                                                                        <div class="is-span-2"><label class="form-label" for="llm-provider-{{ slot }}-key">API Key</label><input type="password" class="form-control" id="llm-provider-{{ slot }}-key" name="{{ prefix }}API_KEY" value="{{ secret_field_value(prefix ~ 'API_KEY') }}" autocomplete="off" placeholder="sk-…" data-provider-field="key"></div>
+                                                                        <div><label class="form-label" for="llm-provider-{{ slot }}-rpm">RPM 上限</label><input type="number" min="0" class="form-control" id="llm-provider-{{ slot }}-rpm" name="{{ prefix }}RPM_LIMIT" value="{{ config.get(prefix ~ 'RPM_LIMIT', 30) }}" data-provider-field="rpm"></div>
+                                                                        <div><label class="form-label" for="llm-provider-{{ slot }}-scenes">适用场景</label><input class="form-control" id="llm-provider-{{ slot }}-scenes" name="{{ prefix }}SCENES" value="{{ config.get(prefix ~ 'SCENES', '*') }}" placeholder="* 或 subtitle_qc, metadata_translation"></div>
+                                                                    </div>
+                                                                </div>
+                                                            </section>
+                                                        {% endfor %}
+                                                    </div>
+                                                    <details class="provider-registry-policy">
+                                                        <summary>兼容与回退策略</summary>
+                                                        <label class="checkbox-label mb-0">
+                                                            <input type="checkbox" name="OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED" {% if config.get('OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED', True) %}checked{% endif %}>
+                                                            新服务不可用时，允许回退到全局模型配置
+                                                        </label>
+                                                    </details>
                                                 </div>
 
                                                 <div class="settings-subcard">
@@ -922,31 +968,61 @@
                                                     <p class="help-text mt-2 mb-0">结果缓存会在本机私有数据库保存已成功解析的结构化输出（可能包含译文），不保存输入 Prompt 或 API 密钥。人工“重新生成”始终旁路缓存。模型覆盖留空时继承全局默认模型。</p>
                                                 </div>
 
-                                                <div class="settings-subcard">
-                                                    <div class="settings-subcard-header">
-                                                        <h5>图片 Provider Registry</h5>
-                                                        <span class="settings-status-badge is-info">额度耗尽自动切换</span>
-                                                    </div>
-                                                    <p class="help-text">当前执行器支持 OpenAI-compatible Images API；原生 Gemini Image 等适配器通过同一能力接口继续扩展，不读取任何 Codex/ChatGPT 登录凭据。</p>
-                                                    {% for slot in [1, 2, 3, 4] %}
-                                                        {% set prefix = 'IMAGE_PROVIDER_' ~ slot ~ '_' %}
-                                                        <div class="border rounded p-3 mb-3">
-                                                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                                                <strong>图片 Profile {{ slot }}</strong>
-                                                                <div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="image-provider-{{ slot }}-enabled" name="{{ prefix }}ENABLED" {% if config.get(prefix ~ 'ENABLED', False) %}checked{% endif %}><label class="form-check-label" for="image-provider-{{ slot }}-enabled">启用</label></div>
-                                                            </div>
-                                                            <div class="row g-3">
-                                                                <div class="col-md-3"><label class="form-label" for="image-provider-{{ slot }}-id">Provider ID</label><input class="form-control" id="image-provider-{{ slot }}-id" name="{{ prefix }}ID" value="{{ config.get(prefix ~ 'ID', '') }}"></div>
-                                                                <div class="col-md-5"><label class="form-label" for="image-provider-{{ slot }}-url">接口地址</label><input class="form-control" id="image-provider-{{ slot }}-url" name="{{ prefix }}BASE_URL" value="{{ config.get(prefix ~ 'BASE_URL', '') }}"></div>
-                                                                <div class="col-md-4"><label class="form-label" for="image-provider-{{ slot }}-model">模型</label><input class="form-control" id="image-provider-{{ slot }}-model" name="{{ prefix }}MODEL_NAME" value="{{ config.get(prefix ~ 'MODEL_NAME', 'gpt-image-2') }}"></div>
-                                                                <div class="col-md-6"><label class="form-label" for="image-provider-{{ slot }}-key">API Key</label><input type="password" class="form-control" id="image-provider-{{ slot }}-key" name="{{ prefix }}API_KEY" value="{{ secret_field_value(prefix ~ 'API_KEY') }}" autocomplete="off"></div>
-                                                                <div class="col-md-4"><label class="form-label" for="image-provider-{{ slot }}-scenes">场景</label><input class="form-control" id="image-provider-{{ slot }}-scenes" name="{{ prefix }}SCENES" value="{{ config.get(prefix ~ 'SCENES', '*') }}"></div>
-                                                                <div class="col-md-2 d-flex align-items-end"><label class="checkbox-label mb-2"><input type="checkbox" name="{{ prefix }}SUPPORTS_EDIT" {% if config.get(prefix ~ 'SUPPORTS_EDIT', True) %}checked{% endif %}>支持参考图编辑</label></div>
-                                                                <input type="hidden" name="{{ prefix }}ADAPTER" value="openai-compatible">
-                                                            </div>
+                                                {% set image_registry = namespace(enabled=0, configured=0) %}
+                                                {% for slot in [1, 2, 3, 4] %}
+                                                    {% set prefix = 'IMAGE_PROVIDER_' ~ slot ~ '_' %}
+                                                    {% if config.get(prefix ~ 'ENABLED', False) %}{% set image_registry.enabled = image_registry.enabled + 1 %}{% endif %}
+                                                    {% if config.get(prefix ~ 'API_KEY') or config.get(prefix ~ 'BASE_URL') %}{% set image_registry.configured = image_registry.configured + 1 %}{% endif %}
+                                                {% endfor %}
+                                                <div class="settings-subcard provider-control-plane" data-provider-registry="image">
+                                                    <div class="provider-registry-toolbar">
+                                                        <div>
+                                                            <span class="section-eyebrow">IMAGE · 视觉能力</span>
+                                                            <h5>图片生成服务</h5>
+                                                            <p>封面生成和参考图编辑共用同一能力路由，额度耗尽自动切换。</p>
                                                         </div>
-                                                    {% endfor %}
-                                                    <label class="checkbox-label mb-0"><input type="checkbox" name="IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED" {% if config.get('IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED', True) %}checked{% endif %}>允许回退到下方旧图片/全局 Key</label>
+                                                        <div class="provider-registry-actions">
+                                                            <span class="provider-count" data-provider-count>{{ image_registry.enabled }} 个启用 · {{ image_registry.configured }} 个已配置</span>
+                                                            <button class="btn btn-sm btn-primary provider-add-button" type="button" data-provider-add><i class="bi bi-plus-lg"></i> 添加服务</button>
+                                                        </div>
+                                                    </div>
+                                                    <div class="provider-registry-list">
+                                                        {% for slot in [1, 2, 3, 4] %}
+                                                            {% set prefix = 'IMAGE_PROVIDER_' ~ slot ~ '_' %}
+                                                            {% set provider_enabled = config.get(prefix ~ 'ENABLED', False) %}
+                                                            {% set provider_configured = config.get(prefix ~ 'API_KEY') or config.get(prefix ~ 'BASE_URL') %}
+                                                            <section class="provider-registry-item {{ 'is-enabled' if provider_enabled else '' }}" data-provider-item data-provider-slot="{{ slot }}">
+                                                                <div class="provider-registry-row">
+                                                                    <span class="provider-order">{{ slot }}</span>
+                                                                    <div class="provider-identity"><strong data-provider-summary="id">{{ config.get(prefix ~ 'ID', 'image-' ~ slot) }}</strong><small>{{ '首选路由' if slot == 1 else '故障转移 ' ~ (slot - 1) }}</small></div>
+                                                                    <div class="provider-fact"><span>模型</span><strong data-provider-summary="model">{{ config.get(prefix ~ 'MODEL_NAME', 'gpt-image-2') }}</strong></div>
+                                                                    <div class="provider-fact provider-fact-wide"><span>端点</span><strong data-provider-summary="url">{{ config.get(prefix ~ 'BASE_URL', '') or '继承图片/全局端点' }}</strong></div>
+                                                                    <div class="provider-fact"><span>能力</span><strong>{{ '生成 + 编辑' if config.get(prefix ~ 'SUPPORTS_EDIT', True) else '仅生成' }}</strong></div>
+                                                                    <span class="settings-status-badge {{ 'is-success' if provider_configured else 'is-warning' }}" data-provider-key-status>{{ 'Key 已配置' if config.get(prefix ~ 'API_KEY') else ('端点已配置' if provider_configured else '待配置') }}</span>
+                                                                    <button class="provider-row-toggle" type="button" aria-expanded="false" aria-controls="image-provider-editor-{{ slot }}" data-provider-toggle><span>编辑</span><i class="bi bi-chevron-down"></i></button>
+                                                                </div>
+                                                                <div class="provider-registry-editor" id="image-provider-editor-{{ slot }}" hidden>
+                                                                    <div class="provider-editor-heading">
+                                                                        <div><strong>编辑图片服务</strong><small>当前支持 OpenAI-compatible Images API。</small></div>
+                                                                        <div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="image-provider-{{ slot }}-enabled" name="{{ prefix }}ENABLED" {% if provider_enabled %}checked{% endif %}><label class="form-check-label" for="image-provider-{{ slot }}-enabled">参与路由</label></div>
+                                                                    </div>
+                                                                    <div class="provider-fields-grid">
+                                                                        <div><label class="form-label" for="image-provider-{{ slot }}-id">服务名称</label><input class="form-control" id="image-provider-{{ slot }}-id" name="{{ prefix }}ID" value="{{ config.get(prefix ~ 'ID', '') }}" data-provider-field="id"></div>
+                                                                        <div class="is-span-2"><label class="form-label" for="image-provider-{{ slot }}-url">接口地址</label><input class="form-control" id="image-provider-{{ slot }}-url" name="{{ prefix }}BASE_URL" value="{{ config.get(prefix ~ 'BASE_URL', '') }}" placeholder="https://api.openai.com/v1" data-provider-field="url"></div>
+                                                                        <div><label class="form-label" for="image-provider-{{ slot }}-model">模型</label><input class="form-control" id="image-provider-{{ slot }}-model" name="{{ prefix }}MODEL_NAME" value="{{ config.get(prefix ~ 'MODEL_NAME', 'gpt-image-2') }}" data-provider-field="model"></div>
+                                                                        <div class="is-span-2"><label class="form-label" for="image-provider-{{ slot }}-key">API Key</label><input type="password" class="form-control" id="image-provider-{{ slot }}-key" name="{{ prefix }}API_KEY" value="{{ secret_field_value(prefix ~ 'API_KEY') }}" autocomplete="off" placeholder="sk-…" data-provider-field="key"></div>
+                                                                        <div><label class="form-label" for="image-provider-{{ slot }}-scenes">适用场景</label><input class="form-control" id="image-provider-{{ slot }}-scenes" name="{{ prefix }}SCENES" value="{{ config.get(prefix ~ 'SCENES', '*') }}"></div>
+                                                                        <div class="provider-capability-toggle"><label class="checkbox-label mb-0"><input type="checkbox" name="{{ prefix }}SUPPORTS_EDIT" {% if config.get(prefix ~ 'SUPPORTS_EDIT', True) %}checked{% endif %}>支持参考图编辑</label></div>
+                                                                        <input type="hidden" name="{{ prefix }}ADAPTER" value="openai-compatible">
+                                                                    </div>
+                                                                </div>
+                                                            </section>
+                                                        {% endfor %}
+                                                    </div>
+                                                    <details class="provider-registry-policy">
+                                                        <summary>兼容与回退策略</summary>
+                                                        <label class="checkbox-label mb-0"><input type="checkbox" name="IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED" {% if config.get('IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED', True) %}checked{% endif %}>新服务不可用时，允许回退到旧图片/全局配置</label>
+                                                    </details>
                                                 </div>
 
                                                 <div class="settings-subcard">
@@ -2833,9 +2909,13 @@
     const settingsLayout = document.querySelector('.settings-layout');
     const categoryDefinitions = [
         {
-            id: 'vtab-recording-publish', icon: 'bi-record-circle', name: '录播与投稿',
-            description: '流程、投稿、弹幕烧录与审核',
-            titles: ['自动化流程', '投稿策略', 'ASS 弹幕与烧录', '内容审核与阿里云凭证']
+            id: 'vtab-overview', icon: 'bi-grid-1x2', name: '总览',
+            description: '配置状态与快捷入口', overview: true, titles: []
+        },
+        {
+            id: 'vtab-recording-publish', icon: 'bi-diagram-3', name: '工作流',
+            description: '自动化、投稿、弹幕与审核',
+            titles: ['自动化流程', '投稿策略', 'ASS 弹幕与烧录', '内容审核与阿里云凭证', '投稿后自动生成章节']
         },
         {
             id: 'vtab-platform-accounts', icon: 'bi-person-badge', name: '平台账号',
@@ -2848,8 +2928,8 @@
             titles: ['投稿节点探测与测试', '通用网络代理', 'YouTube 下载与代理', 'FFmpeg 环境', 'YouTube 监控 API']
         },
         {
-            id: 'vtab-ai-content', icon: 'bi-stars', name: 'AI 内容',
-            description: '模型、录播投稿与元数据提示词',
+            id: 'vtab-ai-content', icon: 'bi-cpu', name: 'AI 服务',
+            description: '模型路由、图像与提示词',
             titles: ['AI 模型与专项配置', '标题、简介与封面生图提示词', 'AI 智能分段', '元数据翻译主提示词', '简介重试提示词']
         },
         {
@@ -2863,9 +2943,9 @@
             titles: ['通知策略', '群机器人', 'Turbo 通道', '自建消息网关', 'Bot 消息']
         },
         {
-            id: 'vtab-storage-security', icon: 'bi-shield-lock', name: '存储与安全',
-            description: '目录、并发、清理与管理员',
-            titles: ['录播文件夹', '任务并发', '日志清理', '下载内容清理', '管理员账号']
+            id: 'vtab-storage-security', icon: 'bi-shield-check', name: '系统',
+            description: '外观、存储、安全与运行环境',
+            titles: ['显示主题', '录播文件夹', '任务并发', '日志清理', '下载内容清理', '管理员账号']
         }
     ];
 
@@ -2878,13 +2958,6 @@
             if (title) card.dataset.settingsTitle = title;
             if (title && !cardsByTitle.has(title)) cardsByTitle.set(title, wrapper);
         });
-
-        const themeWrapper = cardsByTitle.get('显示主题');
-        if (themeWrapper) {
-            themeWrapper.className = 'settings-appearance-strip';
-            settingsLayout.parentNode.insertBefore(themeWrapper, settingsLayout);
-            cardsByTitle.delete('显示主题');
-        }
 
         settingsNav.replaceChildren();
         settingsTabContent.replaceChildren();
@@ -2936,7 +3009,24 @@
             headerCopy.append(heading, lead);
             header.appendChild(headerCopy);
             const grid = document.createElement('div');
-            grid.className = 'settings-pane-grid';
+            grid.className = category.overview ? 'settings-overview-grid' : 'settings-pane-grid';
+            if (category.overview) {
+                const overviewIntro = document.createElement('div');
+                overviewIntro.className = 'settings-overview-intro';
+                overviewIntro.innerHTML = '<span class="section-eyebrow">CONTROL CENTER</span><h4>从状态开始，而不是从表单开始</h4><p>先确认系统是否可用，再进入具体模块编辑。未展开的设置不会占用注意力。</p>';
+                grid.appendChild(overviewIntro);
+                categoryDefinitions.filter(function (item) { return !item.overview; }).forEach(function (item) {
+                    const tile = document.createElement('button');
+                    tile.type = 'button';
+                    tile.className = 'settings-overview-tile';
+                    tile.setAttribute('data-settings-target', '#' + item.id);
+                    const configuredCards = item.titles.filter(function (title) { return cardsByTitle.has(title); }).length;
+                    tile.innerHTML = '<span class="settings-overview-icon"><i class="bi ' + item.icon + '"></i></span>' +
+                        '<span class="settings-overview-copy"><strong>' + item.name + '</strong><small>' + item.description + '</small></span>' +
+                        '<span class="settings-overview-meta">' + configuredCards + ' 个模块 <i class="bi bi-arrow-right"></i></span>';
+                    grid.appendChild(tile);
+                });
+            }
             const wideCardTitles = new Set([
                 'ASS 弹幕与烧录',
                 '内容审核与阿里云凭证',
@@ -2964,7 +3054,106 @@
                 fallbackGrid.appendChild(wrapper);
             }
         });
+
+        settingsTabContent.querySelectorAll('.settings-card').forEach(function (card, index) {
+            const header = card.querySelector(':scope > .settings-card-header');
+            const body = card.querySelector(':scope > .settings-card-body');
+            if (!header || !body || header.querySelector('[data-card-toggle]')) return;
+            const heading = header.querySelector('h4');
+            const cardId = 'settings-card-panel-' + index;
+            body.id = cardId;
+            body.hidden = true;
+            card.classList.add('is-collapsed');
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'settings-card-toggle';
+            toggle.setAttribute('data-card-toggle', '');
+            toggle.setAttribute('aria-controls', cardId);
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.setAttribute('aria-label', '展开' + String(heading?.textContent || '设置'));
+            toggle.innerHTML = '<span>配置</span><i class="bi bi-chevron-down"></i>';
+            header.appendChild(toggle);
+            toggle.addEventListener('click', function () {
+                const opening = body.hidden;
+                body.hidden = !opening;
+                card.classList.toggle('is-collapsed', !opening);
+                card.classList.toggle('is-expanded', opening);
+                toggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+                toggle.querySelector('span').textContent = opening ? '收起' : '配置';
+            });
+        });
     }
+
+    document.querySelectorAll('[data-provider-registry]').forEach(function (registry) {
+        const items = Array.from(registry.querySelectorAll('[data-provider-item]'));
+        const count = registry.querySelector('[data-provider-count]');
+        const syncRegistry = function () {
+            let enabled = 0;
+            let configured = 0;
+            items.forEach(function (item) {
+                const enabledInput = item.querySelector('input[name$="_ENABLED"]');
+                const keyInput = item.querySelector('[data-provider-field="key"]');
+                const urlInput = item.querySelector('[data-provider-field="url"]');
+                const modelInput = item.querySelector('[data-provider-field="model"]');
+                const hasConfig = Boolean(String(keyInput?.value || '').trim() || String(urlInput?.value || '').trim() || String(modelInput?.value || '').trim());
+                if (enabledInput?.checked) enabled += 1;
+                if (hasConfig) configured += 1;
+                item.classList.toggle('is-enabled', Boolean(enabledInput?.checked));
+                const status = item.querySelector('[data-provider-key-status]');
+                if (status) {
+                    status.textContent = String(keyInput?.value || '').trim() ? 'Key 已配置' : (hasConfig ? '服务已配置' : '待配置');
+                    status.classList.toggle('is-success', hasConfig);
+                    status.classList.toggle('is-warning', !hasConfig);
+                }
+            });
+            if (count) count.textContent = enabled + ' 个启用 · ' + configured + ' 个已配置';
+        };
+        const openItem = function (item, focusField) {
+            const toggle = item?.querySelector('[data-provider-toggle]');
+            const editor = item?.querySelector('.provider-registry-editor');
+            if (!toggle || !editor) return;
+            editor.hidden = false;
+            item.classList.add('is-editing');
+            toggle.setAttribute('aria-expanded', 'true');
+            toggle.querySelector('span').textContent = '收起';
+            if (focusField) window.setTimeout(function () { item.querySelector('[data-provider-field="id"]')?.focus(); }, 80);
+        };
+        items.forEach(function (item) {
+            const toggle = item.querySelector('[data-provider-toggle]');
+            const editor = item.querySelector('.provider-registry-editor');
+            toggle?.addEventListener('click', function () {
+                if (editor.hidden) {
+                    openItem(item, false);
+                } else {
+                    editor.hidden = true;
+                    item.classList.remove('is-editing');
+                    toggle.setAttribute('aria-expanded', 'false');
+                    toggle.querySelector('span').textContent = '编辑';
+                }
+            });
+            item.querySelectorAll('input, select').forEach(function (field) {
+                field.addEventListener('input', function () {
+                    const summaryKey = field.getAttribute('data-provider-field');
+                    if (summaryKey && summaryKey !== 'key') {
+                        const summary = item.querySelector('[data-provider-summary="' + summaryKey + '"]');
+                        if (summary) summary.textContent = String(field.value || '').trim() || (summaryKey === 'url' ? '继承默认端点' : '未设置');
+                    }
+                    syncRegistry();
+                });
+                field.addEventListener('change', syncRegistry);
+            });
+        });
+        registry.querySelector('[data-provider-add]')?.addEventListener('click', function () {
+            const target = items.find(function (item) {
+                const key = item.querySelector('[data-provider-field="key"]');
+                const url = item.querySelector('[data-provider-field="url"]');
+                return !String(key?.value || '').trim() && !String(url?.value || '').trim();
+            }) || items[items.length - 1];
+            openItem(target, true);
+            target?.scrollIntoView({behavior: 'smooth', block: 'center'});
+        });
+        syncRegistry();
+    });
 
     const booleanSettingsForm = document.getElementById('settings-form');
     if (booleanSettingsForm) {
@@ -3174,8 +3363,8 @@
             const provider = asrProvider.value;
             if (provider === 'whisper') {
                 whisperConfig.style.display = 'block';
-                voxtralConfig.style.display = 'none';
-                freeAsrConfig.style.display = 'none';
+                voxtralConfig.style.display = 'block';
+                freeAsrConfig.style.display = 'block';
                 sharedVadConfig.style.display = 'block';
                 if (sharedVadProviderPill) {
                     sharedVadProviderPill.textContent = 'Whisper';
@@ -3184,9 +3373,9 @@
                     sharedVadProviderCopy.textContent = '当前为 Whisper 模式，扫描窗、segment 时间戳和失败回退会共同决定最终字幕时间轴。';
                 }
             } else if (provider === 'voxtral') {
-                whisperConfig.style.display = 'none';
+                whisperConfig.style.display = 'block';
                 voxtralConfig.style.display = 'block';
-                freeAsrConfig.style.display = 'none';
+                freeAsrConfig.style.display = 'block';
                 sharedVadConfig.style.display = 'block';
                 if (sharedVadProviderPill) {
                     sharedVadProviderPill.textContent = 'Voxtral';
@@ -3195,8 +3384,8 @@
                     sharedVadProviderCopy.textContent = '当前为 Voxtral 模式，扫描窗和时间戳粒度同样生效；关闭扫描窗时默认整段发送，超过单请求上限时仍会自动切片。';
                 }
             } else if (provider === 'free_pool') {
-                whisperConfig.style.display = 'none';
-                voxtralConfig.style.display = 'none';
+                whisperConfig.style.display = 'block';
+                voxtralConfig.style.display = 'block';
                 freeAsrConfig.style.display = 'block';
                 sharedVadConfig.style.display = 'block';
                 if (sharedVadProviderPill) {
@@ -3206,6 +3395,16 @@
                     sharedVadProviderCopy.textContent = '仅在没有可复用 AI 字幕时运行 VAD，再按 Groq、Cloudflare 顺序自动消耗免费额度；不会回退到付费接口。';
                 }
             }
+            // 设置页始终保留全部 Provider 入口；默认服务只决定运行时路由，
+            // 不应让其他服务的凭据与高级配置从管理界面消失。
+            [whisperConfig, voxtralConfig, freeAsrConfig].forEach(function (wrapper) {
+                wrapper.style.display = 'block';
+                wrapper.classList.remove('is-selected-provider');
+            });
+            const selectedWrapper = provider === 'voxtral'
+                ? voxtralConfig
+                : (provider === 'free_pool' ? freeAsrConfig : whisperConfig);
+            selectedWrapper.classList.add('is-selected-provider');
         };
         asrProvider.addEventListener('change', toggleAsrProvider);
         toggleAsrProvider();
@@ -4213,6 +4412,11 @@
         function clearHighlights() {
             document.querySelectorAll('#settings-tabContent .settings-card.search-hit').forEach(function (c) { c.classList.remove('search-hit'); });
             document.querySelectorAll('#settings-tabContent .settings-card.search-dim').forEach(function (c) { c.classList.remove('search-dim'); });
+            document.querySelectorAll('[data-search-revealed="true"]').forEach(function (wrapper) {
+                wrapper.style.display = wrapper.dataset.searchPreviousDisplay || '';
+                delete wrapper.dataset.searchPreviousDisplay;
+                delete wrapper.dataset.searchRevealed;
+            });
         }
 
         var debounceTimer = null;
@@ -4233,12 +4437,32 @@
                 searchHint.className = 'form-text text-warning';
                 return;
             }
-            matches.forEach(function (m) { m.card.classList.add('search-hit'); });
+            matches.forEach(function (m) {
+                m.card.classList.add('search-hit');
+                var conditionalWrapper = m.card.closest('#free-asr-config, #whisper-config, #voxtral-config');
+                if (conditionalWrapper && conditionalWrapper.style.display === 'none') {
+                    conditionalWrapper.dataset.searchPreviousDisplay = conditionalWrapper.style.display;
+                    conditionalWrapper.dataset.searchRevealed = 'true';
+                    conditionalWrapper.style.display = 'block';
+                }
+            });
             cards.forEach(function (c) { if (c.text.indexOf(ql) === -1) { c.card.classList.add('search-dim'); } });
             searchHint.classList.remove('d-none');
             searchHint.textContent = '找到 ' + matches.length + ' 项，已定位到第一个';
             searchHint.className = 'form-text text-success';
             activatePane(matches[0].paneId);
+            var firstBody = matches[0].card.querySelector(':scope > .settings-card-body');
+            var firstToggle = matches[0].card.querySelector('[data-card-toggle]');
+            if (firstBody && firstBody.hidden) {
+                firstBody.hidden = false;
+                matches[0].card.classList.remove('is-collapsed');
+                matches[0].card.classList.add('is-expanded');
+                if (firstToggle) {
+                    firstToggle.setAttribute('aria-expanded', 'true');
+                    var toggleLabel = firstToggle.querySelector('span');
+                    if (toggleLabel) { toggleLabel.textContent = '收起'; }
+                }
+            }
             setTimeout(function () {
                 matches[0].card.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }, 220);
