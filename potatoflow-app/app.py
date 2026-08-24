@@ -1656,6 +1656,11 @@ def live_recording_job(fingerprint):
     if not job:
         return jsonify({'error': '没有找到该录播任务'}), 404
     job['log'] = live_recorder_manager.pipeline_log(fingerprint)
+    try:
+        from modules.ai_request_ledger import summarize_task_ai_usage
+        job['ai_usage'] = summarize_task_ai_usage(fingerprint)
+    except Exception:
+        job['ai_usage'] = {}
     return jsonify(job)
 
 

@@ -30,6 +30,23 @@ def player(hero_id, hero, items=None):
 
 
 class DouyuStatsTests(unittest.TestCase):
+    def test_douyu_connection_subscribes_to_ai_captions(self):
+        fake_socket = mock.Mock()
+        with mock.patch.object(daemon.socket, "socket", return_value=fake_socket):
+            result = daemon.douyu_connect("9999")
+
+        payload = b"".join(
+            call.args[0] for call in fake_socket.sendall.call_args_list
+        )
+        messages, pending = daemon.decode_packets(payload)
+        self.assertIs(result, fake_socket)
+        self.assertEqual(pending, b"")
+        self.assertEqual(
+            [message_type for message_type, _message, _raw in messages],
+            ["loginreq", "joingroup", "sub"],
+        )
+        self.assertEqual(messages[-1][1].get("mt"), "asr_caption")
+
     def test_dota_maps_retry_after_partial_startup_timeout(self):
         original_heroes = daemon.dota_hero_map
         original_items = daemon.dota_item_map
@@ -134,6 +151,61 @@ class DouyuStatsTests(unittest.TestCase):
         messages, pending = daemon.decode_packets(pending + (first + second)[split:])
         self.assertEqual([item[0] for item in messages], ["oni"])
         self.assertEqual(pending, b"")
+
+    def test_ai_caption_revisions_replace_partial_sentence(self):
+        monitor = daemon.RoomMonitor("9999", "主播", {})
+        base = {
+            "rid": "9999",
+            "idx": "3539",
+            "bt": "1787492082180",
+            "bpts": "41293264",
+        }
+        monitor.handle_asr_caption({
+            **base,
+            "et": "1787492083945",
+            "txt": "for the first time",
+        })
+        monitor.handle_asr_caption({
+            **base,
+            # Douyu may refine the begin time together with the text.
+            "bt": "1787492082280",
+            "et": "1787492090700",
+            "txt": "For the first time in Dota history.",
+        })
+
+        captions = monitor.state["ai_captions"]
+        self.assertEqual(len(captions["items"]), 1)
+        self.assertEqual(
+            captions["items"][0]["text"],
+            "For the first time in Dota history.",
+        )
+        self.assertEqual(captions["diagnostics"]["recorded_captions"], 1)
+        self.assertEqual(captions["diagnostics"]["revised_captions"], 1)
+
+    def test_formatter_scopes_and_deduplicates_ai_captions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            streamer = Path(temporary) / "主播"
+            session = streamer / "主播_2026-08-23_20-00-00"
+            metadata = streamer / ".potato-flow"
+            session.mkdir(parents=True)
+            metadata.mkdir()
+            (metadata / "douyu-stats.json").write_text(json.dumps({
+                "ai_captions": {"items": [
+                    {"idx": "1", "text": "旧半句", "start_unix_ts": 101, "end_unix_ts": 102},
+                    {"idx": "1", "text": "完整第一句", "start_unix_ts": 101, "end_unix_ts": 104},
+                    {"idx": "2", "text": "第二句", "start_unix_ts": 110, "end_unix_ts": 112},
+                    {"idx": "3", "text": "范围外", "start_unix_ts": 130, "end_unix_ts": 131},
+                ]},
+            }, ensure_ascii=False), encoding="utf-8")
+
+            captions = formatter.get_ai_captions_for_recording(
+                session,
+                start_ts=100,
+                end_ts=120,
+            )
+
+        self.assertEqual([item["text"] for item in captions], ["完整第一句", "第二句"])
+        self.assertEqual([item["time"] for item in captions], [1.0, 10.0])
 
     def test_high_energy_uses_voice_danmu_price_and_deduplicates_queue(self):
         monitor = daemon.RoomMonitor("9999", "主播", {})

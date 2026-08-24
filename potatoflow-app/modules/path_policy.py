@@ -64,6 +64,7 @@ def atomic_write_text(
     *,
     encoding: str = "utf-8",
     private: bool = False,
+    newline: str | None = None,
 ) -> None:
     """Atomically replace a text file without inheriting unsafe source modes."""
     destination = path.resolve() if path.is_symlink() else path
@@ -76,7 +77,7 @@ def atomic_write_text(
     os.close(descriptor)
     temporary = Path(temporary_name)
     try:
-        temporary.write_text(text, encoding=encoding)
+        temporary.write_text(text, encoding=encoding, newline=newline)
         enforce_file_mode(temporary, private=private)
         # Windows may briefly keep a configuration file open while the
         # recorder reloads it. Retrying the atomic replace avoids surfacing a

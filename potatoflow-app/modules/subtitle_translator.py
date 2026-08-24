@@ -71,7 +71,7 @@ def setup_task_logger(task_id):
 
 def get_openai_client(openai_config):
     """
-    创建OpenAI客户端 (与ai_enhancer.py保持一致)
+    Reuse the shared OpenAI client/connection pool.
     
     Args:
         openai_config (dict): OpenAI配置信息，包含api_key, base_url等
@@ -79,25 +79,9 @@ def get_openai_client(openai_config):
     Returns:
         OpenAI客户端实例
     """
-    import openai
-    
-    # 配置选项
-    api_key = openai_config.get('OPENAI_API_KEY', '')
-    options = {}
-    
-    # 如果提供了base_url，添加到选项中
-    if openai_config.get('OPENAI_BASE_URL'):
-        options['base_url'] = openai_config.get('OPENAI_BASE_URL')
-    timeout_value = openai_config.get('OPENAI_TIMEOUT_SECONDS', 600)
-    try:
-        timeout_seconds = float(str(timeout_value).strip())
-    except Exception:
-        timeout_seconds = 600.0
-    if timeout_seconds > 0:
-        options['timeout'] = timeout_seconds
-    
-    # 创建并返回新版客户端实例
-    return openai.OpenAI(api_key=api_key, **options)
+    from .ai_enhancer import get_openai_client as get_pooled_openai_client
+
+    return get_pooled_openai_client(openai_config)
 
 @dataclass
 class SubtitleItem:

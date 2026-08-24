@@ -82,6 +82,9 @@ def douyu_connect(room_id: str) -> socket.socket:
     sock.connect(("danmuproxy.douyu.com", 8601))
     sock.sendall(encode_packet(f"type@=loginreq/roomid@={room_id}/"))
     sock.sendall(encode_packet(f"type@=joingroup/rid@={room_id}/gid@=-9999/"))
+    # The web player uses this explicit barrage-server subscription for its
+    # AI caption overlay. It does not require a browser or media decoding.
+    sock.sendall(encode_packet("type@=sub/mt@=asr_caption/"))
     return sock
 
 
@@ -534,6 +537,16 @@ class RoomMonitor(threading.Thread):
             "games": [],
             "active_game": None,
             "gsi_hero_history": [],
+            "ai_captions": {
+                "items": [],
+                "diagnostics": {
+                    "messages": 0,
+                    "recorded_captions": 0,
+                    "revised_captions": 0,
+                    "parse_errors": 0,
+                    "last_seen_unix_ts": None,
+                },
+            },
             "dota_hero_catalog": sorted({
                 str(name).strip()
                 for name in dota_hero_map.values()
@@ -566,6 +579,7 @@ class RoomMonitor(threading.Thread):
         self._backfill_unpriced_gift_events()
         self._ensure_diamond_fan_state()
         self._ensure_high_energy_state()
+        self._ensure_ai_caption_state()
         diagnostics = self.state.setdefault("tooltip_diagnostics", {})
         if isinstance(diagnostics, dict):
             for key, value in {
@@ -606,6 +620,7 @@ class RoomMonitor(threading.Thread):
             "started_at", "gift_events", "gift_diagnostics", "diamond_fans",
             "high_energy", "online_samples",
             "games", "active_game", "gsi_hero_history", "tooltip_diagnostics",
+            "ai_captions",
         ):
             if key in previous:
                 self.state[key] = previous[key]
@@ -621,6 +636,75 @@ class RoomMonitor(threading.Thread):
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def _ensure_ai_caption_state(self) -> dict:
+        captions = self.state.setdefault("ai_captions", {})
+        if not isinstance(captions, dict):
+            captions = {}
+            self.state["ai_captions"] = captions
+        if not isinstance(captions.get("items"), list):
+            captions["items"] = []
+        diagnostics = captions.setdefault("diagnostics", {})
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+            captions["diagnostics"] = diagnostics
+        for key, value in {
+            "messages": 0,
+            "recorded_captions": 0,
+            "revised_captions": 0,
+            "parse_errors": 0,
+            "last_seen_unix_ts": None,
+        }.items():
+            diagnostics.setdefault(key, value)
+        return captions
+
+    def handle_asr_caption(self, message: dict[str, str]) -> None:
+        """Keep the latest revision of every AI-caption sentence."""
+        captions = self._ensure_ai_caption_state()
+        diagnostics = captions["diagnostics"]
+        diagnostics["messages"] += 1
+        try:
+            if str(message.get("rid") or self.room_id) != self.room_id:
+                return
+            text = re.sub(r"\s+", " ", str(message.get("txt") or "")).strip()
+            index = str(message.get("idx") or "").strip()
+            begin_ms = int(message.get("bt") or 0)
+            end_ms = int(message.get("et") or begin_ms)
+            if not text or not index or begin_ms <= 0 or end_ms < begin_ms:
+                raise ValueError("invalid asr_caption fields")
+            item = {
+                "idx": index,
+                "text": text,
+                "start_unix_ts": begin_ms / 1000.0,
+                "end_unix_ts": end_ms / 1000.0,
+                "stream_pts_seconds": (
+                    int(message.get("bpts") or 0) / 1000.0
+                    if str(message.get("bpts") or "").strip()
+                    else None
+                ),
+            }
+            items = captions["items"]
+            revision_position = next(
+                (
+                    position
+                    for position in range(len(items) - 1, -1, -1)
+                    if str(items[position].get("idx") or "") == index
+                    and abs(
+                        float(items[position].get("start_unix_ts") or 0)
+                        - item["start_unix_ts"]
+                    ) <= 30.0
+                ),
+                None,
+            )
+            if revision_position is not None:
+                items[revision_position] = item
+                diagnostics["revised_captions"] += 1
+            else:
+                items.append(item)
+                diagnostics["recorded_captions"] += 1
+            diagnostics["last_seen_unix_ts"] = item["end_unix_ts"]
+        except (TypeError, ValueError):
+            diagnostics["parse_errors"] += 1
 
     def _ensure_gift_diagnostics(self) -> dict:
         diagnostics = self.state.setdefault("gift_diagnostics", {})
@@ -1381,6 +1465,12 @@ class RoomMonitor(threading.Thread):
             item for item in self.state.get("games", [])
             if float(item.get("end_unix_ts") or item.get("last_seen_unix_ts") or 0) >= cutoff
         ][-50:]
+        captions = self._ensure_ai_caption_state()
+        captions["items"] = [
+            item for item in captions.get("items", [])
+            if isinstance(item, dict)
+            and float(item.get("end_unix_ts") or 0) >= cutoff
+        ][-100000:]
 
     def flush(self) -> None:
         try:
@@ -1443,6 +1533,8 @@ class RoomMonitor(threading.Thread):
                             self.handle_oni(message)
                         elif message_type == "type_tooltips":
                             self.handle_tooltips(message)
+                        elif message_type == "asr_caption":
+                            self.handle_asr_caption(message)
                     if time.time() - last_dota_poll >= DOTA2_POLL_INTERVAL:
                         self.poll_dota2_data()
                         last_dota_poll = time.time()

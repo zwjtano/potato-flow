@@ -2147,6 +2147,93 @@ def title_competitive_results_supported(title: str, verified_description: str) -
     return title_relations <= description_relations
 
 
+def recording_evidence_id(item: Any) -> str:
+    """Return a stable, non-content identifier for transcript or danmaku evidence."""
+    source_id = getattr(item, "id", "")
+    if isinstance(source_id, str) and source_id.strip():
+        return source_id.strip()
+    timestamp_ms = round(float(getattr(item, "time", 0) or 0) * 1000)
+    text = str(getattr(item, "text", "") or "")
+    digest = hashlib.sha256(
+        f"{timestamp_ms}\x00{text}".encode("utf-8")
+    ).hexdigest()[:12]
+    return f"danmaku:{timestamp_ms}:{digest}"
+
+
+def recording_evidence_payload(items: list[Any], source: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "evidence_id": recording_evidence_id(item),
+            "source": str(source or "unknown"),
+            "timestamp_seconds": max(
+                0, int(float(getattr(item, "time", 0) or 0))
+            ),
+            "text": str(getattr(item, "text", "") or ""),
+        }
+        for item in items
+    ]
+
+
+def build_danmaku_salience_peaks(
+    comments: list[Any],
+    *,
+    window_seconds: int = 30,
+    minimum_messages: int = 3,
+    maximum_peaks: int = 12,
+) -> list[dict[str, Any]]:
+    """Return density-only audience signals; never promote them to facts."""
+    window = max(10, min(120, int(window_seconds)))
+    minimum = max(2, int(minimum_messages))
+    buckets: dict[tuple[int, int], list[Any]] = {}
+    for comment in comments:
+        try:
+            timestamp = max(0.0, float(getattr(comment, "time", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+        if not str(getattr(comment, "text", "") or "").strip():
+            continue
+        for offset in (0, window // 2):
+            start = max(0, int((timestamp - offset) // window) * window + offset)
+            buckets.setdefault((start, start + window), []).append(comment)
+
+    candidates = []
+    for (start, end), items in buckets.items():
+        if len(items) < minimum:
+            continue
+        unique_text_count = len({
+            re.sub(r"\s+", " ", str(getattr(item, "text", "") or "")).strip()
+            for item in items
+        })
+        candidates.append((len(items), unique_text_count, start, end, items))
+    candidates.sort(key=lambda item: (-item[0], -item[1], item[2]))
+
+    selected: list[tuple[int, int, int, int, list[Any]]] = []
+    for candidate in candidates:
+        _count, _unique, start, end, _items = candidate
+        if any(start < prior_end and end > prior_start for *_head, prior_start, prior_end, _tail in selected):
+            continue
+        selected.append(candidate)
+        if len(selected) >= max(1, min(50, int(maximum_peaks))):
+            break
+
+    return [
+        {
+            "peak_id": f"danmaku-peak:{start * 1000}:{end * 1000}",
+            "start_seconds": start,
+            "end_seconds": end,
+            "message_count": count,
+            "unique_text_count": unique_count,
+            "sample_evidence_ids": [
+                recording_evidence_id(item)
+                for item in sorted(items, key=lambda value: float(value.time))[:5]
+            ],
+        }
+        for count, unique_count, start, end, items in sorted(
+            selected, key=lambda item: item[2]
+        )
+    ]
+
+
 def render_grounded_danmaku_timeline(
     timeline: Any,
     selected_comments: list[Any],
@@ -2156,6 +2243,8 @@ def render_grounded_danmaku_timeline(
     duration_seconds: float | None = None,
     maximum_points: int | None = None,
     anchor_diagnostics: dict[str, Any] | None = None,
+    require_evidence_ids: bool = False,
+    minimum_direct_evidence_count: int = 1,
 ) -> str:
     """Render timeline anchors only from exact, coherent XML evidence clusters."""
     if not isinstance(timeline, list):
@@ -2170,7 +2259,18 @@ def render_grounded_danmaku_timeline(
         for comment in selected_comments
         if str(getattr(comment, "text", "")).strip()
     }
+    sampled_by_id = {
+        recording_evidence_id(comment): comment
+        for comment in selected_comments
+        if str(getattr(comment, "text", "")).strip()
+    }
+    all_by_id = {
+        recording_evidence_id(comment): comment
+        for comment in all_comments
+        if str(getattr(comment, "text", "")).strip()
+    }
     delay = max(0, min(60, int(delay_seconds or 0)))
+    minimum_direct = max(1, int(minimum_direct_evidence_count or 1))
     maximum = None if duration_seconds is None else max(0.0, float(duration_seconds))
     verified: list[dict[str, Any]] = []
     rejection_reasons: dict[str, int] = {}
@@ -2183,12 +2283,30 @@ def render_grounded_danmaku_timeline(
         if not isinstance(item, dict):
             reject("invalid_candidate")
             continue
-        raw_evidence_texts = item.get("evidence_texts")
-        evidence_texts = list(dict.fromkeys(
-            [str(text or "").strip() for text in raw_evidence_texts[:3]]
-            if isinstance(raw_evidence_texts, list)
-            else [str(item.get("evidence_text") or "").strip()]
-        ))
+        raw_evidence_ids = item.get("evidence_ids")
+        evidence_ids = list(dict.fromkeys(
+            str(value or "").strip()
+            for value in raw_evidence_ids[:3]
+            if str(value or "").strip()
+        )) if isinstance(raw_evidence_ids, list) else []
+        if require_evidence_ids and not evidence_ids:
+            reject("missing_evidence_ids")
+            continue
+        if evidence_ids and any(value not in sampled_by_id for value in evidence_ids):
+            reject("evidence_id_not_sampled")
+            continue
+        if evidence_ids:
+            evidence_texts = [
+                str(getattr(sampled_by_id[value], "text", "")).strip()
+                for value in evidence_ids
+            ]
+        else:
+            raw_evidence_texts = item.get("evidence_texts")
+            evidence_texts = list(dict.fromkeys(
+                [str(text or "").strip() for text in raw_evidence_texts[:3]]
+                if isinstance(raw_evidence_texts, list)
+                else [str(item.get("evidence_text") or "").strip()]
+            ))
         exact_evidence_texts = [
             text for text in evidence_texts
             if text and text in sampled_texts
@@ -2209,25 +2327,45 @@ def render_grounded_danmaku_timeline(
         direct_keywords_supported = bool(exact_evidence_texts) and all(
             keyword.casefold() in evidence_corpus for keyword in keywords
         )
+        # Historical AI results did not contain Evidence IDs. Keep those
+        # replayable, while enforcing the stricter count on the new contract.
+        direct_count_supported = (
+            not evidence_ids or len(evidence_ids) >= minimum_direct
+        )
         evidence_matches = sorted(
             (
-                comment for comment in all_comments
-                if str(getattr(comment, "text", "")).strip() in exact_evidence_texts
+                [all_by_id[value] for value in evidence_ids if value in all_by_id]
+                if evidence_ids
+                else [
+                    comment for comment in all_comments
+                    if str(getattr(comment, "text", "")).strip() in exact_evidence_texts
+                ]
             ),
             key=lambda comment: float(comment.time),
         )
         matching_comments: list[Any] = []
-        if direct_keywords_supported and len(exact_evidence_texts) == len(evidence_texts):
+        if (
+            direct_keywords_supported
+            and direct_count_supported
+            and len(exact_evidence_texts) == len(evidence_texts)
+        ):
             for first_index, first in enumerate(evidence_matches):
                 cluster = [
                     comment for comment in evidence_matches[first_index:]
                     if float(first.time) <= float(comment.time) <= float(first.time) + 30.0
                 ]
+                cluster_ids = {
+                    recording_evidence_id(comment) for comment in cluster
+                }
                 cluster_texts = {
                     str(getattr(comment, "text", "")).strip()
                     for comment in cluster
                 }
-                if all(text in cluster_texts for text in exact_evidence_texts):
+                if (
+                    all(value in cluster_ids for value in evidence_ids)
+                    if evidence_ids
+                    else all(text in cluster_texts for text in exact_evidence_texts)
+                ):
                     matching_comments = cluster
                     break
 
@@ -2280,6 +2418,8 @@ def render_grounded_danmaku_timeline(
         if not matching_comments:
             if not exact_evidence_texts:
                 reject("evidence_not_exact_sample")
+            elif not direct_count_supported:
+                reject("insufficient_direct_evidence")
             elif not direct_keywords_supported:
                 reject("keywords_not_supported")
             else:
@@ -2308,7 +2448,7 @@ def render_grounded_danmaku_timeline(
             continue
         event_text = event[:120]
         event_key = _compact_alias(event_text)
-        evidence_key = frozenset(evidence_texts)
+        evidence_key = frozenset(evidence_ids or evidence_texts)
         duplicate = any(
             abs(corrected - int(existing["corrected_seconds"])) <= 60
             and (
@@ -2327,6 +2467,7 @@ def render_grounded_danmaku_timeline(
             "event_key": event_key,
             "evidence_key": evidence_key,
             "evidence_count": len(evidence_texts),
+            "evidence_ids": evidence_ids,
         })
 
     if not verified:
@@ -2365,6 +2506,11 @@ def render_grounded_danmaku_timeline(
                 "final_timestamp": format_timestamp(int(item["corrected_seconds"])),
                 "reaction_delay_seconds": delay,
                 "evidence_count": item["evidence_count"],
+                **(
+                    {"evidence_ids": item["evidence_ids"]}
+                    if item["evidence_ids"]
+                    else {}
+                ),
             }
             for item in ordered
         ]
@@ -4785,6 +4931,12 @@ def generate_recording_cover_with_ai(
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     from modules.ai_enhancer import get_openai_client  # type: ignore
+    from modules.ai_request_ledger import (  # type: ignore
+        begin_current_physical_request,
+        finish_current_physical_request,
+        input_fingerprint,
+        logical_ai_request,
+    )
     from modules.config_manager import load_config as load_app_config  # type: ignore
 
     ai_cfg = load_app_config()
@@ -5616,16 +5768,52 @@ The central subject, player ribbon and optional KDA must form one obvious focal 
         or ai_cfg.get("OPENAI_IMAGE_SIZE")
         or "1536x1024"
     )
+
+    def tracked_image_request(callback: Callable[[], Any], mode: str) -> Any:
+        reference_signature = []
+        for path in reference_paths:
+            try:
+                stat = path.stat()
+                reference_signature.append((path.name, stat.st_size, stat.st_mtime_ns))
+            except OSError:
+                reference_signature.append((path.name, 0, 0))
+        with logical_ai_request(
+            kind="image",
+            scene_name=f"recording_cover_{cover_variant}",
+            provider="openai_compatible",
+            model=image_model,
+            fingerprint=input_fingerprint(prompt, image_size, reference_signature),
+            metadata={
+                "cover_variant": cover_variant,
+                "reference_count": len(reference_paths),
+                "mode": mode,
+            },
+        ):
+            handle = begin_current_physical_request(
+                mode=mode,
+                metadata={"size": image_size},
+            )
+            try:
+                response = callback()
+            except Exception as exc:
+                finish_current_physical_request(handle, error=exc)
+                raise
+            finish_current_physical_request(handle, response=response)
+            return response
+
     with image_generation_queue(cfg) as queue_wait_seconds:
         details["ai_cover_queue_wait_seconds"] = round(queue_wait_seconds, 3)
         if cover_tournament_context.get("mode") == "ti_competition":
             with ExitStack() as stack:
                 reference_handles = [stack.enter_context(path.open("rb")) for path in reference_paths]
-                response = image_client.edit(
-                    model=image_model,
-                    image=reference_handles,
-                    prompt=prompt,
-                    size=image_size,
+                response = tracked_image_request(
+                    lambda: image_client.edit(
+                        model=image_model,
+                        image=reference_handles,
+                        prompt=prompt,
+                        size=image_size,
+                    ),
+                    "images_edit",
                 )
             background_endpoint = "images.edit.full_ai_composition"
             details.update({
@@ -5641,15 +5829,18 @@ The central subject, player ribbon and optional KDA must form one obvious focal 
                     stack.enter_context(path.open("rb"))
                     for path in reference_paths
                 ]
-                response = image_client.edit(
-                    model=image_model,
-                    image=(
-                        reference_handles
-                        if len(reference_handles) > 1
-                        else reference_handles[0]
+                response = tracked_image_request(
+                    lambda: image_client.edit(
+                        model=image_model,
+                        image=(
+                            reference_handles
+                            if len(reference_handles) > 1
+                            else reference_handles[0]
+                        ),
+                        prompt=prompt,
+                        size=image_size,
                     ),
-                    prompt=prompt,
-                    size=image_size,
+                    "images_edit",
                 )
             details.update({
                 "ai_cover_reference_used": True,
@@ -5661,10 +5852,13 @@ The central subject, player ribbon and optional KDA must form one obvious focal 
                 "ai_cover_reference_kind": reference_kind,
             })
         else:
-            response = image_client.generate(
-                model=image_model,
-                prompt=prompt,
-                size=image_size,
+            response = tracked_image_request(
+                lambda: image_client.generate(
+                    model=image_model,
+                    prompt=prompt,
+                    size=image_size,
+                ),
+                "images_generate",
             )
     item = response.data[0] if getattr(response, "data", None) else None
     if item is None:
@@ -6303,9 +6497,12 @@ def _generate_danmaku_metadata_with_ai(
     grounding_context: dict[str, Any] | None = None,
     timeline_duration_seconds: float | None = None,
     timeline_diagnostics: dict[str, Any] | None = None,
+    captions: list[Any] | None = None,
+    caption_source: str = "",
 ) -> tuple[str, str]:
-    """Generate a grounded description and concise title topic from danmaku."""
-    if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
+    """Generate metadata from AI captions, with danmaku/GSI validation."""
+    primary_evidence = list(captions or comments or [])
+    if not primary_evidence or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
         return base_description, ""
     try:
         root = resolve_app_root(cfg)
@@ -6321,23 +6518,32 @@ def _generate_danmaku_metadata_with_ai(
         full_batch_enabled = bool(cfg.get("ai_danmaku_full_batch_enabled", True))
         if full_batch_enabled:
             discovery_batches = batch_summary_comments(
-                comments,
+                primary_evidence,
                 int(cfg.get("ai_danmaku_batch_comments", 600)),
             )
             selected = [comment for batch in discovery_batches for comment in batch]
         else:
             selected = select_summary_comments(
-                comments,
+                primary_evidence,
                 int(cfg.get("ai_danmaku_max_comments", 800)),
             )
             discovery_batches = [selected]
+        verification_evidence = sorted(
+            [*primary_evidence, *list(comments or [])],
+            key=lambda item: float(getattr(item, "time", 0) or 0),
+        )
         timeline_minimum, timeline_maximum = timeline_target_range(
             timeline_duration_seconds
         )
-        reaction_delay = max(
-            0,
-            min(60, int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0)),
+        reaction_delay = (
+            0
+            if captions
+            else max(
+                0,
+                min(60, int(cfg.get("ai_danmaku_reaction_delay_seconds", 8) or 0)),
+            )
         )
+        salience_peaks = build_danmaku_salience_peaks(list(comments or []))
         diagnostics = timeline_diagnostics if timeline_diagnostics is not None else {}
         diagnostics.update({
             "timeline_target_min": timeline_minimum,
@@ -6348,9 +6554,14 @@ def _generate_danmaku_metadata_with_ai(
             "timeline_min_screen_spam_messages": _TIMELINE_MIN_SPAM_MESSAGES,
             "timeline_retry_attempted": False,
             "full_batch_enabled": full_batch_enabled,
-            "source_comment_count": len(comments),
+            "primary_evidence_source": (
+                str(caption_source or "transcript") if captions else "danmaku_xml"
+            ),
+            "source_caption_count": len(captions or []),
+            "source_comment_count": len(comments or []),
             "effective_comment_count": len(selected),
             "discovery_batch_count": len(discovery_batches),
+            "danmaku_salience_peak_count": len(salience_peaks),
         })
         verified_game = (
             (grounding_context or {}).get("game")
@@ -6424,9 +6635,11 @@ def _generate_danmaku_metadata_with_ai(
             "room_participant_identity_map": recording_room_participant_identity_map(
                 str(cfg.get("streamer_name") or "").strip()
             ),
-            "comment_count": len(comments),
+            "caption_count": len(captions or []),
+            "comment_count": len(comments or []),
             "sampled_comments": "",
             "sampled_comment_evidence": [],
+            "danmaku_salience_peaks": salience_peaks,
             "verified_live_context": verified_live_context,
             "tournament_context": tournament_context,
             "streamer_participation": {
@@ -6457,8 +6670,15 @@ def _generate_danmaku_metadata_with_ai(
             else ""
         )
         system_prompt = f"""
-你是直播录播编辑。根据按时间采样的观众弹幕，为哔哩哔哩录播生成内容充实的中文简介。
-只能总结弹幕能支持的主题、高潮时刻和观众反应，不得虚构主播说过的话或未出现的事件。
+你是直播录播编辑。优先根据平台字幕、内嵌字幕或人工字幕理解主播、解说和现场语音内容，为哔哩哔哩录播生成中文简介。
+sampled_primary_evidence 是主要内容来源；当 primary_evidence_source 不是 danmaku_xml 时，它来自
+TranscriptDocument 标准字幕资产，不是观众弹幕。sampled_danmaku_validation 是同一录播的观众弹幕，只用于交叉验证画面事件、
+人物称呼、游戏术语和观众反应。字幕与弹幕冲突时不得强行下结论；不得把 AI 字幕误写成主播逐字原话。
+danmaku_salience_peaks 只表示某个时间窗的弹幕密度和去重数量，可用于判断观众关注度和候选事件优先级；
+它不包含事件事实，不能单独证明人物、动作、胜负、因果或画面内容，最终事实仍必须引用 sampled_primary_evidence 的 Evidence ID。
+当 primary_evidence_source=danmaku_xml 时，单条弹幕不能直接生成事实；每项至少引用两条明确且一致的 Evidence ID，
+或者由程序在同一 60 秒窗口找到至少三条围绕同一关键词的集中刷屏。字幕主证据不受此数量限制。
+只能总结输入证据能支持的主题、高潮时刻和观众反应，不得虚构未出现的事件。
 verified_live_context 是在 AI 之前完成的直播统计与主播同场对局识别结果；主播最终持有的装备、KDA
 只能使用其中已经确认的数据，禁止从弹幕、标题或常识猜测，且不得把其他对局的数据混入本段。
 英雄身份优先使用 verified_live_context；结构化身份缺失时，允许按下述严格规则由多条原始 XML
@@ -6517,14 +6737,14 @@ event 应写清“谁和谁以什么关系做了什么”，并在参与者或�
 英雄归属仍需要人名与英雄的重复明确绑定；最终胜负仍需要赛后确认性证据，不能用赛中预测代替。
 description 只作为本批次的简短候选摘要，不要重复 base_description，也不要输出文件名、内部编号、
 录制时间或“重要时间点”标题；最终投稿简介只会使用通过 XML 核验的 timeline 行。
-按 sampled_comment_evidence 从前到后分析，不能为迎合标题把后半段事件提前，也不能把不同时段的
+按 sampled_primary_evidence 从前到后分析，不能为迎合标题把后半段事件提前，也不能把不同时段的
 独立话题写成同一条因果链。description 提到的每个关键事实都必须有对应 timeline；没有可核验的
 evidence_texts/evidence_keywords 就删除该事实，禁止生成脱离时间点的长篇总结。
-timeline 只选择 sampled_comment_evidence 有直接证据或同一时间出现集中刷屏的事件。每项返回 event、evidence_texts
-和 evidence_keywords；evidence_texts 必须一字不改地复制输入中 1 至 3 条 text，
-evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原文关键词。
+timeline 只选择 sampled_primary_evidence 有直接证据或同一时间出现集中刷屏的事件。每项返回 event、evidence_ids、evidence_texts
+和 evidence_keywords；evidence_ids 必须逐字复制 sampled_primary_evidence 中 1 至 3 个 ID，evidence_texts 优先一字不改地复制对应 text，
+evidence_keywords 是这些输入原文中足以支持整个 event 的 1 至 4 个原文关键词。
 	签约、加入或转入某组织、官宣、解约、开除、婚恋、疾病、违法、收入等现实身份与状态属于高风险事实。
-	本流程输入只有观众弹幕，无法独立核验画面、官方页面或当事人原话；即使大量弹幕声称“已经显示”“转了”或
+	AI 字幕与观众弹幕都属于非结构化证据，无法独立核验画面、官方页面或现实身份状态；即使大量输入声称“已经显示”“转了”或
 	“宣布了”，event 也必须明确保留来源限定；较负面、未经证实、可能损害人物名誉的现实传言必须整条删除，
 	不得通过添加“弹幕称”继续保留；中性现实消息使用“观众讨论”，明显玩笑使用“直播间调侃”，不得改写成“页面显示”或
 	无来源限定的事实结论。只有 verified_live_context 中明确提供的结构化事实才可直接陈述。
@@ -6549,7 +6769,7 @@ evidence_keywords 是这些弹幕中足以支持整个 event 的 1 至 4 个原�
 人名或“某人一方”承接，不要退化成“多人”“一方”“场上一方”。只有证据本身确实无法识别人物时才可使用中性主语。
 重要事件涉及人物时，event 必须写明当前主播或被提及的其他人物“谁做了什么”；
 无法从证据确定人物时宁可写“主播”或省略该事件，不得猜测姓名。
-每条 event 必须是 evidence_texts 的最小忠实改写：主语、对象、动作、数字、原因、结果和“首波”
+每条 event 必须是 evidence_texts 的最小忠实改写，并提交 sampled_primary_evidence 中对应的 evidence_ids；这些 ID 所指向的原文必须直接支持主语、对象、动作、数字、原因、结果和“首波”
 “翻盘”“阵亡”等阶段性判断都必须由原文直接说明或由同一 30 秒窗口的多条证据共同支持；
 不得仅因附近讨论了相关英雄、装备或选人，就向 event 补入原文没有的动作与结果。
 胜负与荣誉属于最高风险事实：“谁赢、谁输、谁淘汰谁、谁晋级、谁夺冠、谁翻盘或被翻盘”必须有
@@ -6582,7 +6802,7 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
 	本直播间自定义要求只能补充题材重点、语气和风格，不能推翻事实证据、人物归属、时间顺序、5W1H缺证省略和风险过滤规则；
 	较负面的未经证实现实传言无论自定义要求如何指定来源词都必须删除；
 	具体比赛、游戏表现和现场事件不得使用“直播间热议/讨论/关注”作为兜底主语。
-返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
+返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_ids":["..."],"evidence_texts":["..."],"evidence_keywords":["..."]}}]}}，description 不超过 1600 个中文字符。
 """.strip()
         ai_client = get_openai_client(ai_cfg)
         model_name = str(ai_cfg.get("OPENAI_MODEL_NAME", "gpt-4o-mini"))
@@ -6607,13 +6827,25 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
         ) -> tuple[int, dict[str, Any], float]:
             request_started_at = time.perf_counter()
             batch_payload = dict(payload)
-            batch_payload["sampled_comment_evidence"] = [
-                {
-                    "timestamp_seconds": max(0, int(float(comment.time))),
-                    "text": str(comment.text),
-                }
-                for comment in batch
-            ]
+            batch_payload["sampled_primary_evidence"] = recording_evidence_payload(
+                batch,
+                str(caption_source or "transcript") if captions else "danmaku_xml",
+            )
+            batch_start = min(float(comment.time) for comment in batch)
+            batch_end = max(float(comment.time) for comment in batch)
+            validation_comments = [
+                comment for comment in comments or []
+                if batch_start - 30 <= float(comment.time) <= batch_end + 30
+            ][:300]
+            batch_payload["sampled_danmaku_validation"] = recording_evidence_payload(
+                validation_comments,
+                "danmaku_xml",
+            )
+            # Preserve the legacy payload key for custom prompts while making
+            # it point to the actual primary source.
+            batch_payload["sampled_comment_evidence"] = list(
+                batch_payload["sampled_primary_evidence"]
+            )
             batch_text = "\n".join(str(comment.text) for comment in batch)
             batch_payload["room_participant_identity_map"] = [
                 identity
@@ -6732,24 +6964,30 @@ timestamp_reaction_delay_seconds 将最终时间统一前移，请勿在 AI 内�
         timeline_text = render_grounded_danmaku_timeline(
             raw_timeline,
             selected,
-            comments,
+            verification_evidence,
             delay_seconds=reaction_delay,
             duration_seconds=timeline_duration_seconds,
             maximum_points=None,
             anchor_diagnostics=diagnostics,
+            require_evidence_ids=bool(captions),
+            minimum_direct_evidence_count=1 if captions else 2,
         )
         verified_count = len(timeline_lines(timeline_text))
         if verified_count < timeline_minimum and len(selected) >= timeline_minimum:
             diagnostics["timeline_retry_attempted"] = True
             retry_payload = dict(payload)
             retry_selected = select_summary_comments(selected, 800)
-            retry_payload["sampled_comment_evidence"] = [
-                {
-                    "timestamp_seconds": max(0, int(float(comment.time))),
-                    "text": str(comment.text),
-                }
-                for comment in retry_selected
-            ]
+            retry_payload["sampled_comment_evidence"] = recording_evidence_payload(
+                retry_selected,
+                str(caption_source or "transcript") if captions else "danmaku_xml",
+            )
+            retry_payload["sampled_primary_evidence"] = list(
+                retry_payload["sampled_comment_evidence"]
+            )
+            retry_payload["sampled_danmaku_validation"] = recording_evidence_payload(
+                select_summary_comments(list(comments or []), 800),
+                "danmaku_xml",
+            )
             retry_payload.update({
                 "verified_timeline": timeline_lines(timeline_text),
                 "timeline_shortfall": timeline_minimum - verified_count,
@@ -6767,10 +7005,10 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
 	仅由弹幕支持的中性现实消息必须保留来源限定；
 	较负面、未经证实、可能损害人物名誉的现实传言必须整条删除，不得用“弹幕称”包装后保留。
 相邻候选如果是同一人物、同一动作和同一结果的延续，应合并；只有新阶段、新决定、转折或结果才能拆开。
-每项优先从 sampled_comment_evidence 逐字复制 1 至 3 条 evidence_texts，
+每项必须返回 sampled_comment_evidence 中 1 至 3 个 evidence_ids，并优先逐字复制对应 evidence_texts，
 并提供足以支持 event 的 evidence_keywords；同一 60 秒内至少 3 条相关刷屏也可以作为证据。
 证据不足就删掉正文中的对应事件，绝不能编造。不要返回时间戳。
-返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
+返回 JSON 对象：{{"description":"...","timeline":[{{"event":"...","evidence_ids":["..."],"evidence_texts":["..."],"evidence_keywords":["..."]}}]}}。
 """.strip()
             try:
                 with ai_metadata_request_slot(cfg):
@@ -6817,11 +7055,13 @@ description 中的每个关键事件都要在 timeline 中有对应证据，time
                 regenerated_timeline_text = render_grounded_danmaku_timeline(
                     regenerated_timeline,
                     selected,
-                    comments,
+                    verification_evidence,
                     delay_seconds=reaction_delay,
                     duration_seconds=timeline_duration_seconds,
                     maximum_points=None,
                     anchor_diagnostics=diagnostics,
+                    require_evidence_ids=bool(captions),
+                    minimum_direct_evidence_count=1 if captions else 2,
                 )
                 regenerated_count = len(timeline_lines(regenerated_timeline_text))
                 if regenerated_count >= verified_count:
@@ -7359,9 +7599,11 @@ def generate_danmaku_metadata_with_ai(
     timeline_duration_seconds: float | None = None,
     timeline_diagnostics: dict[str, Any] | None = None,
     queue_entered_callback: Callable[[float], None] | None = None,
+    captions: list[Any] | None = None,
+    caption_source: str = "",
 ) -> tuple[str, str]:
-    """Queue one task, then generate its AI description and title together."""
-    if not comments or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
+    """Queue one caption-first task, then generate description and title."""
+    if not (captions or comments) or not bool(cfg.get("ai_danmaku_summary_enabled", True)):
         return base_description, ""
     with ai_metadata_queue(cfg) as queue_wait_seconds:
         if timeline_diagnostics is not None:
@@ -7378,6 +7620,8 @@ def generate_danmaku_metadata_with_ai(
             grounding_context,
             timeline_duration_seconds,
             timeline_diagnostics,
+            captions,
+            caption_source,
         )
 
 
@@ -7708,6 +7952,8 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         append_stats_enabled = bool(cfg.get("douyu_stats_append_description", True))
         cover_context_enabled = bool(cfg.get("douyu_stats_cover_context_enabled", True))
         stats_text = ""
+        ai_captions: list[Any] = []
+        transcript_document: Any | None = None
         live_stats_prepared = True
         current_stage = "live_stats"
         if not stats_enabled:
@@ -7716,7 +7962,21 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             store.stage(key, "live_stats", "running", {"description_before_length": len(description)})
             try:
                 from modules.douyu_stats_formatter import get_stats_for_description  # type: ignore
+                from modules.subtitle_source_resolver import (  # type: ignore
+                    resolve_transcript_document,
+                    transcript_document_path,
+                )
                 stats_text = str(get_stats_for_description(str(video.parent)) or "")[:1900]
+                transcript_document = resolve_transcript_document(
+                    str(video.parent),
+                    video_path=video,
+                    duration_seconds=recording_duration_seconds,
+                    ffprobe=str(cfg.get("ffprobe", "ffprobe")),
+                    ffmpeg=str(cfg.get("ffmpeg", "ffmpeg")),
+                )
+                ai_captions = list(
+                    getattr(transcript_document, "segments", ()) or ()
+                )
                 if stats_text:
                     store.stage(
                         key,
@@ -7726,6 +7986,24 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     )
                 else:
                     store.stage(key, "live_stats", "skipped", {"reason": "本次录播时间内没有匹配的直播数据", "outcome": "no_data"})
+                if ai_captions:
+                    store.stage(key, "live_stats", "completed", {
+                        **live_stats_stage_details(stats_text),
+                        "ai_caption_count": len(ai_captions),
+                        "ai_caption_source": str(transcript_document.source),
+                        "transcript_schema_version": str(
+                            transcript_document.schema_version
+                        ),
+                        "transcript_quality_score": (
+                            transcript_document.metadata.get("quality", {}).get("score")
+                        ),
+                        "transcript_quality_tier": (
+                            transcript_document.metadata.get("quality", {}).get("tier")
+                        ),
+                        "transcript_path": str(
+                            transcript_document_path(video.parent, video)
+                        ),
+                    })
             except Exception as exc:
                 store.stage(key, "live_stats", "warning", {"reason": "直播数据整理失败，但不阻断投稿", "outcome": "failed_non_blocking"}, error=str(exc))
 
@@ -7883,6 +8161,10 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             store.stage(key, "tournament_match", "skipped", {"reason": "非 TI 录播或缺少录制时间"})
 
         current_stage = "ai"
+        from modules.ai_request_ledger import (  # type: ignore
+            ai_task_context,
+            summarize_task_ai_usage,
+        )
         ai_topic = ""
         ai_details: dict[str, Any] = {}
         ai_generation_exhausted = False
@@ -7987,7 +8269,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             )
         else:
             timeline_details: dict[str, Any] = {}
-            if comments and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
+            if (ai_captions or comments) and not dry_run and bool(cfg.get("ai_danmaku_summary_enabled", True)):
                 base_ai_description = description
                 best_ai_description = description
                 description_attempts: list[dict[str, Any]] = []
@@ -7996,6 +8278,11 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     attempt_number = attempt_index + 1
                     queued_ai_details = {
                         "comment_count": len(comments),
+                        "ai_caption_count": len(ai_captions),
+                        "primary_evidence_source": (
+                            str(getattr(transcript_document, "source", "") or "transcript")
+                            if ai_captions else "danmaku_xml"
+                        ),
                         "ai_generation_attempt": attempt_number,
                         "ai_generation_max_attempts": 3,
                     }
@@ -8014,8 +8301,8 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                         })
 
                     attempt_timeline_details: dict[str, Any] = {}
-                    candidate_description, candidate_topic = (
-                        generate_danmaku_metadata_with_ai(
+                    with ai_task_context(key):
+                        candidate_description, candidate_topic = generate_danmaku_metadata_with_ai(
                             comments,
                             base_ai_description,
                             cfg,
@@ -8023,8 +8310,9 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                             recording_duration_seconds,
                             attempt_timeline_details,
                             mark_ai_metadata_running,
+                            ai_captions,
+                            str(getattr(transcript_document, "source", "") or ""),
                         )
-                    )
                     candidate_fallback = str(
                         recording_metadata_values(video, cfg)["ai_topic"] or ""
                     ).strip()
@@ -8084,7 +8372,11 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 })
                 ai_details.update(timeline_details)
             else:
-                reason = "试运行" if dry_run else ("未配置可分析弹幕" if not comments else "AI 简介未启用")
+                reason = "试运行" if dry_run else (
+                    "未采集到可分析的 AI 字幕或弹幕"
+                    if not (ai_captions or comments)
+                    else "AI 简介未启用"
+                )
                 ai_details.update({
                     "reason": reason,
                     "title": title,
@@ -8110,14 +8402,15 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
             if not dry_run and not existing_submission:
                 store.stage(key, "ai", "running", ai_details)
                 try:
-                    tags, partition, metadata_automation = enhance_recording_metadata(
-                        title,
-                        description,
-                        tags,
-                        original_cover,
-                        partition,
-                        cfg,
-                    )
+                    with ai_task_context(key):
+                        tags, partition, metadata_automation = enhance_recording_metadata(
+                            title,
+                            description,
+                            tags,
+                            original_cover,
+                            partition,
+                            cfg,
+                        )
                     ai_details.update(metadata_automation)
                 except Exception as exc:
                     metadata_automation = {"metadata_automation_error": str(exc)}
@@ -8360,12 +8653,16 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 "manual_review_updated_at": review_override.get("updated_at"),
             })
         ai_was_used = bool(
-            comments and bool(cfg.get("ai_danmaku_summary_enabled", True))
+            (ai_captions or comments)
+            and bool(cfg.get("ai_danmaku_summary_enabled", True))
         ) or bool(
             metadata_automation.get("tag_generation_enabled")
             or metadata_automation.get("partition_recommendation_enabled")
             or metadata_automation.get("metadata_automation_error")
         )
+        ledger_summary = summarize_task_ai_usage(key)
+        if ledger_summary.get("logical_request_count"):
+            ai_details["ai_request_ledger"] = ledger_summary
         ai_stage_status = (
             "warning"
             if ai_generation_exhausted
@@ -8685,22 +8982,23 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 "original_cover_path": str(original_cover),
             })
             try:
-                generated_cover, cover_generation = generate_recording_cover_with_ai(
-                    title=title,
-                    ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
-                    description=description_body,
-                    streamer=recording_metadata_values(video, cfg)["streamer"],
-                    cfg=cfg,
-                    work_dir=work_dir,
-                    target_size=(1920, 1080),
-                    output_path=work_dir / "ai_cover_16x9.jpg",
-                    recording_dir=video.parent,
-                    game_context=cover_game_context,
-                    game_context_locked=True,
-                    tournament_match=tournament_match,
-                    cover_text=str(ai_details.get("cover_text") or ""),
-                    shared_reference_cache=cover_reference_cache,
-                )
+                with ai_task_context(key):
+                    generated_cover, cover_generation = generate_recording_cover_with_ai(
+                        title=title,
+                        ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+                        description=description_body,
+                        streamer=recording_metadata_values(video, cfg)["streamer"],
+                        cfg=cfg,
+                        work_dir=work_dir,
+                        target_size=(1920, 1080),
+                        output_path=work_dir / "ai_cover_16x9.jpg",
+                        recording_dir=video.parent,
+                        game_context=cover_game_context,
+                        game_context_locked=True,
+                        tournament_match=tournament_match,
+                        cover_text=str(ai_details.get("cover_text") or ""),
+                        shared_reference_cache=cover_reference_cache,
+                    )
                 if generated_cover:
                     cover = generated_cover
                 cover_generation.update({
@@ -8780,22 +9078,23 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 "title_topic": ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
             })
             try:
-                generated_cover43, cover43_details = generate_recording_cover_with_ai(
-                    title=title,
-                    ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
-                    description=description_body,
-                    streamer=recording_metadata_values(video, cfg)["streamer"],
-                    cfg=cfg,
-                    work_dir=work_dir,
-                    target_size=(1600, 1200),
-                    output_path=work_dir / "ai_cover_4x3.jpg",
-                    recording_dir=video.parent,
-                    game_context=cover_game_context,
-                    game_context_locked=True,
-                    tournament_match=tournament_match,
-                    cover_text=str(ai_details.get("cover_text") or ""),
-                    shared_reference_cache=cover_reference_cache,
-                )
+                with ai_task_context(key):
+                    generated_cover43, cover43_details = generate_recording_cover_with_ai(
+                        title=title,
+                        ai_topic=ai_topic or recording_metadata_values(video, cfg)["ai_topic"],
+                        description=description_body,
+                        streamer=recording_metadata_values(video, cfg)["streamer"],
+                        cfg=cfg,
+                        work_dir=work_dir,
+                        target_size=(1600, 1200),
+                        output_path=work_dir / "ai_cover_4x3.jpg",
+                        recording_dir=video.parent,
+                        game_context=cover_game_context,
+                        game_context_locked=True,
+                        tournament_match=tournament_match,
+                        cover_text=str(ai_details.get("cover_text") or ""),
+                        shared_reference_cache=cover_reference_cache,
+                    )
                 if generated_cover43:
                     cover43 = generated_cover43
                 cover43_generation.update({
@@ -8838,6 +9137,16 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 })
         store.stage(key, "cover_4x3", cover43_status, cover43_generation)
         cover_generation.update(cover43_generation)
+        ledger_summary = summarize_task_ai_usage(key)
+        if ledger_summary.get("logical_request_count"):
+            ai_details["ai_request_ledger"] = ledger_summary
+            store.stage(
+                key,
+                "ai",
+                ai_stage_status,
+                ai_details,
+                error=ai_stage_error or None,
+            )
         if force_cover_regeneration:
             refreshed_review = store.review_override(key)
             refreshed_review["regenerate_covers_on_resume"] = False
