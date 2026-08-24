@@ -9,16 +9,24 @@ import subprocess
 import tempfile
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
+from .ai_request_ledger import file_sha256
 from .asr_api_client import AsrApiClient, AsrConfig
 from .ffmpeg_manager import get_ffmpeg_path, get_ffprobe_path
+from .path_policy import atomic_write_text
 from .speech_pipeline_settings import coerce_bool
 from .srt_transform_engine import SrtTransformConfig, SrtTransformEngine
 from .subtitle_pipeline_types import (
     AlignedSubtitleCue,
     AsrTranscriptionResult,
     DetectedSpeechWindow,
+)
+from .transcript_document import (
+    persist_transcript_document,
+    transcript_document_from_cues,
+    with_transcript_quality,
 )
 from .vad_processor import VadConfig, VadProcessor
 
@@ -119,6 +127,7 @@ class SpeechRecognizer:
         self.logger = _setup_task_logger(self.task_id)
         self.last_warning_message: str = ''
         self.last_error_message: str = ''
+        self.last_transcript_path: str = ''
         self._temp_dirs: List[str] = []
 
         if config.provider not in ('whisper', 'voxtral'):
@@ -167,6 +176,7 @@ class SpeechRecognizer:
                 voxtral_enforce_max_duration=config.voxtral_enforce_max_duration,
             ),
             logger=self.logger,
+            task_id=self.task_id,
         )
         self._srt = SrtTransformEngine(
             SrtTransformConfig(
@@ -186,6 +196,7 @@ class SpeechRecognizer:
         try:
             self.last_warning_message = ''
             self.last_error_message = ''
+            self.last_transcript_path = ''
 
             if not self._asr.client:
                 self.last_error_message = 'ASR client not initialised'
@@ -226,8 +237,25 @@ class SpeechRecognizer:
                 self.last_error_message = 'Failed to render SRT'
                 return None
 
-            with open(output_path, 'w', encoding='utf-8') as file_obj:
-                file_obj.write(srt_text)
+            atomic_write_text(Path(output_path), srt_text, encoding='utf-8')
+            try:
+                transcript_path = Path(output_path).with_suffix('.transcript.json')
+                document = with_transcript_quality(transcript_document_from_cues(
+                    cue_dicts,
+                    provider=self.config.api_provider,
+                    model=self.config.model_name,
+                    audio_sha256=file_sha256(audio_wav),
+                    duration_seconds=total_duration,
+                    language=str(getattr(self._asr, '_language_hint', '') or ''),
+                ))
+                persist_transcript_document(document, transcript_path, private=True)
+                self.last_transcript_path = str(transcript_path)
+            except Exception as exc:
+                self.last_warning_message = (
+                    self.last_warning_message
+                    or f'transcript_document_persist_failed: {exc}'
+                )
+                self.logger.warning("TranscriptDocument persist failed: %s", exc)
             self.logger.info("Subtitle range: %.2fs -> %.2fs", cue_dicts[0]['start'], cue_dicts[-1]['end'])
             return output_path
         except Exception as exc:

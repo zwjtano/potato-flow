@@ -7,6 +7,8 @@ import re
 import time
 import json
 import base64
+import hashlib
+import threading
 import traceback
 from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence
 from difflib import SequenceMatcher
@@ -18,8 +20,14 @@ from .utils import (
     extract_chat_message_json,
     get_chat_message_text,
 )
+from .ai_request_ledger import input_fingerprint, logical_ai_request
 
 import openai
+
+
+_OPENAI_CLIENT_POOL_LOCK = threading.Lock()
+_OPENAI_CLIENT_POOL: Dict[tuple[str, str, float], Any] = {}
+_OPENAI_CLIENT_POOL_LIMIT = 8
 
 # Pre-compiled regex patterns for _pre_clean (performance optimization)
 _URL_PATTERNS = [
@@ -158,12 +166,13 @@ def setup_task_logger(task_id):
 
 def get_openai_client(openai_config):
     """
-    创建OpenAI客户端。
+    Reuse one SDK/HTTP connection pool per credential and endpoint tuple.
     """
-    api_key = openai_config.get('OPENAI_API_KEY', '')
+    api_key = str(openai_config.get('OPENAI_API_KEY', '') or '')
     options = {}
-    if openai_config.get('OPENAI_BASE_URL'):
-        options['base_url'] = openai_config.get('OPENAI_BASE_URL')
+    base_url = str(openai_config.get('OPENAI_BASE_URL') or '').strip().rstrip('/')
+    if base_url:
+        options['base_url'] = base_url
     timeout_value = openai_config.get('OPENAI_TIMEOUT_SECONDS', 600)
     try:
         timeout_seconds = float(str(timeout_value).strip())
@@ -171,7 +180,40 @@ def get_openai_client(openai_config):
         timeout_seconds = 600.0
     if timeout_seconds > 0:
         options['timeout'] = timeout_seconds
-    return openai.OpenAI(api_key=api_key, **options)
+    pool_key = (
+        hashlib.sha256(api_key.encode('utf-8')).hexdigest(),
+        base_url,
+        timeout_seconds if timeout_seconds > 0 else 0.0,
+    )
+    with _OPENAI_CLIENT_POOL_LOCK:
+        cached = _OPENAI_CLIENT_POOL.get(pool_key)
+        if cached is not None:
+            # Refresh insertion order so rarely used configurations are evicted.
+            _OPENAI_CLIENT_POOL.pop(pool_key)
+            _OPENAI_CLIENT_POOL[pool_key] = cached
+            return cached
+        client = openai.OpenAI(api_key=api_key, **options)
+        _OPENAI_CLIENT_POOL[pool_key] = client
+        while len(_OPENAI_CLIENT_POOL) > _OPENAI_CLIENT_POOL_LIMIT:
+            _old_key = next(iter(_OPENAI_CLIENT_POOL))
+            _OPENAI_CLIENT_POOL.pop(_old_key, None)
+            # A caller may still be using the evicted client in another thread.
+            # Removing it from the cache is safe; closing it here is not.
+        return client
+
+
+def _clear_openai_client_pool() -> None:
+    """Close pooled clients during tests or an explicit configuration reset."""
+    with _OPENAI_CLIENT_POOL_LOCK:
+        clients = list(_OPENAI_CLIENT_POOL.values())
+        _OPENAI_CLIENT_POOL.clear()
+    for client in clients:
+        close = getattr(client, 'close', None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
 
 
 def _is_timeout_like_error(exc: Exception) -> bool:
@@ -554,11 +596,37 @@ def _request_chat_completion(
     scene_name: str,
     user_content=None,
     response_format=None,
+    logical_request_id: str = "",
+    request_ledger=None,
 ):
     """公共 LLM 调用逻辑：构建消息、计时、执行请求，返回原始 response。"""
     user_message_content = user_content
     if user_message_content is None:
         user_message_content = json.dumps(payload, ensure_ascii=False)
+    if not logical_request_id:
+        with logical_ai_request(
+            kind="llm",
+            scene_name=scene_name,
+            provider="openai_compatible",
+            model=model_name,
+            fingerprint=input_fingerprint(system_prompt, user_message_content),
+            metadata={"response_format": bool(response_format)},
+        ) as (ledger, run_id):
+            return _request_chat_completion(
+                client,
+                model_name,
+                system_prompt,
+                payload,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                thinking_enabled=thinking_enabled,
+                logger_obj=logger_obj,
+                scene_name=scene_name,
+                user_content=user_content,
+                response_format=response_format,
+                logical_request_id=run_id or "__untracked__",
+                request_ledger=ledger,
+            )
     create_kwargs = {
         "model": model_name,
         "messages": [
@@ -573,6 +641,17 @@ def _request_chat_completion(
         create_kwargs["response_format"] = response_format
     request_start = time.time()
     mode_label = "JSON模式" if response_format else "纯文本模式"
+    request_id = ""
+    ledger_started = time.monotonic()
+    if request_ledger and logical_request_id:
+        try:
+            request_id, ledger_started = request_ledger.begin_request(
+                logical_request_id,
+                mode="json" if response_format else "text",
+                metadata={"scene_name": scene_name},
+            )
+        except Exception:
+            request_id = ""
     if logger_obj:
         logger_obj.info(f"发起模型请求（{mode_label}）")
     try:
@@ -583,10 +662,31 @@ def _request_chat_completion(
             logger=logger_obj,
             scene_name=scene_name,
         )
+    except Exception as exc:
+        if request_ledger and request_id:
+            try:
+                request_ledger.finish_request(
+                    request_id,
+                    ledger_started,
+                    error=exc,
+                )
+            except Exception:
+                pass
+        raise
+    else:
+        if request_ledger and request_id:
+            try:
+                request_ledger.finish_request(
+                    request_id,
+                    ledger_started,
+                    response=response,
+                )
+            except Exception:
+                pass
+        return response
     finally:
         if logger_obj:
             logger_obj.info(f"模型请求结束，耗时: {time.time() - request_start:.2f}秒")
-    return response
 
 
 def _request_json_object(
@@ -602,6 +702,50 @@ def _request_json_object(
     scene_name: str,
     user_content=None,
 ) -> Optional[Dict[str, Any]]:
+    user_message_content = (
+        user_content
+        if user_content is not None
+        else json.dumps(payload, ensure_ascii=False)
+    )
+    with logical_ai_request(
+        kind="llm",
+        scene_name=scene_name,
+        provider="openai_compatible",
+        model=model_name,
+        fingerprint=input_fingerprint(system_prompt, user_message_content),
+        metadata={"expects_json_object": True},
+    ) as (ledger, run_id):
+        return _request_json_object_tracked(
+            client,
+            model_name,
+            system_prompt,
+            payload,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            thinking_enabled=thinking_enabled,
+            logger_obj=logger_obj,
+            scene_name=scene_name,
+            user_content=user_content,
+            logical_request_id=run_id or "__untracked__",
+            request_ledger=ledger,
+        )
+
+
+def _request_json_object_tracked(
+    client,
+    model_name: str,
+    system_prompt: str,
+    payload: Dict[str, Any],
+    *,
+    max_tokens: Optional[int] = None,
+    temperature: float,
+    thinking_enabled: bool,
+    logger_obj,
+    scene_name: str,
+    user_content=None,
+    logical_request_id: str = "",
+    request_ledger=None,
+) -> Optional[Dict[str, Any]]:
     try:
         response = _request_chat_completion(
             client, model_name, system_prompt, payload,
@@ -609,6 +753,8 @@ def _request_json_object(
             thinking_enabled=thinking_enabled, logger_obj=logger_obj,
             scene_name=scene_name, user_content=user_content,
             response_format={"type": "json_object"},
+            logical_request_id=logical_request_id,
+            request_ledger=request_ledger,
         )
     except Exception as exc:
         if _is_timeout_like_error(exc) or _is_response_format_unsupported_error(exc):
@@ -622,6 +768,8 @@ def _request_json_object(
                 thinking_enabled=thinking_enabled, logger_obj=logger_obj,
                 scene_name=f"{scene_name}_fallback_plain_json",
                 user_content=user_content,
+                logical_request_id=logical_request_id,
+                request_ledger=request_ledger,
             )
         else:
             raise
@@ -649,6 +797,8 @@ def _request_json_object(
             thinking_enabled=thinking_enabled, logger_obj=logger_obj,
             scene_name=f"{scene_name}_retry_json",
             user_content=user_content,
+            logical_request_id=logical_request_id,
+            request_ledger=request_ledger,
         )
     except Exception:
         pass

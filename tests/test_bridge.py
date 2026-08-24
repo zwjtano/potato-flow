@@ -21,6 +21,7 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 import bridge
+from modules.transcript_document import TranscriptSegment
 
 
 def _process_multipart_session_slot(state_db, session_key, result_queue, hold_seconds):
@@ -395,6 +396,174 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(diagnostics["ai_metadata_queue_wait_seconds"], 1.235)
         self.assertEqual(entered_waits, [1.23456])
         generate.assert_called_once()
+
+    def test_ai_metadata_can_run_from_captions_without_danmaku(self):
+        captions = [
+            TranscriptSegment(
+                id="douyu-caption:1:2000",
+                start_seconds=2.0,
+                end_seconds=4.0,
+                text="这是斗鱼 AI 字幕",
+            )
+        ]
+        cfg = {
+            "state_db": "/tmp/test-ai-caption-metadata-queue/state.sqlite3",
+            "ai_danmaku_summary_enabled": True,
+        }
+        with patch.object(
+            bridge,
+            "ai_metadata_queue",
+            return_value=bridge.contextmanager(lambda: iter([0.0]))(),
+        ), patch.object(
+            bridge,
+            "_generate_danmaku_metadata_with_ai",
+            return_value=("字幕简介", "字幕标题"),
+        ) as generate:
+            result = bridge.generate_danmaku_metadata_with_ai(
+                [],
+                "原简介",
+                cfg,
+                captions=captions,
+            )
+
+        self.assertEqual(result, ("字幕简介", "字幕标题"))
+        self.assertEqual(generate.call_args.args[-2], captions)
+        self.assertEqual(generate.call_args.args[-1], "")
+
+    def test_recording_evidence_payload_preserves_transcript_segment_id(self):
+        caption = TranscriptSegment(
+            id="douyu-caption:7:1500",
+            start_seconds=1.5,
+            end_seconds=3.0,
+            text="平台 AI 字幕",
+        )
+
+        payload = bridge.recording_evidence_payload(
+            [caption], "douyu_asr_caption"
+        )
+
+        self.assertEqual(payload, [{
+            "evidence_id": "douyu-caption:7:1500",
+            "source": "douyu_asr_caption",
+            "timestamp_seconds": 1,
+            "text": "平台 AI 字幕",
+        }])
+
+    def test_evidence_id_anchors_duplicate_text_to_selected_occurrence(self):
+        early = types.SimpleNamespace(time=10.0, text="同一句字幕")
+        late = types.SimpleNamespace(time=100.0, text="同一句字幕")
+        late_id = bridge.recording_evidence_id(late)
+        diagnostics = {}
+
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "主播重复说明规则",
+                "evidence_ids": [late_id],
+                "evidence_keywords": ["同一句"],
+            }],
+            [late],
+            [early, late],
+            delay_seconds=0,
+            anchor_diagnostics=diagnostics,
+            require_evidence_ids=True,
+        )
+
+        self.assertEqual(rendered, "重要时间点\n01:40 主播重复说明规则")
+        self.assertEqual(
+            diagnostics["timeline_anchor_details"][0]["evidence_ids"],
+            [late_id],
+        )
+
+    def test_caption_timeline_rejects_missing_evidence_id(self):
+        caption = TranscriptSegment(
+            id="douyu-caption:8:2000",
+            start_seconds=2.0,
+            end_seconds=3.0,
+            text="字幕事实",
+        )
+        diagnostics = {}
+
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "无 ID 的模型结论",
+                "evidence_texts": ["字幕事实"],
+                "evidence_keywords": ["字幕事实"],
+            }],
+            [caption],
+            [caption],
+            anchor_diagnostics=diagnostics,
+            require_evidence_ids=True,
+        )
+
+        self.assertEqual(rendered, "")
+        self.assertEqual(
+            diagnostics["timeline_rejection_reasons"],
+            {"missing_evidence_ids": 1},
+        )
+
+    def test_danmaku_salience_peaks_are_density_only_signals(self):
+        comments = [
+            types.SimpleNamespace(time=100.0 + index, text=f"集中反应{index % 3}")
+            for index in range(8)
+        ]
+        comments.extend([
+            types.SimpleNamespace(time=5.0, text="零散一条"),
+            types.SimpleNamespace(time=500.0, text="零散另一条"),
+        ])
+
+        peaks = bridge.build_danmaku_salience_peaks(comments)
+
+        self.assertEqual(len(peaks), 1)
+        self.assertEqual(peaks[0]["message_count"], 8)
+        self.assertEqual(peaks[0]["unique_text_count"], 3)
+        self.assertEqual(len(peaks[0]["sample_evidence_ids"]), 5)
+        self.assertNotIn("text", peaks[0])
+        self.assertNotIn("event", peaks[0])
+
+    def test_single_danmaku_evidence_id_cannot_directly_create_fact(self):
+        comment = types.SimpleNamespace(time=20.0, text="主播完成挑战")
+        diagnostics = {}
+
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "主播完成挑战",
+                "evidence_ids": [bridge.recording_evidence_id(comment)],
+                "evidence_keywords": ["完成挑战"],
+            }],
+            [comment],
+            [comment],
+            delay_seconds=0,
+            anchor_diagnostics=diagnostics,
+            minimum_direct_evidence_count=2,
+        )
+
+        self.assertEqual(rendered, "")
+        self.assertEqual(
+            diagnostics["timeline_rejection_reasons"],
+            {"insufficient_direct_evidence": 1},
+        )
+
+    def test_danmaku_keyword_cluster_can_validate_one_seed_id(self):
+        comments = [
+            types.SimpleNamespace(time=20.0 + index, text=text)
+            for index, text in enumerate((
+                "主播完成挑战", "挑战完成了", "终于完成挑战",
+            ))
+        ]
+
+        rendered = bridge.render_grounded_danmaku_timeline(
+            [{
+                "event": "主播完成挑战",
+                "evidence_ids": [bridge.recording_evidence_id(comments[0])],
+                "evidence_keywords": ["完成", "挑战"],
+            }],
+            comments,
+            comments,
+            delay_seconds=0,
+            minimum_direct_evidence_count=2,
+        )
+
+        self.assertEqual(rendered, "重要时间点\n00:20 主播完成挑战")
 
     def test_title_prompt_rejects_vague_marketing_conclusions(self):
         prompt = bridge.DEFAULT_RECORDING_TITLE_AI_PROMPT

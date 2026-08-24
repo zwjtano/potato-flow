@@ -14,6 +14,13 @@ from urllib.parse import urlparse, urlunparse
 
 import requests
 
+from .ai_request_ledger import (
+    begin_current_physical_request,
+    file_sha256,
+    finish_current_physical_request,
+    input_fingerprint,
+    logical_ai_request,
+)
 from .subtitle_pipeline_types import (
     AsrSegmentTiming,
     AsrTranscriptionResult,
@@ -119,8 +126,14 @@ class ImplausibleAsrResultError(RuntimeError):
 
 
 class AsrApiClient:
-    def __init__(self, config: AsrConfig, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self,
+        config: AsrConfig,
+        logger: Optional[logging.Logger] = None,
+        task_id: Optional[str] = None,
+    ):
         self.config = config
+        self.task_id = str(task_id or "")
         self.logger = logger or logging.getLogger(__name__)
         self.client: Any = None
         self._language_hint: str = ''
@@ -564,9 +577,24 @@ class AsrApiClient:
 
             if use_translation_endpoint is None:
                 use_translation_endpoint = bool(self.config.translate)
-            if use_translation_endpoint:
-                return self.client.audio.translations.create(**params)
-            return self.client.audio.transcriptions.create(**params)
+            handle = begin_current_physical_request(
+                mode="asr_sdk",
+                metadata={
+                    "response_format": response_format,
+                    "granularities": list(granularities),
+                    "translation": bool(use_translation_endpoint),
+                },
+            )
+            try:
+                if use_translation_endpoint:
+                    response = self.client.audio.translations.create(**params)
+                else:
+                    response = self.client.audio.transcriptions.create(**params)
+            except Exception as exc:
+                finish_current_physical_request(handle, error=exc)
+                raise
+            finish_current_physical_request(handle, response=response)
+            return response
 
     def _build_whisper_transcriptions_url(self) -> str:
         """Build the /v1/audio/transcriptions URL for direct HTTP requests."""
@@ -613,20 +641,65 @@ class AsrApiClient:
         for gran in granularities:
             form_data.append(('timestamp_granularities', str(gran)))
 
-        with open(wav_path, 'rb') as file_obj:
-            response = requests.post(
-                endpoint_url,
-                headers=headers,
-                files={'file': (os.path.basename(wav_path), file_obj, 'audio/wav')},
-                data=form_data,
-                timeout=max(30.0, float(self.config.request_timeout_s or 300.0)),
-            )
-        if response.status_code != 200:
-            raise AsrHttpError(response.status_code, response.text)
-        payload: Dict[str, Any] = response.json()
+        handle = begin_current_physical_request(
+            mode="asr_http",
+            metadata={
+                "response_format": "verbose_json",
+                "granularities": list(granularities),
+            },
+        )
+        try:
+            with open(wav_path, 'rb') as file_obj:
+                response = requests.post(
+                    endpoint_url,
+                    headers=headers,
+                    files={'file': (os.path.basename(wav_path), file_obj, 'audio/wav')},
+                    data=form_data,
+                    timeout=max(30.0, float(self.config.request_timeout_s or 300.0)),
+                )
+            if response.status_code != 200:
+                raise AsrHttpError(response.status_code, response.text)
+        except Exception as exc:
+            finish_current_physical_request(handle, error=exc)
+            raise
+        try:
+            payload: Dict[str, Any] = response.json()
+        except Exception as exc:
+            finish_current_physical_request(handle, response=response, error=exc)
+            raise
+        finish_current_physical_request(handle, response=response)
         return payload
 
     def transcribe_window(
+        self,
+        wav_path: str,
+        window: Optional[DetectedSpeechWindow] = None,
+        segment_info: Optional[str] = None,
+    ) -> AsrTranscriptionResult:
+        try:
+            audio_fingerprint = file_sha256(wav_path)
+        except OSError:
+            audio_fingerprint = input_fingerprint(os.path.basename(wav_path))
+        with logical_ai_request(
+            kind="asr",
+            scene_name="asr_transcription",
+            provider=self.config.provider,
+            model=self.config.model_name,
+            fingerprint=audio_fingerprint,
+            task_id=str(getattr(self, "task_id", "") or ""),
+            metadata={
+                "window_start_seconds": float(window.start_s) if window else None,
+                "window_end_seconds": float(window.end_s) if window else None,
+                "diarize": bool(self.config.diarize),
+            },
+        ):
+            return self._transcribe_window_tracked(
+                wav_path,
+                window=window,
+                segment_info=segment_info,
+            )
+
+    def _transcribe_window_tracked(
         self,
         wav_path: str,
         window: Optional[DetectedSpeechWindow] = None,
@@ -852,17 +925,33 @@ class AsrApiClient:
                     if include_language_hint and lang_hint and lang_hint.lower() != 'unknown' and not granularities:
                         form_data.append(('language', lang_hint))
 
-                    with open(wav_path, 'rb') as file_obj:
-                        response = requests.post(
-                            endpoint_url,
-                            headers=headers,
-                            files={'file': (os.path.basename(wav_path), file_obj, 'audio/wav')},
-                            data=form_data,
-                            timeout=max(30.0, float(self.config.request_timeout_s or 300.0)),
-                        )
-                    if response.status_code != 200:
-                        raise AsrHttpError(response.status_code, response.text)
-                    payload = response.json()
+                    handle = begin_current_physical_request(
+                        mode="asr_http",
+                        metadata={
+                            "response_format": "verbose_json",
+                            "granularities": list(granularities),
+                        },
+                    )
+                    try:
+                        with open(wav_path, 'rb') as file_obj:
+                            response = requests.post(
+                                endpoint_url,
+                                headers=headers,
+                                files={'file': (os.path.basename(wav_path), file_obj, 'audio/wav')},
+                                data=form_data,
+                                timeout=max(30.0, float(self.config.request_timeout_s or 300.0)),
+                            )
+                        if response.status_code != 200:
+                            raise AsrHttpError(response.status_code, response.text)
+                    except Exception as exc:
+                        finish_current_physical_request(handle, error=exc)
+                        raise
+                    try:
+                        payload = response.json()
+                    except Exception as exc:
+                        finish_current_physical_request(handle, response=response, error=exc)
+                        raise
+                    finish_current_physical_request(handle, response=response)
                     result = self._payload_to_transcription_result(
                         payload,
                         provider='voxtral',
@@ -1422,6 +1511,10 @@ class AsrApiClient:
         headers: Dict[str, str] = {}
         if self.config.api_key:
             headers['x-api-key'] = self.config.api_key
+        handle = begin_current_physical_request(
+            mode="asr_language_detection",
+            metadata={"provider": "voxtral"},
+        )
         try:
             with open(wav_path, 'rb') as file_obj:
                 response = requests.post(
@@ -1432,10 +1525,13 @@ class AsrApiClient:
                     timeout=max(30.0, float(self.config.request_timeout_s or 300.0)),
                 )
             if response.status_code != 200:
-                return ''
-            return self._extract_language_from_data(response.json() if response.content else {})
-        except Exception:
+                raise AsrHttpError(response.status_code, response.text)
+            language_data = response.json() if response.content else {}
+        except Exception as exc:
+            finish_current_physical_request(handle, error=exc)
             return ''
+        finish_current_physical_request(handle, response=response)
+        return self._extract_language_from_data(language_data)
 
     @staticmethod
     def _render_result_to_srt(

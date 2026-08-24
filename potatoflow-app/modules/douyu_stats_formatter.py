@@ -223,6 +223,37 @@ def recording_timeframe(
     return 0.0, modified
 
 
+def recording_start_from_xml_offsets(
+    video_dir: str | os.PathLike[str],
+) -> float | None:
+    """Recover recording start from XML absolute and relative timestamps."""
+    root = Path(video_dir)
+    if not root.is_dir():
+        xml_paths = [root]
+    else:
+        xml_paths = [
+            path
+            for path in sorted(root.glob("*.xml"))
+            if path.stem == root.name or path.stem.startswith(f"{root.name}_")
+        ]
+    starts: list[float] = []
+    for xml_path in xml_paths:
+        try:
+            for _event, element in ET.iterparse(xml_path, events=("end",)):
+                if element.tag == "d":
+                    fields = str(element.attrib.get("p") or "").split(",")
+                    if len(fields) >= 5:
+                        relative = float(fields[0])
+                        absolute = float(fields[4])
+                        if absolute > 0 and relative >= 0:
+                            starts.append(absolute - relative)
+                            break
+                element.clear()
+        except (OSError, ET.ParseError, ValueError):
+            continue
+    return min(starts) if starts else None
+
+
 def filter_by_timeframe(
     items: Iterable[dict],
     start_ts: float,
@@ -936,3 +967,66 @@ def get_stats_for_description(
     if not stats:
         return ""
     return format_stats(stats, float(start_ts), float(end_ts), comments)
+
+
+def get_ai_captions_for_recording(
+    video_dir: str | os.PathLike[str],
+    start_ts: Optional[float] = None,
+    end_ts: Optional[float] = None,
+    duration_seconds: Optional[float] = None,
+    include_timeframe: bool = False,
+) -> list[dict] | dict:
+    """Return finalized Douyu AI captions scoped to one recording.
+
+    Douyu revises the same ``idx`` several times while a sentence is being
+    recognized. The daemon normally replaces those revisions in place; this
+    second dedupe keeps restored/legacy snapshots safe as well.
+    """
+    comments = load_xml_comments(video_dir)
+    if start_ts is None or end_ts is None:
+        detected_start, detected_end = recording_timeframe(video_dir, comments)
+        offset_start = recording_start_from_xml_offsets(video_dir)
+        start_ts = (
+            offset_start if start_ts is None and offset_start is not None
+            else detected_start if start_ts is None
+            else start_ts
+        )
+        end_ts = (
+            float(start_ts) + float(duration_seconds)
+            if end_ts is None and duration_seconds is not None and duration_seconds > 0
+            else detected_end if end_ts is None
+            else end_ts
+        )
+    start = float(start_ts)
+    end = float(end_ts)
+    stats = load_stats(_stats_path(video_dir))
+    caption_state = stats.get("ai_captions", {}) if isinstance(stats, dict) else {}
+    items = caption_state.get("items", []) if isinstance(caption_state, dict) else []
+    deduped: dict[tuple[str, float], dict] = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        text = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
+        item_start = float(item.get("start_unix_ts") or 0)
+        item_end = float(item.get("end_unix_ts") or item_start)
+        index = str(item.get("idx") or "").strip()
+        if not text or not index or item_end < start or item_start > end:
+            continue
+        deduped[(index, item_start)] = {
+            "idx": index,
+            "time": max(0.0, item_start - start),
+            "end_time": max(0.0, min(end, item_end) - start),
+            "text": text,
+            "stream_pts_seconds": item.get("stream_pts_seconds"),
+        }
+    selected = sorted(
+        deduped.values(),
+        key=lambda item: (float(item["time"]), item["idx"]),
+    )
+    if include_timeframe:
+        return {
+            "recording_start_unix_ts": start,
+            "recording_end_unix_ts": end,
+            "items": selected,
+        }
+    return selected
