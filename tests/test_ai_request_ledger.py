@@ -27,6 +27,16 @@ from modules.ai_request_ledger import (
 )
 
 
+@contextmanager
+def sqlite_connection(path):
+    """Use a real closing context; sqlite3.Connection.__exit__ only commits."""
+    connection = sqlite3.connect(path)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 class AiRequestLedgerTests(unittest.TestCase):
     def test_extracts_openai_usage_without_storing_content(self):
         response = SimpleNamespace(
@@ -78,7 +88,7 @@ class AiRequestLedgerTests(unittest.TestCase):
                     }),
                 )
                 ledger.finish_run(run_id, status="completed")
-                with sqlite3.connect(path) as connection:
+                with sqlite_connection(path) as connection:
                     cost, metadata_json = connection.execute(
                         "SELECT cost_usd, metadata_json FROM ai_requests"
                     ).fetchone()
@@ -123,7 +133,7 @@ class AiRequestLedgerTests(unittest.TestCase):
             )
             ledger.finish_run(run_id, status="completed")
 
-            with sqlite3.connect(path) as connection:
+            with sqlite_connection(path) as connection:
                 run = connection.execute(
                     "SELECT status, physical_request_count, input_fingerprint FROM ai_runs"
                 ).fetchone()
@@ -157,7 +167,7 @@ class AiRequestLedgerTests(unittest.TestCase):
                 model="test", fingerprint="active",
             )
             ledger.finish_run(expired, status="completed")
-            with sqlite3.connect(path) as connection:
+            with sqlite_connection(path) as connection:
                 connection.execute(
                     "UPDATE ai_runs SET created_at=1, completed_at=2 WHERE id=?",
                     (expired,),
@@ -166,7 +176,7 @@ class AiRequestLedgerTests(unittest.TestCase):
                     "UPDATE ai_runs SET created_at=1 WHERE id=?", (active,)
                 )
             removed = ledger.prune_expired(30, now=100 * 86400)
-            with sqlite3.connect(path) as connection:
+            with sqlite_connection(path) as connection:
                 remaining = connection.execute(
                     "SELECT id, status FROM ai_runs ORDER BY id"
                 ).fetchall()
@@ -201,7 +211,7 @@ class AiRequestLedgerTests(unittest.TestCase):
             for thread in threads:
                 thread.join()
             ledger.finish_run(run_id, status="completed")
-            with sqlite3.connect(ledger.path) as connection:
+            with sqlite_connection(ledger.path) as connection:
                 attempts = [
                     row[0] for row in connection.execute(
                         "SELECT attempt FROM ai_requests ORDER BY attempt"
@@ -232,7 +242,7 @@ class AiRequestLedgerTests(unittest.TestCase):
                 model="test",
                 fingerprint="second",
             )
-            with sqlite3.connect(path) as connection:
+            with sqlite_connection(path) as connection:
                 rows = connection.execute(
                     "SELECT id, scene_name FROM ai_runs"
                 ).fetchall()
@@ -272,7 +282,7 @@ class AiRequestLedgerTests(unittest.TestCase):
                     logger_obj=None,
                     scene_name="metadata_test",
                 )
-                with sqlite3.connect(Path(temporary) / "ledger.sqlite3") as connection:
+                with sqlite_connection(Path(temporary) / "ledger.sqlite3") as connection:
                     runs = connection.execute(
                         "SELECT scene_name, status, physical_request_count FROM ai_runs"
                     ).fetchall()
@@ -334,7 +344,7 @@ class AiRequestLedgerTests(unittest.TestCase):
                 with patch.object(client, "_get_or_probe_capabilities", return_value=probe):
                     result = client.transcribe_window(str(wav))
 
-                with sqlite3.connect(Path(temporary) / "ledger.sqlite3") as connection:
+                with sqlite_connection(Path(temporary) / "ledger.sqlite3") as connection:
                     run = connection.execute(
                         "SELECT kind, provider, model, physical_request_count, input_fingerprint, task_id FROM ai_runs"
                     ).fetchone()
