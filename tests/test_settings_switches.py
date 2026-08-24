@@ -45,20 +45,23 @@ class SettingsSwitchTests(unittest.TestCase):
         self.assertNotIn('id="settings-mobile-section"', template)
         self.assertNotIn("potatoflow-settings-mode", template)
 
-    def test_settings_categories_follow_user_workflows(self):
+    def test_settings_categories_follow_control_center_information_architecture(self):
         template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
 
         for category in (
-            "录播与投稿",
+            "总览",
+            "工作流",
             "平台账号",
             "网络与下载",
-            "AI 内容",
+            "AI 服务",
             "字幕与语音",
             "通知与远程",
-            "存储与安全",
+            "系统",
         ):
             self.assertIn("name: '" + category + "'", template)
-        self.assertIn("settings-appearance-strip", template)
+        self.assertIn("settings-overview-grid", template)
+        self.assertIn("provider-control-plane", template)
+        self.assertNotIn("settings-appearance-strip", template)
 
     def test_settings_layout_is_rebuilt_before_first_paint(self):
         template = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
