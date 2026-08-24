@@ -135,6 +135,45 @@ DEFAULT_CONFIG = {
     "OPENAI_RPM_LIMIT": 30,  # 所有进程共享的文本模型物理请求上限；0 表示关闭
     "OPENAI_REQUEST_MAX_RETRIES": 2,  # 统一调用层重试；SDK 内部重试固定关闭以保证准确计数
     "OPENAI_RETRY_BASE_SECONDS": 0.75,
+    # 只缓存已成功解析的结构化结果；键中包含 Prompt 版本、模型、端点摘要和完整输入哈希。
+    "OPENAI_RESULT_CACHE_MODE": "auto",  # auto / off / refresh / read-only
+    "OPENAI_RESULT_CACHE_TTL_HOURS": 168,  # 默认 7 天；Prompt 版本变化会自动失效
+    "OPENAI_RESULT_CACHE_WAIT_SECONDS": 120,  # 相同请求跨进程合并时最长等待时间
+    "OPENAI_METADATA_MODEL_NAME": "",  # 留空回退到全局模型
+    "OPENAI_CLASSIFICATION_MODEL_NAME": "",  # 标签、内容画像和分区等低温度任务
+    "OPENAI_TRANSLATION_MODEL_NAME": "",  # 元数据翻译；字幕仍优先使用 SUBTITLE_OPENAI_MODEL_NAME
+    "OPENAI_SCENE_MODEL_OVERRIDES": {},  # scene_name -> model
+    "OPENAI_SCENE_TOKEN_BUDGETS": {},  # scene_name -> max output tokens
+    # 多 Provider 路由。启用任一 Profile 后按编号优先级尝试；旧全局配置作为兼容回退。
+    "OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED": True,
+    "OPENAI_PROVIDER_1_ENABLED": False,
+    "OPENAI_PROVIDER_1_ID": "primary",
+    "OPENAI_PROVIDER_1_BASE_URL": "",
+    "OPENAI_PROVIDER_1_API_KEY": "",
+    "OPENAI_PROVIDER_1_MODEL_NAME": "",
+    "OPENAI_PROVIDER_1_RPM_LIMIT": 30,
+    "OPENAI_PROVIDER_1_SCENES": "*",
+    "OPENAI_PROVIDER_2_ENABLED": False,
+    "OPENAI_PROVIDER_2_ID": "fallback-1",
+    "OPENAI_PROVIDER_2_BASE_URL": "",
+    "OPENAI_PROVIDER_2_API_KEY": "",
+    "OPENAI_PROVIDER_2_MODEL_NAME": "",
+    "OPENAI_PROVIDER_2_RPM_LIMIT": 30,
+    "OPENAI_PROVIDER_2_SCENES": "*",
+    "OPENAI_PROVIDER_3_ENABLED": False,
+    "OPENAI_PROVIDER_3_ID": "fallback-2",
+    "OPENAI_PROVIDER_3_BASE_URL": "",
+    "OPENAI_PROVIDER_3_API_KEY": "",
+    "OPENAI_PROVIDER_3_MODEL_NAME": "",
+    "OPENAI_PROVIDER_3_RPM_LIMIT": 30,
+    "OPENAI_PROVIDER_3_SCENES": "*",
+    "OPENAI_PROVIDER_4_ENABLED": False,
+    "OPENAI_PROVIDER_4_ID": "fallback-3",
+    "OPENAI_PROVIDER_4_BASE_URL": "",
+    "OPENAI_PROVIDER_4_API_KEY": "",
+    "OPENAI_PROVIDER_4_MODEL_NAME": "",
+    "OPENAI_PROVIDER_4_RPM_LIMIT": 30,
+    "OPENAI_PROVIDER_4_SCENES": "*",
     # 录播封面可独立指定 Images API 凭据；留空则回退到全局 OpenAI 配置。
     "OPENAI_IMAGE_API_KEY": "",
     "OPENAI_IMAGE_MODEL_NAME": "gpt-image-2",
@@ -145,6 +184,46 @@ DEFAULT_CONFIG = {
     # 4:3 使用独立请求与构图提示，生成后再单独处理为投稿尺寸。
     # Official Images API sizes are square or 3:2; final output is cropped to 4:3.
     "OPENAI_IMAGE_SIZE_4X3": "1536x1024",
+    # 多图片 Provider 路由；当前执行器支持 OpenAI-compatible Images API。
+    "IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED": True,
+    "IMAGE_PROVIDER_1_ENABLED": False,
+    "IMAGE_PROVIDER_1_ID": "image-primary",
+    "IMAGE_PROVIDER_1_ADAPTER": "openai-compatible",
+    "IMAGE_PROVIDER_1_BASE_URL": "",
+    "IMAGE_PROVIDER_1_API_KEY": "",
+    "IMAGE_PROVIDER_1_MODEL_NAME": "gpt-image-2",
+    "IMAGE_PROVIDER_1_SCENES": "*",
+    "IMAGE_PROVIDER_1_SUPPORTS_EDIT": True,
+    "IMAGE_PROVIDER_2_ENABLED": False,
+    "IMAGE_PROVIDER_2_ID": "image-fallback-1",
+    "IMAGE_PROVIDER_2_ADAPTER": "openai-compatible",
+    "IMAGE_PROVIDER_2_BASE_URL": "",
+    "IMAGE_PROVIDER_2_API_KEY": "",
+    "IMAGE_PROVIDER_2_MODEL_NAME": "gpt-image-2",
+    "IMAGE_PROVIDER_2_SCENES": "*",
+    "IMAGE_PROVIDER_2_SUPPORTS_EDIT": True,
+    "IMAGE_PROVIDER_3_ENABLED": False,
+    "IMAGE_PROVIDER_3_ID": "image-fallback-2",
+    "IMAGE_PROVIDER_3_ADAPTER": "openai-compatible",
+    "IMAGE_PROVIDER_3_BASE_URL": "",
+    "IMAGE_PROVIDER_3_API_KEY": "",
+    "IMAGE_PROVIDER_3_MODEL_NAME": "gpt-image-2",
+    "IMAGE_PROVIDER_3_SCENES": "*",
+    "IMAGE_PROVIDER_3_SUPPORTS_EDIT": True,
+    "IMAGE_PROVIDER_4_ENABLED": False,
+    "IMAGE_PROVIDER_4_ID": "image-fallback-3",
+    "IMAGE_PROVIDER_4_ADAPTER": "openai-compatible",
+    "IMAGE_PROVIDER_4_BASE_URL": "",
+    "IMAGE_PROVIDER_4_API_KEY": "",
+    "IMAGE_PROVIDER_4_MODEL_NAME": "gpt-image-2",
+    "IMAGE_PROVIDER_4_SCENES": "*",
+    "IMAGE_PROVIDER_4_SUPPORTS_EDIT": True,
+    # 本地视觉证据：录制完成后串行抽帧、去重和 RapidOCR，不占用远端 Vision API。
+    "VISUAL_EVIDENCE_ENABLED": False,
+    "VISUAL_EVIDENCE_SAMPLE_INTERVAL_SECONDS": 30,
+    "VISUAL_EVIDENCE_MAX_FRAMES": 180,
+    "VISUAL_EVIDENCE_OCR_CONFIDENCE": 0.60,
+    "VISUAL_EVIDENCE_OCR_MODEL_VERSION": "rapidocr-3.9.2-default",
     # 录播 AI 投稿创作要求。直播间单独配置优先；留空使用 bridge 内置默认。
     "RECORDING_AI_TITLE_PROMPT": "",
     "RECORDING_AI_DESCRIPTION_PROMPT": "",

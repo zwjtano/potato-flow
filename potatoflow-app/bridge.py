@@ -2960,7 +2960,8 @@ class StateStore:
             for stage, status in (
                 ("detect", "completed"), ("record", "completed"),
                 ("ass", "pending"), ("burn", "pending"),
-                ("ai_subtitle", "pending"), ("live_stats", "pending"),
+                ("ai_subtitle", "pending"), ("evidence", "pending"),
+                ("visual_evidence", "pending"), ("live_stats", "pending"),
                 ("xml_identity", "pending"), ("ai", "pending"),
                 ("cover_16x9", "pending"), ("cover_4x3", "pending"),
                 ("upload", "pending"), ("collection", "pending"),
@@ -4756,6 +4757,11 @@ def generate_recording_cover_with_ai(
         logical_ai_request,
     )
     from modules.config_manager import load_config as load_app_config  # type: ignore
+    from modules.image_provider_registry import (  # type: ignore
+        resolve_image_provider_profiles,
+    )
+    from modules.llm_provider_registry import is_provider_failover_error  # type: ignore
+    from modules.provider_control_plane import ProviderCircuitStore  # type: ignore
 
     ai_cfg = load_app_config()
     enabled = bool(ai_cfg.get("AI_GENERATE_RECORDING_COVER", False))
@@ -4775,20 +4781,10 @@ def generate_recording_cover_with_ai(
     }
     if not enabled:
         return None, details
-    image_api_key = str(
-        ai_cfg.get("OPENAI_IMAGE_API_KEY")
-        or ai_cfg.get("OPENAI_API_KEY")
-        or ""
-    ).strip()
-    if not image_api_key:
-        raise ValueError("未配置图片或全局 AI API Key，无法生成录播封面")
-
-    image_model = str(ai_cfg.get("OPENAI_IMAGE_MODEL_NAME") or "gpt-image-2").strip()
-    image_base_url = str(ai_cfg.get("OPENAI_IMAGE_BASE_URL") or "").strip()
-    client_config = dict(ai_cfg)
-    client_config["OPENAI_API_KEY"] = image_api_key
-    if image_base_url:
-        client_config["OPENAI_BASE_URL"] = image_base_url
+    initial_image_profiles = resolve_image_provider_profiles(ai_cfg, scene_name="")
+    if not initial_image_profiles:
+        raise ValueError("未配置可用的图片 Provider Profile，无法生成录播封面")
+    image_model = initial_image_profiles[0].model_name
     custom_reference_value = str(cfg.get("cover_reference_path") or "").strip()
     custom_reference_path = Path(custom_reference_value).expanduser()
     if custom_reference_value and not custom_reference_path.is_absolute():
@@ -5215,7 +5211,6 @@ def generate_recording_cover_with_ai(
 不要添加“直播回放”、主播开播时间或任何数字日期信息。避免大段文字，中文必须清楚易读。
 本直播间的封面创作要求：{str(cfg.get("ai_cover_prompt") or DEFAULT_RECORDING_COVER_AI_PROMPT).strip()}
 """.strip()
-    image_client = get_openai_client(client_config).images
     requested_ratio = (target_width / target_height) if target_height else 0
     if abs(requested_ratio - (16 / 9)) < 0.02:
         image_size_key = "OPENAI_IMAGE_SIZE_16X9"
@@ -5229,7 +5224,9 @@ def generate_recording_cover_with_ai(
         or "1536x1024"
     )
 
-    def tracked_image_request(callback: Callable[[], Any], mode: str) -> Any:
+    image_scene = f"recording_cover_{cover_variant}"
+
+    def tracked_image_request(mode: str) -> Any:
         reference_signature = []
         for path in reference_paths:
             try:
@@ -5239,8 +5236,8 @@ def generate_recording_cover_with_ai(
                 reference_signature.append((path.name, 0, 0))
         with logical_ai_request(
             kind="image",
-            scene_name=f"recording_cover_{cover_variant}",
-            provider="openai_compatible",
+            scene_name=image_scene,
+            provider="provider_router",
             model=image_model,
             fingerprint=input_fingerprint(prompt, image_size, reference_signature),
             metadata={
@@ -5249,39 +5246,75 @@ def generate_recording_cover_with_ai(
                 "mode": mode,
             },
         ):
-            handle = begin_current_physical_request(
-                mode=mode,
-                metadata={"size": image_size},
-            )
-            try:
-                response = callback()
-            except Exception as exc:
-                finish_current_physical_request(handle, error=exc)
-                raise
-            finish_current_physical_request(handle, response=response)
-            return response
+            profiles = resolve_image_provider_profiles(ai_cfg, scene_name=image_scene)
+            if not profiles:
+                raise RuntimeError(f"场景 {image_scene} 没有可用的图片 Provider Profile")
+            circuit_store = ProviderCircuitStore()
+            last_error: Exception | None = None
+            for profile in profiles:
+                if mode == "images_edit" and not profile.supports_edit:
+                    continue
+                if not circuit_store.is_available(profile):
+                    continue
+                profile_client = get_openai_client(
+                    profile.materialize_config(ai_cfg)
+                ).images
+                handle = begin_current_physical_request(
+                    mode=mode,
+                    metadata={
+                        "size": image_size,
+                        "provider_profile": profile.profile_id,
+                        "adapter": profile.adapter,
+                        "model": profile.model_name,
+                    },
+                )
+                try:
+                    if mode == "images_edit":
+                        with ExitStack() as stack:
+                            reference_handles = [
+                                stack.enter_context(path.open("rb"))
+                                for path in reference_paths
+                            ]
+                            response = profile_client.edit(
+                                model=profile.model_name,
+                                image=(
+                                    reference_handles
+                                    if len(reference_handles) > 1
+                                    else reference_handles[0]
+                                ),
+                                prompt=prompt,
+                                size=image_size,
+                            )
+                    else:
+                        response = profile_client.generate(
+                            model=profile.model_name,
+                            prompt=prompt,
+                            size=image_size,
+                        )
+                except Exception as exc:
+                    last_error = exc
+                    finish_current_physical_request(handle, error=exc)
+                    if not is_provider_failover_error(exc):
+                        raise
+                    circuit_store.mark_unavailable(
+                        profile,
+                        cooldown_seconds=60,
+                        reason=exc.__class__.__name__,
+                    )
+                    continue
+                finish_current_physical_request(handle, response=response)
+                details["ai_cover_provider_profile"] = profile.profile_id
+                details["ai_cover_provider_adapter"] = profile.adapter
+                details["ai_cover_model"] = profile.model_name
+                return response
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError(f"场景 {image_scene} 的全部图片 Provider 均处于熔断状态")
 
     with image_generation_queue(cfg) as queue_wait_seconds:
         details["ai_cover_queue_wait_seconds"] = round(queue_wait_seconds, 3)
         if reference_paths:
-            with ExitStack() as stack:
-                reference_handles = [
-                    stack.enter_context(path.open("rb"))
-                    for path in reference_paths
-                ]
-                response = tracked_image_request(
-                    lambda: image_client.edit(
-                        model=image_model,
-                        image=(
-                            reference_handles
-                            if len(reference_handles) > 1
-                            else reference_handles[0]
-                        ),
-                        prompt=prompt,
-                        size=image_size,
-                    ),
-                    "images_edit",
-                )
+            response = tracked_image_request("images_edit")
             details.update({
                 "ai_cover_reference_used": True,
                 "ai_cover_reference_name": reference_name,
@@ -5292,14 +5325,7 @@ def generate_recording_cover_with_ai(
                 "ai_cover_reference_kind": reference_kind,
             })
         else:
-            response = tracked_image_request(
-                lambda: image_client.generate(
-                    model=image_model,
-                    prompt=prompt,
-                    size=image_size,
-                ),
-                "images_generate",
-            )
+            response = tracked_image_request("images_generate")
     item = response.data[0] if getattr(response, "data", None) else None
     if item is None:
         raise RuntimeError("图片模型没有返回封面")
@@ -5352,7 +5378,7 @@ def generate_recording_cover_with_ai(
         raise RuntimeError(f"AI 封面尺寸处理失败: {message}")
     details.update({
         "ai_cover_generated": True,
-        "ai_cover_model": image_model,
+        "ai_cover_model": details.get("ai_cover_model") or image_model,
         "ai_cover_path": str(cover),
         "ai_cover_prompt": prompt,
         "ai_cover_width": target_width,
@@ -7365,6 +7391,74 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
         )
 
         app_config = load_app_config()
+
+        def process_visual_evidence_stage() -> None:
+            visual_enabled_raw = app_config.get("VISUAL_EVIDENCE_ENABLED", False)
+            visual_enabled = (
+                visual_enabled_raw
+                if isinstance(visual_enabled_raw, bool)
+                else str(visual_enabled_raw).strip().casefold()
+                in {"1", "true", "yes", "on"}
+            )
+            if not visual_enabled or dry_run:
+                store.stage(key, "visual_evidence", "skipped", {
+                    "reason": (
+                        "试运行不执行 OCR"
+                        if dry_run and visual_enabled
+                        else "未启用本地 OCR 视觉证据"
+                    ),
+                    "outcome": "ocr_not_enabled",
+                })
+                return
+            store.stage(key, "visual_evidence", "running", {
+                "policy": "post_recording_low_priority_bounded_concurrency",
+                "concurrency": 1,
+                "sample_interval_seconds": app_config.get(
+                    "VISUAL_EVIDENCE_SAMPLE_INTERVAL_SECONDS", 30
+                ),
+            })
+            try:
+                from modules.visual_evidence import (  # type: ignore
+                    run_visual_evidence_pipeline,
+                )
+
+                ocr_triggered_times = []
+                for peak in build_danmaku_salience_peaks(list(comments or []))[:24]:
+                    start_seconds = float(peak.get("start_seconds", 0) or 0)
+                    end_seconds = float(peak.get("end_seconds", start_seconds) or start_seconds)
+                    ocr_triggered_times.append((
+                        (start_seconds + end_seconds) / 2,
+                        "danmaku_peak",
+                    ))
+                visual_run = run_visual_evidence_pipeline(
+                    video,
+                    recording_id=key,
+                    duration_seconds=recording_duration_seconds,
+                    config={**app_config, "ffmpeg": str(cfg.get("ffmpeg", "ffmpeg"))},
+                    triggered_times=ocr_triggered_times,
+                )
+            except Exception as exc:
+                store.stage(
+                    key,
+                    "visual_evidence",
+                    "warning",
+                    {
+                        "reason": "OCR 视觉证据失败，但不阻断投稿",
+                        "outcome": "failed_non_blocking",
+                    },
+                    error=safe_task_error_detail(exc),
+                )
+                return
+            store.stage(key, "visual_evidence", "completed", {
+                "candidate_frames": visual_run.candidates,
+                "extracted_frames": visual_run.extracted,
+                "deduplicated_frames": visual_run.deduplicated,
+                "ocr_cache_hits": visual_run.cache_hits,
+                "ocr_positive_frames": visual_run.ocr_positive_frames,
+                "visual_evidence_count": visual_run.evidence_count,
+                "concurrency": 1,
+            })
+
         ai_captions: list[Any] = []
         transcript_document: Any | None = None
         current_stage = "ai_subtitle"
@@ -7479,6 +7573,37 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                 getattr(transcript_document, "segments", ()) or ()
             )
             if ai_captions:
+                store.stage(key, "evidence", "running", {
+                    "source": "transcript_document",
+                    "recording_id": key,
+                })
+                try:
+                    from modules.evidence_store import get_evidence_store  # type: ignore
+
+                    evidence_segment_count = get_evidence_store().ingest_transcript(
+                        key,
+                        transcript_document,
+                    )
+                except Exception as exc:
+                    evidence_segment_count = 0
+                    print(f"WARN Transcript Evidence 持久化失败: {exc}", file=sys.stderr)
+                    store.stage(
+                        key,
+                        "evidence",
+                        "warning",
+                        {
+                            "reason": "字幕可继续使用，但证据索引写入失败",
+                            "outcome": "failed_non_blocking",
+                        },
+                        error=str(exc),
+                    )
+                else:
+                    store.stage(key, "evidence", "completed", {
+                        "recording_id": key,
+                        "speech_evidence_count": evidence_segment_count,
+                        "storage": "private_sqlite_fts5",
+                        "progressive_disclosure": True,
+                    })
                 quality = transcript_document.metadata.get("quality", {})
                 source_reference = str(
                     transcript_document.metadata.get("subtitle_path")
@@ -7499,6 +7624,7 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     "generated_by_asr": generated_by_asr,
                     "quality_control": qc_details,
                     "reused_existing_asset": not generated_by_asr,
+                    "evidence_segment_count": evidence_segment_count,
                 })
             elif store.stage_state(key, "ai_subtitle").get("status") != "warning":
                 reason = (
@@ -7513,19 +7639,43 @@ def _upload_one_unlocked(video: Path, base_cfg: dict[str, Any], store: StateStor
                     "speech_recognition_enabled": speech_enabled,
                     "outcome": "no_transcript",
                 })
+                store.stage(key, "evidence", "skipped", {
+                    "reason": "没有可入库的 TranscriptDocument",
+                    "outcome": "no_speech_evidence",
+                })
+            if store.stage_state(key, "evidence").get("status") in {"pending", "running"}:
+                store.stage(key, "evidence", "skipped", {
+                    "reason": "AI 字幕未通过质检或没有形成可用 TranscriptDocument",
+                    "outcome": "no_speech_evidence",
+                })
+            process_visual_evidence_stage()
         except Exception as exc:
             transcript_document = None
             ai_captions = []
+            pending_free_quota = "pending_free_quota" in str(exc)
             store.stage(
                 key,
                 "ai_subtitle",
-                "warning",
+                "pending" if pending_free_quota else "warning",
                 {
-                    "reason": "AI 字幕处理失败，但不阻断弹幕分析与投稿",
-                    "outcome": "failed_non_blocking",
+                    "reason": (
+                        "免费 ASR 额度暂不可用；已停止付费回退，可在额度恢复后重试"
+                        if pending_free_quota
+                        else "AI 字幕处理失败，但不阻断弹幕分析与投稿"
+                    ),
+                    "outcome": (
+                        "pending_free_quota"
+                        if pending_free_quota
+                        else "failed_non_blocking"
+                    ),
                 },
                 error=safe_task_error_detail(exc),
             )
+            store.stage(key, "evidence", "skipped", {
+                "reason": "AI 字幕阶段未形成可入库证据",
+                "outcome": "upstream_subtitle_unavailable",
+            })
+            process_visual_evidence_stage()
 
         # Collect stable live context before AI so metadata and both cover
         # variants are grounded in the same recording and the same game.

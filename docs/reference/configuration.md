@@ -24,6 +24,55 @@
 
 示例文件位于 `potatoflow-app/bridge.config.example.json`。
 
+## AI 字幕与免费 ASR
+
+录播流程优先复用已有 AI 字幕；仅当侧挂、持久化、内嵌和平台字幕都不存在时，`SPEECH_RECOGNITION_ENABLED` 才会触发 ASR。选择 `free_pool` 后，系统不会回退到付费接口。
+
+| 字段 | 默认值 | 说明 |
+|---|---:|---|
+| `SPEECH_RECOGNITION_PROVIDER` | `whisper` | 选择 `free_pool` 启用 Groq → Cloudflare 自动切换 |
+| `GROQ_API_KEY` | 空 | Groq 独立密钥；不会写入日志和额度台账 |
+| `GROQ_ASR_MODEL_NAME` | `whisper-large-v3-turbo` | Groq 多语言 ASR 模型 |
+| `GROQ_ASR_HOURLY_AUDIO_SECONDS` | `7200` | 本机保守滚动小时上限 |
+| `GROQ_ASR_DAILY_AUDIO_SECONDS` | `28800` | 本机保守滚动日上限 |
+| `GROQ_ASR_RPM_LIMIT` | `20` | 跨进程请求预留上限 |
+| `CLOUDFLARE_ACCOUNT_ID` | 空 | Workers AI Account ID |
+| `CLOUDFLARE_API_TOKEN` | 空 | Workers AI Read/Edit Token |
+| `CLOUDFLARE_ASR_MODEL_NAME` | `@cf/openai/whisper-large-v3-turbo` | Cloudflare ASR 模型 |
+| `CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS` | `14400` | 根据免费 Neurons 设置的保守日上限 |
+
+同一供应商的多个 Key 通常共享组织额度，PotatoFlow 不通过 Key 轮换规避限制。需要更多容量时应添加不同 Provider，或显式改用非 `free_pool` 的付费配置。
+
+## AI Provider Control Plane
+
+文本和图片均可配置 4 个有序 Profile。Profile 1 优先，额度、鉴权或容量不可用时自动切换下一项；熔断状态跨进程共享，但不保存 Key 明文。
+
+| 字段模式 | 说明 |
+|---|---|
+| `OPENAI_PROVIDER_{1..4}_ENABLED` | 启用文本 Profile |
+| `OPENAI_PROVIDER_{1..4}_{ID,BASE_URL,API_KEY,MODEL_NAME}` | 独立文本端点和模型 |
+| `OPENAI_PROVIDER_{1..4}_RPM_LIMIT` | 独立跨进程 RPM bucket，`0` 表示关闭 |
+| `OPENAI_PROVIDER_{1..4}_SCENES` | `*` 或逗号分隔场景名 |
+| `OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED` | 是否把旧全局文本 Key 作为末级回退 |
+| `IMAGE_PROVIDER_{1..4}_ENABLED` | 启用图片 Profile |
+| `IMAGE_PROVIDER_{1..4}_{ID,BASE_URL,API_KEY,MODEL_NAME}` | OpenAI-compatible Images 配置 |
+| `IMAGE_PROVIDER_{1..4}_SUPPORTS_EDIT` | 是否支持参考图编辑能力 |
+| `IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED` | 是否回退到旧图片/全局 Key |
+
+当前图片执行器只支持 `openai-compatible`；Gemini Image native、腾讯 ASR 等通过新 Adapter 扩展，未实现前不会显示为有效 Provider。Codex/ChatGPT 登录凭据不属于任何 Profile。
+
+## 内容证据与本地 OCR
+
+| 字段 | 默认值 | 说明 |
+|---|---:|---|
+| `VISUAL_EVIDENCE_ENABLED` | `false` | 录制完成后启用本地 OCR 后处理 |
+| `VISUAL_EVIDENCE_SAMPLE_INTERVAL_SECONDS` | `30` | 固定周期候选帧间隔 |
+| `VISUAL_EVIDENCE_MAX_FRAMES` | `180` | 单段录播最大候选帧；事件帧优先 |
+| `VISUAL_EVIDENCE_OCR_CONFIDENCE` | `0.60` | 低于此置信度的文字不进入证据层 |
+| `VISUAL_EVIDENCE_OCR_MODEL_VERSION` | `rapidocr-3.9.2-default` | OCR 缓存版本；升级模型时修改 |
+
+OCR 固定串行运行并使用本地 RapidOCR/ONNX Runtime，不调用远端 Vision API。Transcript 和 VisualEvidence 写入私有 `evidence.sqlite3`，下游按关键词或时间窗读取。
+
 ## 单直播间设置
 
 直播间自己的分段、分P、仅录制、AI 提示词和时间点提前补偿保存在持久化配置中，优先级高于系统默认值。提前补偿可在直播间的“AI 投稿设置”中按房间调整，默认 8 秒。

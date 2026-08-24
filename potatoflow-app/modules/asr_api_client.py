@@ -89,6 +89,7 @@ class AsrConfig:
     request_timeout_s: float = 300.0
     voxtral_max_audio_duration_s: float = 10800.0
     voxtral_enforce_max_duration: bool = True
+    cloudflare_account_id: str = ''
 
 
 @dataclass
@@ -190,7 +191,7 @@ class AsrApiClient:
             self.logger.error("Missing ASR API key - ASR client not initialised")
             return
         try:
-            if self.config.provider == 'voxtral':
+            if self.config.provider in {'voxtral', 'cloudflare'}:
                 if not self.config.base_url:
                     self.logger.error("Missing ASR base URL - ASR client not initialised")
                     return
@@ -707,10 +708,13 @@ class AsrApiClient:
     ) -> AsrTranscriptionResult:
         if self.config.provider == 'voxtral':
             return self._transcribe_segment_voxtral(wav_path, window=window, segment_info=segment_info)
+        if self.config.provider == 'cloudflare':
+            return self._transcribe_segment_cloudflare(wav_path, window=window)
 
         model = self.config.model_name or 'whisper-1'
         segment_desc = segment_info or wav_path
         implausible_retry_used = False
+        quota_exhausted = False
         for attempt in range(self.config.max_retries):
             try:
                 probe_result = self._get_or_probe_capabilities(
@@ -752,6 +756,11 @@ class AsrApiClient:
             except AsrFormatIncompatibleError:
                 raise
             except Exception as exc:
+                status_code = getattr(exc, 'status_code', None)
+                if status_code is None:
+                    status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
+                error_text = str(exc).casefold()
+                quota_exhausted = quota_exhausted or status_code == 429 or 'rate_limit' in error_text
                 self.logger.warning(
                     "ASR request failed for [%s] with %s: %s (attempt %d/%d)",
                     segment_desc,
@@ -769,8 +778,83 @@ class AsrApiClient:
             response_format='',
             timestamp_mode='none',
             window=window,
-            failure_token='asr_failed',
+            failure_token='asr_quota_exhausted' if quota_exhausted else 'asr_failed',
         )
+
+    def _transcribe_segment_cloudflare(
+        self,
+        wav_path: str,
+        *,
+        window: Optional[DetectedSpeechWindow],
+    ) -> AsrTranscriptionResult:
+        endpoint = str(self.config.base_url or '').strip()
+        if not endpoint:
+            account_id = str(self.config.cloudflare_account_id or '').strip()
+            endpoint = (
+                f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/"
+                f"{self.config.model_name or '@cf/openai/whisper-large-v3-turbo'}"
+            )
+        handle = begin_current_physical_request(
+            mode="asr_cloudflare",
+            metadata={"provider": "cloudflare", "response_format": "json"},
+        )
+        response = None
+        try:
+            with open(wav_path, 'rb') as audio_file:
+                audio_bytes = audio_file.read()
+            request_payload: Dict[str, Any] = {
+                "audio": list(audio_bytes),
+                "task": "transcribe",
+                "vad_filter": False,
+            }
+            language = self._language_hint or self._normalize_language_code(self.config.language)
+            if language:
+                request_payload["language"] = language
+            prompt = str(self.config.prompt or '').strip()
+            if prompt:
+                request_payload["initial_prompt"] = prompt
+            response = requests.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=request_payload,
+                timeout=max(30.0, float(self.config.request_timeout_s or 300.0)),
+            )
+            if response.status_code != 200:
+                raise AsrHttpError(response.status_code, response.text)
+            envelope = response.json()
+            if not isinstance(envelope, dict):
+                raise AsrRequestError("Cloudflare ASR response is not a JSON object")
+            if envelope.get("success") is False:
+                raise AsrRequestError(str(envelope.get("errors") or "Cloudflare ASR failed"))
+            payload = envelope.get("result", envelope)
+            if not isinstance(payload, dict):
+                raise AsrRequestError("Cloudflare ASR result is not a JSON object")
+            result = self._payload_to_transcription_result(
+                payload,
+                provider="cloudflare",
+                response_format="json",
+                timestamp_mode="word" if self._payload_has_words(payload) else "segment",
+                window=window,
+                granularities=("segment",),
+            )
+            finish_current_physical_request(handle, response=response)
+            return result
+        except Exception as exc:
+            finish_current_physical_request(handle, response=response, error=exc)
+            status_code = getattr(exc, 'status_code', None)
+            error_text = str(exc).casefold()
+            quota_exhausted = status_code == 429 or '7505' in error_text or 'quota' in error_text
+            return AsrTranscriptionResult(
+                provider="cloudflare",
+                response_format="",
+                timestamp_mode="none",
+                window=window,
+                failure_token="asr_quota_exhausted" if quota_exhausted else "asr_failed",
+                metadata={"exception": str(exc)},
+            )
 
     def _transcribe_with_cached_capabilities(
         self,
@@ -829,6 +913,11 @@ class AsrApiClient:
                     include_prompt=include_prompt,
                 )
             except Exception as exc:
+                status_code = getattr(exc, 'status_code', None)
+                if status_code is None:
+                    status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
+                if status_code == 429 or 'rate_limit' in str(exc).casefold():
+                    raise
                 self.logger.debug("Raw HTTP fallback failed (%s), using SDK path", exc)
                 response = self._request_whisper_response(
                     wav_path, model, fmt,

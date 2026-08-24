@@ -234,6 +234,8 @@ class AiRequestLedger:
                 job_purpose TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
                 physical_request_count INTEGER NOT NULL DEFAULT 0,
+                application_cache_hit INTEGER NOT NULL DEFAULT 0,
+                application_cache_key TEXT NOT NULL DEFAULT '',
                 input_fingerprint TEXT NOT NULL,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 error_type TEXT NOT NULL DEFAULT '',
@@ -284,6 +286,16 @@ class AiRequestLedger:
         if "job_purpose" not in run_columns:
             connection.execute(
                 "ALTER TABLE ai_runs ADD COLUMN job_purpose TEXT NOT NULL DEFAULT ''"
+            )
+        if "application_cache_hit" not in run_columns:
+            connection.execute(
+                """ALTER TABLE ai_runs
+                   ADD COLUMN application_cache_hit INTEGER NOT NULL DEFAULT 0"""
+            )
+        if "application_cache_key" not in run_columns:
+            connection.execute(
+                """ALTER TABLE ai_runs
+                   ADD COLUMN application_cache_key TEXT NOT NULL DEFAULT ''"""
             )
         connection.commit()
 
@@ -345,6 +357,18 @@ class AiRequestLedger:
                 ),
             )
         self._maybe_prune_expired()
+
+    def mark_run_application_cache_hit(self, run_id: str, cache_key: str) -> None:
+        """Mark a logical run as served without a provider request."""
+        if not run_id:
+            return
+        with self._connection() as connection:
+            connection.execute(
+                """UPDATE ai_runs
+                   SET application_cache_hit=1, application_cache_key=?
+                   WHERE id=?""",
+                (str(cache_key or "")[:128], run_id),
+            )
 
     def prune_expired(
         self,
@@ -479,6 +503,7 @@ def summarize_task_ai_usage(task_id: str) -> dict[str, Any]:
             row = connection.execute(
                 """SELECT
                        COUNT(DISTINCT r.id),
+                       COUNT(DISTINCT CASE WHEN r.application_cache_hit=1 THEN r.id END),
                        COUNT(q.id),
                        COALESCE(SUM(CASE WHEN q.status='failed' THEN 1 ELSE 0 END), 0),
                        COALESCE(SUM(q.input_tokens), 0),
@@ -497,15 +522,16 @@ def summarize_task_ai_usage(task_id: str) -> dict[str, Any]:
         return {}
     return {
         "logical_request_count": int(row[0] or 0),
-        "physical_request_count": int(row[1] or 0),
-        "failed_physical_request_count": int(row[2] or 0),
-        "input_tokens": int(row[3] or 0),
-        "output_tokens": int(row[4] or 0),
-        "total_tokens": int(row[5] or 0),
-        "cached_tokens": int(row[6] or 0),
-        "cache_write_tokens": int(row[7] or 0),
-        "physical_latency_ms": int(row[8] or 0),
-        "cost_usd": round(float(row[9] or 0), 10),
+        "application_cache_hit_count": int(row[1] or 0),
+        "physical_request_count": int(row[2] or 0),
+        "failed_physical_request_count": int(row[3] or 0),
+        "input_tokens": int(row[4] or 0),
+        "output_tokens": int(row[5] or 0),
+        "total_tokens": int(row[6] or 0),
+        "cached_tokens": int(row[7] or 0),
+        "cache_write_tokens": int(row[8] or 0),
+        "physical_latency_ms": int(row[9] or 0),
+        "cost_usd": round(float(row[10] or 0), 10),
     }
 
 

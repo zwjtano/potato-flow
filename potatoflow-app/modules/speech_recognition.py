@@ -115,6 +115,7 @@ class SpeechRecognitionConfig:
     max_retries: int = 3
     retry_delay_s: float = 2.0
     request_timeout_s: float = 300.0
+    cloudflare_account_id: str = ''
     # AI 智能分段（基于字级时间戳的语义重分段）
     ai_segmentation_enabled: bool = False
     ai_segmentation_config: Optional[Any] = None
@@ -130,7 +131,7 @@ class SpeechRecognizer:
         self.last_transcript_path: str = ''
         self._temp_dirs: List[str] = []
 
-        if config.provider not in ('whisper', 'voxtral'):
+        if config.provider not in ('whisper', 'voxtral', 'cloudflare', 'free_pool'):
             raise ValueError(f"Unsupported speech recognition provider: {config.provider}")
 
         self._vad = VadProcessor(
@@ -174,6 +175,7 @@ class SpeechRecognizer:
                 request_timeout_s=config.request_timeout_s,
                 voxtral_max_audio_duration_s=config.voxtral_max_audio_duration_s,
                 voxtral_enforce_max_duration=config.voxtral_enforce_max_duration,
+                cloudflare_account_id=config.cloudflare_account_id,
             ),
             logger=self.logger,
             task_id=self.task_id,
@@ -218,7 +220,7 @@ class SpeechRecognizer:
             if self.config.vad_enabled:
                 cues = self._transcribe_with_vad(audio_wav, total_duration)
 
-            if not cues:
+            if not cues and self.last_error_message != 'pending_free_quota':
                 cues = self._fallback_transcription(audio_wav, total_duration)
             if not cues:
                 self.last_error_message = self.last_error_message or 'No subtitles generated'
@@ -240,10 +242,12 @@ class SpeechRecognizer:
             atomic_write_text(Path(output_path), srt_text, encoding='utf-8')
             try:
                 transcript_path = Path(output_path).with_suffix('.transcript.json')
+                used_providers = sorted(getattr(self._asr, 'used_providers', ()) or ())
+                used_models = sorted(getattr(self._asr, 'used_models', ()) or ())
                 document = with_transcript_quality(transcript_document_from_cues(
                     cue_dicts,
-                    provider=self.config.api_provider,
-                    model=self.config.model_name,
+                    provider='+'.join(used_providers) or self.config.api_provider,
+                    model='+'.join(used_models) or self.config.model_name,
                     audio_sha256=file_sha256(audio_wav),
                     duration_seconds=total_duration,
                     language=str(getattr(self._asr, '_language_hint', '') or ''),
@@ -293,6 +297,9 @@ class SpeechRecognizer:
             return []
 
         results = self._asr.transcribe_windows_concurrent(window_inputs)
+        if any(result.failure_token == 'pending_free_quota' for result in results):
+            self.last_error_message = 'pending_free_quota'
+            return []
         aligned = self._srt.align_transcription_results(results, total_duration_s=total_duration)
         aligned = self._maybe_apply_ai_segmentation(results, aligned)
         success_count = sum(1 for result in results if result.ok or result.timestamp_mode == 'srt')
@@ -319,6 +326,9 @@ class SpeechRecognizer:
         if not window_inputs:
             return []
         results = self._asr.transcribe_windows_concurrent(window_inputs)
+        if any(result.failure_token == 'pending_free_quota' for result in results):
+            self.last_error_message = 'pending_free_quota'
+            return []
         aligned = self._srt.align_transcription_results(results, total_duration_s=total_duration)
         aligned = self._maybe_apply_ai_segmentation(results, aligned)
         if not aligned:
@@ -546,9 +556,106 @@ def create_speech_recognizer_from_config(
             return None
 
         provider = str(app_config.get('SPEECH_RECOGNITION_PROVIDER') or 'whisper').strip().lower()
-        if provider not in ('whisper', 'voxtral'):
+        if provider not in ('whisper', 'voxtral', 'cloudflare', 'free_pool'):
             provider = 'whisper'
+        if provider == 'free_pool':
+            from .asr_provider_router import FreeAsrCandidate, FreeAsrProviderRouter
+            from .provider_control_plane import (
+                ProviderKind,
+                ProviderRequest,
+                build_provider_registry,
+            )
+
+            routed_recognizers: list[tuple[str, SpeechRecognizer, float, float, int]] = []
+            groq_key = str(app_config.get('GROQ_API_KEY') or '').strip()
+            if groq_key:
+                groq_config = dict(app_config)
+                groq_config.update({
+                    'SPEECH_RECOGNITION_PROVIDER': 'whisper',
+                    'WHISPER_API_KEY': groq_key,
+                    'WHISPER_BASE_URL': 'https://api.groq.com/openai/v1',
+                    'WHISPER_MODEL_NAME': str(
+                        app_config.get('GROQ_ASR_MODEL_NAME')
+                        or 'whisper-large-v3-turbo'
+                    ),
+                    'WHISPER_MAX_WORKERS': min(
+                        int(app_config.get('WHISPER_MAX_WORKERS', 3) or 3),
+                        int(app_config.get('GROQ_ASR_MAX_WORKERS', 2) or 2),
+                    ),
+                    # The provider router owns failover. Retrying the same free
+                    # provider would consume audio quota without adding coverage.
+                    'WHISPER_MAX_RETRIES': 1,
+                })
+                recognizer = create_speech_recognizer_from_config(groq_config, task_id)
+                if recognizer is not None:
+                    routed_recognizers.append((
+                        'groq',
+                        recognizer,
+                        float(app_config.get('GROQ_ASR_DAILY_AUDIO_SECONDS', 28_800) or 28_800),
+                        float(app_config.get('GROQ_ASR_HOURLY_AUDIO_SECONDS', 7_200) or 7_200),
+                        int(app_config.get('GROQ_ASR_RPM_LIMIT', 20) or 20),
+                    ))
+
+            cloudflare_token = str(app_config.get('CLOUDFLARE_API_TOKEN') or '').strip()
+            cloudflare_account = str(app_config.get('CLOUDFLARE_ACCOUNT_ID') or '').strip()
+            if cloudflare_token and cloudflare_account:
+                cloudflare_config = dict(app_config)
+                cloudflare_config.update({
+                    'SPEECH_RECOGNITION_PROVIDER': 'cloudflare',
+                    'CLOUDFLARE_API_TOKEN': cloudflare_token,
+                    'CLOUDFLARE_ACCOUNT_ID': cloudflare_account,
+                })
+                recognizer = create_speech_recognizer_from_config(cloudflare_config, task_id)
+                if recognizer is not None:
+                    routed_recognizers.append((
+                        'cloudflare',
+                        recognizer,
+                        float(
+                            app_config.get('CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS', 14_400)
+                            or 14_400
+                        ),
+                        0.0,
+                        0,
+                    ))
+
+            if not routed_recognizers:
+                return None
+            request = ProviderRequest(
+                kind=ProviderKind.ASR,
+                required_capabilities=frozenset({
+                    'asr.transcribe',
+                    'asr.segment_timestamp',
+                }),
+                preferred_capabilities=frozenset({'asr.word_timestamp'}),
+                scene_name='ai_subtitle',
+                constraints={
+                    'billing_mode': 'free_only',
+                    'language': str(app_config.get('WHISPER_LANGUAGE') or 'zh'),
+                },
+            )
+            route_order = {
+                registration.provider_id: index
+                for index, registration in enumerate(
+                    build_provider_registry(app_config).match(request)
+                )
+            }
+            routed_recognizers.sort(
+                key=lambda item: route_order.get(item[0], len(route_order) + 100)
+            )
+            primary = routed_recognizers[0][1]
+            primary._asr = FreeAsrProviderRouter(
+                [
+                    FreeAsrCandidate(provider_id, recognizer._asr, daily, hourly, rpm)
+                    for provider_id, recognizer, daily, hourly, rpm in routed_recognizers
+                ],
+                task_id=str(task_id or ''),
+            )
+            primary.config.provider = 'free_pool'
+            primary.config.api_provider = 'free_pool'
+            return primary
+
         use_voxtral = provider == 'voxtral'
+        use_cloudflare = provider == 'cloudflare'
 
         if use_voxtral:
             api_provider = 'voxtral'
@@ -557,6 +664,23 @@ def create_speech_recognizer_from_config(
             model_name = app_config.get('VOXTRAL_MODEL_NAME') or 'voxtral-mini-latest'
             language = app_config.get('VOXTRAL_LANGUAGE') or ''
             prompt = ''
+            max_retries = int(app_config.get('WHISPER_MAX_RETRIES', 3) or 3)
+            timeout_s = float(app_config.get('OPENAI_TIMEOUT_SECONDS', 600) or 600.0)
+            cloudflare_account_id = ''
+        elif use_cloudflare:
+            api_provider = 'cloudflare'
+            api_key = app_config.get('CLOUDFLARE_API_TOKEN') or ''
+            cloudflare_account_id = str(app_config.get('CLOUDFLARE_ACCOUNT_ID') or '').strip()
+            model_name = str(
+                app_config.get('CLOUDFLARE_ASR_MODEL_NAME')
+                or '@cf/openai/whisper-large-v3-turbo'
+            )
+            base_url = (
+                f"https://api.cloudflare.com/client/v4/accounts/{cloudflare_account_id}/ai/run/"
+                f"{model_name}"
+            ) if cloudflare_account_id else ''
+            language = app_config.get('WHISPER_LANGUAGE') or ''
+            prompt = app_config.get('WHISPER_PROMPT') or ''
             max_retries = int(app_config.get('WHISPER_MAX_RETRIES', 3) or 3)
             timeout_s = float(app_config.get('OPENAI_TIMEOUT_SECONDS', 600) or 600.0)
         else:
@@ -568,6 +692,7 @@ def create_speech_recognizer_from_config(
             prompt = app_config.get('WHISPER_PROMPT') or ''
             max_retries = int(app_config.get('WHISPER_MAX_RETRIES', 3) or 3)
             timeout_s = float(app_config.get('OPENAI_TIMEOUT_SECONDS', 600) or 600.0)
+            cloudflare_account_id = ''
 
         config = SpeechRecognitionConfig(
             provider=provider,
@@ -618,6 +743,7 @@ def create_speech_recognizer_from_config(
             max_retries=max_retries,
             retry_delay_s=float(app_config.get('WHISPER_RETRY_DELAY_S', 2.0) or 2.0),
             request_timeout_s=timeout_s,
+            cloudflare_account_id=cloudflare_account_id,
             ai_segmentation_enabled=coerce_bool(app_config.get('AI_SEGMENTATION_ENABLED', False)),
             ai_segmentation_config=(
                 AISegmentationConfig.from_app_config(app_config)

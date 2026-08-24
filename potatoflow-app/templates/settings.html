@@ -10,7 +10,7 @@
 {% set default_target = 'bilibili' %}
 {% set default_target_label = 'bilibili' %}
 {% set account_ready_count = (1 if config.get('BILIBILI_COOKIES_PATH') else 0) + (1 if config.get('YOUTUBE_COOKIES_PATH') else 0) %}
-{% set ai_ready = config.get('OPENAI_API_KEY') or config.get('OPENAI_IMAGE_API_KEY') or config.get('SUBTITLE_OPENAI_API_KEY') or config.get('WHISPER_API_KEY') or config.get('VOXTRAL_API_KEY') %}
+{% set ai_ready = config.get('OPENAI_API_KEY') or config.get('OPENAI_IMAGE_API_KEY') or config.get('OPENAI_PROVIDER_1_API_KEY') or config.get('OPENAI_PROVIDER_2_API_KEY') or config.get('OPENAI_PROVIDER_3_API_KEY') or config.get('OPENAI_PROVIDER_4_API_KEY') or config.get('IMAGE_PROVIDER_1_API_KEY') or config.get('IMAGE_PROVIDER_2_API_KEY') or config.get('IMAGE_PROVIDER_3_API_KEY') or config.get('IMAGE_PROVIDER_4_API_KEY') or config.get('SUBTITLE_OPENAI_API_KEY') or config.get('WHISPER_API_KEY') or config.get('VOXTRAL_API_KEY') or config.get('GROQ_API_KEY') or config.get('CLOUDFLARE_API_TOKEN') %}
 {% set moderation_ready = config.get('ALIYUN_ACCESS_KEY_ID') and config.get('ALIYUN_ACCESS_KEY_SECRET') %}
 
 <div class="settings-container">
@@ -837,6 +837,117 @@
 
                                                 <div class="settings-subcard">
                                                     <div class="settings-subcard-header">
+                                                        <h5>文本 Provider Registry</h5>
+                                                        <span class="settings-status-badge is-info">按 Profile 1 → 4 路由</span>
+                                                    </div>
+                                                    <p class="help-text">每个 Profile 是独立的 Key、端点、模型与 RPM 配额桶。遇到额度、鉴权或容量错误会跨进程熔断并自动切换；场景可填 <code>*</code>，或用逗号列出 <code>subtitle_qc</code>、<code>metadata_translation</code> 等。</p>
+                                                    {% for slot in [1, 2, 3, 4] %}
+                                                        {% set prefix = 'OPENAI_PROVIDER_' ~ slot ~ '_' %}
+                                                        <div class="border rounded p-3 mb-3">
+                                                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                                                <strong>文本 Profile {{ slot }}</strong>
+                                                                <div class="form-check form-switch mb-0">
+                                                                    <input class="form-check-input" type="checkbox" id="llm-provider-{{ slot }}-enabled" name="{{ prefix }}ENABLED" {% if config.get(prefix ~ 'ENABLED', False) %}checked{% endif %}>
+                                                                    <label class="form-check-label" for="llm-provider-{{ slot }}-enabled">启用</label>
+                                                                </div>
+                                                            </div>
+                                                            <div class="row g-3">
+                                                                <div class="col-md-3"><label class="form-label" for="llm-provider-{{ slot }}-id">Provider ID</label><input class="form-control" id="llm-provider-{{ slot }}-id" name="{{ prefix }}ID" value="{{ config.get(prefix ~ 'ID', '') }}"></div>
+                                                                <div class="col-md-5"><label class="form-label" for="llm-provider-{{ slot }}-url">接口地址</label><input class="form-control" id="llm-provider-{{ slot }}-url" name="{{ prefix }}BASE_URL" value="{{ config.get(prefix ~ 'BASE_URL', '') }}" placeholder="https://api.openai.com/v1"></div>
+                                                                <div class="col-md-4"><label class="form-label" for="llm-provider-{{ slot }}-model">模型</label><input class="form-control" id="llm-provider-{{ slot }}-model" name="{{ prefix }}MODEL_NAME" value="{{ config.get(prefix ~ 'MODEL_NAME', '') }}"></div>
+                                                                <div class="col-md-5"><label class="form-label" for="llm-provider-{{ slot }}-key">API Key</label><input type="password" class="form-control" id="llm-provider-{{ slot }}-key" name="{{ prefix }}API_KEY" value="{{ secret_field_value(prefix ~ 'API_KEY') }}" autocomplete="off"></div>
+                                                                <div class="col-md-2"><label class="form-label" for="llm-provider-{{ slot }}-rpm">RPM</label><input type="number" min="0" class="form-control" id="llm-provider-{{ slot }}-rpm" name="{{ prefix }}RPM_LIMIT" value="{{ config.get(prefix ~ 'RPM_LIMIT', 30) }}"></div>
+                                                                <div class="col-md-5"><label class="form-label" for="llm-provider-{{ slot }}-scenes">场景</label><input class="form-control" id="llm-provider-{{ slot }}-scenes" name="{{ prefix }}SCENES" value="{{ config.get(prefix ~ 'SCENES', '*') }}"></div>
+                                                            </div>
+                                                        </div>
+                                                    {% endfor %}
+                                                    <label class="checkbox-label mb-0">
+                                                        <input type="checkbox" name="OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED" {% if config.get('OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED', True) %}checked{% endif %}>
+                                                        Profile 可用时仍允许回退到上方旧全局 Key（迁移完成后建议关闭）
+                                                    </label>
+                                                </div>
+
+                                                <div class="settings-subcard">
+                                                    <div class="settings-subcard-header">
+                                                        <h5>文本调用治理与场景路由</h5>
+                                                        <span class="settings-status-badge is-info">跨进程生效</span>
+                                                    </div>
+                                                    <div class="row g-3">
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-result-cache-mode" class="form-label">应用级结果缓存</label>
+                                                                {% set result_cache_mode = config.get('OPENAI_RESULT_CACHE_MODE', 'auto') %}
+                                                                <select id="openai-result-cache-mode" name="OPENAI_RESULT_CACHE_MODE" class="form-select">
+                                                                    <option value="auto" {% if result_cache_mode == 'auto' %}selected{% endif %}>自动读写</option>
+                                                                    <option value="read-only" {% if result_cache_mode == 'read-only' %}selected{% endif %}>只读</option>
+                                                                    <option value="refresh" {% if result_cache_mode == 'refresh' %}selected{% endif %}>刷新并写入</option>
+                                                                    <option value="off" {% if result_cache_mode == 'off' %}selected{% endif %}>关闭</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-result-cache-ttl" class="form-label">结果缓存时长（小时）</label>
+                                                                <input type="number" min="1" max="8760" id="openai-result-cache-ttl" name="OPENAI_RESULT_CACHE_TTL_HOURS" value="{{ config.get('OPENAI_RESULT_CACHE_TTL_HOURS', 168) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-rpm-limit" class="form-label">文本模型 RPM 上限</label>
+                                                                <input type="number" min="0" max="60000" id="openai-rpm-limit" name="OPENAI_RPM_LIMIT" value="{{ config.get('OPENAI_RPM_LIMIT', 30) }}" class="form-control">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-metadata-model" class="form-label">录播摘要模型</label>
+                                                                <input type="text" id="openai-metadata-model" name="OPENAI_METADATA_MODEL_NAME" value="{{ config.get('OPENAI_METADATA_MODEL_NAME', '') }}" class="form-control" placeholder="留空继承默认模型">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-classification-model" class="form-label">分类与标签模型</label>
+                                                                <input type="text" id="openai-classification-model" name="OPENAI_CLASSIFICATION_MODEL_NAME" value="{{ config.get('OPENAI_CLASSIFICATION_MODEL_NAME', '') }}" class="form-control" placeholder="可配置更轻量模型">
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-4">
+                                                            <div class="form-group">
+                                                                <label for="openai-translation-model" class="form-label">元数据翻译模型</label>
+                                                                <input type="text" id="openai-translation-model" name="OPENAI_TRANSLATION_MODEL_NAME" value="{{ config.get('OPENAI_TRANSLATION_MODEL_NAME', '') }}" class="form-control" placeholder="留空继承默认模型">
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <p class="help-text mt-2 mb-0">结果缓存会在本机私有数据库保存已成功解析的结构化输出（可能包含译文），不保存输入 Prompt 或 API 密钥。人工“重新生成”始终旁路缓存。模型覆盖留空时继承全局默认模型。</p>
+                                                </div>
+
+                                                <div class="settings-subcard">
+                                                    <div class="settings-subcard-header">
+                                                        <h5>图片 Provider Registry</h5>
+                                                        <span class="settings-status-badge is-info">额度耗尽自动切换</span>
+                                                    </div>
+                                                    <p class="help-text">当前执行器支持 OpenAI-compatible Images API；原生 Gemini Image 等适配器通过同一能力接口继续扩展，不读取任何 Codex/ChatGPT 登录凭据。</p>
+                                                    {% for slot in [1, 2, 3, 4] %}
+                                                        {% set prefix = 'IMAGE_PROVIDER_' ~ slot ~ '_' %}
+                                                        <div class="border rounded p-3 mb-3">
+                                                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                                                <strong>图片 Profile {{ slot }}</strong>
+                                                                <div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="image-provider-{{ slot }}-enabled" name="{{ prefix }}ENABLED" {% if config.get(prefix ~ 'ENABLED', False) %}checked{% endif %}><label class="form-check-label" for="image-provider-{{ slot }}-enabled">启用</label></div>
+                                                            </div>
+                                                            <div class="row g-3">
+                                                                <div class="col-md-3"><label class="form-label" for="image-provider-{{ slot }}-id">Provider ID</label><input class="form-control" id="image-provider-{{ slot }}-id" name="{{ prefix }}ID" value="{{ config.get(prefix ~ 'ID', '') }}"></div>
+                                                                <div class="col-md-5"><label class="form-label" for="image-provider-{{ slot }}-url">接口地址</label><input class="form-control" id="image-provider-{{ slot }}-url" name="{{ prefix }}BASE_URL" value="{{ config.get(prefix ~ 'BASE_URL', '') }}"></div>
+                                                                <div class="col-md-4"><label class="form-label" for="image-provider-{{ slot }}-model">模型</label><input class="form-control" id="image-provider-{{ slot }}-model" name="{{ prefix }}MODEL_NAME" value="{{ config.get(prefix ~ 'MODEL_NAME', 'gpt-image-2') }}"></div>
+                                                                <div class="col-md-6"><label class="form-label" for="image-provider-{{ slot }}-key">API Key</label><input type="password" class="form-control" id="image-provider-{{ slot }}-key" name="{{ prefix }}API_KEY" value="{{ secret_field_value(prefix ~ 'API_KEY') }}" autocomplete="off"></div>
+                                                                <div class="col-md-4"><label class="form-label" for="image-provider-{{ slot }}-scenes">场景</label><input class="form-control" id="image-provider-{{ slot }}-scenes" name="{{ prefix }}SCENES" value="{{ config.get(prefix ~ 'SCENES', '*') }}"></div>
+                                                                <div class="col-md-2 d-flex align-items-end"><label class="checkbox-label mb-2"><input type="checkbox" name="{{ prefix }}SUPPORTS_EDIT" {% if config.get(prefix ~ 'SUPPORTS_EDIT', True) %}checked{% endif %}>支持参考图编辑</label></div>
+                                                                <input type="hidden" name="{{ prefix }}ADAPTER" value="openai-compatible">
+                                                            </div>
+                                                        </div>
+                                                    {% endfor %}
+                                                    <label class="checkbox-label mb-0"><input type="checkbox" name="IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED" {% if config.get('IMAGE_PROVIDER_LEGACY_FALLBACK_ENABLED', True) %}checked{% endif %}>允许回退到下方旧图片/全局 Key</label>
+                                                </div>
+
+                                                <div class="settings-subcard">
+                                                    <div class="settings-subcard-header">
                                                         <h5>录播封面图片模型</h5>
                                                         <span class="settings-status-badge {{ 'is-info' if config.get('OPENAI_IMAGE_API_KEY') or config.get('OPENAI_IMAGE_BASE_URL') else ('is-success' if config.get('OPENAI_API_KEY') else 'is-neutral') }}">
                                                             {{ '已独立配置' if config.get('OPENAI_IMAGE_API_KEY') or config.get('OPENAI_IMAGE_BASE_URL') else ('继承全局配置' if config.get('OPENAI_API_KEY') else '未配置') }}
@@ -885,6 +996,22 @@
                                                         </div>
                                                     </div>
                                                     <p class="help-text mt-2 mb-0">两种封面将分别调用图片模型生成。模型不提供精确 16:9 / 4:3 尺寸时，系统会按各自的构图提示生成后独立处理为投稿比例。接口地址、API 密钥留空时分别继承全局配置。</p>
+                                                </div>
+
+                                                <div class="settings-subcard">
+                                                    <div class="settings-subcard-header">
+                                                        <h5>本地 OCR 视觉证据</h5>
+                                                        <span class="settings-status-badge {{ 'is-info' if config.get('VISUAL_EVIDENCE_ENABLED', False) else 'is-neutral' }}">{{ '已启用' if config.get('VISUAL_EVIDENCE_ENABLED', False) else '未启用' }}</span>
+                                                    </div>
+                                                    <div class="row g-3">
+                                                        <div class="col-12">
+                                                            <label class="checkbox-label"><input type="checkbox" name="VISUAL_EVIDENCE_ENABLED" {% if config.get('VISUAL_EVIDENCE_ENABLED', False) %}checked{% endif %}>录制完成后串行执行 FFmpeg 抽帧、感知哈希去重和本地 RapidOCR</label>
+                                                        </div>
+                                                        <div class="col-md-4"><label class="form-label" for="visual-evidence-interval">固定抽帧间隔（秒）</label><input type="number" min="5" max="600" id="visual-evidence-interval" name="VISUAL_EVIDENCE_SAMPLE_INTERVAL_SECONDS" value="{{ config.get('VISUAL_EVIDENCE_SAMPLE_INTERVAL_SECONDS', 30) }}" class="form-control"></div>
+                                                        <div class="col-md-4"><label class="form-label" for="visual-evidence-max">单段最大候选帧</label><input type="number" min="1" max="1000" id="visual-evidence-max" name="VISUAL_EVIDENCE_MAX_FRAMES" value="{{ config.get('VISUAL_EVIDENCE_MAX_FRAMES', 180) }}" class="form-control"></div>
+                                                        <div class="col-md-4"><label class="form-label" for="visual-evidence-confidence">OCR 置信度阈值</label><input type="number" min="0" max="1" step="0.05" id="visual-evidence-confidence" name="VISUAL_EVIDENCE_OCR_CONFIDENCE" value="{{ config.get('VISUAL_EVIDENCE_OCR_CONFIDENCE', 0.60) }}" class="form-control"></div>
+                                                    </div>
+                                                    <p class="help-text mt-2 mb-0">该步骤不调用 Vision API，固定并发为 1；帧 SHA-256 + OCR 模型版本用于幂等缓存。结果写入私有 Evidence SQLite，后续模型只按需检索摘要和时间窗。</p>
                                                 </div>
 
                                                 <div class="settings-subcard">
@@ -1062,8 +1189,89 @@
                                                             <label for="asr-provider" class="form-label">默认 ASR 服务</label>
                                                             <select id="asr-provider" name="SPEECH_RECOGNITION_PROVIDER" class="form-select">
                                                                 <option value="whisper" {% if config.get('SPEECH_RECOGNITION_PROVIDER', 'whisper') == 'whisper' %}selected{% endif %}>Whisper（OpenAI 兼容）</option>
+                                                                <option value="free_pool" {% if config.get('SPEECH_RECOGNITION_PROVIDER', 'whisper') == 'free_pool' %}selected{% endif %}>免费池（Groq → Cloudflare）</option>
                                                                 <option value="voxtral" {% if config.get('SPEECH_RECOGNITION_PROVIDER', 'whisper') == 'voxtral' %}selected{% endif %}>Voxtral（Mistral）</option>
                                                             </select>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    </div>
+
+                                    <div class="col-12" id="free-asr-config">
+                                        <article class="settings-card">
+                                            <div class="settings-card-header">
+                                                <div>
+                                                    <span class="section-eyebrow">免费 ASR 路由</span>
+                                                    <h4>Groq 与 Cloudflare 凭据</h4>
+                                                </div>
+                                                <span class="settings-status-badge is-info">禁止付费回退</span>
+                                            </div>
+                                            <div class="settings-card-body">
+                                                <div class="alert alert-info">
+                                                    仅在侧挂、持久化、内嵌和平台字幕都不存在时启用。Groq 本地额度用尽或返回限流后自动切换 Cloudflare；两者都不可用时记录 <code>pending_free_quota</code>，不会转入付费接口。额度默认值可调整，以供应商控制台显示为准。
+                                                </div>
+                                                <input type="hidden" name="ASR_BILLING_MODE" value="free_only">
+                                                <div class="row g-3">
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="groq-api-key" class="form-label">Groq API Key</label>
+                                                            <input type="password" id="groq-api-key" name="GROQ_API_KEY" value="{{ secret_field_value('GROQ_API_KEY') }}" class="form-control" autocomplete="off" placeholder="Groq Free 项目密钥">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="groq-asr-model" class="form-label">Groq ASR 模型</label>
+                                                            <input type="text" id="groq-asr-model" name="GROQ_ASR_MODEL_NAME" value="{{ config.get('GROQ_ASR_MODEL_NAME', 'whisper-large-v3-turbo') }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="groq-asr-hourly" class="form-label">Groq 每小时音频秒</label>
+                                                            <input type="number" min="1" id="groq-asr-hourly" name="GROQ_ASR_HOURLY_AUDIO_SECONDS" value="{{ config.get('GROQ_ASR_HOURLY_AUDIO_SECONDS', 7200) }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="groq-asr-daily" class="form-label">Groq 每日音频秒</label>
+                                                            <input type="number" min="1" id="groq-asr-daily" name="GROQ_ASR_DAILY_AUDIO_SECONDS" value="{{ config.get('GROQ_ASR_DAILY_AUDIO_SECONDS', 28800) }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="groq-asr-workers" class="form-label">Groq 最大并发</label>
+                                                            <input type="number" min="1" max="20" id="groq-asr-workers" name="GROQ_ASR_MAX_WORKERS" value="{{ config.get('GROQ_ASR_MAX_WORKERS', 2) }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="groq-asr-rpm" class="form-label">Groq RPM 上限</label>
+                                                            <input type="number" min="1" id="groq-asr-rpm" name="GROQ_ASR_RPM_LIMIT" value="{{ config.get('GROQ_ASR_RPM_LIMIT', 20) }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="cloudflare-account-id" class="form-label">Cloudflare Account ID</label>
+                                                            <input type="text" id="cloudflare-account-id" name="CLOUDFLARE_ACCOUNT_ID" value="{{ config.get('CLOUDFLARE_ACCOUNT_ID', '') }}" class="form-control" autocomplete="off">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group">
+                                                            <label for="cloudflare-api-token" class="form-label">Cloudflare Workers AI Token</label>
+                                                            <input type="password" id="cloudflare-api-token" name="CLOUDFLARE_API_TOKEN" value="{{ secret_field_value('CLOUDFLARE_API_TOKEN') }}" class="form-control" autocomplete="off">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-8">
+                                                        <div class="form-group">
+                                                            <label for="cloudflare-asr-model" class="form-label">Cloudflare ASR 模型</label>
+                                                            <input type="text" id="cloudflare-asr-model" name="CLOUDFLARE_ASR_MODEL_NAME" value="{{ config.get('CLOUDFLARE_ASR_MODEL_NAME', '@cf/openai/whisper-large-v3-turbo') }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="cloudflare-asr-daily" class="form-label">Cloudflare 每日音频秒</label>
+                                                            <input type="number" min="1" id="cloudflare-asr-daily" name="CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS" value="{{ config.get('CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS', 14400) }}" class="form-control">
                                                         </div>
                                                     </div>
                                                 </div>
@@ -2883,16 +3091,18 @@
     const asrProvider = document.getElementById('asr-provider');
     const whisperConfig = document.getElementById('whisper-config');
     const voxtralConfig = document.getElementById('voxtral-config');
+    const freeAsrConfig = document.getElementById('free-asr-config');
     const sharedVadConfig = document.getElementById('shared-vad-config');
     const sharedVadProviderPill = document.getElementById('shared-vad-provider-pill');
     const sharedVadProviderCopy = document.getElementById('shared-vad-provider-copy');
 
-    if (asrProvider && whisperConfig && voxtralConfig && sharedVadConfig) {
+    if (asrProvider && whisperConfig && voxtralConfig && freeAsrConfig && sharedVadConfig) {
         const toggleAsrProvider = function () {
             const provider = asrProvider.value;
             if (provider === 'whisper') {
                 whisperConfig.style.display = 'block';
                 voxtralConfig.style.display = 'none';
+                freeAsrConfig.style.display = 'none';
                 sharedVadConfig.style.display = 'block';
                 if (sharedVadProviderPill) {
                     sharedVadProviderPill.textContent = 'Whisper';
@@ -2903,12 +3113,24 @@
             } else if (provider === 'voxtral') {
                 whisperConfig.style.display = 'none';
                 voxtralConfig.style.display = 'block';
+                freeAsrConfig.style.display = 'none';
                 sharedVadConfig.style.display = 'block';
                 if (sharedVadProviderPill) {
                     sharedVadProviderPill.textContent = 'Voxtral';
                 }
                 if (sharedVadProviderCopy) {
                     sharedVadProviderCopy.textContent = '当前为 Voxtral 模式，扫描窗和时间戳粒度同样生效；关闭扫描窗时默认整段发送，超过单请求上限时仍会自动切片。';
+                }
+            } else if (provider === 'free_pool') {
+                whisperConfig.style.display = 'none';
+                voxtralConfig.style.display = 'none';
+                freeAsrConfig.style.display = 'block';
+                sharedVadConfig.style.display = 'block';
+                if (sharedVadProviderPill) {
+                    sharedVadProviderPill.textContent = '免费池';
+                }
+                if (sharedVadProviderCopy) {
+                    sharedVadProviderCopy.textContent = '仅在没有可复用 AI 字幕时运行 VAD，再按 Groq、Cloudflare 顺序自动消耗免费额度；不会回退到付费接口。';
                 }
             }
         };

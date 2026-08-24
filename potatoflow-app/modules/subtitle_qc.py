@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import json
 import logging
 import math
 import re
@@ -10,7 +9,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from .utils import extract_chat_message_json, get_chat_message_text
 
 logger = logging.getLogger('subtitle_qc')
 SHORT_LINE_NORMALIZED_LEN = 8
@@ -703,7 +701,7 @@ def _call_ai_judge(
     if not api_key:
         return None, None, None, 'missing_openai_api_key'
 
-    from .ai_enhancer import _request_chat_completion, get_openai_client
+    from .ai_enhancer import _request_json_object, get_openai_client
     client = get_openai_client({
         'OPENAI_API_KEY': api_key,
         'OPENAI_BASE_URL': base_url,
@@ -715,6 +713,11 @@ def _call_ai_judge(
         'OPENAI_RPM_LIMIT': config.get('OPENAI_RPM_LIMIT', 30),
         'OPENAI_REQUEST_MAX_RETRIES': config.get('OPENAI_REQUEST_MAX_RETRIES', 2),
         'OPENAI_RETRY_BASE_SECONDS': config.get('OPENAI_RETRY_BASE_SECONDS', 0.75),
+        'OPENAI_RESULT_CACHE_MODE': config.get('OPENAI_RESULT_CACHE_MODE', 'auto'),
+        'OPENAI_RESULT_CACHE_TTL_HOURS': config.get('OPENAI_RESULT_CACHE_TTL_HOURS', 168),
+        'OPENAI_RESULT_CACHE_BYPASS': config.get('OPENAI_RESULT_CACHE_BYPASS', False),
+        'OPENAI_SCENE_MODEL_OVERRIDES': config.get('OPENAI_SCENE_MODEL_OVERRIDES', {}),
+        'OPENAI_SCENE_TOKEN_BUDGETS': config.get('OPENAI_SCENE_TOKEN_BUDGETS', {}),
     })
 
     system = (
@@ -736,22 +739,19 @@ def _call_ai_judge(
     }
 
     try:
-        resp = _request_chat_completion(
-            client,
-            model_name,
-            system,
-            user,
+        parsed_raw = _request_json_object(
+            client=client,
+            model_name=model_name,
+            system_prompt=system,
+            payload=user,
             max_tokens=120,
             temperature=0.0,
             thinking_enabled=config.get('SUBTITLE_QC_THINKING_ENABLED', False),
             logger_obj=logger,
             scene_name='subtitle_qc',
-            response_format={'type': 'json_object'},
         )
-        message = resp.choices[0].message
-        parsed_raw = extract_chat_message_json(message, expected_type=dict)
         if not isinstance(parsed_raw, dict) or not parsed_raw:
-            logger.warning(f"字幕QC未返回有效JSON，响应预览: {get_chat_message_text(message)[:200]}")
+            logger.warning("字幕QC未返回有效JSON")
             return None, None, None, 'ai_return_not_json'
         parsed: Dict[str, Any] = parsed_raw
 

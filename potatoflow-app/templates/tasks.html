@@ -1277,6 +1277,11 @@ html[data-theme="dark"] .task-datetime { color: #d1deea; border-bottom-color: #6
 .recording-detail-loading { display: flex; min-height: 220px; align-items: center; justify-content: center; gap: .65rem; color: #7d8798; }
 .recording-detail-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding: 1rem; border: 1px solid #e6ebf2; border-radius: 12px; background: #f8fafc; }
 .recording-detail-summary strong { display: block; margin-bottom: .25rem; }
+.recording-ai-usage { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .55rem; margin: 0 0 1rem; }
+.recording-ai-usage > div { padding: .7rem .8rem; border: 1px solid #e3e8ef; border-radius: 10px; background: #fff; }
+.recording-ai-usage span, .recording-ai-usage strong { display: block; }
+.recording-ai-usage span { color: #778399; font-size: .7rem; }
+.recording-ai-usage strong { margin-top: .18rem; color: #243247; font-size: .92rem; }
 .recording-detail-stages { display: grid; gap: .7rem; }
 .recording-detail-stage { border: 1px solid #e3e8ef; border-radius: 12px; background: #fff; overflow: hidden; }
 .recording-detail-stage > summary { display: grid; grid-template-columns: 34px minmax(120px, 1fr) auto 14px; align-items: center; gap: .75rem; padding: .85rem 1rem; cursor: pointer; list-style: none; }
@@ -1383,6 +1388,8 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-detail-stage {
     border-color: var(--studio-border);
     background: var(--studio-surface-raised);
 }
+html[data-theme="dark"] #recordingJobDetailModal .recording-ai-usage > div { border-color: #344256; background: #202b3a; }
+html[data-theme="dark"] #recordingJobDetailModal .recording-ai-usage strong { color: #edf4ff; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-ai-review { color: #b8c9d8; border-color: #315a82; background: #172d41; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-ai-review strong { color: #8bc1ff; }
 html[data-theme="dark"] #recordingJobDetailModal .recording-detail-summary .text-muted,
@@ -1486,6 +1493,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
     background: #19a9dc;
 }
 @media (max-width: 767.98px) {
+    .recording-ai-usage { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .recording-task-filters { grid-template-columns: 1fr 1fr; }
     .recording-filter-search, .recording-filter-actions { grid-column: 1 / -1; }
     .recording-filter-actions .btn { flex: 1; }
@@ -1651,6 +1659,8 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         ass: {name: '处理弹幕字幕', description: '读取弹幕 XML，并按配置生成 ASS 字幕', icon: 'bi-badge-cc'},
         burn: {name: '烧录弹幕字幕', description: '用 FFmpeg 转码并将 ASS 弹幕永久写入视频画面', icon: 'bi-badge-cc'},
         ai_subtitle: {name: '处理 AI 字幕', description: '优先复用侧挂、内嵌或平台字幕，缺失时按配置执行 ASR，并将质检后的字幕提供给 AI', icon: 'bi-soundwave'},
+        evidence: {name: '建立内容证据索引', description: '把 TranscriptDocument 按时间戳写入私有 SQLite/FTS5，供后续按需检索', icon: 'bi-journal-text'},
+        visual_evidence: {name: '提取 OCR 视觉证据', description: '录制完成后低优先级抽帧、去重和 OCR；未启用时明确跳过', icon: 'bi-eye'},
         ai: {name: 'AI 简介与投稿信息', description: '生成标题、简介、标签和投稿分区', icon: 'bi-stars'},
         xml_identity: {name: '主播英雄识别', description: '优先读取斗鱼主播视角英雄、最终六格装备与 KDA，XML 仅作兜底', icon: 'bi-person-check'},
         live_stats: {name: '直播数据整理', description: '按本次录播时间整理礼物、在线人数与对局数据', icon: 'bi-bar-chart-line'},
@@ -2127,6 +2137,22 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
         modal.querySelector('[data-role="recording-detail-meta"]').textContent =
             `${job.room_name || '未匹配直播间'} · ${job.video_name || ''} · ${job.display_id || job.short_id || job.id?.slice(0, 12) || ''}`;
 
+        const aiUsage = job.ai_usage && typeof job.ai_usage === 'object' ? job.ai_usage : {};
+        const logicalRequests = Number(aiUsage.logical_request_count || 0);
+        const physicalRequests = Number(aiUsage.physical_request_count || 0);
+        const applicationHits = Number(aiUsage.application_cache_hit_count || 0);
+        const inputTokens = Number(aiUsage.input_tokens || 0);
+        const promptCachedTokens = Number(aiUsage.cached_tokens || 0);
+        const promptCacheRatio = inputTokens > 0 ? `${(promptCachedTokens * 100 / inputTokens).toFixed(1)}%` : '—';
+        const requestAmplification = logicalRequests > 0 ? `${(physicalRequests / logicalRequests).toFixed(2)}×` : '—';
+        const aiUsageHtml = logicalRequests > 0 ? `<div class="recording-ai-usage" aria-label="AI 调用指标">
+            <div><span>逻辑调用</span><strong>${logicalRequests.toLocaleString()}</strong></div>
+            <div><span>真实请求 / 放大率</span><strong>${physicalRequests.toLocaleString()} · ${requestAmplification}</strong></div>
+            <div><span>结果缓存命中</span><strong>${applicationHits.toLocaleString()}</strong></div>
+            <div><span>Prompt 缓存率</span><strong>${promptCacheRatio}</strong></div>
+            <div><span>Token / 成本</span><strong>${inputTokens.toLocaleString()} · $${Number(aiUsage.cost_usd || 0).toFixed(4)}</strong></div>
+        </div>` : '';
+
         const stagesByKey = new Map((job.stages || []).map(stage => [stage.key, stage]));
         const visibleStageKeys = Array.isArray(job.stages) && job.stages.length
             ? job.stages.map(stage => stage.key)
@@ -2211,6 +2237,7 @@ html[data-theme="dark"] #recordingJobDetailModal .recording-burn-live .progress-
                 <span class="badge ${job.status === 'failed' ? 'text-bg-danger' : job.status === 'completed' ? 'text-bg-success' : queuedStatusLabel ? 'text-bg-warning' : 'text-bg-primary'}">${escapeRecordingDetail(queuedStatusLabel || recordingJobStatusNames[job.status] || job.status || '处理中')}</span>
             </div>
             ${retryNotice}
+            ${aiUsageHtml}
             <div class="recording-detail-legend" aria-label="流水线状态说明">
                 <strong>状态说明</strong>
                 <span class="recording-detail-legend-item completed"><i class="bi bi-circle-fill"></i>绿色：已完成</span>

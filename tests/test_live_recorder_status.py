@@ -4830,7 +4830,7 @@ class LiveRecorderStatusTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            '"detect", "record", "ass", "burn", "ai_subtitle", "live_stats"',
+            '"detect", "record", "ass", "burn", "ai_subtitle", "evidence"',
             source,
         )
         self.assertIn("已烧录视频完成封装且校验通过后", template)

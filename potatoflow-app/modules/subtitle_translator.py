@@ -116,6 +116,9 @@ class TranslationConfig:
     rpm_limit: int = 30
     request_max_retries: int = 2
     retry_base_seconds: float = 0.75
+    result_cache_mode: str = "auto"
+    result_cache_ttl_hours: float = 168.0
+    result_cache_bypass: bool = False
     # Prompt 中心配置
     prompt_mode: str = "builtin"
     prompt_text: str = ""         # 字幕翻译主 Prompt 用户文本
@@ -396,19 +399,18 @@ class LLMRequester:
                     f"开始翻译批次 {batch_id}，包含 {len(texts)} 条字幕"
                 )
             
-            from .ai_enhancer import _request_chat_completion
-            response = _request_chat_completion(
-                self.client,
-                model_name,
-                system_prompt,
-                {},
+            from .ai_enhancer import _request_json_object
+            parsed = _request_json_object(
+                client=self.client,
+                model_name=model_name,
+                system_prompt=system_prompt,
+                payload={},
                 max_tokens=4096,
                 temperature=0.0,
                 thinking_enabled=self.openai_config.get('OPENAI_THINKING_ENABLED', False),
                 logger_obj=self.logger,
                 scene_name='subtitle_translate_batch',
                 user_content=user_prompt,
-                response_format={"type": "json_object"},
             )
             
             response_time = time.time() - start_time
@@ -419,14 +421,11 @@ class LLMRequester:
                     f"批次 {batch_id} 翻译完成，耗时: {response_time:.2f}秒"
                 )
             
-            # 检查响应是否有效
-            if not response.choices or len(response.choices) == 0:
+            if not isinstance(parsed, dict):
                 with self._log_lock:
-                    self.logger.warning(f"批次 {batch_id}: API返回空的choices列表")
+                    self.logger.warning(f"批次 {batch_id}: API未返回有效JSON对象")
                 return [""] * len(texts)
-            
-            message = response.choices[0].message
-            return self._parse_structured_translation_result(message, len(texts), batch_id)
+            return self._parse_structured_translation_result(parsed, len(texts), batch_id)
             
         except Exception as e:
             with self._log_lock:
@@ -458,29 +457,24 @@ class LLMRequester:
             model_name = self.openai_config.get('OPENAI_MODEL_NAME', 'gpt-3.5-turbo')
             with self._log_lock:
                 self.logger.info(f"开始严格模式翻译批次 {batch_id}，包含 {len(texts)} 条字幕")
-            from .ai_enhancer import _request_chat_completion
-            response = _request_chat_completion(
-                self.client,
-                model_name,
-                system_prompt,
-                {},
+            from .ai_enhancer import _request_json_object
+            parsed = _request_json_object(
+                client=self.client,
+                model_name=model_name,
+                system_prompt=system_prompt,
+                payload={},
                 max_tokens=4096,
                 temperature=0.0,
                 thinking_enabled=self.openai_config.get('OPENAI_THINKING_ENABLED', False),
                 logger_obj=self.logger,
                 scene_name='subtitle_translate_batch_strict',
                 user_content=user_prompt,
-                response_format={"type": "json_object"},
             )
-            
-            # 检查响应是否有效
-            if not response.choices or len(response.choices) == 0:
+            if not isinstance(parsed, dict):
                 with self._log_lock:
-                    self.logger.warning(f"严格模式批次 {batch_id}: API返回空的choices列表")
+                    self.logger.warning(f"严格模式批次 {batch_id}: API未返回有效JSON对象")
                 return [""] * len(texts)
-            
-            message = response.choices[0].message
-            return self._parse_structured_translation_result(message, len(texts), batch_id)
+            return self._parse_structured_translation_result(parsed, len(texts), batch_id)
         except Exception as e:
             with self._log_lock:
                 self.logger.error(f"严格模式批次 {batch_id} 翻译失败: {e}")
@@ -525,7 +519,10 @@ class LLMRequester:
     def _parse_structured_translation_result(self, message, expected_count: int, batch_id: str) -> List[str]:
         """解析结构化翻译结果"""
         try:
-            json_result = extract_chat_message_json(message, expected_type=dict)
+            json_result = (
+                message if isinstance(message, dict)
+                else extract_chat_message_json(message, expected_type=dict)
+            )
             # 如果首次解析失败，尝试清洗 ASS 标签后重试
             if not isinstance(json_result, dict):
                 import re as _re
@@ -554,6 +551,7 @@ class LLMRequester:
                     self.logger.warning(f"批次 {batch_id}: translations不是数组格式")
                 return [""] * expected_count
             
+            translations = list(translations)
             # 确保返回的翻译数量正确
             while len(translations) < expected_count:
                 translations.append("")  # 用空字符串填充
@@ -600,6 +598,9 @@ class SubtitleTranslator:
             'OPENAI_RPM_LIMIT': config.rpm_limit,
             'OPENAI_REQUEST_MAX_RETRIES': config.request_max_retries,
             'OPENAI_RETRY_BASE_SECONDS': config.retry_base_seconds,
+            'OPENAI_RESULT_CACHE_MODE': config.result_cache_mode,
+            'OPENAI_RESULT_CACHE_TTL_HOURS': config.result_cache_ttl_hours,
+            'OPENAI_RESULT_CACHE_BYPASS': config.result_cache_bypass,
             # Prompt 中心配置（快照，避免热修改影响进行中的翻译）
             'PROMPT_MODE': getattr(config, 'prompt_mode', 'builtin'),
             'PROMPT_TEXT': getattr(config, 'prompt_text', ''),
@@ -1163,6 +1164,9 @@ def create_translator_from_config(app_config: Dict, task_id: Optional[str] = Non
             rpm_limit=int(app_config.get('OPENAI_RPM_LIMIT', 30)),
             request_max_retries=int(app_config.get('OPENAI_REQUEST_MAX_RETRIES', 2)),
             retry_base_seconds=float(app_config.get('OPENAI_RETRY_BASE_SECONDS', 0.75)),
+            result_cache_mode=str(app_config.get('OPENAI_RESULT_CACHE_MODE', 'auto')),
+            result_cache_ttl_hours=float(app_config.get('OPENAI_RESULT_CACHE_TTL_HOURS', 168)),
+            result_cache_bypass=bool(app_config.get('OPENAI_RESULT_CACHE_BYPASS', False)),
             prompt_mode=prompt_mode,
             prompt_text=prompt_text,
             prompt_strict_mode=prompt_strict_mode,

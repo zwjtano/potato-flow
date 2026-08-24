@@ -181,6 +181,8 @@ RECORDING_STAGE_LABELS = {
     "record": "自动录制",
     "ass": "生成 ASS",
     "ai_subtitle": "处理 AI 字幕",
+    "evidence": "建立内容证据索引",
+    "visual_evidence": "提取 OCR 视觉证据",
     "ai": "生成 AI 简介",
     "xml_identity": "主播英雄识别",
     "live_stats": "直播数据整理",
@@ -3684,7 +3686,8 @@ class LiveRecorderManager:
                 "record", "ass", "burn", "cover", "remux", "verify", "cleanup",
             ),
             "bilibili": (
-                "detect", "record", "ass", "burn", "ai_subtitle", "live_stats", "xml_identity", "ai",
+                "detect", "record", "ass", "burn", "ai_subtitle", "evidence",
+                "visual_evidence", "live_stats", "xml_identity", "ai",
                 "cover", "cover_16x9", "cover_4x3", "upload", "chapters", "collection", "comment", "cleanup",
             ),
         }
@@ -4397,7 +4400,10 @@ class LiveRecorderManager:
             )
             from .config_manager import load_config
 
-            app_config = load_config()
+            app_config = dict(load_config())
+            # A user-requested regeneration must produce a fresh candidate and
+            # must not overwrite the reusable automatic-pipeline result cache.
+            app_config["OPENAI_RESULT_CACHE_BYPASS"] = True
             if selected & {"title", "description", "tags"} and not app_config.get("OPENAI_API_KEY"):
                 raise RecorderConfigError("未配置全局 AI API Key，无法重新生成标题、简介或标签")
             if (

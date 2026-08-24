@@ -21,6 +21,13 @@ from .utils import (
     get_chat_message_text,
 )
 from .ai_request_ledger import input_fingerprint, logical_ai_request
+from .ai_result_cache import (
+    build_result_cache_key,
+    get_ai_result_cache,
+    resolve_result_cache_mode,
+    resolve_result_cache_ttl_seconds,
+    resolve_result_cache_wait_seconds,
+)
 from .llm_orchestrator import (
     LLMRequestPolicy,
     acquire_request_slot,
@@ -29,14 +36,25 @@ from .llm_orchestrator import (
     llm_retry_delay,
     resolve_llm_request_policy,
 )
+from .llm_provider_registry import (
+    LlmProviderProfile,
+    get_last_provider_route,
+    get_provider_health_store,
+    is_provider_failover_error,
+    preferred_available_profile,
+    record_last_provider_route,
+    resolve_provider_profiles,
+)
+from .prompt_registry import PromptSpec, is_valid_cache_result, resolve_scene_request
 
 import openai
 
 
 _OPENAI_CLIENT_POOL_LOCK = threading.Lock()
-_OPENAI_CLIENT_POOL: Dict[tuple[str, str, float], Any] = {}
+_OPENAI_CLIENT_POOL: Dict[tuple[str, str, float, str], Any] = {}
 _OPENAI_CLIENT_POOL_LIMIT = 8
 _OPENAI_CLIENT_REQUEST_POLICIES: Dict[tuple[int, str], LLMRequestPolicy] = {}
+_OPENAI_CLIENT_CONFIGS: Dict[int, Dict[str, Any]] = {}
 
 # Pre-compiled regex patterns for _pre_clean (performance optimization)
 _URL_PATTERNS = [
@@ -177,12 +195,20 @@ def get_openai_client(openai_config):
     """
     Reuse one SDK/HTTP connection pool per credential and endpoint tuple.
     """
-    api_key = str(openai_config.get('OPENAI_API_KEY', '') or '')
+    root_config = dict(openai_config or {})
+    bootstrap_profiles = resolve_provider_profiles(root_config, scene_name="")
+    bootstrap_profile = bootstrap_profiles[0] if bootstrap_profiles else None
+    connection_config = (
+        bootstrap_profile.materialize_config(root_config)
+        if bootstrap_profile is not None
+        else root_config
+    )
+    api_key = str(connection_config.get('OPENAI_API_KEY', '') or '')
     options = {}
-    base_url = str(openai_config.get('OPENAI_BASE_URL') or '').strip().rstrip('/')
+    base_url = str(connection_config.get('OPENAI_BASE_URL') or '').strip().rstrip('/')
     if base_url:
         options['base_url'] = base_url
-    timeout_value = openai_config.get('OPENAI_TIMEOUT_SECONDS', 600)
+    timeout_value = connection_config.get('OPENAI_TIMEOUT_SECONDS', 600)
     try:
         timeout_seconds = float(str(timeout_value).strip())
     except Exception:
@@ -192,13 +218,57 @@ def get_openai_client(openai_config):
     # SDK retries are intentionally disabled.  The shared orchestrator records
     # and rate-limits every physical attempt, including Retry-After handling.
     options['max_retries'] = 0
+    orchestration_keys = (
+        'OPENAI_MODEL_NAME',
+        'OPENAI_METADATA_MODEL_NAME',
+        'OPENAI_CLASSIFICATION_MODEL_NAME',
+        'OPENAI_TRANSLATION_MODEL_NAME',
+        'SUBTITLE_OPENAI_MODEL_NAME',
+        'SUBTITLE_QC_MODEL_NAME',
+        'OPENAI_SCENE_MODEL_OVERRIDES',
+        'OPENAI_SCENE_TOKEN_BUDGETS',
+        'OPENAI_RESULT_CACHE_MODE',
+        'OPENAI_RESULT_CACHE_TTL_HOURS',
+        'OPENAI_RESULT_CACHE_BYPASS',
+        'OPENAI_PROMPT_CACHE_MODE',
+        'OPENAI_PROMPT_CACHE_TTL',
+        'OPENAI_PROMPT_CACHE_KEY_SHARDS',
+        'OPENAI_RPM_LIMIT',
+        'OPENAI_REQUEST_MAX_RETRIES',
+        'OPENAI_RETRY_BASE_SECONDS',
+        'OPENAI_PROVIDER_LEGACY_FALLBACK_ENABLED',
+        'OPENAI_PROVIDER_ROUTING_DISABLED',
+    )
+    provider_orchestration = {
+        f"OPENAI_PROVIDER_{slot}_{field}": (
+            hashlib.sha256(str(root_config.get(f"OPENAI_PROVIDER_{slot}_{field}") or "").encode("utf-8")).hexdigest()
+            if field == "API_KEY"
+            else root_config.get(f"OPENAI_PROVIDER_{slot}_{field}")
+        )
+        for slot in range(1, 5)
+        for field in (
+            "ENABLED", "ID", "BASE_URL", "API_KEY", "MODEL_NAME", "RPM_LIMIT", "SCENES"
+        )
+    }
+    orchestration_signature = hashlib.sha256(
+        json.dumps(
+            {
+                **{key: root_config.get(key) for key in orchestration_keys},
+                **provider_orchestration,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ).encode('utf-8')
+    ).hexdigest()[:16]
     pool_key = (
         hashlib.sha256(api_key.encode('utf-8')).hexdigest(),
         base_url,
         timeout_seconds if timeout_seconds > 0 else 0.0,
+        orchestration_signature,
     )
-    model_name = str(openai_config.get('OPENAI_MODEL_NAME') or '').strip()
-    policy = resolve_llm_request_policy(openai_config, model_name=model_name)
+    model_name = str(connection_config.get('OPENAI_MODEL_NAME') or '').strip()
+    policy = resolve_llm_request_policy(connection_config, model_name=model_name)
     with _OPENAI_CLIENT_POOL_LOCK:
         cached = _OPENAI_CLIENT_POOL.get(pool_key)
         if cached is not None:
@@ -206,10 +276,12 @@ def get_openai_client(openai_config):
             _OPENAI_CLIENT_POOL.pop(pool_key)
             _OPENAI_CLIENT_POOL[pool_key] = cached
             _OPENAI_CLIENT_REQUEST_POLICIES[(id(cached), model_name)] = policy
+            _OPENAI_CLIENT_CONFIGS[id(cached)] = root_config
             return cached
         client = openai.OpenAI(api_key=api_key, **options)
         _OPENAI_CLIENT_POOL[pool_key] = client
         _OPENAI_CLIENT_REQUEST_POLICIES[(id(client), model_name)] = policy
+        _OPENAI_CLIENT_CONFIGS[id(client)] = root_config
         while len(_OPENAI_CLIENT_POOL) > _OPENAI_CLIENT_POOL_LIMIT:
             _old_key = next(iter(_OPENAI_CLIENT_POOL))
             evicted = _OPENAI_CLIENT_POOL.pop(_old_key, None)
@@ -218,6 +290,7 @@ def get_openai_client(openai_config):
                 for policy_key in tuple(_OPENAI_CLIENT_REQUEST_POLICIES):
                     if policy_key[0] == evicted_id:
                         _OPENAI_CLIENT_REQUEST_POLICIES.pop(policy_key, None)
+                _OPENAI_CLIENT_CONFIGS.pop(evicted_id, None)
             # A caller may still be using the evicted client in another thread.
             # Removing it from the cache is safe; closing it here is not.
         return client
@@ -229,6 +302,7 @@ def _clear_openai_client_pool() -> None:
         clients = list(_OPENAI_CLIENT_POOL.values())
         _OPENAI_CLIENT_POOL.clear()
         _OPENAI_CLIENT_REQUEST_POLICIES.clear()
+        _OPENAI_CLIENT_CONFIGS.clear()
     for client in clients:
         close = getattr(client, 'close', None)
         if callable(close):
@@ -236,6 +310,47 @@ def _clear_openai_client_pool() -> None:
                 close()
             except Exception:
                 pass
+
+
+def _resolve_client_scene_request(
+    client,
+    *,
+    scene_name: str,
+    model_name: str,
+    max_tokens: Optional[int],
+) -> tuple[str, Optional[int], PromptSpec, Dict[str, Any], LLMRequestPolicy | None]:
+    """Resolve routing once and ensure the routed model has a request policy."""
+    client_config = dict(_OPENAI_CLIENT_CONFIGS.get(id(client)) or {})
+    routed_model, routed_tokens, prompt_spec = resolve_scene_request(
+        client_config,
+        scene_name=scene_name,
+        model_name=model_name,
+        max_tokens=max_tokens,
+    )
+    profiles = resolve_provider_profiles(client_config, scene_name=scene_name)
+    active_profile = None
+    if profiles:
+        try:
+            active_profile = preferred_available_profile(
+                profiles,
+                get_provider_health_store(),
+            ) or profiles[0]
+        except Exception:
+            active_profile = profiles[0]
+    active_config = (
+        active_profile.materialize_config(client_config)
+        if active_profile is not None
+        else client_config
+    )
+    if active_profile is not None:
+        active_config["OPENAI_PREFERRED_PROVIDER_PROFILE"] = active_profile.profile_id
+        routed_model = active_profile.model_name or routed_model
+    request_policy = (
+        resolve_llm_request_policy(active_config, model_name=routed_model)
+        if active_config
+        else None
+    )
+    return routed_model, routed_tokens, prompt_spec, active_config, request_policy
 
 
 def _is_timeout_like_error(exc: Exception) -> bool:
@@ -649,6 +764,15 @@ def _request_chat_completion(
                 logical_request_id=run_id or "__untracked__",
                 request_ledger=ledger,
             )
+    requested_model_name = model_name
+    model_name, max_tokens, _prompt_spec, _client_config, request_policy = (
+        _resolve_client_scene_request(
+            client,
+            scene_name=scene_name,
+            model_name=model_name,
+            max_tokens=max_tokens,
+        )
+    )
     create_kwargs = {
         "model": model_name,
         "messages": [
@@ -661,7 +785,6 @@ def _request_chat_completion(
         create_kwargs["max_tokens"] = max_tokens
     if response_format is not None:
         create_kwargs["response_format"] = response_format
-    request_policy = _OPENAI_CLIENT_REQUEST_POLICIES.get((id(client), model_name))
     apply_prompt_cache_policy(
         create_kwargs,
         request_policy,
@@ -674,75 +797,174 @@ def _request_chat_completion(
     mode_label = "JSON模式" if response_format else "纯文本模式"
 
     def physical_create(physical_kwargs):
-        max_retries = request_policy.max_retries if request_policy else 0
-        for attempt in range(max_retries + 1):
-            governor_wait_seconds = 0.0
+        root_provider_config = dict(
+            _OPENAI_CLIENT_CONFIGS.get(id(client)) or _client_config or {}
+        )
+        profiles = resolve_provider_profiles(
+            root_provider_config,
+            scene_name=scene_name,
+        )
+        if not profiles:
+            # Preserve dependency-injected/custom clients used by tests and
+            # embedders. Normal PotatoFlow clients always carry a configured
+            # Profile; this synthetic profile never creates a new SDK client.
+            if not hasattr(getattr(client, "chat", None), "completions"):
+                raise RuntimeError(f"场景 {scene_name} 没有可用的文本模型 Provider Profile")
+            profiles = (LlmProviderProfile(
+                profile_id="injected-client",
+                api_key="__injected_client__",
+                base_url="",
+                model_name=requested_model_name,
+                rpm_limit=0,
+                scenes=("*",),
+                priority=0,
+            ),)
+        base_model, _unused_tokens, _unused_spec = resolve_scene_request(
+            root_provider_config,
+            scene_name=scene_name,
+            model_name=requested_model_name,
+            max_tokens=max_tokens,
+        )
+        health_store = get_provider_health_store()
+        bootstrap_profiles = resolve_provider_profiles(root_provider_config, scene_name="")
+        bootstrap_profile = (
+            bootstrap_profiles[0]
+            if bootstrap_profiles
+            else profiles[0]
+            if profiles[0].profile_id == "injected-client"
+            else None
+        )
+        last_provider_error: Exception | None = None
+        for profile in profiles:
             try:
-                governor_wait_seconds = acquire_request_slot(request_policy)
+                if not health_store.is_available(profile):
+                    continue
             except Exception as exc:
-                # Fail open: the provider remains the final limit boundary.
                 if logger_obj:
-                    logger_obj.warning("AI RPM 治理器不可用，本次请求直接发送: %s", exc)
-            request_id = ""
-            ledger_started = time.monotonic()
-            if request_ledger and logical_request_id:
+                    logger_obj.warning("Provider 熔断状态读取失败，继续尝试 %s: %s", profile.profile_id, exc)
+            profile_config = profile.materialize_config(root_provider_config)
+            if profile.profile_id == "injected-client":
+                profile_config["OPENAI_REQUEST_MAX_RETRIES"] = 0
+            profile_model = profile.model_name or base_model
+            profile_policy = resolve_llm_request_policy(
+                profile_config,
+                model_name=profile_model,
+            )
+            provider_client = (
+                client
+                if bootstrap_profile is not None
+                and profile.health_key == bootstrap_profile.health_key
+                else get_openai_client(profile_config)
+            )
+            provider_kwargs = dict(physical_kwargs)
+            provider_kwargs["model"] = profile_model
+            provider_kwargs.pop("prompt_cache_key", None)
+            provider_kwargs.pop("prompt_cache_retention", None)
+            apply_prompt_cache_policy(
+                provider_kwargs,
+                profile_policy,
+                model_name=profile_model,
+                scene_name=scene_name,
+                system_prompt=system_prompt,
+                user_content=user_message_content,
+            )
+            max_retries = profile_policy.max_retries if profile_policy else 0
+            for attempt in range(max_retries + 1):
+                governor_wait_seconds = 0.0
                 try:
-                    request_id, ledger_started = request_ledger.begin_request(
-                        logical_request_id,
-                        mode="json" if response_format else "text",
-                        metadata={
-                            "scene_name": scene_name,
-                            "retry_attempt": attempt,
-                            "governor_wait_ms": round(governor_wait_seconds * 1000),
-                            "prompt_cache_mode": (
-                                request_policy.prompt_cache_mode if request_policy else "off"
-                            ),
-                            "prompt_cache_key": physical_kwargs.get("prompt_cache_key", ""),
-                        },
-                    )
-                except Exception:
-                    request_id = ""
-            if logger_obj:
-                logger_obj.info(
-                    "发起模型请求（%s，物理尝试 %d/%d）",
-                    mode_label,
-                    attempt + 1,
-                    max_retries + 1,
-                )
-            try:
-                response = client.chat.completions.create(**physical_kwargs)
-            except Exception as exc:
-                if request_ledger and request_id:
+                    governor_wait_seconds = acquire_request_slot(profile_policy)
+                except Exception as exc:
+                    if logger_obj:
+                        logger_obj.warning("AI RPM 治理器不可用，本次请求直接发送: %s", exc)
+                request_id = ""
+                ledger_started = time.monotonic()
+                if request_ledger and logical_request_id:
                     try:
-                        request_ledger.finish_request(
-                            request_id, ledger_started, error=exc
+                        request_id, ledger_started = request_ledger.begin_request(
+                            logical_request_id,
+                            mode="json" if response_format else "text",
+                            metadata={
+                                "scene_name": scene_name,
+                                "provider_profile": profile.profile_id,
+                                "provider_bucket": profile_policy.provider_bucket,
+                                "model": profile_model,
+                                "retry_attempt": attempt,
+                                "governor_wait_ms": round(governor_wait_seconds * 1000),
+                                "prompt_cache_mode": profile_policy.prompt_cache_mode,
+                                "prompt_cache_key": provider_kwargs.get("prompt_cache_key", ""),
+                            },
                         )
                     except Exception:
-                        pass
-                if attempt >= max_retries or not is_retryable_llm_error(exc):
-                    raise
-                delay = llm_retry_delay(
-                    exc,
-                    attempt=attempt,
-                    base_seconds=request_policy.retry_base_seconds,
-                )
+                        request_id = ""
                 if logger_obj:
-                    logger_obj.warning(
-                        "模型请求可重试错误（%s），%.2f 秒后重试",
-                        exc.__class__.__name__,
-                        delay,
+                    logger_obj.info(
+                        "发起模型请求（%s，Provider %s，物理尝试 %d/%d）",
+                        mode_label,
+                        profile.profile_id,
+                        attempt + 1,
+                        max_retries + 1,
                     )
-                time.sleep(delay)
-            else:
-                if request_ledger and request_id:
-                    try:
-                        request_ledger.finish_request(
-                            request_id, ledger_started, response=response
+                try:
+                    response = provider_client.chat.completions.create(**provider_kwargs)
+                except Exception as exc:
+                    last_provider_error = exc
+                    if request_ledger and request_id:
+                        try:
+                            request_ledger.finish_request(
+                                request_id, ledger_started, error=exc
+                            )
+                        except Exception:
+                            pass
+                    if is_provider_failover_error(exc):
+                        cooldown = max(
+                            60.0,
+                            llm_retry_delay(
+                                exc,
+                                attempt=attempt,
+                                base_seconds=profile_policy.retry_base_seconds,
+                            ),
                         )
-                    except Exception:
-                        pass
-                return response
-        raise RuntimeError("模型请求重试循环异常结束")
+                        try:
+                            health_store.mark_unavailable(
+                                profile,
+                                cooldown_seconds=cooldown,
+                                reason=exc.__class__.__name__,
+                            )
+                        except Exception:
+                            pass
+                        if logger_obj:
+                            logger_obj.warning(
+                                "Provider %s 配额/容量不可用，切换下一 Profile",
+                                profile.profile_id,
+                            )
+                        break
+                    if attempt >= max_retries or not is_retryable_llm_error(exc):
+                        raise
+                    delay = llm_retry_delay(
+                        exc,
+                        attempt=attempt,
+                        base_seconds=profile_policy.retry_base_seconds,
+                    )
+                    if logger_obj:
+                        logger_obj.warning(
+                            "模型请求可重试错误（%s），%.2f 秒后重试",
+                            exc.__class__.__name__,
+                            delay,
+                        )
+                    time.sleep(delay)
+                else:
+                    if request_ledger and request_id:
+                        try:
+                            request_ledger.finish_request(
+                                request_id, ledger_started, response=response
+                            )
+                        except Exception:
+                            pass
+                    record_last_provider_route(profile, profile_model)
+                    return response
+        if last_provider_error is not None:
+            raise last_provider_error
+        raise RuntimeError(f"场景 {scene_name} 的全部 Provider Profile 均处于熔断状态")
 
     try:
         return openai_chat_create_with_thinking_control(
@@ -775,33 +997,177 @@ def _request_json_object(
     scene_name: str,
     user_content=None,
 ) -> Optional[Dict[str, Any]]:
+    model_name, max_tokens, prompt_spec, client_config, request_policy = (
+        _resolve_client_scene_request(
+            client,
+            scene_name=scene_name,
+            model_name=model_name,
+            max_tokens=max_tokens,
+        )
+    )
     user_message_content = (
         user_content
         if user_content is not None
         else json.dumps(payload, ensure_ascii=False)
     )
+    cache_mode = resolve_result_cache_mode(client_config)
+    cache_eligible = prompt_spec.cacheable and cache_mode != "off"
+    cache_key = ""
+    if cache_eligible:
+        cache_key = build_result_cache_key(
+            scene_name=prompt_spec.name,
+            prompt_version=prompt_spec.version,
+            provider_bucket=(request_policy.provider_bucket if request_policy else ""),
+            model_name=model_name,
+            system_prompt=system_prompt,
+            user_content=user_message_content,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking_enabled=thinking_enabled,
+        )
     with logical_ai_request(
         kind="llm",
         scene_name=scene_name,
         provider="openai_compatible",
         model=model_name,
         fingerprint=input_fingerprint(system_prompt, user_message_content),
-        metadata={"expects_json_object": True},
+        metadata={
+            "expects_json_object": True,
+            "prompt_spec": prompt_spec.name,
+            "prompt_version": prompt_spec.version,
+            "application_cache_mode": cache_mode,
+            "application_cache_candidate": cache_eligible,
+        },
     ) as (ledger, run_id):
-        return _request_json_object_tracked(
-            client,
-            model_name,
-            system_prompt,
-            payload,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            thinking_enabled=thinking_enabled,
-            logger_obj=logger_obj,
-            scene_name=scene_name,
-            user_content=user_content,
-            logical_request_id=run_id or "__untracked__",
-            request_ledger=ledger,
-        )
+        try:
+            result_cache = get_ai_result_cache() if cache_key else None
+        except Exception as exc:
+            result_cache = None
+            cache_key = ""
+            if logger_obj:
+                logger_obj.warning("AI 结果缓存初始化失败，本次继续请求模型: %s", exc)
+
+        def use_cached_result(cached: Any) -> Optional[Dict[str, Any]]:
+            if not is_valid_cache_result(prompt_spec, cached):
+                return None
+            if ledger and run_id:
+                try:
+                    ledger.mark_run_application_cache_hit(run_id, cache_key)
+                except Exception:
+                    pass
+            if logger_obj:
+                logger_obj.info(
+                    "%s 命中应用级结果缓存，跳过模型请求（Prompt %s）",
+                    scene_name,
+                    prompt_spec.version,
+                )
+            return cached
+
+        if cache_key and cache_mode != "refresh":
+            try:
+                cached = result_cache.get(cache_key)
+            except Exception as exc:
+                cached = None
+                if logger_obj:
+                    logger_obj.warning("AI 结果缓存读取失败，本次继续请求模型: %s", exc)
+            valid_cached = use_cached_result(cached)
+            if valid_cached is not None:
+                return valid_cached
+
+        fill_lease_token = ""
+        if cache_key and cache_mode in {"auto", "refresh"}:
+            wait_seconds = resolve_result_cache_wait_seconds(client_config)
+            deadline = time.monotonic() + wait_seconds
+            waited_for_peer = False
+            try:
+                while not fill_lease_token:
+                    fill_lease_token = result_cache.acquire_fill_lease(
+                        cache_key,
+                        lease_seconds=max(600.0, wait_seconds * 2.0),
+                    )
+                    if fill_lease_token:
+                        if waited_for_peer:
+                            cached = result_cache.get(cache_key)
+                            valid_cached = use_cached_result(cached)
+                            if valid_cached is not None:
+                                result_cache.release_fill_lease(cache_key, fill_lease_token)
+                                fill_lease_token = ""
+                                return valid_cached
+                        break
+                    waited_for_peer = True
+                    cached = result_cache.get(cache_key)
+                    valid_cached = use_cached_result(cached)
+                    if valid_cached is not None:
+                        return valid_cached
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        if logger_obj:
+                            logger_obj.warning(
+                                "%s 等待相同 AI 请求完成超时，本次独立请求模型",
+                                scene_name,
+                            )
+                        break
+                    time.sleep(min(0.1, remaining))
+            except Exception as exc:
+                if logger_obj:
+                    logger_obj.warning("AI 结果缓存并发协调失败，本次继续请求模型: %s", exc)
+                fill_lease_token = ""
+
+        try:
+            result = _request_json_object_tracked(
+                client,
+                model_name,
+                system_prompt,
+                payload,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                thinking_enabled=thinking_enabled,
+                logger_obj=logger_obj,
+                scene_name=scene_name,
+                user_content=user_content,
+                logical_request_id=run_id or "__untracked__",
+                request_ledger=ledger,
+            )
+            actual_route = get_last_provider_route()
+            preferred_profile = str(
+                client_config.get("OPENAI_PREFERRED_PROVIDER_PROFILE") or ""
+            )
+            cache_route_matches = (
+                not preferred_profile
+                or actual_route.get("profile_id") == preferred_profile
+            )
+            if (
+                cache_key
+                and is_valid_cache_result(prompt_spec, result)
+                and cache_mode in {"auto", "refresh"}
+                and cache_route_matches
+            ):
+                try:
+                    result_cache.put(
+                        cache_key,
+                        result,
+                        scene_name=prompt_spec.name,
+                        prompt_version=prompt_spec.version,
+                        model_name=model_name,
+                        ttl_seconds=resolve_result_cache_ttl_seconds(client_config),
+                    )
+                except Exception as exc:
+                    if logger_obj:
+                        logger_obj.warning("AI 结果缓存写入失败，不影响本次结果: %s", exc)
+            elif cache_key and not cache_route_matches and logger_obj:
+                logger_obj.info(
+                    "%s 本次由备用 Provider %s 完成；不写入首选 Provider 的缓存键",
+                    scene_name,
+                    actual_route.get("profile_id") or "unknown",
+                )
+            return result
+        finally:
+            if fill_lease_token:
+                try:
+                    result_cache.release_fill_lease(cache_key, fill_lease_token)
+                except Exception as exc:
+                    if logger_obj:
+                        logger_obj.warning("AI 结果缓存并发租约释放失败: %s", exc)
 
 
 def _request_json_object_tracked(

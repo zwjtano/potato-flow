@@ -3144,7 +3144,8 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(
                 set(stages),
                 {
-                    "detect", "record", "ass", "burn", "ai_subtitle", "ai", "xml_identity", "live_stats",
+                    "detect", "record", "ass", "burn", "ai_subtitle", "evidence",
+                    "visual_evidence", "ai", "xml_identity", "live_stats",
                     "cover_16x9", "cover_4x3", "upload", "collection", "comment", "cleanup",
                 },
             )
