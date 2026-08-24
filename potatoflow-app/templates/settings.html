@@ -12,6 +12,9 @@
 {% set account_ready_count = (1 if config.get('BILIBILI_COOKIES_PATH') else 0) + (1 if config.get('YOUTUBE_COOKIES_PATH') else 0) %}
 {% set ai_ready = config.get('OPENAI_API_KEY') or config.get('OPENAI_IMAGE_API_KEY') or config.get('OPENAI_PROVIDER_1_API_KEY') or config.get('OPENAI_PROVIDER_2_API_KEY') or config.get('OPENAI_PROVIDER_3_API_KEY') or config.get('OPENAI_PROVIDER_4_API_KEY') or config.get('IMAGE_PROVIDER_1_API_KEY') or config.get('IMAGE_PROVIDER_2_API_KEY') or config.get('IMAGE_PROVIDER_3_API_KEY') or config.get('IMAGE_PROVIDER_4_API_KEY') or config.get('SUBTITLE_OPENAI_API_KEY') or config.get('WHISPER_API_KEY') or config.get('VOXTRAL_API_KEY') or config.get('GROQ_API_KEY') or config.get('CLOUDFLARE_API_TOKEN') %}
 {% set moderation_ready = config.get('ALIYUN_ACCESS_KEY_ID') and config.get('ALIYUN_ACCESS_KEY_SECRET') %}
+{% set groq_asr_ready = config.get('GROQ_API_KEY') %}
+{% set cloudflare_asr_ready = config.get('CLOUDFLARE_ACCOUNT_ID') and config.get('CLOUDFLARE_API_TOKEN') %}
+{% set free_asr_ready_count = (1 if groq_asr_ready else 0) + (1 if cloudflare_asr_ready else 0) %}
 
 <div class="settings-container">
     <div class="settings-page-header">
@@ -1200,80 +1203,149 @@
                                     </div>
 
                                     <div class="col-12" id="free-asr-config">
-                                        <article class="settings-card">
+                                        <article class="settings-card free-asr-provider-card">
                                             <div class="settings-card-header">
                                                 <div>
                                                     <span class="section-eyebrow">免费 ASR 路由</span>
-                                                    <h4>Groq 与 Cloudflare 凭据</h4>
+                                                    <h4>免费 ASR Provider</h4>
                                                 </div>
-                                                <span class="settings-status-badge is-info">禁止付费回退</span>
+                                                <span id="free-asr-provider-count"
+                                                      class="settings-status-badge {{ 'is-success' if free_asr_ready_count == 2 else ('is-info' if free_asr_ready_count == 1 else 'is-warning') }}"
+                                                      aria-live="polite">{{ free_asr_ready_count }}/2 已配置</span>
                                             </div>
                                             <div class="settings-card-body">
-                                                <div class="alert alert-info">
-                                                    仅在侧挂、持久化、内嵌和平台字幕都不存在时启用。Groq 本地额度用尽或返回限流后自动切换 Cloudflare；两者都不可用时记录 <code>pending_free_quota</code>，不会转入付费接口。额度默认值可调整，以供应商控制台显示为准。
+                                                <div class="free-asr-credential-notice" role="note">
+                                                    <span class="free-asr-notice-icon" aria-hidden="true"><i class="bi bi-key"></i></span>
+                                                    <span>
+                                                        <strong>免费额度不等于免密钥</strong>
+                                                        <small>Groq 需要 API Key；Cloudflare 需要 Account ID 和 Workers AI Token。PotatoFlow 只使用免费额度，不会替你提供共享密钥。</small>
+                                                    </span>
                                                 </div>
                                                 <input type="hidden" name="ASR_BILLING_MODE" value="free_only">
-                                                <div class="row g-3">
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="groq-api-key" class="form-label">Groq API Key</label>
-                                                            <input type="password" id="groq-api-key" name="GROQ_API_KEY" value="{{ secret_field_value('GROQ_API_KEY') }}" class="form-control" autocomplete="off" placeholder="Groq Free 项目密钥">
+
+                                                <div class="free-asr-route" aria-label="免费 ASR 故障转移顺序">
+                                                    <span class="free-asr-route-step">
+                                                        <b>1</b><span><strong>Groq</strong><small>优先调用</small></span>
+                                                    </span>
+                                                    <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                                                    <span class="free-asr-route-step">
+                                                        <b>2</b><span><strong>Cloudflare</strong><small>限流或额度耗尽后切换</small></span>
+                                                    </span>
+                                                    <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                                                    <span class="free-asr-route-step is-terminal">
+                                                        <b><i class="bi bi-clock-history"></i></b><span><strong>等待恢复</strong><small>禁止进入付费接口</small></span>
+                                                    </span>
+                                                </div>
+
+                                                <div class="free-asr-provider-list">
+                                                    <section id="asr-provider-groq" class="free-asr-provider {{ 'is-ready' if groq_asr_ready else 'needs-setup' }}">
+                                                        <div class="free-asr-provider-summary">
+                                                            <span class="free-asr-provider-mark is-groq" aria-hidden="true"><i class="bi bi-lightning-charge-fill"></i></span>
+                                                            <span class="free-asr-provider-copy">
+                                                                <span class="section-eyebrow">PRIMARY PROVIDER</span>
+                                                                <strong>Groq Whisper</strong>
+                                                                <small>需要 1 个 API Key；免费池中的第一路由。</small>
+                                                            </span>
+                                                            <span class="free-asr-provider-actions">
+                                                                <span class="free-asr-provider-state" data-provider-status aria-live="polite">
+                                                                    <i class="bi {{ 'bi-check-circle-fill' if groq_asr_ready else 'bi-exclamation-circle-fill' }}"></i>
+                                                                    <span>{{ '凭据已保存' if groq_asr_ready else '未配置 API Key' }}</span>
+                                                                </span>
+                                                                <button type="button" class="btn btn-sm btn-outline-primary" data-provider-config-button
+                                                                        data-bs-toggle="collapse" data-bs-target="#groq-asr-provider-config"
+                                                                        aria-expanded="false" aria-controls="groq-asr-provider-config">
+                                                                    <i class="bi bi-sliders2"></i><span>{{ '编辑配置' if groq_asr_ready else '立即配置' }}</span>
+                                                                </button>
+                                                            </span>
                                                         </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="groq-asr-model" class="form-label">Groq ASR 模型</label>
-                                                            <input type="text" id="groq-asr-model" name="GROQ_ASR_MODEL_NAME" value="{{ config.get('GROQ_ASR_MODEL_NAME', 'whisper-large-v3-turbo') }}" class="form-control">
+                                                        <div class="collapse free-asr-provider-config" id="groq-asr-provider-config">
+                                                            <div class="free-asr-provider-fields">
+                                                                <div class="form-group">
+                                                                    <label for="groq-api-key" class="form-label">Groq API Key <span class="required-mark">必填</span></label>
+                                                                    <input type="password" id="groq-api-key" name="GROQ_API_KEY" value="{{ secret_field_value('GROQ_API_KEY') }}" class="form-control" autocomplete="off" placeholder="粘贴 Groq Free 项目密钥">
+                                                                    <div class="form-text">密钥仅保存在 PotatoFlow 服务端配置中，页面不会回显明文。</div>
+                                                                </div>
+                                                                <div class="form-group">
+                                                                    <label for="groq-asr-model" class="form-label">ASR 模型</label>
+                                                                    <input type="text" id="groq-asr-model" name="GROQ_ASR_MODEL_NAME" value="{{ config.get('GROQ_ASR_MODEL_NAME', 'whisper-large-v3-turbo') }}" class="form-control">
+                                                                </div>
+                                                            </div>
+                                                            <details class="free-asr-advanced">
+                                                                <summary><i class="bi bi-speedometer2"></i> 高级额度与并发设置</summary>
+                                                                <div class="free-asr-advanced-grid">
+                                                                    <div class="form-group">
+                                                                        <label for="groq-asr-hourly" class="form-label">每小时音频秒</label>
+                                                                        <input type="number" min="1" id="groq-asr-hourly" name="GROQ_ASR_HOURLY_AUDIO_SECONDS" value="{{ config.get('GROQ_ASR_HOURLY_AUDIO_SECONDS', 7200) }}" class="form-control">
+                                                                    </div>
+                                                                    <div class="form-group">
+                                                                        <label for="groq-asr-daily" class="form-label">每日音频秒</label>
+                                                                        <input type="number" min="1" id="groq-asr-daily" name="GROQ_ASR_DAILY_AUDIO_SECONDS" value="{{ config.get('GROQ_ASR_DAILY_AUDIO_SECONDS', 28800) }}" class="form-control">
+                                                                    </div>
+                                                                    <div class="form-group">
+                                                                        <label for="groq-asr-workers" class="form-label">最大并发</label>
+                                                                        <input type="number" min="1" max="20" id="groq-asr-workers" name="GROQ_ASR_MAX_WORKERS" value="{{ config.get('GROQ_ASR_MAX_WORKERS', 2) }}" class="form-control">
+                                                                    </div>
+                                                                    <div class="form-group">
+                                                                        <label for="groq-asr-rpm" class="form-label">RPM 上限</label>
+                                                                        <input type="number" min="1" id="groq-asr-rpm" name="GROQ_ASR_RPM_LIMIT" value="{{ config.get('GROQ_ASR_RPM_LIMIT', 20) }}" class="form-control">
+                                                                    </div>
+                                                                </div>
+                                                            </details>
                                                         </div>
-                                                    </div>
-                                                    <div class="col-md-4">
-                                                        <div class="form-group">
-                                                            <label for="groq-asr-hourly" class="form-label">Groq 每小时音频秒</label>
-                                                            <input type="number" min="1" id="groq-asr-hourly" name="GROQ_ASR_HOURLY_AUDIO_SECONDS" value="{{ config.get('GROQ_ASR_HOURLY_AUDIO_SECONDS', 7200) }}" class="form-control">
+                                                    </section>
+
+                                                    <section id="asr-provider-cloudflare" class="free-asr-provider {{ 'is-ready' if cloudflare_asr_ready else 'needs-setup' }}">
+                                                        <div class="free-asr-provider-summary">
+                                                            <span class="free-asr-provider-mark is-cloudflare" aria-hidden="true"><i class="bi bi-cloud-fill"></i></span>
+                                                            <span class="free-asr-provider-copy">
+                                                                <span class="section-eyebrow">FALLBACK PROVIDER</span>
+                                                                <strong>Cloudflare Workers AI</strong>
+                                                                <small>需要 Account ID 和 API Token；Groq 不可用时自动接管。</small>
+                                                            </span>
+                                                            <span class="free-asr-provider-actions">
+                                                                <span class="free-asr-provider-state" data-provider-status aria-live="polite">
+                                                                    <i class="bi {{ 'bi-check-circle-fill' if cloudflare_asr_ready else 'bi-exclamation-circle-fill' }}"></i>
+                                                                    <span>{{ '凭据已保存' if cloudflare_asr_ready else '缺少账号或 Token' }}</span>
+                                                                </span>
+                                                                <button type="button" class="btn btn-sm btn-outline-primary" data-provider-config-button
+                                                                        data-bs-toggle="collapse" data-bs-target="#cloudflare-asr-provider-config"
+                                                                        aria-expanded="false" aria-controls="cloudflare-asr-provider-config">
+                                                                    <i class="bi bi-sliders2"></i><span>{{ '编辑配置' if cloudflare_asr_ready else '立即配置' }}</span>
+                                                                </button>
+                                                            </span>
                                                         </div>
-                                                    </div>
-                                                    <div class="col-md-4">
-                                                        <div class="form-group">
-                                                            <label for="groq-asr-daily" class="form-label">Groq 每日音频秒</label>
-                                                            <input type="number" min="1" id="groq-asr-daily" name="GROQ_ASR_DAILY_AUDIO_SECONDS" value="{{ config.get('GROQ_ASR_DAILY_AUDIO_SECONDS', 28800) }}" class="form-control">
+                                                        <div class="collapse free-asr-provider-config" id="cloudflare-asr-provider-config">
+                                                            <div class="free-asr-provider-fields is-cloudflare">
+                                                                <div class="form-group">
+                                                                    <label for="cloudflare-account-id" class="form-label">Cloudflare Account ID <span class="required-mark">必填</span></label>
+                                                                    <input type="text" id="cloudflare-account-id" name="CLOUDFLARE_ACCOUNT_ID" value="{{ config.get('CLOUDFLARE_ACCOUNT_ID', '') }}" class="form-control" autocomplete="off" placeholder="Cloudflare 账户 ID">
+                                                                </div>
+                                                                <div class="form-group">
+                                                                    <label for="cloudflare-api-token" class="form-label">Workers AI Token <span class="required-mark">必填</span></label>
+                                                                    <input type="password" id="cloudflare-api-token" name="CLOUDFLARE_API_TOKEN" value="{{ secret_field_value('CLOUDFLARE_API_TOKEN') }}" class="form-control" autocomplete="off" placeholder="具备 Workers AI 权限的 Token">
+                                                                    <div class="form-text">Token 不会在页面中回显明文。</div>
+                                                                </div>
+                                                                <div class="form-group is-model-field">
+                                                                    <label for="cloudflare-asr-model" class="form-label">ASR 模型</label>
+                                                                    <input type="text" id="cloudflare-asr-model" name="CLOUDFLARE_ASR_MODEL_NAME" value="{{ config.get('CLOUDFLARE_ASR_MODEL_NAME', '@cf/openai/whisper-large-v3-turbo') }}" class="form-control">
+                                                                </div>
+                                                            </div>
+                                                            <details class="free-asr-advanced">
+                                                                <summary><i class="bi bi-speedometer2"></i> 高级额度设置</summary>
+                                                                <div class="free-asr-advanced-grid is-single">
+                                                                    <div class="form-group">
+                                                                        <label for="cloudflare-asr-daily" class="form-label">每日音频秒</label>
+                                                                        <input type="number" min="1" id="cloudflare-asr-daily" name="CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS" value="{{ config.get('CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS', 14400) }}" class="form-control">
+                                                                    </div>
+                                                                </div>
+                                                            </details>
                                                         </div>
-                                                    </div>
-                                                    <div class="col-md-4">
-                                                        <div class="form-group">
-                                                            <label for="groq-asr-workers" class="form-label">Groq 最大并发</label>
-                                                            <input type="number" min="1" max="20" id="groq-asr-workers" name="GROQ_ASR_MAX_WORKERS" value="{{ config.get('GROQ_ASR_MAX_WORKERS', 2) }}" class="form-control">
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-4">
-                                                        <div class="form-group">
-                                                            <label for="groq-asr-rpm" class="form-label">Groq RPM 上限</label>
-                                                            <input type="number" min="1" id="groq-asr-rpm" name="GROQ_ASR_RPM_LIMIT" value="{{ config.get('GROQ_ASR_RPM_LIMIT', 20) }}" class="form-control">
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="cloudflare-account-id" class="form-label">Cloudflare Account ID</label>
-                                                            <input type="text" id="cloudflare-account-id" name="CLOUDFLARE_ACCOUNT_ID" value="{{ config.get('CLOUDFLARE_ACCOUNT_ID', '') }}" class="form-control" autocomplete="off">
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <div class="form-group">
-                                                            <label for="cloudflare-api-token" class="form-label">Cloudflare Workers AI Token</label>
-                                                            <input type="password" id="cloudflare-api-token" name="CLOUDFLARE_API_TOKEN" value="{{ secret_field_value('CLOUDFLARE_API_TOKEN') }}" class="form-control" autocomplete="off">
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-8">
-                                                        <div class="form-group">
-                                                            <label for="cloudflare-asr-model" class="form-label">Cloudflare ASR 模型</label>
-                                                            <input type="text" id="cloudflare-asr-model" name="CLOUDFLARE_ASR_MODEL_NAME" value="{{ config.get('CLOUDFLARE_ASR_MODEL_NAME', '@cf/openai/whisper-large-v3-turbo') }}" class="form-control">
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-md-4">
-                                                        <div class="form-group">
-                                                            <label for="cloudflare-asr-daily" class="form-label">Cloudflare 每日音频秒</label>
-                                                            <input type="number" min="1" id="cloudflare-asr-daily" name="CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS" value="{{ config.get('CLOUDFLARE_ASR_DAILY_AUDIO_SECONDS', 14400) }}" class="form-control">
-                                                        </div>
-                                                    </div>
+                                                    </section>
+                                                </div>
+
+                                                <div class="free-asr-policy-note">
+                                                    <i class="bi bi-shield-check" aria-hidden="true"></i>
+                                                    <span>仅在没有可复用字幕时调用。Groq 额度不足或返回 429 后切换 Cloudflare；两者都不可用时记录 <code>pending_free_quota</code>，不会回退到付费 ASR。</span>
                                                 </div>
                                             </div>
                                         </article>
@@ -2783,7 +2855,7 @@
         {
             id: 'vtab-subtitles', icon: 'bi-badge-cc', name: '字幕与语音',
             description: '识别、时间轴、翻译与质检',
-            titles: ['语音识别提供商', 'Whisper 配置', 'Voxtral 配置', '扫描窗、时间戳与回退', '字幕翻译与质检', '字幕翻译主提示词', '严格补救提示词']
+            titles: ['语音识别提供商', '免费 ASR Provider', 'Whisper 配置', 'Voxtral 配置', '扫描窗、时间戳与回退', '字幕翻译与质检', '字幕翻译主提示词', '严格补救提示词']
         },
         {
             id: 'vtab-notify-control', icon: 'bi-send', name: '通知与远程',
@@ -2867,7 +2939,8 @@
             grid.className = 'settings-pane-grid';
             const wideCardTitles = new Set([
                 'ASS 弹幕与烧录',
-                '内容审核与阿里云凭证'
+                '内容审核与阿里云凭证',
+                '免费 ASR Provider'
             ]);
             category.titles.forEach(function (title) {
                 const wrapper = cardsByTitle.get(title);
@@ -3137,6 +3210,58 @@
         asrProvider.addEventListener('change', toggleAsrProvider);
         toggleAsrProvider();
     }
+
+    const freeAsrProviderCount = document.getElementById('free-asr-provider-count');
+    const freeAsrProviderSpecs = [
+        {
+            root: document.getElementById('asr-provider-groq'),
+            fields: [document.getElementById('groq-api-key')],
+            missing: '未配置 API Key'
+        },
+        {
+            root: document.getElementById('asr-provider-cloudflare'),
+            fields: [document.getElementById('cloudflare-account-id'), document.getElementById('cloudflare-api-token')],
+            missing: '缺少账号或 Token'
+        }
+    ];
+
+    const syncFreeAsrProviderStatus = function () {
+        let readyCount = 0;
+        freeAsrProviderSpecs.forEach(function (provider) {
+            if (!provider.root) return;
+            const isReady = provider.fields.every(function (field) {
+                return Boolean(String(field?.value || '').trim());
+            });
+            if (isReady) readyCount += 1;
+            provider.root.classList.toggle('is-ready', isReady);
+            provider.root.classList.toggle('needs-setup', !isReady);
+
+            const status = provider.root.querySelector('[data-provider-status]');
+            const statusIcon = status?.querySelector('i');
+            const statusCopy = status?.querySelector('span');
+            if (statusIcon) {
+                statusIcon.classList.toggle('bi-check-circle-fill', isReady);
+                statusIcon.classList.toggle('bi-exclamation-circle-fill', !isReady);
+            }
+            if (statusCopy) statusCopy.textContent = isReady ? '凭据已保存' : provider.missing;
+
+            const buttonCopy = provider.root.querySelector('[data-provider-config-button] span');
+            if (buttonCopy) buttonCopy.textContent = isReady ? '编辑配置' : '立即配置';
+        });
+
+        if (freeAsrProviderCount) {
+            freeAsrProviderCount.textContent = readyCount + '/2 已配置';
+            freeAsrProviderCount.classList.remove('is-success', 'is-info', 'is-warning');
+            freeAsrProviderCount.classList.add(readyCount === 2 ? 'is-success' : (readyCount === 1 ? 'is-info' : 'is-warning'));
+        }
+    };
+
+    freeAsrProviderSpecs.forEach(function (provider) {
+        provider.fields.forEach(function (field) {
+            field?.addEventListener('input', syncFreeAsrProviderStatus);
+        });
+    });
+    syncFreeAsrProviderStatus();
 
     [
         { checkbox: 'subtitle-time-offset-enabled', input: 'subtitle-time-offset' },

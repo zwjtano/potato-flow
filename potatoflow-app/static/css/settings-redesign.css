@@ -377,6 +377,305 @@
     padding: 6px 10px;
 }
 
+/* Free ASR provider control: status first, credentials on demand. */
+.settings-redesign-page .free-asr-provider-card .settings-card-body {
+    gap: 12px;
+}
+
+.settings-redesign-page .free-asr-credential-notice {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    color: #754d00;
+    border: 1px solid #f0cf7a;
+    border-radius: 8px;
+    background: #fff9e8;
+}
+
+.settings-redesign-page .free-asr-notice-icon {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    color: #9a6500;
+    border-radius: 8px;
+    background: #ffedb8;
+    font-size: 15px;
+}
+
+.settings-redesign-page .free-asr-credential-notice > span:last-child {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.settings-redesign-page .free-asr-credential-notice strong {
+    font-size: 11px;
+    font-weight: 760;
+}
+
+.settings-redesign-page .free-asr-credential-notice small {
+    color: #7e6736;
+    font-size: 9px;
+    line-height: 1.55;
+}
+
+.settings-redesign-page .free-asr-route {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--settings-line);
+    border-radius: 8px;
+    background: var(--settings-soft);
+}
+
+.settings-redesign-page .free-asr-route > .bi-arrow-right {
+    color: #8a98a8;
+    font-size: 12px;
+}
+
+.settings-redesign-page .free-asr-route-step {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 26px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-redesign-page .free-asr-route-step > b {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    place-items: center;
+    color: #087f9f;
+    border: 1px solid #a9deeb;
+    border-radius: 7px;
+    background: #eafaff;
+    font-size: 10px;
+}
+
+.settings-redesign-page .free-asr-route-step.is-terminal > b {
+    color: #7b8795;
+    border-color: #d7dde4;
+    background: #f4f6f8;
+}
+
+.settings-redesign-page .free-asr-route-step > span {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.settings-redesign-page .free-asr-route-step strong {
+    color: var(--settings-text);
+    font-size: 10px;
+    font-weight: 740;
+}
+
+.settings-redesign-page .free-asr-route-step small {
+    overflow: hidden;
+    color: var(--settings-muted);
+    font-size: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-redesign-page .free-asr-provider-list {
+    display: grid;
+    gap: 9px;
+}
+
+.settings-redesign-page .free-asr-provider {
+    overflow: hidden;
+    border: 1px solid var(--settings-line);
+    border-left: 3px solid #e0a62a;
+    border-radius: 8px;
+    background: var(--settings-surface);
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.settings-redesign-page .free-asr-provider.is-ready {
+    border-left-color: #2ca36b;
+}
+
+.settings-redesign-page .free-asr-provider:focus-within {
+    border-color: #80bfd1;
+    box-shadow: 0 0 0 3px rgba(8, 127, 159, .09);
+}
+
+.settings-redesign-page .free-asr-provider-summary {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 66px;
+    padding: 10px 11px;
+}
+
+.settings-redesign-page .free-asr-provider-mark {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    color: #fff;
+    border-radius: 9px;
+    font-size: 15px;
+}
+
+.settings-redesign-page .free-asr-provider-mark.is-groq {
+    background: #e85d3f;
+}
+
+.settings-redesign-page .free-asr-provider-mark.is-cloudflare {
+    background: #f48120;
+}
+
+.settings-redesign-page .free-asr-provider-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.settings-redesign-page .free-asr-provider-copy > strong {
+    color: var(--settings-text);
+    font-size: 11px;
+    font-weight: 760;
+}
+
+.settings-redesign-page .free-asr-provider-copy > small {
+    color: var(--settings-muted);
+    font-size: 8px;
+    line-height: 1.45;
+}
+
+.settings-redesign-page .free-asr-provider-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-redesign-page .free-asr-provider-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #9a6500;
+    font-size: 9px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.settings-redesign-page .free-asr-provider.is-ready .free-asr-provider-state {
+    color: #218153;
+}
+
+.settings-redesign-page .free-asr-provider-actions .btn {
+    min-height: 30px;
+    padding: 5px 9px;
+    font-size: 9px;
+    white-space: nowrap;
+}
+
+.settings-redesign-page .free-asr-provider-config {
+    border-top: 1px solid var(--settings-line);
+    background: var(--settings-soft);
+}
+
+.settings-redesign-page .free-asr-provider-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(220px, .65fr);
+    gap: 10px;
+    padding: 12px;
+}
+
+.settings-redesign-page .free-asr-provider-fields.is-cloudflare {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-redesign-page .free-asr-provider-fields.is-cloudflare .is-model-field {
+    grid-column: 1 / -1;
+}
+
+.settings-redesign-page .required-mark {
+    margin-left: 4px;
+    color: #bd4b39;
+    font-size: 7px;
+    font-weight: 760;
+}
+
+.settings-redesign-page .free-asr-advanced {
+    margin: 0 12px 12px;
+    border: 1px solid var(--settings-line);
+    border-radius: 7px;
+    background: var(--settings-surface);
+}
+
+.settings-redesign-page .free-asr-advanced > summary {
+    display: flex;
+    min-height: 34px;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    color: var(--settings-muted);
+    cursor: pointer;
+    font-size: 9px;
+    font-weight: 700;
+    list-style: none;
+}
+
+.settings-redesign-page .free-asr-advanced > summary::-webkit-details-marker {
+    display: none;
+}
+
+.settings-redesign-page .free-asr-advanced > summary::after {
+    margin-left: auto;
+    content: "+";
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.settings-redesign-page .free-asr-advanced[open] > summary::after {
+    content: "−";
+}
+
+.settings-redesign-page .free-asr-advanced-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px;
+    padding: 0 10px 10px;
+}
+
+.settings-redesign-page .free-asr-advanced-grid.is-single {
+    grid-template-columns: minmax(180px, 320px);
+}
+
+.settings-redesign-page .free-asr-policy-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 10px;
+    color: var(--settings-muted);
+    border-radius: 7px;
+    background: var(--settings-soft);
+    font-size: 8px;
+    line-height: 1.55;
+}
+
+.settings-redesign-page .free-asr-policy-note > i {
+    margin-top: 1px;
+    color: #2b8f63;
+    font-size: 12px;
+}
+
+.settings-redesign-page .free-asr-policy-note code {
+    color: #087f9f;
+}
+
 html[data-theme="dark"] .settings-redesign-page .settings-navigation-panel {
     background: rgba(23, 33, 44, .94);
 }
@@ -388,6 +687,45 @@ html[data-theme="dark"] .settings-redesign-page .settings-layout .settings-nav .
 
 html[data-theme="dark"] .settings-redesign-page .settings-card-header {
     background: #111a24;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-credential-notice {
+    color: #f4cc76;
+    border-color: #6c5424;
+    background: #2c2517;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-notice-icon {
+    color: #f4cc76;
+    background: #43351a;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-credential-notice small {
+    color: #d0b978;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-route-step > b {
+    color: #8be4ff;
+    border-color: #276174;
+    background: #12313b;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-route-step.is-terminal > b {
+    color: #9fb0c1;
+    border-color: #33475a;
+    background: #1c2835;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-provider-config {
+    background: #111a24;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-provider-state {
+    color: #f4c86d;
+}
+
+html[data-theme="dark"] .settings-redesign-page .free-asr-provider.is-ready .free-asr-provider-state {
+    color: #83dcae;
 }
 
 @media (max-width: 991.98px) {
@@ -430,6 +768,20 @@ html[data-theme="dark"] .settings-redesign-page .settings-card-header {
 
     .settings-redesign-page .settings-layout .settings-nav .nav-link {
         min-width: 132px;
+    }
+
+    .settings-redesign-page .free-asr-provider-summary {
+        grid-template-columns: 36px minmax(0, 1fr);
+    }
+
+    .settings-redesign-page .free-asr-provider-actions {
+        grid-column: 1 / -1;
+        justify-content: space-between;
+        padding-left: 46px;
+    }
+
+    .settings-redesign-page .free-asr-advanced-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -508,5 +860,41 @@ html[data-theme="dark"] .settings-redesign-page .settings-card-header {
 
     .settings-redesign-page .settings-actions-bar {
         position: static;
+    }
+
+    .settings-redesign-page .free-asr-route {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-redesign-page .free-asr-route > .bi-arrow-right {
+        margin-left: 8px;
+        transform: rotate(90deg);
+    }
+
+    .settings-redesign-page .free-asr-provider-summary {
+        grid-template-columns: 32px minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    .settings-redesign-page .free-asr-provider-mark {
+        width: 32px;
+        height: 32px;
+    }
+
+    .settings-redesign-page .free-asr-provider-actions {
+        align-items: stretch;
+        flex-direction: column;
+        padding-left: 40px;
+    }
+
+    .settings-redesign-page .free-asr-provider-fields,
+    .settings-redesign-page .free-asr-provider-fields.is-cloudflare,
+    .settings-redesign-page .free-asr-advanced-grid,
+    .settings-redesign-page .free-asr-advanced-grid.is-single {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-redesign-page .free-asr-provider-fields.is-cloudflare .is-model-field {
+        grid-column: auto;
     }
 }
