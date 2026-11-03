@@ -108,6 +108,7 @@ pub struct StreamlinkDownloader {
     url: String,
     headers: HashMap<String, String>,
     output_mode: OutputMode,
+    follow_stream_url: bool,
 }
 
 impl StreamlinkDownloader {
@@ -117,7 +118,13 @@ impl StreamlinkDownloader {
             url,
             headers: HashMap::new(),
             output_mode: OutputMode::Pipe, // 默认管道模式
+            follow_stream_url: false,
         }
+    }
+
+    pub fn following_stream_url(mut self) -> Self {
+        self.follow_stream_url = true;
+        self
     }
 
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
@@ -164,7 +171,12 @@ impl StreamlinkDownloader {
         args.push("--force".to_string());
         args.push("--output".to_string());
         args.push(output_file.to_string());
-        args.push(self.url.clone());
+        let url = if self.follow_stream_url {
+            &download_config.url
+        } else {
+            &self.url
+        };
+        args.push(url.clone());
         args.push("best".to_string());
         Ok(args)
     }
@@ -395,4 +407,30 @@ async fn spawn_log(
     }
 
     Ok(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_url_runtime_follows_each_attempts_url() {
+        let first = "https://ws1a.douyucdn.cn/live/a.flv?token=first&expire=300&fcdn=ws&expire=0";
+        let fresh = "https://ws1a.douyucdn.cn/live/a.flv?token=fresh&expire=300&fcdn=ws";
+        let config = DownloadConfig {
+            url: fresh.to_string(),
+            ..Default::default()
+        };
+        let following = StreamlinkDownloader::new(first.to_string(), Platform::Generic)
+            .following_stream_url()
+            .build_file_args(&config, "out.flv.part")
+            .unwrap();
+        assert!(following.contains(&fresh.to_string()));
+        assert!(!following.iter().any(|arg| arg.contains("token=first")));
+
+        let pinned = StreamlinkDownloader::new(first.to_string(), Platform::Generic)
+            .build_file_args(&config, "out.flv.part")
+            .unwrap();
+        assert!(pinned.contains(&first.to_string()));
+    }
 }

@@ -1,6 +1,7 @@
 use crate::server::common::upload::UploaderMessage;
 use crate::server::common::util::FileValidator;
 use crate::server::core::downloader::cover_downloader;
+use crate::server::core::downloader::ws_expire::resolve_ws_expire_override;
 use crate::server::core::downloader::{
     DanmakuClient, DownloadStatus, DownloaderRuntime, SegmentEvent, SegmentInfo,
 };
@@ -280,7 +281,13 @@ impl DownloadTask {
             }
         };
 
-        let download_config = ctx.download_config(stream);
+        let mut download_config = ctx.download_config(stream);
+        // stream-gears handles 403 on its first GET; external downloaders need
+        // a HEAD probe so that the one-use stream token is not consumed.
+        if !matches!(self.downloader, DownloaderRuntime::StreamGears(_)) {
+            download_config.url =
+                resolve_ws_expire_override(download_config.url, &download_config.headers).await;
+        }
         info!(
             page_url = streamer.url,
             stream_url = download_config.url,

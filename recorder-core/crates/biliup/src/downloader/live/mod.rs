@@ -13,7 +13,7 @@ mod wbi;
 
 pub use bilibili::Bilibili;
 pub use douyin::Douyin;
-pub use douyu::Douyu;
+pub use douyu::{Douyu, strip_ws_expire_override};
 
 pub type LiveResult<T> = Result<T, LiveError>;
 

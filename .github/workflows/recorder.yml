@@ -1,0 +1,38 @@
+name: Recorder core
+
+on:
+  push:
+    paths:
+      - "recorder-core/**"
+      - ".github/workflows/recorder.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "recorder-core/**"
+      - ".github/workflows/recorder.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  douyu-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: recorder-core
+      - name: Test Douyu URL handling, HEAD probing and HTTP 403 fallback
+        working-directory: recorder-core
+        run: cargo test --locked -p biliup -p biliup-cli ws_expire
+      - name: Test HTTP 403 fallback on the first stream connection
+        working-directory: recorder-core
+        run: cargo test --locked -p biliup-cli server::core::downloader::stream_gears::tests
+      - name: Test refreshed Streamlink URLs
+        working-directory: recorder-core
+        run: cargo test --locked -p biliup-cli stream_url_runtime_follows_each_attempts_url

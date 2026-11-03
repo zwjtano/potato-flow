@@ -5,6 +5,7 @@ pub mod ffmpeg_downloader;
 pub mod stream_gears;
 pub mod streamlink;
 pub mod ytdlp;
+pub mod ws_expire;
 
 use crate::server::common::util::Recorder;
 use crate::server::core::downloader::ffmpeg_downloader::FfmpegDownloader;
