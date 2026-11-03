@@ -276,6 +276,27 @@ def openai_chat_create_with_thinking_control(
     request_create = create_callable or (
         lambda kwargs: client.chat.completions.create(**kwargs)
     )
+    # Official GPT-5.6 uses the reasoning API, not vendor-specific thinking.
+    model_name = safe_str((create_kwargs or {}).get('model'), default='')
+    official_host = urlparse(str(getattr(client, 'base_url', '') or '')).hostname
+    if official_host == 'api.openai.com' and (
+        model_name == 'gpt-5.6' or model_name.startswith('gpt-5.6-')
+    ):
+        kwargs = copy.deepcopy(create_kwargs or {})
+        if 'max_tokens' in kwargs:
+            legacy_limit = kwargs.pop('max_tokens')
+            kwargs.setdefault('max_completion_tokens', legacy_limit)
+        if not _coerce_bool(thinking_enabled, default=False):
+            kwargs['reasoning_effort'] = 'none'
+        if kwargs.get('reasoning_effort', 'medium') != 'none':
+            for name in ('temperature', 'top_p', 'logprobs', 'top_logprobs'):
+                kwargs.pop(name, None)
+        if isinstance(kwargs.get('extra_body'), dict):
+            kwargs['extra_body'].pop('thinking', None)
+            if not kwargs['extra_body']:
+                kwargs.pop('extra_body')
+        return request_create(kwargs)
+
     if _coerce_bool(thinking_enabled, default=False) or not attempt_disable_thinking:
         return request_create(create_kwargs)
 
